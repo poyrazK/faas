@@ -28,6 +28,7 @@ import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
+import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
 import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
@@ -1164,6 +1165,60 @@ export class AdminService {
         400: `Alert-rule diagnostics do not accept query parameters.`,
         401: `code: unauthorized`,
         403: `Rule assessment denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare loaded alert definitions with an explicitly selected expected set.
+   * Requires operator read scope, MFA and the operator allowlist. Without
+   * expected_set, returns unknown with available versioned set metadata and
+   * does not read Prometheus. Selection is per request and never establishes
+   * deployment intent. gregale-core-v1 expects faas.rules.yml alerts;
+   * gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
+   * data_placement.yaml alerts. Both are minimum sets; additional rules are
+   * allowed and counted. The embedded catalog revision identifies the exact
+   * expected definitions shipped in this apid binary.
+   * A complete bounded Prometheus alert-rule read and comparison share a
+   * three-second deadline. Compares canonical PromQL syntax, for,
+   * keep_firing_for and rule labels. Identity uses file basename, group and
+   * alert name; directory relocation is ignored and basename/group collisions
+   * are ambiguous. Missing fields and unattributed identities remain unknown.
+   * A complete empty source is degraded with known missing rules.
+   * Definitions matching the selected set are covered, independently of
+   * evaluation, metric input, recording rule or notification health. Group
+   * intervals, offsets, annotations and source directories are not compared.
+   * Totals precede a 200-item preview ordered ambiguous, changed, missing,
+   * unknown, matching, with opaque identity hashes breaking ties. Raw queries,
+   * labels, errors and absolute paths are omitted. Unselected or unreadable
+   * evidence returns HTTP 200 with unknown state and null totals. This read
+   * never changes collection, history or triage state.
+   *
+   * @returns ObsRuleCoverage Explicit expectation metadata with complete comparison totals or an unknown reason.
+   * @throws ApiError
+   */
+  public static getObsRuleCoverage({
+    expectedSet,
+  }: {
+    /**
+     * Select exactly one known minimum expectation set; no automatic selection occurs.
+     */
+    expectedSet?: 'gregale-core-v1' | 'gregale-full-v1',
+  }): CancelablePromise<ObsRuleCoverage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/rule-coverage',
+      query: {
+        'expected_set': expectedSet,
+      },
+      errors: {
+        400: `Unknown or empty or repeated expected_set or another query parameter.`,
+        401: `code: unauthorized`,
+        403: `Rule coverage read denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

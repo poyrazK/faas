@@ -45084,6 +45084,51 @@ paths:
         '403': { description: Rule assessment denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/rule-coverage:
+    get:
+      tags: [admin]
+      operationId: getObsRuleCoverage
+      summary: Compare loaded alert definitions with an explicitly selected expected set.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Without
+        expected_set, returns unknown with available versioned set metadata and
+        does not read Prometheus. Selection is per request and never establishes
+        deployment intent. gregale-core-v1 expects faas.rules.yml alerts;
+        gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
+        data_placement.yaml alerts. Both are minimum sets; additional rules are
+        allowed and counted. The embedded catalog revision identifies the exact
+        expected definitions shipped in this apid binary.
+        A complete bounded Prometheus alert-rule read and comparison share a
+        three-second deadline. Compares canonical PromQL syntax, for,
+        keep_firing_for and rule labels. Identity uses file basename, group and
+        alert name; directory relocation is ignored and basename/group collisions
+        are ambiguous. Missing fields and unattributed identities remain unknown.
+        A complete empty source is degraded with known missing rules.
+        Definitions matching the selected set are covered, independently of
+        evaluation, metric input, recording rule or notification health. Group
+        intervals, offsets, annotations and source directories are not compared.
+        Totals precede a 200-item preview ordered ambiguous, changed, missing,
+        unknown, matching, with opaque identity hashes breaking ties. Raw queries,
+        labels, errors and absolute paths are omitted. Unselected or unreadable
+        evidence returns HTTP 200 with unknown state and null totals. This read
+        never changes collection, history or triage state.
+      parameters:
+        - name: expected_set
+          in: query
+          required: false
+          description: Select exactly one known minimum expectation set; no automatic selection occurs.
+          schema: { type: string, enum: [gregale-core-v1, gregale-full-v1] }
+      responses:
+        '200':
+          description: Explicit expectation metadata with complete comparison totals or an unknown reason.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRuleCoverage' }
+        '400': { description: Unknown or empty or repeated expected_set or another query parameter. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Rule coverage read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/notification-health:
     get:
       tags: [admin]
@@ -64417,6 +64462,98 @@ components:
         pending: { type: [integer, 'null'], minimum: 0 }
         firing: { type: [integer, 'null'], minimum: 0 }
         runbook_url: { type: string, maxLength: 512 }
+
+    ObsRuleCoverage:
+      type: object
+      description: Selected expected alert definitions compared with a complete current source; covered does not imply healthy evaluations or inputs.
+      required: [generated_at, scope, fingerprint_algorithm, selection_source, state, expected_set, available_sets, totals, items, total_items, limit, truncated, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: selected_expected_alert_rules }
+        fingerprint_algorithm: { type: string, const: promql_ast_v1 }
+        selection_source: { type: string, enum: [none, explicit_request] }
+        state: { type: string, enum: [covered, degraded, partial, unknown] }
+        reason:
+          type: string
+          enum: [expected_set_not_selected, expected_catalog_unavailable, expected_set_unavailable, prometheus_not_configured, source_unavailable, deadline_exceeded, expected_rules_differ, comparison_incomplete]
+        expected_set:
+          description: Selected versioned set metadata; null when no selection or its catalog is unavailable.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+            - { type: 'null' }
+        available_sets:
+          type: array
+          maxItems: 8
+          description: Built-in choices from this binary; their presence is not deployment intent.
+          items: { $ref: '#/components/schemas/ObsRuleCoverageSet' }
+        totals:
+          description: Null for unselected or unreadable evidence; a complete empty source instead has known missing definitions.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleCoverageTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          description: Expected definitions ordered by ambiguity then change then absence then unknown then match; identity hashes break ties.
+          items: { $ref: '#/components/schemas/ObsRuleCoverageItem' }
+        total_items: { type: integer, minimum: 0, maximum: 4096 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean }
+        limitations:
+          type: array
+          items:
+            type: string
+            enum: [expectation_selected_per_request_not_deployment_evidence, selected_set_is_a_minimum_not_an_exclusive_inventory, alert_rules_only_recording_rules_not_checked, coverage_not_evaluation_metric_or_notification_health, canonical_syntax_not_semantic_equivalence, group_intervals_offsets_annotations_and_source_paths_not_compared, raw_queries_labels_and_errors_excluded, preview_bounded_totals_cover_complete_source]
+    ObsRuleCoverageSet:
+      type: object
+      description: Versioned minimum expectation set with a digest of its exact canonical definitions and safe source basenames.
+      required: [id, revision, files, expected_rules]
+      properties:
+        id: { type: string, enum: [gregale-core-v1, gregale-full-v1] }
+        revision: { type: string, pattern: '^[0-9a-f]{64}$' }
+        files:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          description: Sorted safe source basenames selected by the expectation set.
+          items: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        expected_rules: { type: integer, minimum: 1, maximum: 4096 }
+    ObsRuleCoverageTotals:
+      type: object
+      description: Full counts before preview truncation. Expected categories partition expected_rules; additional valid identities are allowed by the minimum set.
+      required: [expected_rules, observed_rules, additional_rules, invalid_observed_rules, invalid_observed_groups, matching, missing, changed, ambiguous, unknown]
+      properties:
+        expected_rules: { type: integer, minimum: 1, maximum: 4096 }
+        observed_rules: { type: integer, minimum: 0, maximum: 4096 }
+        additional_rules: { type: integer, minimum: 0, maximum: 4096 }
+        invalid_observed_rules: { type: integer, minimum: 0, maximum: 4096 }
+        invalid_observed_groups: { type: integer, minimum: 0, maximum: 4096 }
+        matching: { type: integer, minimum: 0, maximum: 4096 }
+        missing: { type: integer, minimum: 0, maximum: 4096 }
+        changed: { type: integer, minimum: 0, maximum: 4096 }
+        ambiguous: { type: integer, minimum: 0, maximum: 4096 }
+        unknown: { type: integer, minimum: 0, maximum: 4096 }
+    ObsRuleCoverageItem:
+      type: object
+      description: One expected identity with safe catalog metadata and closed comparison evidence; these IDs are independent of historical episode rule keys.
+      required: [id, file_name, group_name, rule_name, state, expected_fingerprint, observed_candidates, changed_fields]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        file_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        group_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        rule_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$' }
+        state: { type: string, enum: [matching, missing, changed, ambiguous, unknown] }
+        reason: { type: string, enum: [rule_missing, definition_changed, ambiguous_identity, source_identity_unavailable, definition_unavailable] }
+        expected_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        observed_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        observed_candidates: { type: integer, minimum: 0, maximum: 4096 }
+        changed_fields:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          description: Changed fields in expression then for then keep_firing_for then labels order; empty unless comparison is known changed.
+          items: { type: string, enum: [expression, for, keep_firing_for, labels] }
 
     ObsNotificationHealth:
       type: object

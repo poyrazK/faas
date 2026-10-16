@@ -825,3 +825,41 @@ window under this freshness model, not continuous service availability,
 expected-rule inventory completeness or full metric coverage. Older servers
 may omit this added metadata; the CLI displays coverage as unknown in that case.
 Disabled collection now does not erase its retained historical outcomes.
+
+### Check expected alert definitions
+
+Run `gregalectl obs rule-coverage --json` to see the available expectation sets.
+Without selection, coverage stays unknown and Prometheus is not queried. Select
+the set appropriate to the installation explicitly:
+
+```sh
+gregalectl obs rule-coverage --expected-set gregale-core-v1 --json
+gregalectl obs rule-coverage --expected-set gregale-full-v1 --json
+```
+
+The API equivalent is
+`GET /v1/admin/obs/rule-coverage?expected_set=gregale-core-v1`, with the usual
+operator read scope, MFA and allowlist. Core expects `faas.rules.yml` alerts;
+full also expects `bridge.rules.yml`, `pg_backup.rules.yml` and
+`data_placement.yaml`. These are minimum sets: additional valid rules are counted
+and allowed. The catalog in the binary is not evidence of what was intended to
+be installed. Each set includes its exact definition revision and file basenames.
+
+`covered` means the selected alert definitions match; `degraded` identifies
+missing, changed or ambiguous definitions. `partial` and `unknown` preserve
+unreadable identities or definitions, absent fields and source failures. A
+complete empty source has known missing rules. File basename, group and alert
+name identify a rule; directory moves are ignored and basename/group collisions
+are ambiguous. Changed fields distinguish expression, `for`, `keep_firing_for`
+and rule labels. Formatting and label order are normalized, without claiming
+semantic equivalence. Queries, labels, raw errors and absolute paths are omitted.
+
+Totals cover the complete bounded source and expected set before a 200-item
+preview, with ambiguity/change/absence ahead of matches. The three-second read
+returns null totals if evidence is unavailable. Coverage is a current read:
+it does not write history or prove metric inputs, recording dependencies,
+evaluation health, notification delivery or deployment intent. Group intervals,
+offsets and annotations are outside this comparison. Use `obs rule-health` and
+`obs notification-health` for their respective evidence. Repository maintainers
+update the catalog with `make obs-rule-catalog-generate` after source-rule edits;
+`make obs-rule-catalog-check` and Go tests detect drift.

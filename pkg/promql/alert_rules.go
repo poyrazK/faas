@@ -2,28 +2,53 @@ package promql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 )
 
 type AlertRuleGroup struct {
-	Name  string      `json:"name"`
-	File  string      `json:"file"`
-	Rules []AlertRule `json:"rules"`
+	Name   string            `json:"name"`
+	File   string            `json:"file"`
+	Rules  []AlertRule       `json:"rules"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 type AlertRule struct {
-	Type           string            `json:"type"`
-	Name           string            `json:"name"`
-	Query          string            `json:"query"`
-	Duration       float64           `json:"duration"`
-	Labels         map[string]string `json:"labels"`
-	Annotations    map[string]string `json:"annotations"`
-	State          string            `json:"state"`
-	Health         string            `json:"health"`
-	LastError      string            `json:"lastError"`
-	LastEvaluation time.Time         `json:"lastEvaluation"`
-	Alerts         []Alert           `json:"alerts"`
+	Type             string            `json:"type"`
+	Name             string            `json:"name"`
+	Query            string            `json:"query"`
+	Duration         float64           `json:"duration"`
+	DurationReported bool              `json:"-"`
+	KeepFiringFor    *float64          `json:"keepFiringFor,omitempty"`
+	Labels           map[string]string `json:"labels"`
+	Annotations      map[string]string `json:"annotations"`
+	State            string            `json:"state"`
+	Health           string            `json:"health"`
+	LastError        string            `json:"lastError"`
+	LastEvaluation   time.Time         `json:"lastEvaluation"`
+	Alerts           []Alert           `json:"alerts"`
+}
+
+// Keep absence separate from a reported zero without changing the collector's
+// existing Duration value or acceptance policy.
+func (r *AlertRule) UnmarshalJSON(data []byte) error {
+	type wire AlertRule
+	var decoded struct {
+		*wire
+		Duration *float64 `json:"duration"`
+	}
+	out := AlertRule{}
+	decoded.wire = (*wire)(&out)
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.Duration != nil {
+		out.Duration = *decoded.Duration
+		out.DurationReported = true
+	}
+	*r = out
+	return nil
 }
 
 // AlertRules requires a complete bounded envelope. Warnings or absent arrays

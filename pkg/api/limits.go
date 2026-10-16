@@ -8934,6 +8934,17 @@ const (
 	ObsRuleHealthIdentityMaxBytes = 128
 	ObsRuleHealthRunbookMaxBytes  = 512
 
+	// Expected rule coverage is explicit and bounded independently of health.
+	ObsRuleCoverageBudget             = 3 * time.Second
+	ObsRuleCoverageItemsMax           = 200
+	ObsRuleCoverageExpectedSetsMax    = 8
+	ObsRuleCoverageExpectedFilesMax   = 8
+	ObsRuleCoverageExpressionMaxBytes = 16 * 1024
+	ObsRuleCoverageLabelsMax          = 64
+	ObsRuleCoverageLabelNameMaxBytes  = 128
+	ObsRuleCoverageLabelValueMaxBytes = 2048
+	ObsRuleCatalogMaxBytes            = 4 << 20
+
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.
