@@ -169,6 +169,11 @@ type OutboundAIUsageItem struct {
 	Characters   int64 `json:"characters"`
 	// VideoSeconds is seconds of generated video (ADR-1370).
 	VideoSeconds int64 `json:"video_seconds"`
+	// Built-in tool uses (ADR-1380): web searches as the provider bills
+	// them, file searches, and GB of code-interpreter container sessions.
+	WebSearches   int64 `json:"web_searches"`
+	FileSearches  int64 `json:"file_searches"`
+	CodeSessionGB int64 `json:"code_session_gb"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

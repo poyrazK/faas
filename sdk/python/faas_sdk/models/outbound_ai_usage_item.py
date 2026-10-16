@@ -40,6 +40,12 @@ class OutboundAIUsageItem:
     """Characters of speech input."""
     video_seconds: int
     """Seconds of generated video (ADR-1370)."""
+    web_searches: int
+    """Web searches as the provider bills them: per call, query or grounded prompt (ADR-1380)."""
+    file_searches: int
+    """File search calls (ADR-1380)."""
+    code_session_gb: int
+    """GB of code-interpreter container sessions (ADR-1380)."""
     cost_millicents: int | Unset = UNSET
     """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
     unpriced model."""
@@ -72,6 +78,12 @@ class OutboundAIUsageItem:
 
         video_seconds = self.video_seconds
 
+        web_searches = self.web_searches
+
+        file_searches = self.file_searches
+
+        code_session_gb = self.code_session_gb
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -91,6 +103,9 @@ class OutboundAIUsageItem:
                 "audio_seconds": audio_seconds,
                 "characters": characters,
                 "video_seconds": video_seconds,
+                "web_searches": web_searches,
+                "file_searches": file_searches,
+                "code_session_gb": code_session_gb,
             }
         )
         if cost_millicents is not UNSET:
@@ -127,6 +142,12 @@ class OutboundAIUsageItem:
 
         video_seconds = d.pop("video_seconds")
 
+        web_searches = d.pop("web_searches")
+
+        file_searches = d.pop("file_searches")
+
+        code_session_gb = d.pop("code_session_gb")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -143,6 +164,9 @@ class OutboundAIUsageItem:
             audio_seconds=audio_seconds,
             characters=characters,
             video_seconds=video_seconds,
+            web_searches=web_searches,
+            file_searches=file_searches,
+            code_session_gb=code_session_gb,
             cost_millicents=cost_millicents,
         )
 

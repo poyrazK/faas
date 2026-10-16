@@ -152,6 +152,9 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 			estimate.OutputTokens = api.OutboundAIDefaultOutputReserveTokens
 		}
 	}
+	// ADR-1380: the request's built-in tools reserve their fees.
+	estimate.WebSearches, estimate.FileSearches = plan.facts.tools.webSearches, plan.facts.tools.fileSearches
+	estimate.CodeSessionGB = plan.facts.tools.codeSessionGB
 	estimate.InputTokens = min(estimate.InputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputTokens = min(estimate.OutputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputImageTokens = min(estimate.OutputImageTokens, estimate.OutputTokens)

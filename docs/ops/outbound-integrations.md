@@ -926,6 +926,51 @@ allowed`, their spend is outside the integration's caps, and
 `outbound_ai_unmetered_calls_total` counts them by integration. Operator
 integrations take `ai_allow_unmetered` in `outboundd.toml`.
 
+## AI built-in tool fees
+
+Providers bill some built-in tools per use, on top of tokens. The gateway
+counts these uses from each response, prices them, and reserves them before the
+call (ADR-1380).
+
+| Tool | Counted from | Typical price |
+| --- | --- | --- |
+| OpenAI web search | Responses `web_search_call` items, or one per chat completion on a search model | $10 per 1,000 calls, $25 for `web_search_preview` on non-reasoning models |
+| OpenAI file search | Responses `file_search_call` items | $2.50 per 1,000 calls |
+| OpenAI code interpreter | Responses `code_interpreter_call` containers | $0.03 per GB per 20-minute session |
+| Anthropic web search | `usage.server_tool_use.web_search_requests` | $10 per 1,000 searches |
+| Gemini Google Search | `groundingMetadata.webSearchQueries` | Gemini 3 and newer: $14 per 1,000 queries; Gemini 2.5: $35 per 1,000 grounded prompts |
+
+- **Prices.** The catalog prices web search per model, and file search and
+  containers on OpenAI and Azure OpenAI models. A price list overrides them
+  with `web-search`, `file-search` and `code-session-gb`:
+
+  ```sh
+  gregale ai prices set <id> --price model=gpt-5,input=1.25,output=10,web-search=0.01,file-search=0.0025,code-session-gb=0.03
+  ```
+- **Reservation.** A request that declares a tool reserves its fee before
+  admission, so a cost cap holds ahead of the call:
+  - web search: Anthropic's `max_uses`, else 5 (one for a chat search model
+    or a Gemini 2.5 grounded prompt);
+  - file search: 2;
+  - code interpreter: one session at the container's `memory_limit` (default
+    1 GB).
+- **Containers** are charged once per 20-minute session window per outboundd
+  process. A conversation that reuses a container is not charged again within
+  the window.
+- **Not covered:**
+  - free allowances (Gemini's daily or monthly free grounding), which the
+    gateway charges like the rest;
+  - Anthropic code execution, billed by container hour;
+  - Google Maps grounding.
+- **Search content tokens** are in the providers' token counts and priced as
+  tokens. With OpenAI's generally available `web_search` tool on a
+  non-reasoning model, the catalog's preview price overstates each search
+  until a price list corrects it.
+
+`gregale ai usage` shows web searches, file searches and GB code sessions in
+its MEDIA column. `outbound_ai_tool_uses_total` counts them by integration and
+tool.
+
 ## AI media metering
 
 See [ADR-997](../adr/997-ai-gateway-media-metering-content-guardrails-replay.md).

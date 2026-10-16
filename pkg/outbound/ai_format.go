@@ -227,6 +227,20 @@ type aiCallFacts struct {
 	videoSeconds    int64
 	videoResolution string
 	videoSized      bool
+	// tools is the built-in tool uses the request declares and reserves
+	// (ADR-1380).
+	tools aiToolReserve
+}
+
+// aiToolReserve is what a request's built-in tools reserve (ADR-1380):
+// web searches, file searches and GB of code-interpreter container
+// sessions. chatSearch marks a chat completion on a search model, which
+// runs one search per call; codeGB is the container memory a session is
+// charged at.
+type aiToolReserve struct {
+	webSearches, fileSearches, codeSessionGB int64
+	chatSearch                               bool
+	codeGB                                   int64
 }
 
 // readAICallFacts reads the model and output ceiling from a JSON body.
@@ -269,7 +283,74 @@ func readAICallFacts(endpoint aiEndpoint, body []byte) aiCallFacts {
 	case aiMediaVideo:
 		facts.videoSeconds, facts.videoResolution, facts.videoSized = videoFacts(fields)
 	}
+	if endpoint.generation {
+		facts.tools = readToolReserve(endpoint, facts.model, fields)
+	}
 	return facts
+}
+
+// readToolReserve reads the built-in tools a generation request declares
+// (ADR-1380): OpenAI Responses web_search, file_search and code_interpreter
+// tools, a chat completion on a search model, Anthropic web_search with its
+// max_uses, and Gemini google_search grounding.
+func readToolReserve(endpoint aiEndpoint, model string, fields map[string]json.RawMessage) aiToolReserve {
+	reserve := aiToolReserve{codeGB: 1}
+	if endpoint.format == aiFormatOpenAI && endpoint.openAIOutputField == "max_completion_tokens" {
+		_, options := fields["web_search_options"]
+		if options || strings.Contains(model, "-search-") || strings.HasSuffix(model, "-search") {
+			reserve.chatSearch, reserve.webSearches = true, 1
+		}
+	}
+	var tools []map[string]json.RawMessage
+	if json.Unmarshal(fields["tools"], &tools) != nil {
+		return reserve
+	}
+	for _, tool := range tools {
+		kind := jsonString(tool["type"])
+		switch {
+		case endpoint.format == aiFormatOpenAI && strings.HasPrefix(kind, "web_search"):
+			reserve.webSearches = max(reserve.webSearches, api.OutboundAIToolReserveWebSearches)
+		case endpoint.format == aiFormatOpenAI && kind == "file_search":
+			reserve.fileSearches = api.OutboundAIToolReserveFileSearches
+		case endpoint.format == aiFormatOpenAI && kind == "code_interpreter":
+			reserve.codeGB = containerMemoryGB(tool["container"])
+			reserve.codeSessionGB = reserve.codeGB
+		case endpoint.format == aiFormatAnthropic && strings.HasPrefix(kind, "web_search"):
+			uses := jsonInt(tool["max_uses"])
+			if uses <= 0 {
+				uses = api.OutboundAIToolReserveWebSearches
+			}
+			reserve.webSearches += min(uses, api.OutboundAIToolUsesPerCallMax)
+		case endpoint.format == aiFormatGemini:
+			for _, key := range []string{"google_search", "googleSearch", "google_search_retrieval", "googleSearchRetrieval"} {
+				if _, ok := tool[key]; ok {
+					reserve.webSearches = api.OutboundAIToolReserveWebSearches
+					if geminiBillsPerPrompt(model) {
+						reserve.webSearches = 1
+					}
+				}
+			}
+		}
+	}
+	reserve.webSearches = min(reserve.webSearches, api.OutboundAIToolUsesPerCallMax)
+	return reserve
+}
+
+// containerMemoryGB reads a code_interpreter tool's container memory_limit
+// ("1g" to "64g"); an absent or unknown value is the provider's 1 GB.
+func containerMemoryGB(raw json.RawMessage) int64 {
+	var container struct {
+		MemoryLimit string `json:"memory_limit"`
+	}
+	if json.Unmarshal(raw, &container) != nil {
+		return 1
+	}
+	limit := strings.ToLower(strings.TrimSpace(container.MemoryLimit))
+	gb, err := strconv.ParseInt(strings.TrimSuffix(limit, "g"), 10, 64)
+	if err != nil || !strings.HasSuffix(limit, "g") || gb < 1 || gb > api.OutboundAIContainerMemoryGBMax {
+		return 1
+	}
+	return gb
 }
 
 // videoResolutionText bounds a requested video resolution ("720p", "4k").

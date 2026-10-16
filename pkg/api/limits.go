@@ -903,7 +903,18 @@ const (
 	OutboundAIVideoDefaultSeconds                    = 8
 	OutboundAIVideoSecondsMax                        = 600
 	OutboundAIVideosPerCallMax                       = 8
-	OutboundAIPriceEntriesMax                        = 64
+	// Built-in tools (ADR-1380): the ceiling of a price per web search,
+	// file search or GB container session; the uses a request that declares
+	// a tool reserves when it names no limit; how long a code-interpreter
+	// container's session is charged once; the largest container memory in
+	// GB; and the uses one response may report.
+	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
+	OutboundAIToolReserveWebSearches             = 5
+	OutboundAIToolReserveFileSearches            = 2
+	OutboundAIContainerSessionMinutes            = 20
+	OutboundAIContainerMemoryGBMax               = 64
+	OutboundAIToolUsesPerCallMax                 = 1_000
+	OutboundAIPriceEntriesMax                    = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25

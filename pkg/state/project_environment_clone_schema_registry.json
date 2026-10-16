@@ -7898,9 +7898,12 @@
       "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
       "millicents_per_audio_minute",
+      "millicents_per_code_session_gb",
+      "millicents_per_file_search",
       "millicents_per_image",
       "millicents_per_million_characters",
       "millicents_per_video_second",
+      "millicents_per_web_search",
       "model_prefix",
       "output_image_millicents_per_mtok",
       "output_millicents_per_mtok",
@@ -8066,8 +8069,10 @@
       "cached_input_tokens",
       "caller",
       "characters",
+      "code_session_gb",
       "cost_millicents",
       "error_requests",
+      "file_searches",
       "images",
       "input_tokens",
       "integration_id",
@@ -8077,7 +8082,8 @@
       "updated_at",
       "usage_date",
       "usage_unknown_requests",
-      "video_seconds"
+      "video_seconds",
+      "web_searches"
     ],
     "kind": "operational"
   },

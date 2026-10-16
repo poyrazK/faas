@@ -550,6 +550,7 @@ func (w *AIBatchWorker) settle(ctx context.Context, integration Integration, bat
 		bound := 3 * api.OutboundAIMaxTokensPerResponse
 		usage.InputTokens, usage.OutputTokens = min(usage.InputTokens, bound), min(usage.OutputTokens, bound)
 		usage.CachedInputTokens, usage.CacheWriteTokens = min(usage.CachedInputTokens, bound), min(usage.CacheWriteTokens, bound)
+		usage.WebSearches, usage.FileSearches = min(usage.WebSearches, bound), min(usage.FileSearches, bound)
 		usageCost := min(batchCost(aiCallCostMillicents(integration, usage)), api.MaxOutboundAICostMillicents)
 		record := AIUsageRecord{IntegrationID: batch.IntegrationID, Caller: batch.Caller, Outcome: AIUsageOutcomeKnown,
 			Usage: usage, CostMillicents: usageCost, LeaseID: batchSettlementKey(batch.ID, model)}
@@ -667,6 +668,9 @@ func (r *batchResultReader) endLine() {
 	total.CachedInputTokens += usage.CachedInputTokens
 	total.CacheWriteTokens += usage.CacheWriteTokens
 	total.OutputTokens += usage.OutputTokens
+	// ADR-1380: a batch request's web and file searches.
+	total.WebSearches += usage.WebSearches
+	total.FileSearches += usage.FileSearches
 	r.totals[usage.Model] = total
 }
 

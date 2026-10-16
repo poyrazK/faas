@@ -61,6 +61,8 @@ func formatMediaPrices(entry api.OutboundAIPriceEntry) string {
 		{"per image", entry.MillicentsPerImage}, {"per audio minute", entry.MillicentsPerAudioMinute},
 		{"per million characters", entry.MillicentsPerMillionCharacters},
 		{"per video second", entry.MillicentsPerVideoSecond},
+		{"per web search", entry.MillicentsPerWebSearch}, {"per file search", entry.MillicentsPerFileSearch},
+		{"per GB code session", entry.MillicentsPerCodeSessionGB},
 	} {
 		if price.value != nil {
 			parts = append(parts, price.label+" "+financialMoney(*price.value))
@@ -157,13 +159,20 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 			entry.MillicentsPerMillionCharacters = &millicents
 		case "video-second":
 			entry.MillicentsPerVideoSecond = &millicents
+		case "web-search":
+			entry.MillicentsPerWebSearch = &millicents
+		case "file-search":
+			entry.MillicentsPerFileSearch = &millicents
+		case "code-session-gb":
+			entry.MillicentsPerCodeSessionGB = &millicents
 		default:
 			return entry, fmt.Errorf("%q: unknown key %q", spec, key)
 		}
 	}
-	media := seen["image"] || seen["audio-minute"] || seen["characters"] || seen["video-second"]
+	media := seen["image"] || seen["audio-minute"] || seen["characters"] || seen["video-second"] ||
+		seen["web-search"] || seen["file-search"] || seen["code-session-gb"]
 	if !seen["model"] || (!media && (!seen["input"] || !seen["output"])) {
-		return entry, fmt.Errorf("%q: model plus input and output, or an image, audio-minute, characters or video-second price, are required", spec)
+		return entry, fmt.Errorf("%q: model plus input and output, or a media or tool price, are required", spec)
 	}
 	return entry, nil
 }

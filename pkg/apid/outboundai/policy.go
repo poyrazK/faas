@@ -102,7 +102,8 @@ func usageResponse(usage state.OutboundAIUsage) api.OutboundAIUsageResponse {
 			UsageUnknownRequests: item.UsageUnknownRequests, InputTokens: item.InputTokens,
 			CachedInputTokens: item.CachedInputTokens, CacheWriteTokens: item.CacheWriteTokens, OutputTokens: item.OutputTokens,
 			CostMillicents: item.CostMillicents, Images: item.Images, AudioSeconds: item.AudioSeconds, Characters: item.Characters,
-			VideoSeconds: item.VideoSeconds,
+			VideoSeconds: item.VideoSeconds, WebSearches: item.WebSearches, FileSearches: item.FileSearches,
+			CodeSessionGB: item.CodeSessionGB,
 		})
 	}
 	return out

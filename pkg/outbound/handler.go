@@ -72,6 +72,9 @@ type Handler struct {
 	// during the staged preview rollout; nil admits every account
 	// (ADR-998).
 	AIGatewayRollout AIGatewayRollout
+	// aiContainers charges each code-interpreter container once per
+	// session window (ADR-1380).
+	aiContainers aiContainerSessions
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -663,6 +666,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
 			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
 			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
+			settlement.codeGB = aiPlan.facts.tools.codeGB
 		}
 		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
 	}

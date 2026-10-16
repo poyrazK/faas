@@ -37,6 +37,7 @@ type Metrics struct {
 	aiEvaluations          *prometheus.CounterVec
 	aiBatches              *prometheus.CounterVec
 	aiUnmetered            *prometheus.CounterVec
+	aiToolUses             *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
@@ -153,6 +154,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_unmetered_calls_total",
 			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1370).",
 		}, []string{"integration_id"}),
+		aiToolUses: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_tool_uses_total",
+			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1380).",
+		}, []string{"integration_id", "tool"}),
 		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_route_canary_calls_total",
 			Help: "Calls of routes with an active canary, by the target tried first (canary or baseline) (ADR-1340).",
@@ -196,6 +201,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiEvaluations,
 		m.aiBatches,
 		m.aiUnmetered,
+		m.aiToolUses,
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
 		m.aiModeration,
@@ -324,6 +330,15 @@ func (m *Metrics) ObserveAIUsage(integrationID string, outcome AIUsageOutcome, u
 		"video_seconds": usage.VideoSeconds} {
 		if value > 0 {
 			m.aiMedia.WithLabelValues(integrationID, kind).Add(float64(value))
+		}
+	}
+	if m.aiToolUses == nil {
+		return
+	}
+	for tool, value := range map[string]int64{"web_searches": usage.WebSearches, "file_searches": usage.FileSearches,
+		"code_session_gb": usage.CodeSessionGB} {
+		if value > 0 {
+			m.aiToolUses.WithLabelValues(integrationID, tool).Add(float64(value))
 		}
 	}
 }

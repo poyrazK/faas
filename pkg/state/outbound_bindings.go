@@ -81,6 +81,10 @@ type OutboundAIUsageItem struct {
 	Characters   int64
 	// VideoSeconds is seconds of generated video (ADR-1370).
 	VideoSeconds int64
+	// Built-in tool uses (ADR-1380).
+	WebSearches   int64
+	FileSearches  int64
+	CodeSessionGB int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.

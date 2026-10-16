@@ -38,7 +38,10 @@ func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ stat
 			InputImageMillicentsPerMTok: copyInt64(entry.Price.InputImage), OutputImageMillicentsPerMTok: copyInt64(entry.Price.OutputImage),
 			MillicentsPerImage: copyInt64(entry.Price.Image), MillicentsPerAudioMinute: copyInt64(entry.Price.AudioMinute),
 			MillicentsPerMillionCharacters: copyInt64(entry.Price.Characters),
-			MillicentsPerVideoSecond:       copyInt64(entry.Price.VideoSecond)})
+			MillicentsPerVideoSecond:       copyInt64(entry.Price.VideoSecond),
+			// ADR-1380 built-in tool prices.
+			MillicentsPerWebSearch: copyInt64(entry.Price.WebSearch), MillicentsPerFileSearch: copyInt64(entry.Price.FileSearch),
+			MillicentsPerCodeSessionGB: copyInt64(entry.Price.CodeSessionGB)})
 	}
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	httpkit.WriteJSON(w, http.StatusOK, out)

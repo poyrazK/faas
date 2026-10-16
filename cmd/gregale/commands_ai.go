@@ -231,13 +231,15 @@ func cmdAIPolicy(args []string) int {
 }
 
 // formatMediaUsage lists a rollup's images, audio seconds and characters
-// (ADR-997) and video seconds (ADR-1370), or "-".
+// (ADR-997), video seconds (ADR-1370) and built-in tool uses (ADR-1380),
+// or "-".
 func formatMediaUsage(item api.OutboundAIUsageItem) string {
 	var parts []string
 	for _, count := range []struct {
 		value int64
 		unit  string
-	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}, {item.VideoSeconds, "video s"}} {
+	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}, {item.VideoSeconds, "video s"},
+		{item.WebSearches, "web searches"}, {item.FileSearches, "file searches"}, {item.CodeSessionGB, "GB code sessions"}} {
 		if count.value > 0 {
 			parts = append(parts, strconv.FormatInt(count.value, 10)+" "+count.unit)
 		}

@@ -46,6 +46,12 @@ type OutboundAIPriceEntry struct {
 	// (ADR-1370). A model prefix may name a resolution after "@", such as
 	// "veo-3.1-generate-001@4k", which wins for calls at that resolution.
 	MillicentsPerVideoSecond *int64 `json:"millicents_per_video_second,omitempty"`
+	// Built-in tool prices (ADR-1380): per web search (a call, query or
+	// grounded prompt, as the provider bills it), per file search, and per
+	// GB of code-interpreter container memory per session.
+	MillicentsPerWebSearch     *int64 `json:"millicents_per_web_search,omitempty"`
+	MillicentsPerFileSearch    *int64 `json:"millicents_per_file_search,omitempty"`
+	MillicentsPerCodeSessionGB *int64 `json:"millicents_per_code_session_gb,omitempty"`
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -67,7 +73,10 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 		}
 		if !optionalWithin(entry.MillicentsPerImage, MaxOutboundAIPriceMillicentsPerImage) ||
 			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) ||
-			!optionalWithin(entry.MillicentsPerVideoSecond, MaxOutboundAIPriceMillicentsPerVideoSecond) {
+			!optionalWithin(entry.MillicentsPerVideoSecond, MaxOutboundAIPriceMillicentsPerVideoSecond) ||
+			!optionalWithin(entry.MillicentsPerWebSearch, MaxOutboundAIPriceMillicentsPerToolUse) ||
+			!optionalWithin(entry.MillicentsPerFileSearch, MaxOutboundAIPriceMillicentsPerToolUse) ||
+			!optionalWithin(entry.MillicentsPerCodeSessionGB, MaxOutboundAIPriceMillicentsPerToolUse) {
 			return false
 		}
 		if _, dup := seen[entry.ModelPrefix]; dup {

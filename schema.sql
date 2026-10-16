@@ -32343,9 +32343,13 @@ CREATE TABLE public.outbound_ai_price_entries (
     millicents_per_audio_minute bigint,
     millicents_per_million_characters bigint,
     millicents_per_video_second bigint,
+    millicents_per_web_search bigint,
+    millicents_per_file_search bigint,
+    millicents_per_code_session_gb bigint,
     CONSTRAINT outbound_ai_price_entries_media_chk CHECK ((((input_image_millicents_per_mtok IS NULL) OR ((input_image_millicents_per_mtok >= 0) AND (input_image_millicents_per_mtok <= 1000000000))) AND ((output_image_millicents_per_mtok IS NULL) OR ((output_image_millicents_per_mtok >= 0) AND (output_image_millicents_per_mtok <= 1000000000))) AND ((millicents_per_image IS NULL) OR ((millicents_per_image >= 0) AND (millicents_per_image <= 10000000))) AND ((millicents_per_audio_minute IS NULL) OR ((millicents_per_audio_minute >= 0) AND (millicents_per_audio_minute <= 10000000))) AND ((millicents_per_million_characters IS NULL) OR ((millicents_per_million_characters >= 0) AND (millicents_per_million_characters <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000))))),
+    CONSTRAINT outbound_ai_price_entries_tools_chk CHECK ((((millicents_per_web_search IS NULL) OR ((millicents_per_web_search >= 0) AND (millicents_per_web_search <= 10000000))) AND ((millicents_per_file_search IS NULL) OR ((millicents_per_file_search >= 0) AND (millicents_per_file_search <= 10000000))) AND ((millicents_per_code_session_gb IS NULL) OR ((millicents_per_code_session_gb >= 0) AND (millicents_per_code_session_gb <= 10000000))))),
     CONSTRAINT outbound_ai_price_entries_video_chk CHECK (((millicents_per_video_second IS NULL) OR ((millicents_per_video_second >= 0) AND (millicents_per_video_second <= 10000000))))
 );
 
@@ -32569,11 +32573,15 @@ CREATE TABLE public.outbound_ai_usage_daily (
     audio_seconds bigint DEFAULT 0 NOT NULL,
     characters bigint DEFAULT 0 NOT NULL,
     video_seconds bigint DEFAULT 0 NOT NULL,
+    web_searches bigint DEFAULT 0 NOT NULL,
+    file_searches bigint DEFAULT 0 NOT NULL,
+    code_session_gb bigint DEFAULT 0 NOT NULL,
     CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = ANY (ARRAY['runs'::text, 'replay'::text, 'moderation'::text, 'evaluation'::text])) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
     CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
     CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
     CONSTRAINT outbound_ai_usage_daily_media_chk CHECK (((images >= 0) AND (audio_seconds >= 0) AND (characters >= 0))),
     CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_tools_chk CHECK (((web_searches >= 0) AND (file_searches >= 0) AND (code_session_gb >= 0))),
     CONSTRAINT outbound_ai_usage_daily_video_chk CHECK ((video_seconds >= 0))
 );
 

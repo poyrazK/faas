@@ -15,7 +15,11 @@ reference rate and rounded up, so a budget never under-counts:
 - character prices per million input characters;
 - video prices per second of generated video (ADR-1370), for the providers
   whose video calls the gateway meters, with a "<model>@<resolution>" row
-  for each resolution LiteLLM prices apart.
+  for each resolution LiteLLM prices apart;
+- built-in tool prices (ADR-1380): per web search from LiteLLM's
+  search_context_cost_per_query (the dearest context size), and for
+  OpenAI and Azure OpenAI models the file search price and the price per GB
+  code-interpreter container session.
 
 Run it with an isolated interpreter on a downloaded file kept in its own
 directory, for example:
@@ -60,6 +64,13 @@ AUDIO_MODES = {"audio_transcription", "audio_speech"}
 VIDEO_MODE = "video_generation"
 VIDEO_PROVIDERS = {"gemini", "vertex"}
 VIDEO_TIER_PREFIX = "output_cost_per_second_"
+# Built-in tools (ADR-1380). File search has no LiteLLM model entry: OpenAI's
+# pricing page lists $2.50 per 1,000 calls (read 2026-10-16). The container
+# price per GB session is LiteLLM's openai/container
+# code_interpreter_cost_per_session, which prices a 1 GB container.
+OPENAI_TOOL_PROVIDERS = {"openai", "azure_openai"}
+FILE_SEARCH_USD_PER_CALL = "0.0025"
+CONTAINER_ENTRY = "openai/container"
 MAX_PRICE = 1_000_000_000  # api.MaxOutboundAIPriceMillicentsPerMTok
 MAX_UNIT_PRICE = 10_000_000  # api.MaxOutboundAIPriceMillicentsPerImage, ...PerAudioMinute and ...PerVideoSecond
 MILLICENTS_PER_USD = Decimal(10) ** 5
@@ -118,8 +129,23 @@ def video_tiers(entry, usd_per_eur):
     return tiers
 
 
+def tool_prices(entry, gateway, usd_per_eur, container_usd):
+    """web_search, file_search, code_session_gb (ADR-1380)."""
+    web_search = None
+    search = entry.get("search_context_cost_per_query")
+    if isinstance(search, dict):
+        values = [Decimal(value) for value in search.values() if value is not None and not isinstance(value, (dict, list))]
+        if values and max(values) > 0:
+            web_search = convert_unit(max(values), usd_per_eur)
+    if gateway not in OPENAI_TOOL_PROVIDERS or entry.get("mode") not in {"chat", "responses"}:
+        return [web_search, None, None]
+    file_search = convert_unit(Decimal(FILE_SEARCH_USD_PER_CALL), usd_per_eur)
+    code_session = None if container_usd is None else convert_unit(container_usd, usd_per_eur)
+    return [web_search, file_search, code_session]
+
+
 def within_limits(row):
-    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE, MAX_UNIT_PRICE]
+    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE, MAX_UNIT_PRICE] + [MAX_UNIT_PRICE] * 3
     return all(value is None or 0 <= value <= limit for value, limit in zip(row, limits))
 
 
@@ -136,6 +162,8 @@ def model_name(key, prefixes):
 
 
 def build(data, usd_per_eur):
+    container = data.get(CONTAINER_ENTRY, {}).get("code_interpreter_cost_per_session")
+    container_usd = None if container is None else Decimal(container)
     providers = {}
     for gateway, (sources, prefixes) in PROVIDERS.items():
         models = {}
@@ -165,7 +193,7 @@ def build(data, usd_per_eur):
                 input_price if cached is None else convert(cached, usd_per_eur),
                 input_price if write is None else convert(write, usd_per_eur),
                 0 if output is None else convert(output, usd_per_eur),
-            ] + media
+            ] + media + tool_prices(entry, gateway, usd_per_eur, container_usd)
             # Free experimental entries say nothing about spend; without a
             # row the call stays unpriced exactly as before the catalog.
             if not within_limits(row) or not any(row):
@@ -177,7 +205,7 @@ def build(data, usd_per_eur):
             if video:
                 for resolution, price in video_tiers(entry, usd_per_eur).items():
                     tier_name = name + "@" + resolution
-                    tier_row = [0, 0, 0, 0, None, None, None, None, None, price]
+                    tier_row = [0, 0, 0, 0, None, None, None, None, None, price, None, None, None]
                     if len(tier_name) <= MAX_MODEL_BYTES and within_limits(tier_row) and (
                             tier_name not in models or price_weight(tier_row) > price_weight(models[tier_name])):
                         models[tier_name] = tier_row
@@ -227,9 +255,10 @@ def main():
         "generated": args.generated,
         "usd_per_eur": args.usd_per_eur,
         "fx_source": "ECB euro foreign exchange reference rate of " + args.fx_date,
-        "unit": "EUR millicents, rounded up: per million tokens or characters, per image, per audio minute, per second of video",
+        "unit": "EUR millicents, rounded up: per million tokens or characters, per image, per audio minute, per second of video, "
+                "per web search, per file search, per GB container session",
         "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters",
-                   "video_second"],
+                   "video_second", "web_search", "file_search", "code_session_gb"],
     }
     with open(args.output, "w", encoding="utf-8") as handle:
         handle.write(render(meta, build(data, usd_per_eur)))

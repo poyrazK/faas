@@ -6756,6 +6756,9 @@ type OutboundAiPriceEntry struct {
 	MillicentsPerAudioMinute       pgtype.Int8
 	MillicentsPerMillionCharacters pgtype.Int8
 	MillicentsPerVideoSecond       pgtype.Int8
+	MillicentsPerWebSearch         pgtype.Int8
+	MillicentsPerFileSearch        pgtype.Int8
+	MillicentsPerCodeSessionGb     pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -6896,6 +6899,9 @@ type OutboundAiUsageDaily struct {
 	AudioSeconds         int64
 	Characters           int64
 	VideoSeconds         int64
+	WebSearches          int64
+	FileSearches         int64
+	CodeSessionGb        int64
 }
 
 type OutboundAiUserUsageDaily struct {

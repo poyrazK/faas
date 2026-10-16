@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -94,6 +95,7 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserverFormat(plan.endpoint.format, resp.Header.Get("Content-Type"), time.Now)
 		observer.fallbackModel = plan.facts.model
 		observer.media = plan.endpoint.media
+		observer.chatSearch = plan.facts.tools.chatSearch
 	} else {
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
@@ -135,6 +137,9 @@ type aiSettlement struct {
 	// video is a video call's seconds and resolution (ADR-1370).
 	videoSeconds    int64
 	videoResolution string
+	// codeGB is the memory a code-interpreter session is charged at
+	// (ADR-1380).
+	codeGB int64
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
 	// route places a route attempt in its route, and moderation is the
@@ -168,6 +173,40 @@ func videoUsage(settlement aiSettlement, status int, usage AIUsage, outcome AIUs
 		VideoResolution: settlement.videoResolution}, AIUsageOutcomeKnown
 }
 
+// aiContainerSessions remembers the code-interpreter containers this
+// process charged, so a container a conversation reuses is charged once per
+// session window (ADR-1380). It is bounded and starts over when full.
+type aiContainerSessions struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+// aiContainerSessionsMax bounds the remembered containers.
+const aiContainerSessionsMax = 10_000
+
+// charge returns how many of a response's containers start a session.
+func (c *aiContainerSessions) charge(integrationID string, ids []string, now time.Time) int64 {
+	if len(ids) == 0 {
+		return 0
+	}
+	window := api.OutboundAIContainerSessionMinutes * time.Minute
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen == nil || len(c.seen) >= aiContainerSessionsMax {
+		c.seen = make(map[string]time.Time)
+	}
+	var sessions int64
+	for _, id := range ids {
+		key := integrationID + "/" + id
+		if started, ok := c.seen[key]; ok && now.Sub(started) < window {
+			continue
+		}
+		c.seen[key] = now
+		sessions++
+	}
+	return sessions
+}
+
 // estimatedAIUsage is what a billable call with unreadable usage settles
 // at: its reservation, priced as reserved. Errors and non-billable calls
 // keep zero.
@@ -196,6 +235,10 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	usage, outcome = speechUsage(integration, settlement, status, usage, outcome)
 	usage, outcome = videoUsage(settlement, status, usage, outcome)
+	if outcome != AIUsageOutcomeError {
+		// ADR-1380: a container is charged once per session window.
+		usage.CodeSessionGB = h.aiContainers.charge(integration.ID, observer.containerIDs(), time.Now()) * max(settlement.codeGB, 1)
+	}
 	cost := aiCallCostMillicents(integration, usage)
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost

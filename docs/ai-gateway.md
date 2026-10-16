@@ -48,6 +48,8 @@ account during the preview; contact support to have it turned on for yours.
   exported.
 - **Media.** Image generation, transcription, speech and Veo video generation
   are metered and capped like chat.
+- **Tool fees.** Web search, file search, code-interpreter containers and
+  Gemini search grounding are counted, priced and capped like tokens.
 - **No unmetered spend.** Calls the gateway cannot meter, such as realtime
   client secrets, vector stores or fine-tuning, are refused unless you allow
   them for the integration.
@@ -161,5 +163,7 @@ catalog, used for budgets and reports.
   too, and count toward your caps.
 - OpenAI batch input files are not checked by the content policy, and
   batches are not moderated.
+- Free tool allowances, such as Gemini's free search grounding, are charged
+  like the rest, so costs can read high for low-volume use.
 - Feedback and incidents: contact support with the integration ID and request
   ID from `gregale ai logs`.
