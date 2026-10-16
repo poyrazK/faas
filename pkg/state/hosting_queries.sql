@@ -32,8 +32,8 @@ ORDER BY id LIMIT sqlc.arg(page_size)::integer;
 SELECT count(*)::bigint FROM hosting_releases WHERE site_id = sqlc.arg(site_id)::uuid AND state <> 'deleted';
 
 -- name: HostingReleaseCreate :one
-INSERT INTO hosting_releases(id, site_id, manifest)
-VALUES(sqlc.arg(id)::uuid, sqlc.arg(site_id)::uuid, sqlc.arg(manifest)::jsonb) RETURNING *;
+INSERT INTO hosting_releases(id, site_id, manifest, artifact_bytes)
+VALUES(sqlc.arg(id)::uuid, sqlc.arg(site_id)::uuid, sqlc.arg(manifest)::jsonb, sqlc.arg(artifact_bytes)::bigint) RETURNING *;
 
 -- name: HostingReleaseGet :one
 SELECT r.* FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
@@ -138,3 +138,13 @@ WHERE site_id = sqlc.arg(site_id)::uuid AND generation = sqlc.arg(generation)::b
 -- name: HostingRouteBacklog :one
 SELECT count(*)::bigint AS pending, min(pending_since)::timestamptz AS oldest_pending_at
 FROM hosting_route_publications WHERE generation > published_generation;
+
+-- name: HostingAccountUsage :one
+SELECT COALESCE(sum(r.artifact_bytes), 0)::bigint AS payload_bytes,
+ COALESCE(sum(r.artifact_bytes) FILTER (WHERE r.state = 'ready'), 0)::bigint AS ready_payload_bytes,
+ count(*)::bigint AS releases,
+ count(*) FILTER (WHERE r.state = 'pending')::bigint AS pending_uploads,
+ COALESCE(sum(sqlc.arg(copies)::bigint * r.artifact_bytes + sqlc.arg(manifest_reservation)::bigint), 0)::bigint AS reserved_bytes,
+ COALESCE(sum(sqlc.arg(copies)::bigint * r.artifact_bytes + sqlc.arg(manifest_reservation)::bigint) FILTER (WHERE r.state = 'retiring'), 0)::bigint AS retiring_reserved_bytes
+FROM hosting_releases r JOIN hosting_sites s ON s.id = r.site_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND r.state <> 'deleted';

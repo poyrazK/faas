@@ -15,7 +15,10 @@ import (
 
 var ErrHostingQuota = errors.New("internal hosting quota exhausted")
 
-type HostingQuotaError struct{ Limit, Observed int64 }
+type HostingQuotaError struct {
+	Limit, Observed int64
+	Resource        string
+}
 
 func (e *HostingQuotaError) Error() string { return ErrHostingQuota.Error() }
 func (e *HostingQuotaError) Unwrap() error { return ErrHostingQuota }
@@ -26,6 +29,7 @@ func hostingQuota(limit int) error {
 // HostingStore is deliberately separate from VM deployment intent. Static
 // releases never enter instances, schedd, imaged, or snapshot accounting.
 type HostingStore interface {
+	GetHostingUsage(context.Context, string) (api.HostingUsage, error)
 	CreateHostingSite(context.Context, api.HostingSite) (api.HostingSite, error)
 	GetHostingSite(context.Context, string, string) (api.HostingSite, error)
 	ListHostingSites(context.Context, string) ([]api.HostingSite, error)

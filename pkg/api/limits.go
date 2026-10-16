@@ -11251,6 +11251,9 @@ const (
 // publication work, retained artifacts, and the edge kill-switch convergence.
 const (
 	HostingFilesMax                            = 1000
+	HostingAccountStorageMaxBytes        int64 = 1 << 30
+	HostingAccountPendingUploadsMax      int64 = 4
+	HostingStorageCopies                 int64 = 2
 	HostingFileMaxBytes                  int64 = 32 << 20
 	HostingReleaseMaxBytes               int64 = 100 << 20
 	HostingManifestMaxBytes              int64 = 512 << 10

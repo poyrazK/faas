@@ -114,10 +114,14 @@ func (m *MemStore) CreateHostingRelease(_ context.Context, account, site string,
 	if count >= api.HostingReleasesPerSite {
 		return api.HostingRelease{}, hostingQuota(api.HostingReleasesPerSite)
 	}
+	payload := hostingPayloadBytes(manifest)
+	if err := checkHostingAdmission(m.hostingUsageLocked(account), payload); err != nil {
+		return api.HostingRelease{}, err
+	}
 	if m.hostingReleases == nil {
 		m.hostingReleases = make(map[string]api.HostingRelease)
 	}
-	r := api.HostingRelease{ID: uuid.NewString(), SiteID: site, Manifest: manifest, State: "pending", CreatedAt: time.Now().UTC()}
+	r := api.HostingRelease{ArtifactBytes: payload, ID: uuid.NewString(), SiteID: site, Manifest: manifest, State: "pending", CreatedAt: time.Now().UTC()}
 	m.hostingReleases[r.ID] = cloneHostingRelease(r)
 	return cloneHostingRelease(r), nil
 }

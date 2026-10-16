@@ -18,6 +18,7 @@ func TestCapabilitiesUseEnforcedLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || out.UploadBaseURL != h.HostingUploadBaseURL() ||
+		out.AccountStorageMaxBytes != api.HostingAccountStorageMaxBytes || out.AccountPendingUploadsMax != api.HostingAccountPendingUploadsMax ||
 		out.FilesMax != api.HostingFilesMax || out.FileMaxBytes != api.HostingFileMaxBytes ||
 		out.ReleaseMaxBytes != api.HostingReleaseMaxBytes || out.ManifestMaxBytes != api.HostingManifestMaxBytes ||
 		out.PathMaxBytes != api.HostingPathMaxBytes || out.ContentTypeMaxBytes != api.HostingContentTypeMaxBytes ||

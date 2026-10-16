@@ -68,6 +68,14 @@ func failure(w http.ResponseWriter, err error) {
 		var quota *state.HostingQuotaError
 		if errors.As(err, &quota) {
 			p.Limit, p.Observed = &quota.Limit, &quota.Observed
+			if quota.Resource == "storage_bytes" {
+				p.Code = "hosting_storage_quota_exceeded"
+				p.Detail = "retained releases and pending uploads reserve storage until artifact cleanup succeeds"
+			}
+			if quota.Resource == "pending_uploads" {
+				p.Code = "hosting_pending_upload_quota_exceeded"
+				p.Detail = "finalize or retire a pending upload before starting another"
+			}
 		}
 		p.DocsURL = "https://github.com/poyrazK/faas/blob/main/docs/internal-frontend-hosting.md"
 	}

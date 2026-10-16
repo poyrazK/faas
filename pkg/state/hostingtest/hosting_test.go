@@ -41,6 +41,8 @@ func TestHostingStores(t *testing.T) {
 			t.Run("durable_release_cleanup", func(t *testing.T) { durableReleaseCleanup(t, store) })
 			t.Run("durable_snapshot_concurrency", func(t *testing.T) { durableSnapshotConcurrency(t, store) })
 			t.Run("publication_status", func(t *testing.T) { publicationStatusLifecycle(t, store) })
+			t.Run("pending_upload_usage", func(t *testing.T) { pendingUploadUsage(t, store) })
+			t.Run("account_storage_usage", func(t *testing.T) { accountStorageUsage(t, store) })
 			t.Run("custom_domains", func(t *testing.T) { customDomainLifecycle(t, store) })
 			t.Run("custom_domain_recovery", func(t *testing.T) { customDomainRecovery(t, store) })
 			t.Run("custom_domain_quota", func(t *testing.T) { customDomainQuota(t, store) })
@@ -220,7 +222,7 @@ func quota(t *testing.T, store hostingTestStore) {
 			t.Fatal(err)
 		}
 	}
-	if accepted != api.HostingReleasesPerSite {
+	if int64(accepted) != api.HostingAccountPendingUploadsMax {
 		t.Fatalf("admitted %d releases", accepted)
 	}
 }

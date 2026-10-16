@@ -32,7 +32,7 @@ func hostingSiteRow(r sqlc.HostingSite) api.HostingSite {
 }
 
 func hostingReleaseRow(r sqlc.HostingRelease) (api.HostingRelease, error) {
-	out := api.HostingRelease{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time, RetirementGeneration: r.RetirementGeneration}
+	out := api.HostingRelease{ArtifactBytes: r.ArtifactBytes, ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time, RetirementGeneration: r.RetirementGeneration}
 	if r.RetiredAt.Valid {
 		t := r.RetiredAt.Time
 		out.RetiredAt = &t
@@ -140,6 +140,10 @@ func (s *PgStore) CreateHostingRelease(ctx context.Context, account, site string
 		return api.HostingRelease{}, ErrNotFound
 	}
 	q := sqlc.New()
+	// Serialize all sites in this account before checking shared capacity.
+	if _, err = q.HostingAccountLock(ctx, tx, a); err != nil {
+		return api.HostingRelease{}, hostingStoreError(err)
+	}
 	if _, err = q.HostingSiteLock(ctx, tx, sqlc.HostingSiteLockParams{AccountID: a, ID: i}); err != nil {
 		return api.HostingRelease{}, hostingStoreError(err)
 	}
@@ -157,9 +161,17 @@ func (s *PgStore) CreateHostingRelease(ctx context.Context, account, site string
 	if count >= api.HostingReleasesPerSite {
 		return api.HostingRelease{}, hostingQuota(api.HostingReleasesPerSite)
 	}
+	payload := hostingPayloadBytes(manifest)
+	usage, err := q.HostingAccountUsage(ctx, tx, hostingUsageParams(account))
+	if err != nil {
+		return api.HostingRelease{}, err
+	}
+	if err := checkHostingAdmission(hostingUsageRow(account, usage), payload); err != nil {
+		return api.HostingRelease{}, err
+	}
 	body, _ := json.Marshal(manifest)
 	id, _ := parsePgUUID(uuid.NewString())
-	r, err := q.HostingReleaseCreate(ctx, tx, sqlc.HostingReleaseCreateParams{ID: id, SiteID: i, Manifest: body})
+	r, err := q.HostingReleaseCreate(ctx, tx, sqlc.HostingReleaseCreateParams{ID: id, SiteID: i, Manifest: body, ArtifactBytes: payload})
 	if err != nil {
 		return api.HostingRelease{}, hostingStoreError(err)
 	}

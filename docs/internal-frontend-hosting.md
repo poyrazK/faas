@@ -394,3 +394,9 @@ Use the [outage and regional qualification procedure](internal-frontend-hosting-
 to enable explicit API/database fault checks, publication retry recovery, actual
 cold/warm measurements, and optional dedicated control-plane resource snapshots.
 These phases remain unqualified unless their observations complete.
+
+## Account storage accounting
+
+The [storage and cost runbook](internal-frontend-hosting-usage.md) describes
+account-wide reservations, pending upload caps, cleanup accounting and the
+operations dashboard’s hypothetical provider-cost calculator.

@@ -4099,6 +4099,7 @@ type HostingRelease struct {
 	RetiredAt             pgtype.Timestamptz
 	RetirementGeneration  int64
 	RetirementPublishedAt pgtype.Timestamptz
+	ArtifactBytes         int64
 }
 
 type HostingRoutePublication struct {

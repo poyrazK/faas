@@ -68055,3 +68055,6 @@ CREATE TABLE hosting_domains (
 );
 CREATE INDEX hosting_domains_due ON hosting_domains(next_attempt_at, id);
 CREATE INDEX hosting_domains_site ON hosting_domains(site_id, created_at);
+
+ALTER TABLE hosting_releases ADD COLUMN artifact_bytes bigint NOT NULL
+ CONSTRAINT hosting_releases_artifact_bytes_check CHECK (artifact_bytes BETWEEN 0 AND 104857600);

@@ -32,10 +32,16 @@ func (p *routeSink) Put(_ context.Context, route artifacts.Route) error {
 	return nil
 }
 
-type routeArtifacts struct{ removed []string }
+type routeArtifacts struct {
+	removed       []string
+	removeFailure bool
+}
 
 func (*routeArtifacts) ID() string { return strings.Repeat("a", 64) }
 func (p *routeArtifacts) Remove(_ context.Context, _ string, release string, _ api.HostingManifest) error {
+	if p.removeFailure {
+		return errors.New("storage cleanup unavailable")
+	}
 	p.removed = append(p.removed, release)
 	return nil
 }
@@ -191,4 +197,34 @@ func TestDurablePublicationDeadlinePreservesLeaseRenewal(t *testing.T) {
 			t.Fatalf("timed-out publications lost persistent retry scheduling: %v %v", due, err)
 		}
 	})
+}
+
+func TestCleanupFailureRetainsAccountStorageReservation(t *testing.T) {
+	store := state.NewMemStore()
+	account, site := routingSite(t, store, false)
+	release, err := store.CreateHostingRelease(t.Context(), account.ID, site.ID, api.HostingManifest{Files: []api.HostingFile{{Path: "index.html", Size: 1, SHA256: strings.Repeat("a", 64), ContentType: "text/html"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.RetireHostingRelease(t.Context(), account.ID, site.ID, release.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.GetHostingUsage(t.Context(), account.ID)
+	artifacts := &routeArtifacts{removeFailure: true}
+	r := Reconciler{Store: store, Artifacts: artifacts, LeasedRoutes: &routeSink{}, AdmissionEnabled: func() bool { return false }, Now: func() time.Time { return time.Now().Add(api.HostingRetirementGrace + time.Second) }}
+	if err := r.RunOnce(t.Context()); err == nil {
+		t.Fatal("cleanup failure hidden")
+	}
+	after, _ := store.GetHostingUsage(t.Context(), account.ID)
+	if after.ReservedBytes != before.ReservedBytes || after.RetiringReservedBytes == 0 {
+		t.Fatal("failed cleanup freed storage")
+	}
+	artifacts.removeFailure = false
+	if err := r.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = store.GetHostingUsage(t.Context(), account.ID)
+	if after.ReservedBytes != 0 || after.Releases != 0 {
+		t.Fatalf("successful cleanup retained accounting: %+v", after)
+	}
 }
