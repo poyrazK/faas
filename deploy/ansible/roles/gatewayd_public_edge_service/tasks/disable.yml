@@ -1,0 +1,38 @@
+---
+# The cell does not run the edge: stop and remove anything an earlier converge
+# installed. A node that never ran it has nothing to stop.
+- name: gatewayd_public_edge_service — inspect installed edge units
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  register: faas_edge_installed_units
+  loop:
+    - faas-cloudflared.service
+    - faas-gatewayd-public-edge.service
+    - faas-gatewayd-public-edge.socket
+
+- name: gatewayd_public_edge_service — stop and disable installed edge units
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    enabled: false
+    state: stopped
+  loop: "{{ faas_edge_installed_units.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+- name: gatewayd_public_edge_service — remove edge units and drop-ins
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-cloudflared.service
+    - /etc/systemd/system/faas-gatewayd-public-edge.service
+    - /etc/systemd/system/faas-gatewayd-public-edge.socket
+    - /etc/systemd/system/faas-gatewayd-public-edge.service.d
+    - /etc/systemd/system/faas-gatewayd-internal.service.d/50-faas-edge-wants.conf
+  register: faas_edge_removed
+
+- name: gatewayd_public_edge_service — reload systemd after removing the edge  # noqa: no-handler (removal must be visible before later roles query units)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: faas_edge_removed.changed

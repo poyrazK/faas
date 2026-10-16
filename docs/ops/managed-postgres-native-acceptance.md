@@ -243,5 +243,5 @@ path opts in even with a false boolean. Missing/malformed inputs, wrong bundles
 and expired reports keep the staging gate closed; legacy environment approval
 cannot bypass it. Restart after replacing files. This policy does not open
 production admission. See [ADR-992](../adr/992-managed-postgres-combined-rollout-readiness.md)
-the provenance/report correction in [ADR-1378](../adr/1378-postgres-native-acceptance-repair.md),
-and the Python extension in [ADR-1379](../adr/1379-python-postgres-native-acceptance.md).
+the provenance/report correction in [ADR-1379](../adr/1379-postgres-native-acceptance-repair.md),
+and the Python extension in [ADR-1380](../adr/1380-python-postgres-native-acceptance.md).

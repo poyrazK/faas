@@ -1,4 +1,4 @@
-// adr:1354 — wiring for durable single-app verification receipts.
+// adr:1355 — wiring for durable single-app verification receipts.
 package apidserver
 
 import (

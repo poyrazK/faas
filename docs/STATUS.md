@@ -72,7 +72,7 @@ snapshots; reviewed plans remain the guarded write path. See
 
 ## Reviewed service binding plans — 2026-10-16
 
-[ADR-1384](adr/1384-reviewed-service-binding-plans.md) adds private saved plans
+[ADR-1385](adr/1385-reviewed-service-binding-plans.md) adds private saved plans
 with app/account/endpoint identity and service-settings fingerprints. Apply
 checks its precondition under the app lock in both ordinary and activity-aware
 store transactions. Stale plans conflict before mutation, and unrelated manifest
@@ -81,7 +81,7 @@ unguarded behavior. See the [workflow](service-binding-configuration.md#save-and
 
 ## Service binding reliability and transport CLI — 2026-10-16
 
-[ADR-1383](adr/1383-service-binding-reliability-cli.md) extends the service policy
+[ADR-1384](adr/1384-service-binding-reliability-cli.md) extends the service policy
 file with dependency timeouts/retries and canonical URL transport. Validation
 uses the resulting target list before mutation; previews and saved receipts
 expose implicit reliability pruning when a target is removed. Omitted settings
@@ -90,7 +90,7 @@ opt-in, and URL selection does not certify running-guest adoption.
 
 ## Service binding CLI configuration — 2026-10-16
 
-[ADR-1382](adr/1382-service-binding-cli-configuration.md) adds policy-file
+[ADR-1383](adr/1383-service-binding-cli-configuration.md) adds policy-file
 configuration for standalone service targets, declared-only authorization,
 caller restrictions and method/path scopes. Read-only previews preserve the
 API's omitted/null/empty distinctions; apply uses one partial app update and
@@ -99,7 +99,7 @@ Runtime adoption and connectivity still require inspection and verification.
 
 ## Queue canary CLI setup — 2026-10-16
 
-[ADR-1381](adr/1381-queue-canary-cli-deployment-intent.md) adds bounded revision
+[ADR-1382](adr/1382-queue-canary-cli-deployment-intent.md) adds bounded revision
 pin lifetime updates and repeatable per-deployment queue canary declarations.
 Source archive validation precedes deployment mutations, previews expose the
 selected bindings, and redeployments require fresh opt-in. The queue worker
@@ -108,7 +108,7 @@ explicit consent. Native acceptance qualification remains pending below.
 
 ## Queue worker completion acceptance — 2026-10-15
 
-[ADR-1380](adr/1380-queue-worker-completion-acceptance.md) gives the shipped
+[ADR-1381](adr/1381-queue-worker-completion-acceptance.md) gives the shipped
 queue worker a safe reserved canary path with exact deployment opt-in and
 publication consent. The [native queue journey](ops/queue-bindings-native-acceptance.md)
 requires nine phases covering real parked delivery, exact handler completion,
@@ -128,7 +128,7 @@ provisioning or rollout gate is enabled.
 
 ## Python PostgreSQL native acceptance — 2026-10-15
 
-[ADR-1379](adr/1379-python-postgres-native-acceptance.md) extends the
+[ADR-1380](adr/1380-python-postgres-native-acceptance.md) extends the
 [PostgreSQL native journey](ops/managed-postgres-native-acceptance.md) to the
 unchanged Python starter. Nineteen phases now require the probe and both shipped
 starters, private-CA trust, release-only migration credentials, disconnected-pool
@@ -147,7 +147,7 @@ remain pending. No provisioning or rollout gate is enabled.
 
 ## PostgreSQL native acceptance repair — 2026-10-15
 
-[ADR-1378](adr/1378-postgres-native-acceptance-repair.md) repairs the existing
+[ADR-1379](adr/1379-postgres-native-acceptance-repair.md) repairs the existing
 thirteen-phase [PostgreSQL native harness](ops/managed-postgres-native-acceptance.md):
 the fixture CA is packaged under the shipped runtime COPY, provenance identifies
 actual OCI app layers/source archives and the minimal base, and the verdict
@@ -162,7 +162,7 @@ host leak qualification remain pending. No provisioning or rollout gate is enabl
 
 ## Native storage starter runtime matrix — 2026-10-15
 
-[ADR-1377](adr/1377-native-storage-starter-runtime-matrix.md) extends the
+[ADR-1378](adr/1378-native-storage-starter-runtime-matrix.md) extends the
 [deployed storage acceptance journey](ops/object-storage-native-acceptance.md) to
 both unchanged Node and Python starters. Each runs eight phases with isolated
 fixtures, strict TLS trust and its own source/build/app-layer evidence. The
@@ -178,7 +178,7 @@ starters. No feature or rollout gate is enabled.
 
 ## Python storage explicit TLS trust — 2026-10-15
 
-[ADR-1376](adr/1376-python-storage-explicit-tls-trust.md) makes the Python storage
+[ADR-1377](adr/1377-python-storage-explicit-tls-trust.md) makes the Python storage
 starter honor its explicit `AWS_CA_BUNDLE` while preserving certificate-chain and
 hostname verification. Default public CA trust remains enabled; invalid bundles
 and certificates fail adoption/readiness. New transports reread the configured
@@ -190,7 +190,7 @@ remain separate qualification work.
 
 ## Object-storage starter native acceptance harness — 2026-10-15
 
-[ADR-1375](adr/1375-native-object-storage-starter-acceptance.md) adds a strict
+[ADR-1376](adr/1376-native-object-storage-starter-acceptance.md) adds a strict
 [deployed storage acceptance journey](ops/object-storage-native-acceptance.md)
 for the unchanged Node starter, public credential rotation, real snapshot/restore,
 failed-hook cold fallback, independent byte/replay checks and credential cleanup.

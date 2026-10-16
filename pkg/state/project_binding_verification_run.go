@@ -1,4 +1,4 @@
-// adr:1355 — graph and member receipts share a fixed review and deadline.
+// adr:1356 — graph and member receipts share a fixed review and deadline.
 package state
 
 import (

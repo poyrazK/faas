@@ -10576,6 +10576,10 @@ const (
 	// unless the owner sets GOTRUE_SMS_OTP_EXP; GoTrue's own 60 seconds can
 	// expire before a delayed text arrives.
 	AuthSMSCodeSeconds = 300
+	// AuthSSOMetadataBytes bounds a SAML identity provider's metadata XML,
+	// and AuthSSOMaxDomains the email domains one provider serves.
+	AuthSSOMetadataBytes = 512 << 10
+	AuthSSOMaxDomains    = 50
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app
@@ -11161,7 +11165,7 @@ const ProjectReleaseStageMaxTTLSeconds = 1800
 // Queue canaries are bounded, single-message work.
 const QueueCanaryMaxTTLSeconds = 600
 
-// Durable single-app verification receipts have fixed bounds (ADR-1354).
+// Durable single-app verification receipts have fixed bounds (ADR-1355).
 const BindingVerificationRunMaxTTLSeconds = 600
 const BindingVerificationRunMaxSteps = 128
 const BindingVerificationRunMaxActive = 8
@@ -11170,7 +11174,7 @@ const BindingVerificationRunRequestMaxBytes = 16384
 const BindingVerificationRunProbeTimeoutSeconds = 15
 const BindingVerificationRunProbeOutputBytes = 4096
 
-// ADR-1355: durable graph receipts use the member run lifetime and admission limits.
+// ADR-1356: durable graph receipts use the member run lifetime and admission limits.
 const ProjectBindingVerificationRunMaxActive = 8
 const ProjectBindingVerificationRunRequestMaxBytes = 1048576
 

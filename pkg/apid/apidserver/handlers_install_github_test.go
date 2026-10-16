@@ -1,16 +1,5 @@
-// Tests for the PR-B bind picker handlers
-// (cmd/apid/handlers_install_github.go). Mirrors the §11
-// ownership-proof pattern established in handlers_oauth_test.go:
-//
-//  1. each handler must call githubd.VerifyInstallation with the
-//     session's github_login as expected_login BEFORE doing any
-//     work (list or persist);
-//  2. a forged install (account_login != session.github_login) is
-//     403, not 302 — the §11 takeover attempt must be loud;
-//  3. an unauthenticated session (no github_login) is 403 with
-//     the github_login_required code so the dashboard renders
-//     "complete /v1/auth/github first" rather than the generic
-//     forged banner.
+// Browser bind-picker tests retain live installation verification in
+// addition to the durable account/installation ownership proof (ADR-1345).
 package apidserver_test
 
 import (
@@ -45,6 +34,8 @@ type bindPickerFake struct {
 	verifyErr     error
 	bindErr       error
 	bindReturn    string
+	repos         []apidserver.Repo
+	listCalls     int
 
 	gotInstallID     int64
 	gotExpectedLogin string
@@ -68,9 +59,8 @@ func (f *bindPickerFake) BindAppRepo(_ context.Context, _, _ string, _ int64, _,
 	return "bind-test", nil
 }
 
-// Unused methods — the bind picker doesn't call them but the
-// interface requires them. Returning the not-ready problem keeps
-// accidental calls loud (test would see 503 in the response).
+// Other interface methods return the not-ready problem to keep unexpected
+// calls loud. Listing is programmable for the browser ownership regressions.
 func (f *bindPickerFake) GetInstallState(context.Context, string) (apidserver.InstallState, string, string, error) {
 	return apidserver.InstallStateUnspecified, "", "", (*apidserver.ErrGithubdNotReady)
 }
@@ -78,7 +68,8 @@ func (f *bindPickerFake) ExchangeOAuthCode(context.Context, string, string, stri
 	return "", "", (*apidserver.ErrGithubdNotReady)
 }
 func (f *bindPickerFake) ListInstallableRepos(context.Context, string, int64) ([]apidserver.Repo, error) {
-	return nil, (*apidserver.ErrGithubdNotReady)
+	f.listCalls++
+	return f.repos, nil
 }
 func (f *bindPickerFake) UnbindAppRepo(context.Context, string, string) error {
 	return (*apidserver.ErrGithubdNotReady)
@@ -111,7 +102,7 @@ func (f *bindPickerFake) Close() error { return nil }
 // session cookie WITHOUT github_login, and returns the apid handler
 // with a programmable GithubdClient + the session.Manager so
 // callers can re-mint the cookie via SealGithubLogin.
-func newBindPickerTestServer(t *testing.T, gh apidserver.GithubdClient) (http.Handler, *session.Manager, string, string) {
+func newBindPickerTestServer(t *testing.T, gh apidserver.GithubdClient) (http.Handler, *session.Manager, string, string, *state.MemStore) {
 	t.Helper()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
@@ -133,9 +124,22 @@ func newBindPickerTestServer(t *testing.T, gh apidserver.GithubdClient) (http.Ha
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
+	// Connect GitHub persists the verified installation after the customer
+	// signs in. It does not replace a Google/password session with GitHub login.
+	owner := "alice"
+	if fake, ok := gh.(*bindPickerFake); ok && fake.accountLogin != "" {
+		owner = fake.accountLogin
+	}
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{
+		AccountID: acct.ID, InstallationID: 42, DefaultBranch: "main",
+		SealedToken: []byte("sealed"), AuditGithubLogin: owner,
+		TokenExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("connect installation: %v", err)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler()
-	return srv, mgr, acct.ID, cookie
+	return srv, mgr, acct.ID, cookie, store
 }
 
 // stampCookie returns a new cookie value with github_login set.
@@ -180,16 +184,14 @@ func bindJSONRequest(t *testing.T, mgr *session.Manager, accountID, payload stri
 }
 
 // TestListInstallableRepos_UnauthenticatedRefused asserts the
-// "session has no github_login" path: a logged-in FaaS user with
-// no completed /v1/auth/github gets a 403 (not 503, not a redirect)
-// so the dashboard renders the right CTA. Mirrors
-// TestOAuthCallback_UnauthenticatedInstallRefused.
-func TestListInstallableRepos_UnauthenticatedRefused(t *testing.T) {
+// unconnected-installation path: a signed-in customer cannot enumerate an
+// installation absent from their durable account connections.
+func TestListInstallableRepos_UnconnectedInstallationRefused(t *testing.T) {
 	gh := &bindPickerFake{verified: true, accountLogin: "alice"}
-	srv, _, _, cookie := newBindPickerTestServer(t, gh)
+	srv, _, _, cookie, _ := newBindPickerTestServer(t, gh)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"installation_id": 42}`)
+	body := strings.NewReader(`{"installation_id": 43}`)
 	r := httptest.NewRequest(http.MethodPost, "/v1/install/repos/list", body)
 	r.Header.Set("Content-Type", "application/json")
 	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: cookie})
@@ -200,11 +202,11 @@ func TestListInstallableRepos_UnauthenticatedRefused(t *testing.T) {
 	}
 	var p map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &p)
-	if p["code"] != "github_login_required" {
-		t.Errorf("problem.code = %q, want github_login_required", p["code"])
+	if p["code"] != "github_install_not_owned" {
+		t.Errorf("problem.code = %q, want github_install_not_owned", p["code"])
 	}
 	if gh.gotInstallID != 0 {
-		t.Errorf("verify should NOT be called when github_login is empty; got installID=%d", gh.gotInstallID)
+		t.Errorf("verify should NOT be called for an unowned installation; got installID=%d", gh.gotInstallID)
 	}
 }
 
@@ -213,7 +215,7 @@ func TestListInstallableRepos_UnauthenticatedRefused(t *testing.T) {
 // account+installation association from user OAuth is the ownership proof.
 func TestListInstallableRepos_ForeignInstallRefused(t *testing.T) {
 	gh := &bindPickerFake{verified: false, accountLogin: "bob"}
-	srv, mgr, _, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, _, cookie, _ := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()
@@ -244,7 +246,7 @@ func TestListInstallableRepos_ForeignInstallRefused(t *testing.T) {
 // the load-bearing assertion.
 func TestBindAppToRepo_RejectsForeignInstall(t *testing.T) {
 	gh := &bindPickerFake{verified: false, accountLogin: "bob"}
-	srv, mgr, accountID, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, accountID, cookie, _ := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()
@@ -277,7 +279,7 @@ func TestBindAppToRepo_PersistsOnHappyPath(t *testing.T) {
 		defaultBranch: "main",
 		bindReturn:    "bind-myapp-octocat/hello",
 	}
-	srv, mgr, accountID, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, accountID, cookie, _ := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()
@@ -307,7 +309,7 @@ func TestBindAppToRepo_PersistsOnHappyPath(t *testing.T) {
 // 500) so the dashboard renders a retry banner.
 func TestBindAppToRepo_GithubdTransportErrorReturns502(t *testing.T) {
 	gh := &bindPickerFake{verifyErr: errors.New("dial tcp: connection refused")}
-	srv, mgr, accountID, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, accountID, cookie, _ := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()

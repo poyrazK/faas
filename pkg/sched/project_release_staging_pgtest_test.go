@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 1350 — exact candidate service allocation, expiry and routing preservation.
+// adr: 1351 — exact candidate service allocation, expiry and routing preservation.
 package sched
 
 import (

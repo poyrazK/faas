@@ -582,7 +582,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	}
 	accountPurge := strings.SplitN(string(accountPurgeRaw), "-- +goose Down", 2)
 	if len(accountPurge) != 2 {
-		t.Fatal("missing account purge successor downgrade")
+		t.Fatal("missing account purge ordering downgrade")
 	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)

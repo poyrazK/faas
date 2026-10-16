@@ -1,4 +1,4 @@
-// adr: 1346 — policy-driven verification qualifies mixed binding dependencies.
+// adr: 1347 — policy-driven verification qualifies mixed binding dependencies.
 package main
 
 import (

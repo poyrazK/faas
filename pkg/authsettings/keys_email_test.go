@@ -2,6 +2,7 @@ package authsettings
 
 import (
 	"crypto/ecdh"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
@@ -115,5 +116,24 @@ func TestSMSSettings(t *testing.T) {
 		if _, _, err := (Change{SMS: &bad}).Secrets(); err == nil {
 			t.Errorf("accepted %+v", bad)
 		}
+	}
+}
+
+func TestNewSAMLKeyIsWhatGoTrueAccepts(t *testing.T) {
+	value, err := NewSAMLKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := x509.ParsePKCS1PrivateKey(der)
+	if err != nil || key.E != 65537 || key.N.BitLen() < 2048 {
+		t.Fatalf("SAML key: %v", err)
+	}
+	on := true
+	if set, _, err := (Change{SSO: &on}).Secrets(); err != nil || set["AUTH_SSO"] != "1" {
+		t.Fatalf("SSO on = %v %v", set, err)
 	}
 }

@@ -459,7 +459,7 @@ or explicitly cleared. CLI and SDK writes use the dedicated
 before mutation. Older write routes reject implicit removal of these
 requirements. A local `bindings check --queue-require ...` reads the same
 readiness evidence without changing the stored policy. See
-[ADR-1345](adr/1345-binding-runtime-audiences-and-queue-release-requirements.md).
+[ADR-1346](adr/1346-binding-runtime-audiences-and-queue-release-requirements.md).
 
 To prepare all dependencies for an enforced release policy with one command,
 preview the plan and then run it for the same candidate:
@@ -499,7 +499,7 @@ errors use `error_code: verification_timeout` and retain any admitted task ID.
 
 The final result is an observation; traffic promotion rechecks policy and
 evidence under its transaction locks. See
-[ADR-1346](adr/1346-unified-binding-policy-verification.md).
+[ADR-1347](adr/1347-unified-binding-policy-verification.md).
 
 Human output identifies blockers and remediation. JSON includes `passed`, the
 applied policy, scope and deployment, per-binding coverage, runtime counts,
@@ -1652,7 +1652,7 @@ The API routes are `POST .../release-sets/staging` with
 project and environment scope, MFA and deploy/read permissions. Mutation retries
 support `Idempotency-Key`. This scheduler lifecycle change requires dedicated
 native KVM `test-metal` and `leakcheck` acceptance before deployment; see
-[ADR-1350](adr/1350-checked-project-service-staging.md).
+[ADR-1351](adr/1351-checked-project-service-staging.md).
 
 ### Push queue binding completion canaries
 
@@ -1692,7 +1692,7 @@ ledger ownership read also identifies registered canaries, and only those
 invocations undergo full completion-canary validation. Caller-controlled source,
 payload and headers cannot skip these checks; cancelled and expired canaries
 remain registered until ordinary retention removes them. See
-[ADR-1353](adr/1353-ledger-backed-canary-dispatch-authority.md).
+[ADR-1354](adr/1354-ledger-backed-canary-dispatch-authority.md).
 
 ### Parallel binding qualification
 
@@ -1714,7 +1714,7 @@ admissions and wait for cleanup of work they created; preexisting queue canaries
 remain available to their original owners. After all members finish, graph
 verification rechecks current evidence against the original snapshots. Evidence
 expiry and the atomic checks at activation remain unchanged. See
-[ADR-1352](adr/1352-bounded-parallel-binding-verification.md).
+[ADR-1353](adr/1353-bounded-parallel-binding-verification.md).
 
 ### Durable single-app binding verification
 
@@ -1761,7 +1761,7 @@ policy and freshness checks. Runs are limited to 128 steps and eight unfinished
 unexpired receipts per app, use normal queue/runtime capacity, and are pruned after
 one day of expiry on the next creation for that app. This workflow currently covers
 one app; graph verification retains its existing prepared-manifest workflow. See
-[ADR-1354](adr/1354-durable-single-app-binding-verification-runs.md).
+[ADR-1355](adr/1355-durable-single-app-binding-verification-runs.md).
 
 ### Durable project graph verification
 
@@ -1800,7 +1800,7 @@ admission bounds, at most eight active graph runs per project/environment, and
 normal runtime/queue capacity. Receipt requests are limited to 1 MiB. Receipts
 older than one day after expiry are pruned on the next creation for the project.
 GitOps candidate holds retain their existing checked workflow. See
-[ADR-1355](adr/1355-durable-project-binding-verification-runs.md).
+[ADR-1356](adr/1356-durable-project-binding-verification-runs.md).
 
 ### Review a binding verification plan
 
@@ -1853,13 +1853,13 @@ SDK create-from-review helpers accept an explicit ready review, caller-supplied 
 
 A creation error preserves the original cause and UUID plus whether creation was invoked; this does not prove acceptance. Use the separate reconciliation helper to GET that same ID once and validate the receipt against the same review/options. A failed or missing read does not prove noncreation. Reconciliation permits terminal or expired matching receipts and performs no resume, admission, renewal or cancellation. Run a confirmed resumable receipt explicitly with the existing runner.
 
-CLI creation failures with `--json` include `run_id`, app or project/environment, `passed=false`, `status=creation_failed`, `create_attempted`, `error` and recovery guidance. Inspect the same ID with `verification-runs status` after uncertainty. See [ADR-1361](adr/1361-reviewed-verification-creation-helpers.md).
+CLI creation failures with `--json` include `run_id`, app or project/environment, `passed=false`, `status=creation_failed`, `create_attempted`, `error` and recovery guidance. Inspect the same ID with `verification-runs status` after uncertainty. See [ADR-1362](adr/1362-reviewed-verification-creation-helpers.md).
 
 ### Retry transient verification status reads
 
 Durable runners retry temporary polling GET failures and HTTP 502/503/504 up to three additional times per read. Backoff uses equal jitter with exponential delay from 250 ms, capped at two seconds, and obeys the original receipt expiry and caller cancellation/deadline. Lifecycle writes, diagnostics, permanent HTTP failures and malformed or mismatched successful responses retain their existing recovery behavior. Exhaustion returns the existing recovery error and diagnostic enrichment.
 
-Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable; values through eight are supported. Go options use `StatusReadRetries` (nil defaults to three, pointer to zero disables), Node uses `statusReadRetries`, and Python uses `status_read_retries`. Progress callbacks receive root `retrying` events with `retry_attempt` and `retry_delay_ms`. No new receipt, renewed expiry or duplicate admission is introduced. See [ADR-1362](adr/1362-bounded-verification-status-read-retries.md).
+Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable; values through eight are supported. Go options use `StatusReadRetries` (nil defaults to three, pointer to zero disables), Node uses `statusReadRetries`, and Python uses `status_read_retries`. Progress callbacks receive root `retrying` events with `retry_attempt` and `retry_delay_ms`. No new receipt, renewed expiry or duplicate admission is introduced. See [ADR-1363](adr/1363-bounded-verification-status-read-retries.md).
 
 ### Discover retained verification receipts
 
@@ -1867,19 +1867,19 @@ Use `gregale bindings verification-runs list APP --json` or `gregale projects en
 
 Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
 
-Reuse filters with `next_cursor`; `observed_at` freezes expiry evaluation across pages. Newer creations do not shift existing page boundaries. Concurrent state changes and retention pruning can remove matches, so pages are not a historical snapshot or permanent audit log. Existing receipt cleanup is unchanged. Inspect the selected UUID with status/diagnostics before choosing a recovery action. See [ADR-1363](adr/1363-verification-run-discovery.md).
+Reuse filters with `next_cursor`; `observed_at` freezes expiry evaluation across pages. Newer creations do not shift existing page boundaries. Concurrent state changes and retention pruning can remove matches, so pages are not a historical snapshot or permanent audit log. Existing receipt cleanup is unchanged. Inspect the selected UUID with status/diagnostics before choosing a recovery action. See [ADR-1364](adr/1364-verification-run-discovery.md).
 
 ### Waiting for final binding qualification
 
 Durable app and graph runners now keep observing the original receipt when completion returns HTTP 202 with recognized `qualification` conditions. Progress callbacks receive `waiting_for_qualification` and public condition codes/selectors. This covers runtime refresh, consumer readiness and valid application acknowledgment observations that are still settling. Failed or malformed evidence, unknown conditions and review drift still stop the run.
 
-Waiting uses the existing polling interval, caller stop controls and original expiry. It admits no replacement tasks or queue messages and never renews a receipt. CLI verify/resume inherits the shared runner behavior and existing timeout cleanup policy. HTTP 200 with passed status still requires the authoritative final preflight. See [ADR-1364](adr/1364-verification-qualification-waiting.md).
+Waiting uses the existing polling interval, caller stop controls and original expiry. It admits no replacement tasks or queue messages and never renews a receipt. CLI verify/resume inherits the shared runner behavior and existing timeout cleanup policy. HTTP 200 with passed status still requires the authoritative final preflight. See [ADR-1365](adr/1365-verification-qualification-waiting.md).
 
 ### Recovering lost admission and completion responses
 
 Durable runners reconcile eligible transport failures and HTTP 502/503/504 by reading the original receipt. Admission proceeds only when that read proves the exact reviewed step owns a valid resource. Completion succeeds only when fresh status confirms the root and all graph members passed with finished resources. Pending completion, missing ownership, failed resources or review drift stop with the original receipt ID and error cause retained.
 
-Progress reports `reconciling` with `operation: admission` or `operation: completion`; admission events identify the selected member and step. Reads use `--status-read-retries` and share the original deadline and caller stop controls. The uncertain write is never automatically replayed. Create, initial resume and cancellation keep their existing explicit recovery behavior. See [ADR-1365](adr/1365-verification-write-reconciliation.md).
+Progress reports `reconciling` with `operation: admission` or `operation: completion`; admission events identify the selected member and step. Reads use `--status-read-retries` and share the original deadline and caller stop controls. The uncertain write is never automatically replayed. Create, initial resume and cancellation keep their existing explicit recovery behavior. See [ADR-1366](adr/1366-verification-write-reconciliation.md).
 
 ### Binding CLI progress and stopped-run recovery
 
@@ -1894,13 +1894,13 @@ gregale projects environments release-sets verification-runs resume project prod
 
 `binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.
 
-Stopped app reports and graph result envelopes include `recovery` with the original root ID, last status/operation, `last_qualification` and exact status/diagnostics commands. These conditions are the last observed wait, with its original check time; they do not assert current qualification. Human summaries show the same recovery context. Turning progress off does not discard it. Creation still announces its recovery ID before the request, using a structured `creating` event in NDJSON mode. Progress output is best effort and never changes execution or timeout cleanup. See [ADR-1366](adr/1366-binding-cli-progress.md).
+Stopped app reports and graph result envelopes include `recovery` with the original root ID, last status/operation, `last_qualification` and exact status/diagnostics commands. These conditions are the last observed wait, with its original check time; they do not assert current qualification. Human summaries show the same recovery context. Turning progress off does not discard it. Creation still announces its recovery ID before the request, using a structured `creating` event in NDJSON mode. Progress output is best effort and never changes execution or timeout cleanup. See [ADR-1367](adr/1367-binding-cli-progress.md).
 
 ### Recovering an uncertain verification creation
 
 Durable app/graph CLI verification now reconciles eligible creation transport failures and HTTP 502/503/504 by reading the original caller-selected UUID. It continues only when the receipt matches the reviewed selection, manifest, member identities, consent, concurrency, plans and lifetime and remains usable. A missing receipt, expired/cancelled state, failed resource or changed selection stops with the original creation error and recovery ID. Creation is never automatically posted twice, and no replacement UUID or review is generated.
 
-Recovery is capped at five seconds, the original caller deadline/stop controls and the requested TTL measured from the attempt. `--status-read-retries` bounds extra transient GET attempts; zero allows the initial reconciliation GET without retries. Existing progress modes emit `reconciling` with `operation: creation` and `retrying` when needed. `--json --progress ndjson` keeps the final report on stdout and events on stderr. The normal runner then resumes the same confirmed receipt under its original expiry. See [ADR-1367](adr/1367-verification-creation-reconciliation.md).
+Recovery is capped at five seconds, the original caller deadline/stop controls and the requested TTL measured from the attempt. `--status-read-retries` bounds extra transient GET attempts; zero allows the initial reconciliation GET without retries. Existing progress modes emit `reconciling` with `operation: creation` and `retrying` when needed. `--json --progress ndjson` keeps the final report on stdout and events on stderr. The normal runner then resumes the same confirmed receipt under its original expiry. See [ADR-1368](adr/1368-verification-creation-reconciliation.md).
 
 ### Adopt rotated PostgreSQL pools in application code
 

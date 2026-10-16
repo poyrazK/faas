@@ -587,7 +587,7 @@ application ACK or other binding blockers.
 A successful canary batch can therefore still return exit status 1. Canaries
 never supply application ACKs. Required queue readiness sends no messages and
 retains partial connectivity coverage. See
-[ADR-1346](adr/1346-unified-binding-policy-verification.md).
+[ADR-1347](adr/1347-unified-binding-policy-verification.md).
 
 `--wait-timeout` bounds the entire workflow; it does not reset for every prefix.
 An ordinary timeout keeps the existing task running and reports its ID; inspect

@@ -137,6 +137,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--captcha turnstile\|hcaptcha\|off`, `--captcha-site-key`, `--captcha-secret-stdin` | A CAPTCHA on sign-up, sign-in and password reset (see CAPTCHA). |
 | `--activity-retention DAYS\|forever` | How long sign-in activity is kept (see Manage users). |
 | `--sms PROVIDER\|off`, `--sms-account`, `--sms-sender`, `--sms-secret-stdin` | Phone sign-in by text message (see Phone sign-in). |
+| `--sso on\|off` | Organization single sign-on with SAML (see Organization single sign-on). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
@@ -316,6 +317,39 @@ No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
 organization can hold 500 pending invitations.
 
+## Organization single sign-on
+
+Let your business customers sign in through their company's identity
+provider (Okta, Microsoft Entra ID, Google Workspace or any SAML 2.0 provider)
+and join their organization automatically:
+
+```sh
+gregale auth config shop-auth --sso on
+printf '%s' "$ADMIN_KEY" | gregale auth sso add shop-auth --metadata-url https://acme.okta.com/app/abc/sso/saml/metadata --domains acme.com --org acme --role member --admin-key-stdin
+```
+
+`--sso on` creates the app's SAML signing key once and keeps it, even when
+SSO is turned off, so identity providers keep trusting the app. `sso add`
+prints what to register with the identity provider: the entity ID
+(`https://<auth-host>/auth/v1/sso/saml/metadata`, which also serves the
+metadata) and the ACS URL (`https://<auth-host>/auth/v1/sso/saml/acs`). Use
+`--metadata-file` for metadata XML instead of a URL.
+
+Users whose email address is in one of `--domains` sign in at
+`/ui/sso` (the hosted sign-in page links to it) or with
+`auth.signInWithSSO({ domain })` from `@gregale/auth`, which returns the
+identity provider's URL to navigate to. With `--org`, they join that
+organization with `--role` (default `member`, never `owner`) the first time
+they sign in, and the provider's existing users join when you link it.
+`gregale auth sso list`, `update` (`--org none` unlinks; members stay) and
+`remove` manage providers. Identity providers live in your database, like
+your users.
+
+An SSO user is a separate account from a password or OAuth account with the
+same address. Because an identity provider vouches only for its own domains,
+an SSO user can accept an organization invitation only for an address in one
+of its provider's domains.
+
 ## Authorize anywhere with one function
 
 Name resources `org/<organization id>/<kind>/<name>`. `gregale_auth.authorize`
@@ -353,7 +387,8 @@ development. Links and codes are never logged.
 ## Hosted pages
 
 Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The
-pages handle sign-in (password, magic link, enabled OAuth providers), sign-up,
+pages handle sign-in (password, magic link, enabled OAuth providers, passkeys,
+phone and organization SSO when they are on), sign-up,
 password reset and invitations, then return to `redirect_to` with the session
 in the URL fragment. Only your site URL and paths under `--redirect-urls` are
 accepted as targets.

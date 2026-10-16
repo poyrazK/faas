@@ -1,4 +1,4 @@
-// adr:1354 — fixed-deadline, atomically admitted verification receipts.
+// adr:1355 — fixed-deadline, atomically admitted verification receipts.
 package state
 
 import (

@@ -1,4 +1,4 @@
-// adr:1353 — dispatch membership comes from the durable ledger read.
+// adr:1354 — dispatch membership comes from the durable ledger read.
 package state
 
 import (
