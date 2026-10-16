@@ -201,3 +201,23 @@ func (m *MemStore) PurgeHostingDomain(_ context.Context, lease HostingDomainLeas
 	delete(m.hostingDomains, lease.Domain.ID)
 	return nil
 }
+
+func (m *MemStore) RecoverHostingDomain(_ context.Context, account, site, id string, req api.RecoverHostingDomainRequest, now time.Time) (api.HostingDomain, error) {
+	if uuid.Validate(req.ProviderID) != nil || req.ExpectedRevision < 1 || now.IsZero() {
+		return api.HostingDomain{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.hostingDomains[id]
+	d := row.Domain
+	if !ok || d.AccountID != account || d.SiteID != site || d.Hostname != req.ExpectedHostname || d.Revision != req.ExpectedRevision || d.Details.ProviderID != "" || d.Details.VerifiedAt == nil || d.Details.CreateStartedAt == nil || now.Sub(*d.Details.CreateStartedAt) < api.HostingDomainRecoveryDelay {
+		return api.HostingDomain{}, ErrConflict
+	}
+	row.Domain.Details.ProviderID = req.ProviderID
+	row.Domain.Revision++
+	row.Domain.NextAttemptAt = now
+	row.Domain.LastErrorCode = ""
+	row.Token, row.Until = "", time.Time{}
+	m.hostingDomains[id] = row
+	return cloneHostingDomain(row.Domain), nil
+}

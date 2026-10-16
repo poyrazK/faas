@@ -11288,6 +11288,7 @@ const (
 	HostingDomainDNSTimeout                    = 5 * time.Second
 	HostingDomainDispatchTimeout               = 30 * time.Second
 	HostingDomainLease                         = 2 * time.Minute
+	HostingDomainRecoveryDelay                 = HostingDomainLease + HostingDomainProviderTimeout + HostingDomainDispatchTimeout
 	HostingDomainRetryInterval                 = time.Minute
 	HostingDomainCheckInterval                 = 30 * time.Minute
 	HostingDomainValidationRetryInterval       = 30 * time.Minute

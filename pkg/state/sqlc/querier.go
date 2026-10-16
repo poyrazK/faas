@@ -1386,6 +1386,7 @@ type Querier interface {
 	HostingDomainFinish(ctx context.Context, db DBTX, arg HostingDomainFinishParams) (int64, error)
 	HostingDomainList(ctx context.Context, db DBTX, arg HostingDomainListParams) ([]HostingDomain, error)
 	HostingDomainPurge(ctx context.Context, db DBTX, arg HostingDomainPurgeParams) (int64, error)
+	HostingDomainRecover(ctx context.Context, db DBTX, arg HostingDomainRecoverParams) (HostingDomain, error)
 	HostingDomainReleaseBatch(ctx context.Context, db DBTX, leaseToken pgtype.UUID) error
 	HostingDomainReserve(ctx context.Context, db DBTX, arg HostingDomainReserveParams) error
 	HostingDomainSave(ctx context.Context, db DBTX, arg HostingDomainSaveParams) (HostingDomain, error)

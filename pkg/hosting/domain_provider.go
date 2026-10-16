@@ -26,7 +26,7 @@ var errDomainProviderMissing = errors.New("hosting domain provider object missin
 type DomainProvider interface {
 	ID() string
 	Target() string
-	Ensure(context.Context, api.HostingDomain) (api.HostingDomainDetails, bool, error)
+	Ensure(context.Context, api.HostingDomain, bool) (api.HostingDomainDetails, bool, error)
 	Remove(context.Context, api.HostingDomain) error
 }
 
@@ -155,44 +155,50 @@ func (p *CloudflareDomains) request(ctx context.Context, method, path string, bo
 	return envelope.Info.TotalPages, nil
 }
 
-func (p *CloudflareDomains) ownedHost(h cfDomainHostname, d api.HostingDomain) bool {
-	return uuid.Validate(h.ID) == nil && h.Hostname == d.Hostname && h.OriginServer == "" && h.OriginSNI == "" && h.Metadata["gregale_domain_id"] == d.ID && h.Metadata["gregale_origin_id"] == p.ID() && h.SSL.Method == "txt" && h.SSL.Type == "dv"
+func (p *CloudflareDomains) validHost(h cfDomainHostname, d api.HostingDomain) bool {
+	if uuid.Validate(h.ID) != nil || h.Hostname != d.Hostname || h.OriginServer != "" || h.OriginSNI != "" || h.SSL.Method != "txt" || h.SSL.Type != "dv" {
+		return false
+	}
+	// Preserve ownership checks on legacy Enterprise objects, but never require metadata.
+	return len(h.Metadata) == 0 || h.Metadata["gregale_domain_id"] == d.ID && h.Metadata["gregale_origin_id"] == p.ID()
 }
 
 func (p *CloudflareDomains) findHost(ctx context.Context, d api.HostingDomain) (*cfDomainHostname, error) {
-	if d.Details.ProviderID != "" {
-		var host cfDomainHostname
-		_, err := p.request(ctx, "GET", p.hostPath()+"/"+d.Details.ProviderID, nil, &host)
-		if err == nil {
-			if !p.ownedHost(host, d) {
-				return nil, ErrDomainProviderConflict
-			}
-			return &host, nil
-		}
-		if !errors.Is(err, errDomainProviderMissing) {
-			return nil, err
-		}
+	if d.Details.ProviderID == "" {
+		return nil, nil
 	}
-	var hosts []cfDomainHostname
-	pages, err := p.request(ctx, "GET", p.hostPath()+"?hostname="+url.QueryEscape(d.Hostname)+"&per_page=50", nil, &hosts)
+	var host cfDomainHostname
+	_, err := p.request(ctx, "GET", p.hostPath()+"/"+d.Details.ProviderID, nil, &host)
+	if errors.Is(err, errDomainProviderMissing) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	if pages > 1 {
+	if host.ID != d.Details.ProviderID || !p.validHost(host, d) {
 		return nil, ErrDomainProviderConflict
 	}
-	var found *cfDomainHostname
-	for _, host := range hosts {
-		if host.Hostname != d.Hostname {
-			return nil, ErrDomainProviderConflict
-		}
-		if !p.ownedHost(host, d) || found != nil {
-			return nil, ErrDomainProviderConflict
-		}
-		copy := host
-		found = &copy
+	return &host, nil
+}
+
+// ValidateRecovery reads the exact operator-reviewed resource; it never discovers
+// or adopts resources through a hostname search and never creates anything.
+func (p *CloudflareDomains) ValidateRecovery(ctx context.Context, d api.HostingDomain, id string) error {
+	if uuid.Validate(id) != nil {
+		return ErrDomainProviderConflict
 	}
-	return found, nil
+	if err := p.validateZone(ctx, false); err != nil {
+		return err
+	}
+	d.Details.ProviderID = id
+	host, err := p.findHost(ctx, d)
+	if err != nil {
+		return err
+	}
+	if host == nil {
+		return ErrDomainProviderConflict
+	}
+	return nil
 }
 
 func (p *CloudflareDomains) ownedApp(app cfDomainApp, d api.HostingDomain) bool {
@@ -255,7 +261,7 @@ func (p *CloudflareDomains) accessApp(ctx context.Context, d api.HostingDomain) 
 	return app, nil
 }
 
-func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain) (api.HostingDomainDetails, bool, error) {
+func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain, allowCreate bool) (api.HostingDomainDetails, bool, error) {
 	details := d.Details
 	if err := p.validateZone(ctx, true); err != nil {
 		return details, false, err
@@ -265,15 +271,30 @@ func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain) (ap
 		return details, false, err
 	}
 	if host == nil {
+		if !allowCreate || details.ProviderID != "" {
+			return details, false, ErrDomainProviderConflict
+		}
+		// The reconciler has durably recorded this single create attempt before I/O.
+		// Existing matches are conflicts, never candidates for implicit adoption.
+		var existing []cfDomainHostname
+		pages, listErr := p.request(ctx, "GET", p.hostPath()+"?hostname="+url.QueryEscape(d.Hostname)+"&per_page=50", nil, &existing)
+		if listErr != nil {
+			return details, false, listErr
+		}
+		if pages > 1 || len(existing) != 0 {
+			return details, false, ErrDomainProviderConflict
+		}
 		host = &cfDomainHostname{}
-		_, err = p.request(ctx, "POST", p.hostPath(), map[string]any{"hostname": d.Hostname, "ssl": map[string]string{"method": "txt", "type": "dv"}, "custom_metadata": map[string]string{"gregale_domain_id": d.ID, "gregale_origin_id": p.ID()}}, host)
+		_, err = p.request(ctx, "POST", p.hostPath(), map[string]any{"hostname": d.Hostname, "ssl": map[string]string{"method": "txt", "type": "dv"}}, host)
 		if err != nil {
 			return details, false, err
 		}
-		if !p.ownedHost(*host, d) {
+		if !p.validHost(*host, d) {
 			return details, false, ErrDomainProviderConflict
 		}
 	}
+	details.ProviderID = host.ID
+
 	retryable := host.SSL.Status == "validation_timed_out" || host.SSL.Status == "issuance_timed_out" || host.SSL.Status == "deployment_timed_out" || host.SSL.Status == "expired" || host.Status == "blocked"
 	if retryable {
 		details.TLSStatus = "failed"
@@ -284,7 +305,7 @@ func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain) (ap
 		if err != nil {
 			return details, false, err
 		}
-		if !p.ownedHost(*host, d) {
+		if !p.validHost(*host, d) {
 			return details, false, ErrDomainProviderConflict
 		}
 	}
@@ -328,9 +349,12 @@ func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain) (ap
 	return details, true, nil
 }
 
-// Removal only touches resources bearing this claim's durable ownership
-// markers. A lost create response is recovered by the same exact lookup.
+// Removal uses the durably bound provider ID. Unknown create results require
+// operator recovery even during deletion; hostname matching never proves ownership.
 func (p *CloudflareDomains) Remove(ctx context.Context, d api.HostingDomain) error {
+	if d.Details.ProviderID == "" && d.Details.CreateStartedAt != nil {
+		return ErrDomainProviderConflict
+	}
 	if err := p.validateZone(ctx, false); err != nil {
 		return err
 	}

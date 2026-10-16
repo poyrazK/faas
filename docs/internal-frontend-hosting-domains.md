@@ -2,6 +2,7 @@
 
 This default-off extension of the static hosting pilot is described in
 [ADR-202610160959](adr/202610160959-internal-hosting-custom-domains.md).
+Standard-plan recovery is amended by [ADR-202610161106](adr/202610161106-standard-plan-hosting-domain-recovery.md).
 It requires durable sites. All domain operations remain operator-only and
 account-owned. Nothing here enables customer entitlements, public site visits,
 builds, or runtime containers.
@@ -12,18 +13,11 @@ builds, or runtime containers.
    Keep a dedicated, separate hosting zone; never share the SaaS Worker zone
    with platform, API, or dashboard traffic.
 2. Enable Cloudflare for SaaS on that zone through the operator's existing
-   provider workflow and qualify **custom metadata support**. Gregale requires
-   `gregale_domain_id` and `gregale_origin_id` markers on provider hostnames to
-   recover lost create responses without adopting someone else's resources.
-   No provider subscription or billing configuration is changed by this code.
-
-   **Cost prerequisite:** Cloudflare currently lists custom metadata as an
-   Enterprise paid add-on in its [SaaS plan matrix](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/).
-   This automatic-recovery implementation therefore does not work on ordinary
-   Free/Pro/Business SaaS plans without that entitlement. Qualify the add-on
-   before enabling admission; this code neither purchases it nor silently
-   downgrades ownership checks. A standard-plan implementation would need a
-   separate operator-assisted recovery protocol for uncertain creates.
+   provider workflow. Standard plans are supported: Gregale does not send
+   Enterprise custom metadata. Cloudflare's normal SaaS, certificate, Worker,
+   storage, and Access pricing still applies; check the account's allowances.
+   No subscription or billing configuration is changed by this code.
+   Read the operator-assisted recovery procedure below before enabling admission.
 3. The custom hostname's DNS must be outside the SaaS provider's Cloudflare
    account. Same-account custom hostnames do not receive Access protection
    under Cloudflare's documented model. Use an external DNS provider or a
@@ -87,7 +81,7 @@ Add the displayed records at the domain's DNS provider:
 - Cloudflare hostname/certificate validation records once they appear.
 
 Gregale does no provider write until its own TXT and CNAME are both observed.
-The controller then creates/reuses the tagged custom hostname, requests a
+The controller then creates the custom hostname once and durably binds its returned ID, requests a
 DNS-TXT managed certificate, and creates a private Access application with
 the internal policy. Keep validation records for certificate renewal.
 
@@ -104,6 +98,7 @@ REST routes below the existing `/v1/internal/hosting/sites/{site}` root:
 |---|---|
 | `GET /domains` | List account-owned domains and DNS/certificate/publication status |
 | `POST /domains` | `{"hostname":"portal.customer.example"}` with an idempotency key |
+| `POST /domains/{domain}/recover` | Explicit provider UUID, hostname, and reviewed revision |
 | `DELETE /domains/{domain}` | `{"expected_revision":1}` with an idempotency key |
 
 Every route independently enforces flags, operator identity, MFA, scope, and
@@ -123,11 +118,41 @@ static request path.
 
 Closed error codes are `dns_pending`, `provider_unavailable`,
 `provider_conflict`, `publication_unavailable`, and `origin_unavailable`.
-Provider outages retain the last published alias. Conflicting ownership markers
-require operator review; do not manually adopt or delete provider resources
-solely because the hostname matches. Lost create responses are recovered only
-through exact ownership markers. Raw provider errors and credentials are not
-stored or returned.
+Provider outages retain the last published alias. A hostname-create attempt is
+recorded durably before provider I/O. If the response or SQL receipt is lost,
+Gregale does not issue another create, adopt a hostname search result, or purge
+uncertain cleanup state. It reports a conflict requiring operator recovery.
+Even a crash before the request was sent conservatively requires this recovery.
+Raw provider errors and credentials are not stored or returned.
+
+### Recover an uncertain hostname create
+
+1. Wait at least 160 seconds from `details.create_started_at` (processing lease
+   plus provider and dispatch budgets). Refresh the domain to review its current
+   hostname and revision. The server enforces this delay.
+2. Inspect the dedicated zone's custom hostnames in Cloudflare. Find the exact
+   resource belonging to this attempt, using provider activity/audit evidence.
+   A matching hostname alone is not ownership evidence. If no resource exists
+   after the request has settled, create a disposable hostname manually with
+   exactly this hostname, SSL type `dv`, method `txt`, and no custom origin.
+   Do not create another resource while a prior provider request is unresolved.
+3. Copy the exact provider hostname UUID. Use **Bind reviewed provider ID** in
+   the operations panel, including when the domain is already removing. The
+   confirmation explicitly authorizes Gregale to manage and delete that resource.
+   Alternatively POST `/domains/{domain}/recover` under the site root with
+   `provider_id`, `expected_hostname`, and `expected_revision` plus an idempotency key.
+4. The API reads that exact provider ID, verifies zone/account, hostname,
+   certificate mode, absence of custom origins, and any legacy ownership markers.
+   A revision-fenced write binds the ID, increments the revision, invalidates old
+   leases, and audits the operator action. It does not enable routing or cancel
+   deletion. Provisioning or terminal cleanup resumes on the next pass.
+
+Only an unknown provider ID can be bound; this endpoint cannot replace an
+existing binding or reset the create attempt. Conflicts require refresh and
+operator review, without automatic retries. A known provider ID that disappears
+is not automatically recreated. Legacy Enterprise objects retain marker checks;
+new resources use persisted provider IDs without metadata. Access application
+lost-response recovery still uses its unique claim-specific application name.
 
 Removal first commits deleting intent and publishes a permanent disabled R2
 alias. After the current generation's receipt and 150-second grace, the
@@ -154,7 +179,7 @@ infrastructure. The independent main Worker switch remains the emergency stop.
 
 Portable checks cover memory/PostgreSQL ownership and concurrent quotas,
 global reservations, lease recovery, stale-result fencing, cleanup receipts and
-grace; provider lost-response recovery and refusal of foreign markers; Worker
+grace; single-attempt create fencing, explicit operator recovery, and refusal of foreign legacy markers; Worker
 audience checks, cache denial, canonical promotion/suspension/retirement, and
 warm/cold serving without API renewal. Mocked Terraform tests prove default-off
 resources, route isolation, and independent admission. The dashboard's unit and
@@ -163,7 +188,7 @@ local browser checks use fixtures, not Cloudflare.
 Before live internal use, record evidence from a disposable external domain:
 
 1. Confirm the SaaS fallback is active, wildcard TLS works on the generated
-   hostname, and custom metadata is retained after API read-back.
+   hostname, and standard-plan custom hostname creation works without custom metadata.
 2. A wrong/missing Gregale TXT or CNAME must leave DNS pending with no provider
    resources. Correct records should produce the additional provider challenges.
 3. Wait for actual certificate issuance and active hostname status, then confirm

@@ -2,6 +2,7 @@
 
 - **Status:** accepted for a default-off internal pilot; provider qualification is pending.
 - **Date:** 2026-10-16
+- **Amended by:** [standard-plan recovery](202610161106-standard-plan-hosting-domain-recovery.md), replacing the Enterprise metadata prerequisite below.
 - **Amends:** [internal static hosting](20261015-internal-static-hosting.md) and [durable routing](202610151515-durable-static-hosting.md).
 
 ## Decision

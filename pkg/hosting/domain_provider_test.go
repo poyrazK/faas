@@ -7,12 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func TestCloudflareDomainProvisioningRecoversOwnedResources(t *testing.T) {
+func TestCloudflareDomainProvisioningRequiresExplicitRecovery(t *testing.T) {
 	policy := uuid.NewString()
 	provider, err := NewCloudflareDomains(strings.Repeat("a", 32), strings.Repeat("b", 32), policy, "test-secret", "customers.hosting.example")
 	if err != nil {
@@ -80,6 +81,9 @@ func TestCloudflareDomainProvisioningRecoversOwnedResources(t *testing.T) {
 					Metadata map[string]string `json:"custom_metadata"`
 				}
 				_ = json.NewDecoder(r.Body).Decode(&body)
+				if body.Metadata != nil {
+					t.Error("standard-plan create sent Enterprise custom metadata")
+				}
 				host = &cfDomainHostname{ID: uuid.NewString(), Hostname: body.Hostname, Status: "pending", Metadata: body.Metadata, Ownership: api.HostingDNSRecord{Type: "txt", Name: "_cf-custom-hostname." + domain.Hostname, Value: "proof"}}
 				host.SSL.Type = "dv"
 				host.SSL.Method = "txt"
@@ -116,48 +120,72 @@ func TestCloudflareDomainProvisioningRecoversOwnedResources(t *testing.T) {
 	provider.base = server.URL
 	provider.client = server.Client()
 	zoneMismatch = true
-	if _, _, err := provider.Ensure(t.Context(), domain); !errors.Is(err, ErrDomainProviderConflict) || creates != 0 {
+	if _, _, err := provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); !errors.Is(err, ErrDomainProviderConflict) || creates != 0 {
 		t.Fatalf("wrote outside isolated zone: %v", err)
 	}
 	zoneMismatch = false
 	rejectResponse = true
-	if _, _, err := provider.Ensure(t.Context(), domain); !errors.Is(err, ErrDomainProviderUnavailable) {
+	if _, _, err := provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); !errors.Is(err, ErrDomainProviderUnavailable) {
 		t.Fatalf("lost response: %v", err)
 	}
 	rejectResponse = false
-	details, ready, err := provider.Ensure(t.Context(), domain)
+	if _, _, err := provider.Ensure(t.Context(), domain, true); !errors.Is(err, ErrDomainProviderConflict) || creates != 1 {
+		t.Fatalf("adopted matching unbound hostname: %v", err)
+	}
+	if err := provider.ValidateRecovery(t.Context(), domain, uuid.NewString()); !errors.Is(err, ErrDomainProviderConflict) {
+		t.Fatalf("accepted wrong provider ID: %v", err)
+	}
+	originalHostname := host.Hostname
+	host.Hostname = "foreign.customer.example"
+	if err := provider.ValidateRecovery(t.Context(), domain, host.ID); !errors.Is(err, ErrDomainProviderConflict) {
+		t.Fatalf("accepted foreign hostname: %v", err)
+	}
+	host.Hostname = originalHostname
+	at := time.Now().UTC()
+	domain.Details.CreateStartedAt = &at
+	if _, _, err := provider.Ensure(t.Context(), domain, false); !errors.Is(err, ErrDomainProviderConflict) || creates != 1 {
+		t.Fatalf("repeated ambiguous create: %v", err)
+	}
+	if err := provider.Remove(t.Context(), domain); !errors.Is(err, ErrDomainProviderConflict) || deletes != 0 {
+		t.Fatalf("purged unresolved create: %v", err)
+	}
+	if err := provider.ValidateRecovery(t.Context(), domain, host.ID); err != nil {
+		t.Fatal(err)
+	}
+	domain.Details.ProviderID = host.ID
+	details, ready, err := provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil)
 	if err != nil || ready || creates != 1 || len(details.Records) != 1 || details.Records[0].Type != "TXT" || appCreates != 0 {
 		t.Fatalf("pending recovery: %+v %v %v", details, ready, err)
 	}
 	domain.Details = details
 	host.SSL.Status = "validation_timed_out"
-	details, ready, err = provider.Ensure(t.Context(), domain)
+	details, ready, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil)
 	if err != nil || ready || patches != 1 || details.ValidationRetriedAt == nil {
 		t.Fatalf("validation retry: %+v %v", details, err)
 	}
 	domain.Details = details
 	host.SSL.Status = "validation_timed_out"
-	if _, _, err = provider.Ensure(t.Context(), domain); err != nil || patches != 1 {
+	if _, _, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); err != nil || patches != 1 {
 		t.Fatalf("validation retry storm: %d %v", patches, err)
 	}
 	host.Status = "active"
 	host.SSL.Status = "active"
-	details, ready, err = provider.Ensure(t.Context(), domain)
+	details, ready, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil)
 	if err != nil || !ready || details.AccessAUD == "" || appCreates != 1 {
 		t.Fatalf("ready: %+v %v %v", details, ready, err)
 	}
 	// Simulate loss of the API/SQL receipt for Access creation too.
-	if _, ready, err = provider.Ensure(t.Context(), domain); err != nil || !ready || appCreates != 1 {
+	if _, ready, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); err != nil || !ready || appCreates != 1 {
 		t.Fatalf("Access recovery: %v %v", ready, err)
 	}
-	host.Metadata["gregale_domain_id"] = "foreign"
-	if _, _, err = provider.Ensure(t.Context(), domain); !errors.Is(err, ErrDomainProviderConflict) {
+	host.Metadata = map[string]string{"gregale_domain_id": "foreign"}
+	if _, _, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); !errors.Is(err, ErrDomainProviderConflict) {
 		t.Fatalf("adopted foreign hostname: %v", err)
 	}
 	if err = provider.Remove(t.Context(), domain); !errors.Is(err, ErrDomainProviderConflict) || deletes != 0 {
 		t.Fatalf("deleted foreign provider object: %v", err)
 	}
-	host.Metadata["gregale_domain_id"] = domain.ID
+	host.Metadata = nil
 	domain.Details = details
 	if err = provider.Remove(t.Context(), domain); err != nil || deletes != 2 {
 		t.Fatalf("cleanup: %v deletes=%d", err, deletes)

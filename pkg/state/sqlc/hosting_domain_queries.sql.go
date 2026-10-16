@@ -319,6 +319,61 @@ func (q *Queries) HostingDomainPurge(ctx context.Context, db DBTX, arg HostingDo
 	return result.RowsAffected(), nil
 }
 
+const hostingDomainRecover = `-- name: HostingDomainRecover :one
+UPDATE hosting_domains SET details = jsonb_set(details, '{provider_id}', to_jsonb($1::text)),
+revision = revision + 1, next_attempt_at = clock_timestamp(), last_error_code = '',
+lease_token = NULL, lease_until = NULL
+WHERE account_id = $2 AND site_id = $3 AND id = $4
+AND revision = $5 AND hostname = $6
+AND COALESCE(details->>'provider_id', '') = '' AND details->>'verified_at' IS NOT NULL
+AND (details->>'create_started_at')::timestamptz <= $7::timestamptz
+RETURNING id, account_id, site_id, hostname, provider_origin_id, challenge, state, revision, generation, published_generation, published_at, details, next_attempt_at, attempts, last_error_code, lease_token, lease_until, created_at
+`
+
+type HostingDomainRecoverParams struct {
+	ProviderID string
+	AccountID  pgtype.UUID
+	SiteID     pgtype.UUID
+	ID         pgtype.UUID
+	Revision   int64
+	Hostname   string
+	BeforeAt   pgtype.Timestamptz
+}
+
+func (q *Queries) HostingDomainRecover(ctx context.Context, db DBTX, arg HostingDomainRecoverParams) (HostingDomain, error) {
+	row := db.QueryRow(ctx, hostingDomainRecover,
+		arg.ProviderID,
+		arg.AccountID,
+		arg.SiteID,
+		arg.ID,
+		arg.Revision,
+		arg.Hostname,
+		arg.BeforeAt,
+	)
+	var i HostingDomain
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.SiteID,
+		&i.Hostname,
+		&i.ProviderOriginID,
+		&i.Challenge,
+		&i.State,
+		&i.Revision,
+		&i.Generation,
+		&i.PublishedGeneration,
+		&i.PublishedAt,
+		&i.Details,
+		&i.NextAttemptAt,
+		&i.Attempts,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const hostingDomainReleaseBatch = `-- name: HostingDomainReleaseBatch :exec
 UPDATE hosting_domains SET lease_token = NULL, lease_until = NULL WHERE lease_token = $1
 `

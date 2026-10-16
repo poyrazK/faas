@@ -187,3 +187,20 @@ func (s *PgStore) PurgeHostingDomain(ctx context.Context, lease HostingDomainLea
 	}
 	return err
 }
+
+func (s *PgStore) RecoverHostingDomain(ctx context.Context, account, site, id string, req api.RecoverHostingDomainRequest, now time.Time) (api.HostingDomain, error) {
+	if uuid.Validate(req.ProviderID) != nil || req.ExpectedRevision < 1 || now.IsZero() {
+		return api.HostingDomain{}, ErrInvalidArgument
+	}
+	a, _ := parsePgUUID(account)
+	si, _ := parsePgUUID(site)
+	di, _ := parsePgUUID(id)
+	row, err := sqlc.New().HostingDomainRecover(ctx, s.pool, sqlc.HostingDomainRecoverParams{AccountID: a, SiteID: si, ID: di, Revision: req.ExpectedRevision, Hostname: req.ExpectedHostname, ProviderID: req.ProviderID, BeforeAt: hostingTimestamp(now.Add(-api.HostingDomainRecoveryDelay))})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return api.HostingDomain{}, ErrConflict
+	}
+	if err != nil {
+		return api.HostingDomain{}, err
+	}
+	return hostingDomainRow(row)
+}

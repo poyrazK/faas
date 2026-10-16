@@ -122,3 +122,61 @@ func customDomainQuota(t *testing.T, store hostingTestStore) {
 		t.Fatalf("concurrent quota: %d created %d limited", created, limited)
 	}
 }
+
+func customDomainRecovery(t *testing.T, store hostingTestStore) {
+	account, site := seedDurable(t, store)
+	d, err := store.CreateHostingDomain(t.Context(), domainInput(account, site))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Add(time.Second)
+	leases, err := store.ClaimHostingDomains(t.Context(), now, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lease state.HostingDomainLease
+	for _, item := range leases {
+		if item.Domain.ID == d.ID {
+			lease = item
+		}
+	}
+	started := now
+	details := lease.Domain.Details
+	details.VerifiedAt, details.CreateStartedAt = &started, &started
+	lease, err = store.SaveHostingDomain(t.Context(), lease, "pending_certificate", details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := api.RecoverHostingDomainRequest{ExpectedRevision: d.Revision, ExpectedHostname: d.Hostname, ProviderID: uuid.NewString()}
+	if _, err := store.RecoverHostingDomain(t.Context(), account.ID, site.ID, d.ID, req, now); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("recovery before in-flight window closed: %v", err)
+	}
+	later := now.Add(api.HostingDomainRecoveryDelay + time.Second)
+	wrong := req
+	wrong.ExpectedHostname = "other.customer.example"
+	if _, err := store.RecoverHostingDomain(t.Context(), account.ID, site.ID, d.ID, wrong, later); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("wrong hostname: %v", err)
+	}
+	if _, err := store.RecoverHostingDomain(t.Context(), uuid.NewString(), site.ID, d.ID, req, later); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("cross-account recovery: %v", err)
+	}
+	// Recovery must also unblock cleanup after deletion, without reactivating it.
+	deleting, err := store.DeleteHostingDomain(t.Context(), account.ID, site.ID, d.ID, d.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecoverHostingDomain(t.Context(), account.ID, site.ID, d.ID, req, later); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale recovery: %v", err)
+	}
+	req.ExpectedRevision = deleting.Revision
+	recovered, err := store.RecoverHostingDomain(t.Context(), account.ID, site.ID, d.ID, req, later)
+	if err != nil || recovered.State != "deleting" || recovered.Details.ProviderID != req.ProviderID || recovered.Generation != deleting.Generation {
+		t.Fatalf("recovery changed routing/deletion: %+v %v", recovered, err)
+	}
+	if _, err := store.SaveHostingDomain(t.Context(), lease, "pending_certificate", details); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale worker saved after recovery: %v", err)
+	}
+	if _, err := store.RecoverHostingDomain(t.Context(), account.ID, site.ID, d.ID, req, later); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("bound ID overwritten: %v", err)
+	}
+}

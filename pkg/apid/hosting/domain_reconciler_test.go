@@ -15,6 +15,8 @@ import (
 
 type domainProviderFixture struct {
 	ready, removeFail bool
+	uncertain         bool
+	creates           int
 	calls, removals   int
 	after             func()
 	err               error
@@ -22,8 +24,20 @@ type domainProviderFixture struct {
 
 func (*domainProviderFixture) ID() string     { return strings.Repeat("b", 64) }
 func (*domainProviderFixture) Target() string { return "customers.hosting.example" }
-func (p *domainProviderFixture) Ensure(_ context.Context, d api.HostingDomain) (api.HostingDomainDetails, bool, error) {
+func (p *domainProviderFixture) Ensure(_ context.Context, d api.HostingDomain, allowCreate bool) (api.HostingDomainDetails, bool, error) {
 	p.calls++
+	if d.Details.CreateStartedAt == nil {
+		panic("provider called without durable create fence")
+	}
+	if d.Details.ProviderID == "" {
+		if !allowCreate {
+			return d.Details, false, artifacts.ErrDomainProviderConflict
+		}
+		p.creates++
+		if p.uncertain {
+			return d.Details, false, artifacts.ErrDomainProviderUnavailable
+		}
+	}
 	if p.after != nil {
 		p.after()
 	}
@@ -198,4 +212,34 @@ func TestDomainReconcilerLateProviderResultCannotReactivateDeletion(t *testing.T
 	if !publisher.head.Deleted {
 		t.Fatal("deletion was postponed by stale completion")
 	}
+}
+
+func TestDomainReconcilerUncertainCreateNeverRepeats(t *testing.T) {
+	store, site, _, provider, dns, _, now, r := domainReconcilerFixture(t)
+	dns.valid, provider.uncertain = true, true
+	if err := r.RunOnce(t.Context()); err == nil {
+		t.Fatal("uncertain create reported success")
+	}
+	rows, _ := store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
+	if rows[0].Details.CreateStartedAt == nil || rows[0].Details.ProviderID != "" {
+		t.Fatal("create fence lost")
+	}
+	*now = now.Add(api.HostingDomainRetryInterval * 2)
+	if err := r.RunOnce(t.Context()); err == nil {
+		t.Fatal("unresolved create retried")
+	}
+	if provider.creates != 1 {
+		t.Fatalf("create attempts: %d", provider.creates)
+	}
+	rows, _ = store.ListHostingDomains(t.Context(), site.AccountID, site.ID)
+	if rows[0].LastErrorCode != "provider_conflict" {
+		t.Fatal("recovery not surfaced")
+	}
+}
+
+func (*domainProviderFixture) ValidateRecovery(_ context.Context, d api.HostingDomain, id string) error {
+	if d.Hostname != "portal.customer.example" || id != "11111111-1111-4111-8111-111111111111" {
+		return artifacts.ErrDomainProviderConflict
+	}
+	return nil
 }

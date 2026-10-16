@@ -56,3 +56,13 @@ UPDATE hosting_domains SET lease_token = NULL, lease_until = NULL WHERE lease_to
 DELETE FROM hosting_domains WHERE id = sqlc.arg(id) AND lease_token = sqlc.arg(token)
 AND state = 'deleting' AND generation = sqlc.arg(generation)
 AND published_generation = generation AND published_at <= sqlc.arg(before_at);
+
+-- name: HostingDomainRecover :one
+UPDATE hosting_domains SET details = jsonb_set(details, '{provider_id}', to_jsonb(sqlc.arg(provider_id)::text)),
+revision = revision + 1, next_attempt_at = clock_timestamp(), last_error_code = '',
+lease_token = NULL, lease_until = NULL
+WHERE account_id = sqlc.arg(account_id) AND site_id = sqlc.arg(site_id) AND id = sqlc.arg(id)
+AND revision = sqlc.arg(revision) AND hostname = sqlc.arg(hostname)
+AND COALESCE(details->>'provider_id', '') = '' AND details->>'verified_at' IS NOT NULL
+AND (details->>'create_started_at')::timestamptz <= sqlc.arg(before_at)::timestamptz
+RETURNING *;

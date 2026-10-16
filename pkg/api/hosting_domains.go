@@ -9,6 +9,7 @@ type HostingDNSRecord struct {
 }
 
 type HostingDomainDetails struct {
+	CreateStartedAt     *time.Time         `json:"create_started_at,omitempty"`
 	ValidationRetriedAt *time.Time         `json:"validation_retried_at,omitempty"`
 	ProviderID          string             `json:"provider_id,omitempty"`
 	AccessID            string             `json:"access_id,omitempty"`
@@ -42,4 +43,10 @@ type CreateHostingDomainRequest struct {
 }
 type DeleteHostingDomainRequest struct {
 	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+type RecoverHostingDomainRequest struct {
+	ExpectedRevision int64  `json:"expected_revision"`
+	ProviderID       string `json:"provider_id"`
+	ExpectedHostname string `json:"expected_hostname"`
 }

@@ -15,6 +15,7 @@ type HostingDomainLease struct {
 	Token  string
 }
 type HostingDomainStore interface {
+	RecoverHostingDomain(context.Context, string, string, string, api.RecoverHostingDomainRequest, time.Time) (api.HostingDomain, error)
 	CreateHostingDomain(context.Context, api.HostingDomain) (api.HostingDomain, error)
 	ListHostingDomains(context.Context, string, string) ([]api.HostingDomain, error)
 	DeleteHostingDomain(context.Context, string, string, string, int64) (api.HostingDomain, error)
@@ -87,6 +88,10 @@ func cloneHostingDomain(d api.HostingDomain) api.HostingDomain {
 	if d.Details.VerifiedAt != nil {
 		at := *d.Details.VerifiedAt
 		d.Details.VerifiedAt = &at
+	}
+	if d.Details.CreateStartedAt != nil {
+		at := *d.Details.CreateStartedAt
+		d.Details.CreateStartedAt = &at
 	}
 	if d.Details.ValidationRetriedAt != nil {
 		at := *d.Details.ValidationRetriedAt
