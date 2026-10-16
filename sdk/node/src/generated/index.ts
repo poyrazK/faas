@@ -1274,6 +1274,7 @@ export type { OperationTimelineResponse } from './models/OperationTimelineRespon
 export type { OperationUsage } from './models/OperationUsage.js';
 export type { OperationWaitingState } from './models/OperationWaitingState.js';
 export type { OperationWebhookBindingResponse } from './models/OperationWebhookBindingResponse.js';
+export type { OperationWebhookSignal } from './models/OperationWebhookSignal.js';
 export type { OperationWorkflowActionObligation } from './models/OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';

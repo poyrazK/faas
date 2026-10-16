@@ -16372,6 +16372,7 @@ SELECT id::text FROM customer_operations
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND record ? 'subject'
   AND record #>> '{subject,type}' = sqlc.arg(subject_type)::text AND record #>> '{subject,id}' = sqlc.arg(subject_id)::text
   AND record->>'scope' = sqlc.arg(scope)::text AND record->>'name' = sqlc.arg(name)::text
+  AND (sqlc.narg(tenant_id)::uuid IS NULL OR platform_tenant_id = sqlc.narg(tenant_id)::uuid)
   AND state IN ('accepted','running','waiting')
 ORDER BY created_at,id LIMIT sqlc.arg(page_limit)::integer;
 

@@ -147,17 +147,24 @@ func TestOperationSubjectSignalTargetsActiveOperations(t *testing.T) {
 		f.admission.IdempotencyKey, f.admission.Input = "order-2", []byte(`{"order_id":"ord_2"}`)
 		other := f.start(t)
 		signals := store.(state.OperationSignalStore)
-		ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
+		ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
 		if err != nil || len(ids) != 2 || !slices.Contains(ids, first.ID) || !slices.Contains(ids, second.ID) || slices.Contains(ids, other.ID) {
 			t.Fatalf("subject targets %v %v", ids, err)
 		}
-		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 1); err != nil || len(ids) != 1 {
+		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 1); err != nil || len(ids) != 1 {
 			t.Fatalf("subject target limit %v %v", ids, err)
+		}
+		// ADR-1198: a webhook binding keeps the match inside its tenant.
+		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, f.other.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10); err != nil || len(ids) != 0 {
+			t.Fatalf("another tenant's operations matched: %v %v", ids, err)
+		}
+		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, f.tenant.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10); err != nil || len(ids) != 2 {
+			t.Fatalf("own tenant's operations missed: %v %v", ids, err)
 		}
 		if _, err := f.ops.CancelOperation(ctx, f.account.ID, f.tenant.ID, second.ID, 1); err != nil {
 			t.Fatal(err)
 		}
-		ids, err = signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
+		ids, err = signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
 		if err != nil || len(ids) != 1 || ids[0] != first.ID {
 			t.Fatalf("settled operation still targeted: %v %v", ids, err)
 		}

@@ -2377,9 +2377,13 @@
       "created_at",
       "endpoint_id",
       "event_types",
+      "mode",
       "operation_name",
       "platform_tenant_id",
       "scope",
+      "signals",
+      "subject_id_from",
+      "subject_type",
       "updated_at",
       "version"
     ],

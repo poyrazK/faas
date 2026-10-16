@@ -729,9 +729,9 @@ const (
 	OperationIdempotencyKeyMaxBytes                          = 128
 	OperationApprovalCommentMaxBytes                         = 1024 // ADR-1194 recorded with the decision
 	OperationApprovalBodyMaxBytes                            = 2048
-	OperationWebhookEventTypesMax                            = 32 // ADR-1193 event types one binding may admit
-	OperationWebhookReceiptCleanupBatch                      = 16 // expired receipts removed per admission
-	OperationWebhookBindingMaxBytes                          = 4096
+	OperationWebhookEventTypesMax                            = 32    // ADR-1193 event types one binding may admit
+	OperationWebhookReceiptCleanupBatch                      = 16    // expired receipts removed per admission
+	OperationWebhookBindingMaxBytes                          = 16384 // ADR-1198 fits 32 signal mappings and a full subject pointer
 	OperationReportIDMaxBytes                                = 128
 	OperationRecoveryEvidenceMaxBytes                        = 4096
 	OperationEventsPageMax                                   = 100

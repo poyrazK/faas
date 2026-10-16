@@ -41,7 +41,8 @@ type OperationSignalInput struct {
 // OperationsForSubject lists active Operations of one name about one subject.
 type OperationSignalStore interface {
 	SignalOperation(ctx context.Context, in OperationSignalInput) (api.OperationSignalReceipt, error)
-	OperationsForSubject(ctx context.Context, accountID, appID, scope, name string, subject api.OperationSubject, limit int) ([]string, error)
+	// tenantID, when set, keeps the match inside one platform tenant.
+	OperationsForSubject(ctx context.Context, accountID, appID, tenantID, scope, name string, subject api.OperationSubject, limit int) ([]string, error)
 }
 
 func validateOperationSignal(in *OperationSignalInput) error {
@@ -156,7 +157,7 @@ func (s *PgStore) SignalOperation(ctx context.Context, in OperationSignalInput) 
 	return receipt, nil
 }
 
-func (s *PgStore) OperationsForSubject(ctx context.Context, accountID, appID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
+func (s *PgStore) OperationsForSubject(ctx context.Context, accountID, appID, tenantID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
 	a, err := operationUUID(accountID)
 	if err != nil {
 		return nil, ErrNotFound
@@ -167,6 +168,7 @@ func (s *PgStore) OperationsForSubject(ctx context.Context, accountID, appID, sc
 	}
 	ids, err := sqlc.New().ActiveCustomerOperationsForSubject(ctx, s.pool, sqlc.ActiveCustomerOperationsForSubjectParams{
 		AccountID: a, AppID: app, Scope: scope, Name: name, SubjectType: subject.Type, SubjectID: subject.ID, PageLimit: int32(limit),
+		TenantID: mustPgUUID(tenantID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("state: list subject operations: %w", err)
@@ -212,14 +214,14 @@ func (m *MemStore) SignalOperation(_ context.Context, in OperationSignalInput) (
 	return receipt, nil
 }
 
-func (m *MemStore) OperationsForSubject(_ context.Context, accountID, appID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
+func (m *MemStore) OperationsForSubject(_ context.Context, accountID, appID, tenantID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
 	matches := []Operation{}
 	for _, op := range data.operations {
 		active := op.State == api.OperationAccepted || op.State == api.OperationRunning || op.State == api.OperationWaiting
-		if active && op.AccountID == accountID && op.AppID == appID && op.Scope == scope && op.Name == name && op.Subject != nil && *op.Subject == subject {
+		if active && op.AccountID == accountID && op.AppID == appID && (tenantID == "" || op.PlatformTenantID == tenantID) && op.Scope == scope && op.Name == name && op.Subject != nil && *op.Subject == subject {
 			matches = append(matches, op)
 		}
 	}

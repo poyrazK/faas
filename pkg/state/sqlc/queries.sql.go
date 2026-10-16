@@ -424,8 +424,9 @@ SELECT id::text FROM customer_operations
 WHERE account_id=$1::uuid AND app_id=$2::uuid AND record ? 'subject'
   AND record #>> '{subject,type}' = $3::text AND record #>> '{subject,id}' = $4::text
   AND record->>'scope' = $5::text AND record->>'name' = $6::text
+  AND ($7::uuid IS NULL OR platform_tenant_id = $7::uuid)
   AND state IN ('accepted','running','waiting')
-ORDER BY created_at,id LIMIT $7::integer
+ORDER BY created_at,id LIMIT $8::integer
 `
 
 type ActiveCustomerOperationsForSubjectParams struct {
@@ -435,6 +436,7 @@ type ActiveCustomerOperationsForSubjectParams struct {
 	SubjectID   string
 	Scope       string
 	Name        string
+	TenantID    pgtype.UUID
 	PageLimit   int32
 }
 
@@ -448,6 +450,7 @@ func (q *Queries) ActiveCustomerOperationsForSubject(ctx context.Context, db DBT
 		arg.SubjectID,
 		arg.Scope,
 		arg.Name,
+		arg.TenantID,
 		arg.PageLimit,
 	)
 	if err != nil {

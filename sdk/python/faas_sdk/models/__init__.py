@@ -2532,6 +2532,8 @@ from .operation_waiting_state import OperationWaitingState
 from .operation_waiting_state_approver import OperationWaitingStateApprover
 from .operation_waiting_state_kind import OperationWaitingStateKind
 from .operation_webhook_binding_response import OperationWebhookBindingResponse
+from .operation_webhook_binding_response_mode import OperationWebhookBindingResponseMode
+from .operation_webhook_signal import OperationWebhookSignal
 from .operation_workflow_action_obligation import OperationWorkflowActionObligation
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
@@ -3616,6 +3618,7 @@ from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
+from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -7199,6 +7202,8 @@ __all__ = (
     "OperationWaitingStateApprover",
     "OperationWaitingStateKind",
     "OperationWebhookBindingResponse",
+    "OperationWebhookBindingResponseMode",
+    "OperationWebhookSignal",
     "OperationWorkflowActionObligation",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
@@ -8129,6 +8134,7 @@ __all__ = (
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
+    "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",

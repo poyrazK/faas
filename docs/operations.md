@@ -780,6 +780,41 @@ admitted operations and their receipts are retained. An endpoint has one
 delivery mode: remove an automation or exclusive operation binding first. See
 [ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
 
+### Resume waiting Operations from a webhook
+
+A binding with `"mode":"signal"` starts nothing. It delivers provider events as
+signals to Operations already waiting on a `wait_for_event` step:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/shop/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"fulfil","platform_tenant_id":"'$TENANT'",
+       "take_over_delivery":true,"mode":"signal",
+       "subject":{"type":"order","id_from":"/data/object/metadata/order_id"},
+       "signals":[{"provider_event":"payment_intent.succeeded","event":"payment.succeeded"}]}'
+```
+
+`subject.id_from` points into the provider payload, and `subject.type` must
+match the type the operation declares. Each `signals` entry maps a provider
+event type to the event a wait step names. When you bind, the operation must be
+a workflow that waits for every mapped event. Leave `event_types` empty;
+`signals` is the filter.
+
+A mapped event reaches the bound customer's active Operations of that
+definition about that subject, at most 16. Other customers' Operations with the
+same subject ID are never reached. The provider body becomes the wait step's
+output, so it must be at most 64 KiB.
+
+| Answer | Meaning |
+|---|---|
+| `202 signaled` | At least one Operation received the signal. A provider retry is the same signal, so it lands once and returns `duplicate: true`. |
+| `202 unmatched` | No active Operation is waiting on that subject. The event is dropped. |
+| `202 ignored` | The event type is unmapped, or the payload lacks the subject. |
+| non-2xx | Any other refusal. The provider retries the event. |
+
+Operations whose pinned workflow does not wait for the event are skipped. See
+[ADR-1198](adr/1198-webhook-delivered-operation-signals.md).
+
 ## Batch Job Operations (closed preview)
 
 `gregale init --template customer-operation-job-export --path exports` creates

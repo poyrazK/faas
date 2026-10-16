@@ -81,7 +81,7 @@ def sync_detailed(
 ) -> Response[OperationWebhookBindingResponse | Problem]:
     """Inspect an endpoint's customer operation binding.
 
-     Returns the bound operation, owner, event selection and revision.
+     Returns the bound operation, owner, mode, event selection and revision.
 
     Args:
         slug (str):
@@ -115,7 +115,7 @@ def sync(
 ) -> OperationWebhookBindingResponse | Problem | None:
     """Inspect an endpoint's customer operation binding.
 
-     Returns the bound operation, owner, event selection and revision.
+     Returns the bound operation, owner, mode, event selection and revision.
 
     Args:
         slug (str):
@@ -144,7 +144,7 @@ async def asyncio_detailed(
 ) -> Response[OperationWebhookBindingResponse | Problem]:
     """Inspect an endpoint's customer operation binding.
 
-     Returns the bound operation, owner, event selection and revision.
+     Returns the bound operation, owner, mode, event selection and revision.
 
     Args:
         slug (str):
@@ -176,7 +176,7 @@ async def asyncio(
 ) -> OperationWebhookBindingResponse | Problem | None:
     """Inspect an endpoint's customer operation binding.
 
-     Returns the bound operation, owner, event selection and revision.
+     Returns the bound operation, owner, mode, event selection and revision.
 
     Args:
         slug (str):

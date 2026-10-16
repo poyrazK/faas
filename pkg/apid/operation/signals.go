@@ -61,7 +61,7 @@ func (s *Service) SignalOperationsBySubject(w http.ResponseWriter, r *http.Reque
 		WriteOperationError(w, state.ErrInvalidArgument)
 		return
 	}
-	ids, err := store.OperationsForSubject(r.Context(), acct.ID, app.ID, req.Scope, req.Operation, req.Subject, api.OperationSignalSubjectTargetMax+1)
+	ids, err := store.OperationsForSubject(r.Context(), acct.ID, app.ID, "", req.Scope, req.Operation, req.Subject, api.OperationSignalSubjectTargetMax+1)
 	if err != nil {
 		WriteOperationError(w, err)
 		return

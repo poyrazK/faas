@@ -1268,6 +1268,7 @@ export type { OperationTimelineResponse } from './OperationTimelineResponse.js';
 export type { OperationUsage } from './OperationUsage.js';
 export type { OperationWaitingState } from './OperationWaitingState.js';
 export type { OperationWebhookBindingResponse } from './OperationWebhookBindingResponse.js';
+export type { OperationWebhookSignal } from './OperationWebhookSignal.js';
 export type { OperationWorkflowActionObligation } from './OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './OperationWorkflowActionPreviewResponse.js';
