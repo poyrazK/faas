@@ -15,6 +15,8 @@ T = TypeVar("T", bound="IssueTeam")
 
 @_attrs_define
 class IssueTeam:
+    """Application-scoped team identity, display name, complete member roster and editor metadata."""
+
     id: UUID
     key: str
     name: str

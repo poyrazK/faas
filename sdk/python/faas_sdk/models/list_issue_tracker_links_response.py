@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ListIssueTrackerLinksResponse")
 
 @_attrs_define
 class ListIssueTrackerLinksResponse:
+    """Cursor-paginated tracker references attached to the selected issue group."""
+
     items: list[IssueTrackerLink]
     next_cursor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

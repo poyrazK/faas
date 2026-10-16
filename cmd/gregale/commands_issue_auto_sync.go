@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 
@@ -22,12 +23,12 @@ func cmdIssueAutoSync(args []string) int {
 	disable := fs.Bool("disable", false, "pause automatic tracker sync")
 	flags, pos := normalizeDebugFlagArgs(args, map[string]bool{"app": true, "issue": true, "link": true, "provider": true, "direction": true, "linear-open-state": true, "linear-resolved-state": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
 	}
-	if *app == "" || len(pos) > 0 || (*enable && *disable) {
+	if *app == "" || len(pos) != 0 || (*enable && *disable) {
 		return printErr("Invalid automatic sync request", fmt.Errorf("require --app, --issue and --link; choose at most one of --enable or --disable"))
 	}
 	if _, err := api.NormalizeIssueTrackerSyncDirection(*direction); err != nil {
@@ -115,6 +116,6 @@ func cmdIssueAutoSync(args []string) int {
 		return jsonOut(writeJSON(policy))
 	}
 	directionLabel, _ := api.NormalizeIssueTrackerSyncDirection(policy.Direction)
-	fmt.Fprintf(osStdout, "enabled=%t\tdirection=%s\t%s\trevision=%d\t%s\n", policy.Enabled, directionLabel, policy.Outcome, policy.Revision, policy.Reason)
+	_, _ = fmt.Fprintf(osStdout, "enabled=%t\tdirection=%s\t%s\trevision=%d\t%s\n", policy.Enabled, directionLabel, policy.Outcome, policy.Revision, policy.Reason)
 	return 0
 }

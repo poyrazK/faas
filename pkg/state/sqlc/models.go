@@ -4497,13 +4497,13 @@ type IssueApplicationReminder struct {
 	IssueID                  pgtype.UUID
 	ResponseID               pgtype.UUID
 	Sequence                 int32
+	PolicyRevision           int64
+	Outcome                  string
+	CreatedAt                pgtype.Timestamptz
 	Kind                     string
 	EscalationPolicyRevision pgtype.Int8
 	ResponsibilityTeamID     pgtype.UUID
 	TargetTeamName           string
-	PolicyRevision           int64
-	Outcome                  string
-	CreatedAt                pgtype.Timestamptz
 }
 
 type IssueApplicationReminderPolicy struct {
@@ -4521,7 +4521,7 @@ type IssueApplicationResponseAccess struct {
 	OwnerAccountID    pgtype.UUID
 	ActorAccountID    pgtype.UUID
 	OwnerPlan         string
-	ResponsibleTeamID pgtype.UUID
+	ResponsibleTeamID interface{}
 	RoutedTeamID      pgtype.UUID
 }
 
@@ -4537,13 +4537,6 @@ type IssueApplicationSlackPolicy struct {
 
 type IssueApplicationTriage struct {
 	IssueID               pgtype.UUID
-	FirstRemindedAt       pgtype.Timestamptz
-	EscalationAttemptedAt pgtype.Timestamptz
-	EscalatedAt           pgtype.Timestamptz
-	EscalationTeamID      pgtype.UUID
-	ReminderStartedAt     pgtype.Timestamptz
-	LastRemindedAt        pgtype.Timestamptz
-	ReminderCount         int32
 	IncidentID            pgtype.UUID
 	Revision              int64
 	AcknowledgedBy        pgtype.UUID
@@ -4551,6 +4544,13 @@ type IssueApplicationTriage struct {
 	SnoozedUntil          pgtype.Timestamptz
 	SnoozedBy             pgtype.UUID
 	SnoozeReason          string
+	ReminderStartedAt     pgtype.Timestamptz
+	LastRemindedAt        pgtype.Timestamptz
+	ReminderCount         int32
+	FirstRemindedAt       pgtype.Timestamptz
+	EscalationAttemptedAt pgtype.Timestamptz
+	EscalatedAt           pgtype.Timestamptz
+	EscalationTeamID      pgtype.UUID
 }
 
 type IssueApplicationTriageActivity struct {
@@ -4670,9 +4670,9 @@ type IssueSlackDeliverySource struct {
 	LinkID                  pgtype.UUID
 	Kind                    string
 	Reason                  string
-	Details                 []byte
-	Eligible                bool
-	ApplicationRetryAllowed bool
+	Details                 interface{}
+	Eligible                interface{}
+	ApplicationRetryAllowed interface{}
 }
 
 type IssueSlackIdentity struct {
@@ -4768,7 +4768,7 @@ type IssueSplitRule struct {
 
 type IssueTeamSlackDelivery struct {
 	ID                        pgtype.UUID
-	DeliverySeq               pgtype.Int8
+	DeliverySeq               int64
 	ChannelID                 string
 	DestinationID             pgtype.UUID
 	DestinationRevision       int64

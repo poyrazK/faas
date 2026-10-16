@@ -18,6 +18,8 @@ T = TypeVar("T", bound="IssueReleaseHealth")
 
 @_attrs_define
 class IssueReleaseHealth:
+    """Observed issue and occurrence counts for one deployment within the requested environment."""
+
     deployment_id: UUID
     commit_sha: str
     created_at: datetime.datetime

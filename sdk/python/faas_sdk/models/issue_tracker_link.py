@@ -16,6 +16,8 @@ T = TypeVar("T", bound="IssueTrackerLink")
 
 @_attrs_define
 class IssueTrackerLink:
+    """Stored external ticket reference with provider identity and editor metadata."""
+
     id: UUID
     original_issue_id: UUID
     """Original identity owning this reference; retained through merge and split."""

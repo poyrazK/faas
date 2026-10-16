@@ -15,9 +15,12 @@ T = TypeVar("T", bound="PublishIssueSourceMapsRequest")
 
 @_attrs_define
 class PublishIssueSourceMapsRequest:
+    """Deployment source-map publication request containing the deployed directory and portable manifest."""
+
     directory: str
     """Absolute deployed directory corresponding to the manifest scan root."""
     manifest: IssueSourceMapManifest
+    """Portable source-map manifest with exact generated-bundle digests and original source locations."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

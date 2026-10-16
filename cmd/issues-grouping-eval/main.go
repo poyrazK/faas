@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/issues/evaluation"
@@ -16,11 +18,16 @@ func main() {
 	file := flag.String("corpus", "pkg/issues/evaluation/testdata/corpus.json", "labeled grouping corpus")
 	strategy := flag.String("strategy", "all", "legacy, failure-site-v1, cause-chain-v1 or all")
 	flag.Parse()
-	input, err := os.Open(*file)
+	root, err := os.OpenRoot(filepath.Dir(*file))
 	if err != nil {
 		fail(err)
 	}
-	defer input.Close()
+	defer func() { _ = root.Close() }()
+	input, err := root.Open(filepath.Base(*file))
+	if err != nil {
+		fail(err)
+	}
+	defer func() { _ = input.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(input, evaluation.MaxCorpusBytes+1))
 	if err != nil {
 		fail(err)
@@ -34,7 +41,7 @@ func main() {
 	if err = decoder.Decode(&cases); err != nil {
 		fail(err)
 	}
-	if err = decoder.Decode(&struct{}{}); err != io.EOF {
+	if err = decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		fail(fmt.Errorf("expected one corpus array"))
 	}
 	strategies := []string{*strategy}

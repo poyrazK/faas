@@ -2139,3 +2139,13 @@ pending/recent link challenges and 200 linked identities are retained per app;
 expired rows are removed before admitting new ones. Message-button records expire
 with native delivery history. Slack Connect users from a different workspace and
 enterprise installations without a concrete workspace are not supported yet.
+
+## Environment cloning
+
+The clone schema inventory recognizes Issues policies, tracker connections,
+Slack installations, response state and delivery history. Inventory coverage
+does not authorize copying them. Frequency, reminder, escalation, synchronization
+and Slack configuration require an isolated target-environment copy strategy;
+cloning does not enable these integrations or copy their credentials. Delivery
+receipts, callback state and response history remain operational records, and
+linked Slack identities remain account identities.

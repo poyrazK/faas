@@ -18,6 +18,8 @@ T = TypeVar("T", bound="BulkIssueLifecycleAction")
 
 @_attrs_define
 class BulkIssueLifecycleAction:
+    """Lifecycle or assignment action applied atomically to the selected canonical issue groups."""
+
     action: BulkIssueLifecycleActionAction
     assignee_account_id: UUID | Unset = UNSET
     """Only for assign; omit both assignment targets to unassign."""

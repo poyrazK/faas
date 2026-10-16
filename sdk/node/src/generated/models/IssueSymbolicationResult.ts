@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Symbolication outcome and mapped frames for one reported exception in its deployment.
+ */
 export type IssueSymbolicationResult = {
   manifest_sha256: string;
   mapped_frames: number;

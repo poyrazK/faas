@@ -9,7 +9,7 @@ import (
 
 const IssueSlackTokenNamespace = "issue-team-slack-bot-token"
 
-var ErrIssueSlackClaimLost = errors.New("Slack delivery claim changed")
+var ErrIssueSlackClaimLost = errors.New("slack delivery claim changed")
 var issueSlackChannel = regexp.MustCompile(`^[CG][A-Z0-9]{8,31}$`)
 var issueSlackTimestamp = regexp.MustCompile(`^[0-9]{1,20}\.[0-9]{1,10}$`)
 

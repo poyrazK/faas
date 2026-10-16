@@ -98,16 +98,16 @@ func (c *Client) ListLinearWorkflowStates(ctx context.Context, token, teamID str
 		}
 		row := response.Data.Team
 		if len(response.Errors) > 0 || row == nil || row.ID != teamID || strings.TrimSpace(string(row.ArchivedAt)) != "null" || row.States == nil || row.States.Nodes == nil || row.States.PageInfo == nil || row.States.PageInfo.HasNextPage == nil || len(row.States.Nodes) > api.IssueTrackerLinearWorkflowPageSize {
-			return nil, errors.New("Linear workflow catalog scope could not be confirmed")
+			return nil, errors.New("linear workflow catalog scope could not be confirmed")
 		}
 		scanned += len(row.States.Nodes)
 		if scanned > api.IssueTrackerLinearWorkflowMax {
-			return nil, errors.New("Linear workflow catalog exceeds the supported bound")
+			return nil, errors.New("linear workflow catalog exceeds the supported bound")
 		}
 		for _, node := range row.States.Nodes {
 			id, e := uuid.Parse(node.ID)
 			if e != nil || id == uuid.Nil || id.String() != node.ID || node.Team.ID != teamID || seenIDs[node.ID] || len(node.ArchivedAt) == 0 {
-				return nil, errors.New("Linear workflow catalog returned inconsistent identities")
+				return nil, errors.New("linear workflow catalog returned inconsistent identities")
 			}
 			seenIDs[node.ID] = true
 			if strings.TrimSpace(string(node.ArchivedAt)) != "null" || mappedLinearState(node.Type) == "" {
@@ -120,9 +120,9 @@ func (c *Client) ListLinearWorkflowStates(ctx context.Context, token, teamID str
 		}
 		cursor = row.States.PageInfo.EndCursor
 		if len(row.States.Nodes) == 0 || cursor == "" || len(cursor) > api.IssueTrackerLinearWorkflowCursorMaxBytes || strings.ContainsFunc(cursor, unicode.IsControl) || seenCursors[cursor] {
-			return nil, errors.New("Linear workflow catalog pagination could not be confirmed")
+			return nil, errors.New("linear workflow catalog pagination could not be confirmed")
 		}
 		seenCursors[cursor] = true
 	}
-	return nil, errors.New("Linear workflow catalog exceeds the supported page bound")
+	return nil, errors.New("linear workflow catalog exceeds the supported page bound")
 }

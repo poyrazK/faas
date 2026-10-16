@@ -2,6 +2,7 @@ package issueslack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -133,7 +134,7 @@ func TestSlackOAuthRejectsRedirectsAndOversizeResponses(t *testing.T) {
 			return r, nil
 		})})
 		_, err := c.ExchangeOAuth(context.Background(), oauthTestConfig(), "code")
-		if err != ErrOAuthProvider {
+		if !errors.Is(err, ErrOAuthProvider) {
 			t.Fatal(err)
 		}
 	}

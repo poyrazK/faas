@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Application-scoped team identity, display name, complete member roster and editor metadata.
+ */
 export type IssueTeam = {
   id: string;
   key: string;

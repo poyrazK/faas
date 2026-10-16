@@ -88,9 +88,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Delete an unused team.
 
-     Membership grants no app access. Members must already be eligible app owners or active organization
-    members. Mutations require deploy-write permission and session MFA. Teams referenced by issue
-    assignments or routing rules cannot be deleted.
+     Deletes the unused application team after checking that no issue assignments or routing rules
+    reference it. Requires deploy-write permission and session MFA.
 
     Args:
         slug (str):
@@ -124,9 +123,8 @@ def sync(
 ) -> Any | Problem | None:
     """Delete an unused team.
 
-     Membership grants no app access. Members must already be eligible app owners or active organization
-    members. Mutations require deploy-write permission and session MFA. Teams referenced by issue
-    assignments or routing rules cannot be deleted.
+     Deletes the unused application team after checking that no issue assignments or routing rules
+    reference it. Requires deploy-write permission and session MFA.
 
     Args:
         slug (str):
@@ -155,9 +153,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Delete an unused team.
 
-     Membership grants no app access. Members must already be eligible app owners or active organization
-    members. Mutations require deploy-write permission and session MFA. Teams referenced by issue
-    assignments or routing rules cannot be deleted.
+     Deletes the unused application team after checking that no issue assignments or routing rules
+    reference it. Requires deploy-write permission and session MFA.
 
     Args:
         slug (str):
@@ -189,9 +186,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Delete an unused team.
 
-     Membership grants no app access. Members must already be eligible app owners or active organization
-    members. Mutations require deploy-write permission and session MFA. Teams referenced by issue
-    assignments or routing rules cannot be deleted.
+     Deletes the unused application team after checking that no issue assignments or routing rules
+    reference it. Requires deploy-write permission and session MFA.
 
     Args:
         slug (str):

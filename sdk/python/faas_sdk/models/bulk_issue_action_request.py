@@ -15,8 +15,11 @@ T = TypeVar("T", bound="BulkIssueActionRequest")
 
 @_attrs_define
 class BulkIssueActionRequest:
+    """Bounded issue selection and one lifecycle or assignment operation to apply atomically."""
+
     issue_ids: list[UUID]
     action: BulkIssueLifecycleAction
+    """Lifecycle or assignment action applied atomically to the selected canonical issue groups."""
 
     def to_dict(self) -> dict[str, Any]:
         issue_ids = []

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { IssueSourceMapManifest } from './IssueSourceMapManifest.js';
+/**
+ * Deployment source-map publication request containing the deployed directory and portable manifest.
+ */
 export type PublishIssueSourceMapsRequest = {
   /**
    * Absolute deployed directory corresponding to the manifest scan root.

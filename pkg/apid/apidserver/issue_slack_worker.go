@@ -12,7 +12,7 @@ import (
 
 func openIssueSlackToken(blob []byte) (string, error) {
 	if mfaIdentities == nil {
-		return "", errors.New("Slack token keys unavailable")
+		return "", errors.New("slack token keys unavailable")
 	}
 	return issueslack.OpenToken(mfaIdentities(), blob)
 }

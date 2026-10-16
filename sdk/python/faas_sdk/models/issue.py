@@ -44,7 +44,7 @@ class Issue:
     fixed_deployment_created_at: datetime.datetime | Unset = UNSET
     ignored_until: datetime.datetime | Unset = UNSET
     assignee_team_id: UUID | Unset = UNSET
-    """Team in this app; mutually exclusive with assignee_account_id."""
+    """Current team assignment within this app, mutually exclusive with the account assignee."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

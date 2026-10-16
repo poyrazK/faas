@@ -45,6 +45,7 @@ class IssueEvent:
     """Opt-in server mapping against this credential's deployment artifacts; requires failure-site-v1 or cause-
     chain-v1."""
     symbolication: IssueSymbolicationResult | Unset = UNSET
+    """Symbolication outcome and mapped frames for one reported exception in its deployment."""
     causes: list[IssueCause] | Unset = UNSET
     causes_incomplete: bool | Unset = UNSET
     """Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause."""

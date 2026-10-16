@@ -21,6 +21,17 @@ func (p fakeProvider) Create(context.Context, Request, string) (Ticket, error) {
 func (p fakeProvider) Recover(_ context.Context, _ Request, _ string, url string) (Ticket, error) {
 	return p.recover(url)
 }
+
+// t.TempDir inherits the runner umask on some Go/OS combinations. The journal
+// contract requires a directory created explicitly with owner-only permissions.
+func privateJournalDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "journal")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
 func ticketFixture() Ticket {
 	return Ticket{URL: "https://github.com/owner/repo/issues/42", ProviderID: "42"}
 }
@@ -28,7 +39,7 @@ func linkedTicket(_ context.Context, ticket Ticket) (api.IssueTrackerLink, error
 	return api.IssueTrackerLink{ID: "55555555-5555-4555-8555-555555555555", URL: ticket.URL}, nil
 }
 func TestJournalRetriesAttachmentWithoutCreatingAgain(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateJournalDir(t)
 	r := requestFixture()
 	creates, links := 0, 0
 	provider := fakeProvider{create: func() (Ticket, error) { creates++; return ticketFixture(), nil }}
@@ -67,7 +78,7 @@ func TestJournalRetriesAttachmentWithoutCreatingAgain(t *testing.T) {
 	}
 }
 func TestJournalUncertainDispatchRequiresVerifiedRecovery(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateJournalDir(t)
 	r := requestFixture()
 	creates, recovers := 0, 0
 	provider := fakeProvider{create: func() (Ticket, error) { creates++; return Ticket{}, errors.New("response lost") }, recover: func(url string) (Ticket, error) {
@@ -92,13 +103,17 @@ func TestJournalUncertainDispatchRequiresVerifiedRecovery(t *testing.T) {
 	}
 }
 func TestJournalConcurrentRequestsAreFencedBeforeDispatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateJournalDir(t)
 	r := requestFixture()
 	started, finish := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	provider := fakeProvider{create: func() (Ticket, error) { close(started); <-finish; return ticketFixture(), nil }}
 	go func() { _, err := Run(context.Background(), dir, r, "secret", "", provider, linkedTicket); done <- err }()
-	<-started
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("first request returned before provider dispatch: %v", err)
+	}
 	_, err := Run(context.Background(), dir, r, "secret", "", provider, linkedTicket)
 	close(finish)
 	if !errors.Is(err, ErrBusy) {
@@ -109,7 +124,7 @@ func TestJournalConcurrentRequestsAreFencedBeforeDispatch(t *testing.T) {
 	}
 }
 func TestJournalExplicitRejectionCanRetryButCorruptEvidenceCannot(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateJournalDir(t)
 	r := requestFixture()
 	calls := 0
 	provider := fakeProvider{create: func() (Ticket, error) {
@@ -147,7 +162,7 @@ func TestJournalRejectsUntrustedPermissionsSymlinksAndCanceledDispatch(t *testin
 	if _, err := Run(context.Background(), public, r, "secret", "", provider, linkedTicket); err == nil {
 		t.Fatal("public journal accepted")
 	}
-	dir := t.TempDir()
+	dir := privateJournalDir(t)
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(dir, alias); err != nil {
 		t.Fatal(err)
@@ -166,7 +181,7 @@ func TestJournalRejectsUntrustedPermissionsSymlinksAndCanceledDispatch(t *testin
 }
 
 func TestJournalEscapedDescriptionRetainsRecoverableTicket(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateJournalDir(t)
 	r := requestFixture()
 	r.Description = strings.Repeat("<", api.IssueTrackerTicketBodyMaxBytes)
 	creates, links := 0, 0

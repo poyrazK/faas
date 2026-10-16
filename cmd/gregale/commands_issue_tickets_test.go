@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,7 +66,7 @@ func TestIssueTicketCLIRetryResumesLinkingAfterProviderSuccess(t *testing.T) {
 	osStdout, jsonOutput = &out, true
 	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
 	provider := &ticketCLIProvider{}
-	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix checkout", "--request-id", requestID, "--journal-dir", t.TempDir()}
+	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix checkout", "--request-id", requestID, "--journal-dir", filepath.Join(t.TempDir(), "journal")}
 	if runIssueTickets(args, provider) == 0 {
 		t.Fatal("failed linking reported success")
 	}

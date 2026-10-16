@@ -117,7 +117,7 @@ func (s *PgStore) EnqueueIssueTrackerEscalation(ctx context.Context) (bool, erro
 	for _, id := range due.RecipientAccountIds {
 		route.Recipients = append(route.Recipients, issueID(id))
 	}
-	escalation, err := q.IssueTrackerEscalationPolicyGet(ctx, tx, sqlc.IssueTrackerEscalationPolicyGetParams{ID: app.ID, AccountID: app.AccountID})
+	escalation, err := q.IssueTrackerEscalationPolicyGet(ctx, tx, sqlc.IssueTrackerEscalationPolicyGetParams(app))
 	if err != nil {
 		return false, err
 	}

@@ -36,16 +36,23 @@ func (c *Client) RespondToInteraction(ctx context.Context, responseURL, workspac
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURL, bytes.NewReader(body))
+	// Only the validated path comes from Slack's signed payload. Construct the
+	// authority locally so request data cannot select a network destination.
+	destination, err := url.Parse(responseURL)
 	if err != nil {
 		return state.ErrInvalidArgument
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://hooks.slack.com", bytes.NewReader(body))
+	if err != nil {
+		return state.ErrInvalidArgument
+	}
+	req.URL.Path = destination.Path
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return state.ErrInvalidArgument
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, api.IssueSlackResponseMaxBytes))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return state.ErrInvalidArgument

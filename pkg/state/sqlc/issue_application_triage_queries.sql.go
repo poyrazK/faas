@@ -158,19 +158,12 @@ func (q *Queries) IssueApplicationTriageCancelSlack(ctx context.Context, db DBTX
 }
 
 const issueApplicationTriageGet = `-- name: IssueApplicationTriageGet :one
-SELECT tr.issue_id, tr.first_reminded_at, tr.escalation_attempted_at, tr.escalated_at, tr.escalation_team_id, tr.reminder_started_at, tr.last_reminded_at, tr.reminder_count, tr.incident_id, tr.revision, tr.acknowledged_by, tr.acknowledged_at, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason,COALESCE(ack.email::text,'')::text AS acknowledged_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name,COALESCE(backup.name,'')::text AS responsible_team_name
+SELECT tr.issue_id, tr.incident_id, tr.revision, tr.acknowledged_by, tr.acknowledged_at, tr.snoozed_until, tr.snoozed_by, tr.snooze_reason, tr.reminder_started_at, tr.last_reminded_at, tr.reminder_count, tr.first_reminded_at, tr.escalation_attempted_at, tr.escalated_at, tr.escalation_team_id,COALESCE(ack.email::text,'')::text AS acknowledged_name,COALESCE(sleeper.email::text,'')::text AS snoozed_name,COALESCE(backup.name,'')::text AS responsible_team_name
 FROM issue_application_triage tr LEFT JOIN accounts ack ON ack.id=tr.acknowledged_by LEFT JOIN accounts sleeper ON sleeper.id=tr.snoozed_by LEFT JOIN app_issue_teams backup ON backup.id=tr.escalation_team_id WHERE tr.issue_id=$1
 `
 
 type IssueApplicationTriageGetRow struct {
 	IssueID               pgtype.UUID
-	FirstRemindedAt       pgtype.Timestamptz
-	EscalationAttemptedAt pgtype.Timestamptz
-	EscalatedAt           pgtype.Timestamptz
-	EscalationTeamID      pgtype.UUID
-	ReminderStartedAt     pgtype.Timestamptz
-	LastRemindedAt        pgtype.Timestamptz
-	ReminderCount         int32
 	IncidentID            pgtype.UUID
 	Revision              int64
 	AcknowledgedBy        pgtype.UUID
@@ -178,6 +171,13 @@ type IssueApplicationTriageGetRow struct {
 	SnoozedUntil          pgtype.Timestamptz
 	SnoozedBy             pgtype.UUID
 	SnoozeReason          string
+	ReminderStartedAt     pgtype.Timestamptz
+	LastRemindedAt        pgtype.Timestamptz
+	ReminderCount         int32
+	FirstRemindedAt       pgtype.Timestamptz
+	EscalationAttemptedAt pgtype.Timestamptz
+	EscalatedAt           pgtype.Timestamptz
+	EscalationTeamID      pgtype.UUID
 	AcknowledgedName      string
 	SnoozedName           string
 	ResponsibleTeamName   string
@@ -188,13 +188,6 @@ func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueI
 	var i IssueApplicationTriageGetRow
 	err := row.Scan(
 		&i.IssueID,
-		&i.FirstRemindedAt,
-		&i.EscalationAttemptedAt,
-		&i.EscalatedAt,
-		&i.EscalationTeamID,
-		&i.ReminderStartedAt,
-		&i.LastRemindedAt,
-		&i.ReminderCount,
 		&i.IncidentID,
 		&i.Revision,
 		&i.AcknowledgedBy,
@@ -202,6 +195,13 @@ func (q *Queries) IssueApplicationTriageGet(ctx context.Context, db DBTX, issueI
 		&i.SnoozedUntil,
 		&i.SnoozedBy,
 		&i.SnoozeReason,
+		&i.ReminderStartedAt,
+		&i.LastRemindedAt,
+		&i.ReminderCount,
+		&i.FirstRemindedAt,
+		&i.EscalationAttemptedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
 		&i.AcknowledgedName,
 		&i.SnoozedName,
 		&i.ResponsibleTeamName,
@@ -319,7 +319,7 @@ func (q *Queries) IssueApplicationTriageReleaseLease(ctx context.Context, db DBT
 }
 
 const issueApplicationTriageReset = `-- name: IssueApplicationTriageReset :one
-INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='',reminder_started_at=NULL,last_reminded_at=NULL,reminder_count=0,first_reminded_at=NULL,escalation_attempted_at=NULL,escalated_at=NULL,escalation_team_id=NULL RETURNING issue_id, first_reminded_at, escalation_attempted_at, escalated_at, escalation_team_id, reminder_started_at, last_reminded_at, reminder_count, incident_id, revision, acknowledged_by, acknowledged_at, snoozed_until, snoozed_by, snooze_reason
+INSERT INTO issue_application_triage(issue_id,revision) VALUES($1,1) ON CONFLICT(issue_id) DO UPDATE SET incident_id=gen_random_uuid(),revision=issue_application_triage.revision+1,acknowledged_by=NULL,acknowledged_at=NULL,snoozed_until=NULL,snoozed_by=NULL,snooze_reason='',reminder_started_at=NULL,last_reminded_at=NULL,reminder_count=0,first_reminded_at=NULL,escalation_attempted_at=NULL,escalated_at=NULL,escalation_team_id=NULL RETURNING issue_id, incident_id, revision, acknowledged_by, acknowledged_at, snoozed_until, snoozed_by, snooze_reason, reminder_started_at, last_reminded_at, reminder_count, first_reminded_at, escalation_attempted_at, escalated_at, escalation_team_id
 `
 
 func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriage, error) {
@@ -327,13 +327,6 @@ func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issu
 	var i IssueApplicationTriage
 	err := row.Scan(
 		&i.IssueID,
-		&i.FirstRemindedAt,
-		&i.EscalationAttemptedAt,
-		&i.EscalatedAt,
-		&i.EscalationTeamID,
-		&i.ReminderStartedAt,
-		&i.LastRemindedAt,
-		&i.ReminderCount,
 		&i.IncidentID,
 		&i.Revision,
 		&i.AcknowledgedBy,
@@ -341,6 +334,13 @@ func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issu
 		&i.SnoozedUntil,
 		&i.SnoozedBy,
 		&i.SnoozeReason,
+		&i.ReminderStartedAt,
+		&i.LastRemindedAt,
+		&i.ReminderCount,
+		&i.FirstRemindedAt,
+		&i.EscalationAttemptedAt,
+		&i.EscalatedAt,
+		&i.EscalationTeamID,
 	)
 	return i, err
 }

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Supported query filters retained by a shared application issue view.
+ */
 export type IssueSavedViewFilters = {
   /**
    * Omit to include every state.

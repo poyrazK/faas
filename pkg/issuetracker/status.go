@@ -96,10 +96,10 @@ func mappedLinearState(kind string) string {
 }
 func linearStatusRow(expected string, row *linearStatus) (Status, error) {
 	if row == nil {
-		return Status{}, errors.New("Linear did not return the linked issue")
+		return Status{}, errors.New("linear did not return the linked issue")
 	}
 	if len(row.ArchivedAt) == 0 {
-		return Status{}, errors.New("Linear archive status was not confirmed")
+		return Status{}, errors.New("linear archive status was not confirmed")
 	}
 	if strings.TrimSpace(string(row.ArchivedAt)) != "null" {
 		return Status{}, ErrUnsupportedStatus
@@ -110,7 +110,7 @@ func linearStatusRow(expected string, row *linearStatus) (Status, error) {
 	team, e2 := uuid.Parse(row.Team.ID)
 	state, e3 := uuid.Parse(row.State.ID)
 	if err != nil || e != nil || n.Provider != "linear" || n.URL != wanted.URL || !strings.HasSuffix(n.URL, "/issue/"+row.Identifier) || e1 != nil || e2 != nil || e3 != nil || id == uuid.Nil || team == uuid.Nil || state == uuid.Nil {
-		return Status{}, errors.New("Linear returned an inconsistent linked issue")
+		return Status{}, errors.New("linear returned an inconsistent linked issue")
 	}
 	mapped := mappedLinearState(row.State.Type)
 	if mapped == "" {
@@ -141,7 +141,7 @@ func (c *Client) ReadStatus(ctx context.Context, url, token string) (Status, err
 		return Status{}, err
 	}
 	if len(out.Errors) > 0 {
-		return Status{}, errors.New("Linear status could not be confirmed")
+		return Status{}, errors.New("linear status could not be confirmed")
 	}
 	return linearStatusRow(normalized.URL, out.Data.Issue)
 }
@@ -165,7 +165,7 @@ func (c *Client) SetStatus(ctx context.Context, observed Status, token, wanted, 
 	}
 	if fresh.Provider == "github" {
 		if linearStateID != "" {
-			return Status{}, errors.New("Linear state selection does not apply to GitHub")
+			return Status{}, errors.New("linear state selection does not apply to GitHub")
 		}
 		state, reason := "open", any(nil)
 		if wanted == "resolved" {
@@ -186,7 +186,7 @@ func (c *Client) SetStatus(ctx context.Context, observed Status, token, wanted, 
 	}
 	stateID, e := uuid.Parse(linearStateID)
 	if e != nil || stateID == uuid.Nil {
-		return Status{}, errors.New("Linear push requires the selected workflow state UUID")
+		return Status{}, errors.New("linear push requires the selected workflow state UUID")
 	}
 	if err := c.VerifyLinearWorkflowState(ctx, token, fresh.TeamID, stateID.String(), wanted); err != nil {
 		return Status{}, err
@@ -197,11 +197,11 @@ func (c *Client) SetStatus(ctx context.Context, observed Status, token, wanted, 
 		return Status{}, err
 	}
 	if len(out.Errors) > 0 || !out.Data.Update.Success {
-		return Status{}, errors.New("Linear status update was not confirmed")
+		return Status{}, errors.New("linear status update was not confirmed")
 	}
 	result, e := linearStatusRow(fresh.URL, out.Data.Update.Issue)
 	if e != nil || result.ID != fresh.ID || result.TeamID != fresh.TeamID || result.State != wanted || result.StateID != stateID.String() {
-		return Status{}, errors.New("Linear status update returned inconsistent evidence")
+		return Status{}, errors.New("linear status update returned inconsistent evidence")
 	}
 	return result, nil
 }

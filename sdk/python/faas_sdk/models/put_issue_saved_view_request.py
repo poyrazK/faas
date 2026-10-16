@@ -14,9 +14,12 @@ T = TypeVar("T", bound="PutIssueSavedViewRequest")
 
 @_attrs_define
 class PutIssueSavedViewRequest:
+    """Shared issue-view display name and validated replacement filter set."""
+
     name: str
     """Trimmed display name"""
     filters: IssueSavedViewFilters
+    """Supported query filters retained by a shared application issue view."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

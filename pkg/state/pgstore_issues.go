@@ -268,7 +268,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 				return api.IssueEventResponse{}, allowedErr
 			}
 			if allowed {
-				row, err = q.IssueSetNewIssueAssignee(ctx, tx, sqlc.IssueSetNewIssueAssigneeParams{ID: row.ID, AssigneeAccountID: stored.AssigneeAccountID, AssigneeTeamID: stored.AssigneeTeamID})
+				_, err = q.IssueSetNewIssueAssignee(ctx, tx, sqlc.IssueSetNewIssueAssigneeParams{ID: row.ID, AssigneeAccountID: stored.AssigneeAccountID, AssigneeTeamID: stored.AssigneeTeamID})
 				if err != nil {
 					return api.IssueEventResponse{}, err
 				}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -58,12 +59,12 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 	recoverURL := fs.String("recover-url", "", "verify an existing ticket after an uncertain create")
 	flags, pos := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "issue": true, "provider": true, "target": true, "title": true, "description": true, "request-id": true, "token-env": true, "journal-dir": true, "recover-url": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
 	}
-	if *app == "" || len(pos) > 0 {
+	if *app == "" || len(pos) != 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1
 	}

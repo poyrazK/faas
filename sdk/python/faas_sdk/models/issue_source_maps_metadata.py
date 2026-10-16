@@ -15,6 +15,8 @@ T = TypeVar("T", bound="IssueSourceMapsMetadata")
 
 @_attrs_define
 class IssueSourceMapsMetadata:
+    """Read-only publication status, manifest digest and retained map count for one deployment."""
+
     deployment_id: UUID
     manifest_sha256: str
     map_count: int

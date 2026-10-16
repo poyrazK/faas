@@ -10,7 +10,7 @@ import (
 func OpenToken(identities []*age.X25519Identity, blob []byte) (string, error) {
 	namespace, raw, err := secretbox.OpenBytesMulti(identities, blob)
 	if err != nil || namespace != state.IssueSlackTokenNamespace || !ValidBotToken(string(raw)) {
-		return "", errors.New("Slack token unavailable")
+		return "", errors.New("slack token unavailable")
 	}
 	return string(raw), nil
 }

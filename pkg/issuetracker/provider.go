@@ -84,7 +84,7 @@ func validateRequest(r Request, requireApp bool) (Request, error) {
 	}
 	origin, err := url.Parse(r.APIBase)
 	if err != nil || (origin.Scheme != "https" && origin.Scheme != "http") || origin.Host == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || len(r.APIBase) > api.IssueTrackerLinkURLMaxBytes || r.AppSlug == "" || len(r.AppSlug) > api.IssueTrackerLinkURLMaxBytes || !utf8.ValidString(r.AppSlug) || strings.IndexFunc(r.AppSlug, unicode.IsControl) >= 0 {
-		return r, errors.New("Gregale API and app identity are invalid")
+		return r, errors.New("gregale API and app identity are invalid")
 	}
 	r.APIBase = strings.TrimRight(r.APIBase, "/")
 	r.Title = strings.TrimSpace(r.Title)
@@ -107,11 +107,11 @@ func validateRequest(r Request, requireApp bool) (Request, error) {
 	case "linear":
 		requestID, _ := uuid.Parse(r.RequestID)
 		if requestID.Version() != 4 || requestID.Variant() != uuid.RFC4122 {
-			return r, errors.New("Linear request-id must be a UUID v4")
+			return r, errors.New("linear request-id must be a UUID v4")
 		}
 		id, err := uuid.Parse(r.Target)
 		if err != nil || id == uuid.Nil {
-			return r, errors.New("Linear target must be a team UUID")
+			return r, errors.New("linear target must be a team UUID")
 		}
 		r.Target = id.String()
 	default:
@@ -167,7 +167,7 @@ func (c *Client) request(ctx context.Context, provider, method, path, token stri
 	if err != nil {
 		return errors.New("tracker request did not return a confirmed outcome")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if !write && response.StatusCode == 401 {
 			return &ProviderUnauthorized{Provider: provider}
@@ -239,7 +239,7 @@ type linearResponse struct {
 
 func linearTicket(r Request, l *linearIssue) (Ticket, error) {
 	if l == nil {
-		return Ticket{}, errors.New("Linear did not confirm an issue")
+		return Ticket{}, errors.New("linear did not confirm an issue")
 	}
 	id, e1 := uuid.Parse(l.ID)
 	team, e2 := uuid.Parse(l.Team.ID)
@@ -275,7 +275,7 @@ func (c *Client) Create(ctx context.Context, r Request, token string) (Ticket, e
 		return Ticket{}, err
 	}
 	if len(out.Errors) > 0 || !out.Data.Create.Success {
-		return Ticket{}, errors.New("Linear request outcome is unconfirmed")
+		return Ticket{}, errors.New("linear request outcome is unconfirmed")
 	}
 	return linearTicket(r, out.Data.Create.Issue)
 }
@@ -310,7 +310,7 @@ func (c *Client) Recover(ctx context.Context, r Request, token, recoveryURL stri
 	}
 	ticket, err := linearTicket(r, out.Data.Issue)
 	if len(out.Errors) > 0 || err != nil || recoveryURL != "" && ticket.URL != n.URL {
-		return Ticket{}, errors.New("Linear recovery issue does not match this request")
+		return Ticket{}, errors.New("linear recovery issue does not match this request")
 	}
 	return ticket, nil
 }

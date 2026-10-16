@@ -15,6 +15,8 @@ T = TypeVar("T", bound="IssueSavedViewFilters")
 
 @_attrs_define
 class IssueSavedViewFilters:
+    """Supported query filters retained by a shared application issue view."""
+
     state: IssueSavedViewFiltersState | Unset = UNSET
     """Omit to include every state."""
     environment: str | Unset = UNSET

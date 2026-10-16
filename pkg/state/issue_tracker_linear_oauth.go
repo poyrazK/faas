@@ -66,7 +66,7 @@ func (s *PgStore) GetLinearOAuthFlow(ctx context.Context, hash, account string) 
 	return linearFlowRow(r), mapErr(e)
 }
 func (s *PgStore) ClaimLinearOAuthFlow(ctx context.Context, hash, account, from, to string) (LinearOAuthFlow, error) {
-	if !(from == "authorizing" && to == "exchanging" || from == "choosing" && to == "consuming") {
+	if (from != "authorizing" || to != "exchanging") && (from != "choosing" || to != "consuming") {
 		return LinearOAuthFlow{}, ErrInvalidArgument
 	}
 	r, e := sqlc.New().LinearOAuthFlowClaim(ctx, s.pool, sqlc.LinearOAuthFlowClaimParams{StateHash: hash, AccountID: issueUUID(account), ExpectedPhase: from, NextPhase: to})

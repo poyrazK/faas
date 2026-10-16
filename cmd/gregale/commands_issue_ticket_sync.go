@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -62,14 +63,14 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	tokenEnv := fs.String("token-env", "", "provider credential environment variable")
 	flags, pos := normalizeDebugFlagArgs(args, map[string]bool{"app": true, "issue": true, "link": true, "direction": true, "deployment": true, "linear-state": true, "token-env": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
 	}
 	issueUUID, e1 := uuid.Parse(*issue)
 	linkUUID, e2 := uuid.Parse(*linkID)
-	if len(pos) > 0 || *app == "" || e1 != nil || e2 != nil || issueUUID == uuid.Nil || linkUUID == uuid.Nil || (*direction != "push" && *direction != "pull") {
+	if len(pos) != 0 || *app == "" || e1 != nil || e2 != nil || issueUUID == uuid.Nil || linkUUID == uuid.Nil || (*direction != "push" && *direction != "pull") {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1
 	}
@@ -129,7 +130,7 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 		return printErr("Cannot sync ticket", fmt.Errorf("tracker reference has inconsistent provider metadata"))
 	}
 	if link.Provider != "linear" && *linearState != "" {
-		return printErr("Invalid sync request", fmt.Errorf("Linear workflow state does not apply to GitHub"))
+		return printErr("Invalid sync request", fmt.Errorf("linear workflow state does not apply to GitHub"))
 	}
 	if *native {
 		if link.Provider == "linear" {
@@ -207,7 +208,7 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 				return printErr("Gregale sync was not confirmed", e)
 			}
 			if after.ID != detail.Issue.ID || after.State != result.DesiredState {
-				return printErr("Gregale sync was not confirmed", fmt.Errorf("Gregale returned inconsistent lifecycle evidence"))
+				return printErr("Gregale sync was not confirmed", fmt.Errorf("gregale returned inconsistent lifecycle evidence"))
 			}
 		}
 		result.Applied = true
@@ -215,12 +216,12 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	fmt.Fprintf(osStdout, "%s: Gregale %s, %s %s; desired %s; change=%t applied=%t\n", result.Direction, result.GregaleState, remote.Provider, result.ProviderState, result.DesiredState, result.WouldChange, result.Applied)
+	_, _ = fmt.Fprintf(osStdout, "%s: Gregale %s, %s %s; desired %s; change=%t applied=%t\n", result.Direction, result.GregaleState, remote.Provider, result.ProviderState, result.DesiredState, result.WouldChange, result.Applied)
 	if result.NeedsDeployment {
-		fmt.Fprintln(osStdout, "Resolution requires --deployment UUID.")
+		_, _ = fmt.Fprintln(osStdout, "Resolution requires --deployment UUID.")
 	}
 	if result.NeedsLinearState {
-		fmt.Fprintln(osStdout, "Linear push requires --linear-state UUID.")
+		_, _ = fmt.Fprintln(osStdout, "Linear push requires --linear-state UUID.")
 	}
 	return 0
 }

@@ -9,9 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/pressly/goose/v3"
 )
 
 func TestPg_IssueTeamsRoutingInboxAndGroupLifecycle(t *testing.T) {
@@ -268,6 +272,30 @@ func TestPg_IssueTeamsRollbackGuardsSavedFiltersAndSupportsEmptyRoundTrip(t *tes
 		t.Fatal(err)
 	}
 	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(ctx, parts[1])
+	_ = tx.Rollback(ctx)
+	var dependency *pgconn.PgError
+	if !errors.As(err, &dependency) || dependency.Code != "2BP01" {
+		t.Fatalf("team rollback must retain later response views and triggers: %v", err)
+	}
+
+	// A migration's empty round trip belongs at its own schema boundary.
+	// Later response views and inbound triggers depend on the team column and
+	// must be rolled back first; the migration deliberately does not cascade.
+	roundTripPool := pgtest.OpenDatabase(t)
+	sqlDB := stdlib.OpenDBFromPool(roundTripPool)
+	defer func() { _ = sqlDB.Close() }()
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 20261014090001001); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = roundTripPool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

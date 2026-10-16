@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Bounded sanitized event context recorded before an issue occurrence.
+ */
 export type IssueBreadcrumb = {
   occurred_at: string;
   category: 'http' | 'db' | 'cache' | 'workflow' | 'log' | 'custom';

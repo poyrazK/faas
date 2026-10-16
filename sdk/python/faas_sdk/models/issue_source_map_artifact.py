@@ -11,6 +11,8 @@ T = TypeVar("T", bound="IssueSourceMapArtifact")
 
 @_attrs_define
 class IssueSourceMapArtifact:
+    """One generated bundle and its bounded source-map metadata, without embedded source contents."""
+
     generated_file: str
     """Portable relative bundle path from the Node build manifest."""
     sha256: str

@@ -40,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -487,7 +488,7 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	}
 	if eventType == "installation" || eventType == "installation_repositories" || eventType == "repository" {
 		if err := s.Service.HandleInstallationLifecycle(r.Context(), eventType, body); err != nil {
-			s.Log.Error("githubd lifecycle webhook handle", "event_type", eventType, "err", err)
+			s.Log.Error("githubd lifecycle webhook handle", "event_type", logsanitize.Field(eventType), "err", logsanitize.FieldAny(err))
 			http.Error(w, "internal", http.StatusInternalServerError)
 			observe(err)
 			return

@@ -55,22 +55,22 @@ func (c *Client) ListLinearOAuthTeams(ctx context.Context, access string) (Linea
 			return result, err
 		}
 		if len(response.Errors) > 0 || d.Organization == nil || d.Viewer == nil || d.Teams == nil || d.Teams.Nodes == nil || d.Teams.PageInfo == nil || d.Teams.PageInfo.HasNext == nil || len(d.Teams.Nodes) > api.IssueTrackerLinearOAuthTeamsPage {
-			return result, errors.New("Linear workspace and teams could not be confirmed")
+			return result, errors.New("linear workspace and teams could not be confirmed")
 		}
 		for _, id := range []string{d.Organization.ID, d.Viewer.ID} {
 			parsed, e := uuid.Parse(id)
 			if e != nil || parsed == uuid.Nil || parsed.String() != id {
-				return result, errors.New("Linear OAuth identity is invalid")
+				return result, errors.New("linear OAuth identity is invalid")
 			}
 		}
 		if page > 0 && (result.WorkspaceID != d.Organization.ID || result.ViewerID != d.Viewer.ID) {
-			return result, errors.New("Linear OAuth identity changed during pagination")
+			return result, errors.New("linear OAuth identity changed during pagination")
 		}
 		result.WorkspaceID, result.ViewerID = d.Organization.ID, d.Viewer.ID
 		for _, n := range d.Teams.Nodes {
 			id, e := uuid.Parse(n.ID)
 			if e != nil || id == uuid.Nil || id.String() != n.ID || seen[n.ID] || len(n.ArchivedAt) == 0 || !utf8.ValidString(n.Name) || strings.TrimSpace(n.Name) == "" || len(n.Name) > api.IssueTrackerLinearWorkflowNameMaxBytes || strings.ContainsFunc(n.Name, unicode.IsControl) {
-				return result, errors.New("Linear team catalog is invalid")
+				return result, errors.New("linear team catalog is invalid")
 			}
 			seen[n.ID] = true
 			if string(n.ArchivedAt) == "null" {
@@ -88,9 +88,9 @@ func (c *Client) ListLinearOAuthTeams(ctx context.Context, access string) (Linea
 		}
 		cursor = d.Teams.PageInfo.Cursor
 		if cursor == "" || len(cursor) > api.IssueTrackerLinearWorkflowCursorMaxBytes || cursors[cursor] {
-			return result, errors.New("Linear team pagination is invalid")
+			return result, errors.New("linear team pagination is invalid")
 		}
 		cursors[cursor] = true
 	}
-	return result, errors.New("Linear team catalog exceeds the supported bound")
+	return result, errors.New("linear team catalog exceeds the supported bound")
 }

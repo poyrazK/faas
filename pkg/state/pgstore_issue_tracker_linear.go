@@ -44,7 +44,7 @@ func (s *PgStore) GetIssueTrackerLinearConnection(ctx context.Context, app, acco
 	return out, tx.Commit(ctx)
 }
 func (s *PgStore) ConfigureIssueTrackerLinearConnection(ctx context.Context, in IssueTrackerLinearRecord, expected int64) (IssueTrackerLinearRecord, error) {
-	if expected < 0 || in.Connection.Connected && (len(in.SealedCredential) == 0 || issueUUID(in.Connection.WorkspaceID).Valid == false || issueUUID(in.Connection.TeamID).Valid == false || issueUUID(in.Connection.ViewerID).Valid == false) {
+	if expected < 0 || in.Connection.Connected && (len(in.SealedCredential) == 0 || !issueUUID(in.Connection.WorkspaceID).Valid || !issueUUID(in.Connection.TeamID).Valid || !issueUUID(in.Connection.ViewerID).Valid) {
 		return in, ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)

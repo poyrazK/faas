@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Explicit provider ticket URL and optional title to attach to an issue group.
+ */
 export type PutIssueTrackerLinkRequest = {
   /**
    * Public GitHub issue or Linear issue HTTPS URL; maximum 512 UTF-8 bytes.

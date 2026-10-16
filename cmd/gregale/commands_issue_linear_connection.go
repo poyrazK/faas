@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/google/uuid"
@@ -22,7 +23,7 @@ func cmdIssueLinearConnection(args []string) int {
 	webhookEnv := fs.String("webhook-secret-env", "", "optional environment variable containing the Linear webhook signing secret; omission disables callbacks on replacement")
 	flags, pos := normalizeDebugFlagArgs(args, map[string]bool{"app": true, "team": true, "token-env": true, "webhook-secret-env": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
@@ -33,7 +34,7 @@ func cmdIssueLinearConnection(args []string) int {
 			credentialFlags = true
 		}
 	})
-	if *app == "" || len(pos) > 0 || *connect && *disconnect || !*connect && credentialFlags {
+	if *app == "" || len(pos) != 0 || *connect && *disconnect || !*connect && credentialFlags {
 		return printErr("Invalid Linear connection request", fmt.Errorf("require --app; choose --connect with --team, --disconnect, or inspect without credential flags"))
 	}
 	in := api.UpdateIssueTrackerLinearConnectionRequest{Connected: *connect}
@@ -72,6 +73,6 @@ func cmdIssueLinearConnection(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	fmt.Fprintf(osStdout, "connected=%t\trevision=%d\tworkspace=%s\tteam=%s\tcallbacks=%t\tcallback_path=%s\n", out.Connected, out.Revision, out.WorkspaceID, out.TeamID, out.WebhookEnabled, out.CallbackPath)
+	_, _ = fmt.Fprintf(osStdout, "connected=%t\trevision=%d\tworkspace=%s\tteam=%s\tcallbacks=%t\tcallback_path=%s\n", out.Connected, out.Revision, out.WorkspaceID, out.TeamID, out.WebhookEnabled, out.CallbackPath)
 	return 0
 }

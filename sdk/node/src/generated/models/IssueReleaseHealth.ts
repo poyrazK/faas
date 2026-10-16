@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Observed issue and occurrence counts for one deployment within the requested environment.
+ */
 export type IssueReleaseHealth = {
   deployment_id: string;
   commit_sha: string;

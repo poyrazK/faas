@@ -16,11 +16,15 @@ T = TypeVar("T", bound="IssueReleaseComparison")
 
 @_attrs_define
 class IssueReleaseComparison:
+    """Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."""
+
     window_start: datetime.datetime
     window_end: datetime.datetime
     environment: str
     baseline: IssueReleaseHealth
+    """Observed issue and occurrence counts for one deployment within the requested environment."""
     candidate: IssueReleaseHealth
+    """Observed issue and occurrence counts for one deployment within the requested environment."""
     http_5xx_rate_delta: float | None
     """Candidate minus baseline observed HTTP 5xx rate, expressed as a fraction. Null if either has no observed
     requests."""

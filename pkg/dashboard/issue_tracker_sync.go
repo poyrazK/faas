@@ -65,9 +65,10 @@ func IssueTrackerSyncReason(reason string) string {
 // Names describe the current provider state; they never authorize a mutation.
 func (v *IssueTrackerSyncPreview) SetLinearWorkflowChoices(catalog []issuetracker.LinearWorkflowState) {
 	for _, state := range catalog {
-		if state.State == "open" {
+		switch state.State {
+		case "open":
 			v.OpenWorkflows = append(v.OpenWorkflows, state)
-		} else if state.State == "resolved" {
+		case "resolved":
 			v.ResolvedWorkflows = append(v.ResolvedWorkflows, state)
 		}
 		if state.State == v.SourceState {

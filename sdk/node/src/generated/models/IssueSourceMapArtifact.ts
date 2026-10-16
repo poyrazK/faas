@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One generated bundle and its bounded source-map metadata, without embedded source contents.
+ */
 export type IssueSourceMapArtifact = {
   /**
    * Portable relative bundle path from the Node build manifest.

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Read-only publication status, manifest digest and retained map count for one deployment.
+ */
 export type IssueSourceMapsMetadata = {
   deployment_id: string;
   manifest_sha256: string;

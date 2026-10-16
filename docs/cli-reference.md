@@ -10680,7 +10680,7 @@ Wait for one invocation to finish (exit 124 on timeout, 130 on Ctrl-C)
 
 Group failures and track ownership and release-aware resolution
 
-`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <OWNER>] [--sort <ORDER>] [--min-customers <N>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>] [--rules-file <PATH>]`
+`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--team <UUID>] [--assignee <OWNER>] [--sort <ORDER>] [--tag <KEY=VALUE>] [--min-customers <N>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>] [--rules-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10691,8 +10691,10 @@ Group failures and track ownership and release-aware resolution
 | `--cursor <CURSOR>` | issue-list or occurrence cursor |  |
 | `--release-cursor <CURSOR>` | release history cursor |  |
 | `--activity-cursor <CURSOR>` | activity history cursor |  |
+| `--team <UUID>` | team assignment or shared inbox |  |
 | `--assignee <OWNER>` | list filter me, unassigned, or account UUID; assignment owner UUID |  |
 | `--sort <ORDER>` | list order: recent or impact by verified customers in 24h |  |
+| `--tag <KEY=VALUE>` | allowed operational tag filter over retained occurrences in 24h |  |
 | `--min-customers <N>` | issue list threshold, or impact-alert policy threshold (0 disables) |  |
 | `--since <RFC3339>` | impact window start |  |
 | `--until <RFC3339>` | ignore until |  |
@@ -10744,14 +10746,15 @@ gregale issues get --app <SLUG> <issue-id>
 
 ### issues assign
 
-Assign an issue to an account
+Assign an issue to an account or team
 
-`gregale issues assign --app <SLUG> [--interactive] [--assignee <UUID>] [<issue-id>]`
+`gregale issues assign --app <SLUG> [--interactive] [--team <UUID>] [--assignee <UUID>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 | `--interactive` | choose an open issue, assign to yourself or unassign, and confirm ownership |  |
+| `--team <UUID>` | team assignment or shared inbox |  |
 | `--assignee <UUID>` | owner account UUID (empty unassigns) |  |
 
 Examples:
@@ -10822,6 +10825,145 @@ Read or configure customer-impact alert threshold
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+
+### issues tickets
+
+Create tracker tickets or preview and apply lifecycle sync
+
+`gregale issues tickets --app <SLUG> --issue <UUID> [--provider <PROVIDER>] [--target <TARGET>] [--title <TEXT>] [--request-id <UUID>] [--description <TEXT>] [--token-env <NAME>] [--journal-dir <PATH>] [--recover-url <URL>] [--recover] [--link <UUID>] [--direction <push|pull|outbound|inbound|both>] [--apply] [--deployment <UUID>] [--linear-state <UUID>] [--webhook-secret-env <NAME>] [--linear-open-state <UUID>] [--linear-resolved-state <UUID>] [--native] [--enable] [--disable] [--connect] [--disconnect] [--team <UUID>] <create|sync|auto-sync|linear-connection>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--issue <UUID>` |  | required |
+| `--provider <PROVIDER>` |  |  |
+| `--target <TARGET>` |  |  |
+| `--title <TEXT>` |  |  |
+| `--request-id <UUID>` |  |  |
+| `--description <TEXT>` |  |  |
+| `--token-env <NAME>` |  |  |
+| `--journal-dir <PATH>` |  |  |
+| `--recover-url <URL>` |  |  |
+| `--recover` |  |  |
+| `--link <UUID>` |  |  |
+| `--direction <push|pull|outbound|inbound|both>` |  |  |
+| `--apply` |  |  |
+| `--deployment <UUID>` |  |  |
+| `--linear-state <UUID>` |  |  |
+| `--webhook-secret-env <NAME>` |  |  |
+| `--linear-open-state <UUID>` |  |  |
+| `--linear-resolved-state <UUID>` |  |  |
+| `--native` |  |  |
+| `--enable` |  |  |
+| `--disable` |  |  |
+| `--connect` |  |  |
+| `--disconnect` |  |  |
+| `--team <UUID>` |  |  |
+
+### issues links
+
+Manage GitHub and Linear tracker references
+
+`gregale issues links --app <SLUG> --issue <UUID> [--url <URL>] [--title <TEXT>] [--link <UUID>] [--cursor <CURSOR>] <list|save|delete>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--issue <UUID>` |  | required |
+| `--url <URL>` |  |  |
+| `--title <TEXT>` |  |  |
+| `--link <UUID>` |  |  |
+| `--cursor <CURSOR>` |  |  |
+
+### issues teams
+
+Manage team members and shared inboxes
+
+`gregale issues teams --app <SLUG> [--key <KEY>] [--name <NAME>] [--members <UUID,UUID>] [--cursor <CURSOR>] <list|get|save|delete|inbox>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--key <KEY>` |  |  |
+| `--name <NAME>` |  |  |
+| `--members <UUID,UUID>` |  |  |
+| `--cursor <CURSOR>` |  |  |
+
+### issues codeowners
+
+Preview or replace ownership rules from a bounded CODEOWNERS subset
+
+`gregale issues codeowners --file <PATH> --bindings-file <PATH> --source-root <PATH> [--app <SLUG>] [--replace] <preview|apply>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` |  | required |
+| `--bindings-file <PATH>` |  | required |
+| `--source-root <PATH>` |  | required |
+| `--app <SLUG>` |  |  |
+| `--replace` | explicitly replace the existing policy |  |
+
+### issues views
+
+Manage and apply shared saved issue inbox filters
+
+`gregale issues views --app <SLUG> [--key <KEY>] [--name <NAME>] [--state <STATE>] [--environment <NAME>] [--team <UUID>] [--assignee <OWNER>] [--sort <ORDER>] [--min-customers <N>] [--tag <KEY=VALUE>] [--cursor <CURSOR>] <list|get|save|delete|apply>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--key <KEY>` |  |  |
+| `--name <NAME>` |  |  |
+| `--state <STATE>` |  |  |
+| `--environment <NAME>` |  |  |
+| `--team <UUID>` | team assignment or shared inbox |  |
+| `--assignee <OWNER>` |  |  |
+| `--sort <ORDER>` |  |  |
+| `--min-customers <N>` |  |  |
+| `--tag <KEY=VALUE>` |  |  |
+| `--cursor <CURSOR>` |  |  |
+
+### issues compare-releases
+
+Compare observed request health and Issues across deployments
+
+`gregale issues compare-releases --app <SLUG> --baseline <UUID> --candidate <UUID> [--environment <NAME>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--baseline <UUID>` |  | required |
+| `--candidate <UUID>` |  | required |
+| `--environment <NAME>` |  |  |
+
+### issues bulk
+
+Atomically triage up to 50 selected issue groups
+
+`gregale issues bulk --app <SLUG> --issues <UUID,UUID> --action <ACTION> [--team <UUID>] [--assignee <UUID>] [--deployment <UUID>] [--until <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--issues <UUID,UUID>` |  | required |
+| `--action <ACTION>` |  | required |
+| `--team <UUID>` | team assignment or shared inbox |  |
+| `--assignee <UUID>` |  |  |
+| `--deployment <UUID>` |  |  |
+| `--until <RFC3339>` |  |  |
+
+### issues source-maps
+
+Publish, inspect or retire deployment mapping artifacts
+
+`gregale issues source-maps --app <SLUG> --deployment <UUID> [--directory <PATH>] [--manifest-file <PATH>] <publish|status|retire>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--deployment <UUID>` |  | required |
+| `--directory <PATH>` | deployed directory corresponding to the build scan root |  |
+| `--manifest-file <PATH>` | portable source-map manifest file |  |
 
 ### issues ownership-rules
 

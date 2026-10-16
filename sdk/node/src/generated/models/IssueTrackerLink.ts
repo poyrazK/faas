@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Stored external ticket reference with provider identity and editor metadata.
+ */
 export type IssueTrackerLink = {
   id: string;
   /**

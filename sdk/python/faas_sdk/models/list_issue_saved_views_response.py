@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ListIssueSavedViewsResponse")
 
 @_attrs_define
 class ListIssueSavedViewsResponse:
+    """Shared saved issue queries available within the selected application."""
+
     items: list[IssueSavedView]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

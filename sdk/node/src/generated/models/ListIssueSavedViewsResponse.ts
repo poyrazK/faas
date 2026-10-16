@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { IssueSavedView } from './IssueSavedView.js';
+/**
+ * Shared saved issue queries available within the selected application.
+ */
 export type ListIssueSavedViewsResponse = {
   items: Array<IssueSavedView>;
 };

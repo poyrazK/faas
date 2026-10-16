@@ -25,7 +25,7 @@ export type IssueOwnershipRule = {
    */
   tag?: string;
   /**
-   * Team in this app; mutually exclusive with assignee_account_id.
+   * Team selected by this ownership rule; cannot be combined with an account assignment.
    */
   assignee_team_id?: string;
 };

@@ -17295,6 +17295,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: deployment_id
+        description: Deployment UUID whose source-map publication is being managed.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -17380,6 +17381,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: view_key
+        description: Stable key of the shared issue query to read, replace or delete.
         in: path
         required: true
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
@@ -17463,6 +17465,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: team_key
+        description: Stable application team key used to manage its identity and membership.
         in: path
         required: true
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
@@ -17511,7 +17514,7 @@ paths:
       tags: [apps]
       operationId: deleteIssueTeam
       summary: Delete an unused team.
-      description: Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+      description: Deletes the unused application team after checking that no issue assignments or routing rules reference it. Requires deploy-write permission and session MFA.
       security: [{ bearerAuth: [] }]
       responses:
         '204': { description: Team deleted. }
@@ -17535,14 +17538,17 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters:
         - name: baseline
+          description: Baseline deployment UUID for the issue health comparison.
           in: query
           required: true
           schema: { type: string, format: uuid }
         - name: candidate
+          description: Candidate deployment UUID compared with the selected baseline.
           in: query
           required: true
           schema: { type: string, format: uuid }
         - name: environment
+          description: Issue environment included in both deployment health observations.
           in: query
           schema: { type: string, default: application, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
       responses:
@@ -17854,6 +17860,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: issue_id
+        description: Issue group UUID that owns the external tracker references.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -17865,6 +17872,7 @@ paths:
       security: [{ bearerAuth: [] }]
       parameters:
         - name: cursor
+          description: Opaque continuation token from the preceding tracker-reference page.
           in: query
           schema: { type: string }
       responses:
@@ -17908,10 +17916,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: issue_id
+        description: Issue group UUID whose selected tracker reference will be removed.
         in: path
         required: true
         schema: { type: string, format: uuid }
       - name: link_id
+        description: Stored tracker-reference UUID to detach from the selected issue group.
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -95630,6 +95640,7 @@ components:
         frame_order: { type: string, enum: [newest-first, oldest-first] }
 
     IssueSourceMapArtifact:
+      description: "One generated bundle and its bounded source-map metadata, without embedded source contents."
       type: object
       required: [generatedFile, sha256, payload]
       properties:
@@ -95637,18 +95648,21 @@ components:
         sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Producer-supplied bundle digest; the server does not retrieve bundle bytes to independently verify it. }
         payload: { type: string, maxLength: 524288, description: Flat Source Map v3 JSON; byte and decoded limits are enforced before persistence. }
     IssueSourceMapManifest:
+      description: "Portable source-map manifest with exact generated-bundle digests and original source locations."
       type: object
       required: [version, artifacts]
       properties:
         version: { type: integer, enum: [1] }
         artifacts: { type: array, minItems: 1, maxItems: 32, items: { $ref: '#/components/schemas/IssueSourceMapArtifact' } }
     PublishIssueSourceMapsRequest:
+      description: "Deployment source-map publication request containing the deployed directory and portable manifest."
       type: object
       required: [directory, manifest]
       properties:
         directory: { type: string, maxLength: 512, description: Absolute deployed directory corresponding to the manifest scan root. }
         manifest: { $ref: '#/components/schemas/IssueSourceMapManifest' }
     IssueSourceMapsMetadata:
+      description: "Read-only publication status, manifest digest and retained map count for one deployment."
       type: object
       required: [deployment_id, manifest_sha256, map_count, ready, created_at]
       properties:
@@ -95659,6 +95673,7 @@ components:
         created_at: { type: string, format: date-time }
         retired_at: { type: string, format: date-time }
     IssueSymbolicationResult:
+      description: "Symbolication outcome and mapped frames for one reported exception in its deployment."
       type: object
       readOnly: true
       required: [manifest_sha256, mapped_frames, unmapped_frames]
@@ -95668,6 +95683,7 @@ components:
         unmapped_frames: { type: integer }
 
     IssueBreadcrumb:
+      description: "Bounded sanitized event context recorded before an issue occurrence."
       type: object
       required: [occurred_at, category, level, message]
       properties:
@@ -95742,7 +95758,7 @@ components:
         fixed_deployment_id: { type: string, format: uuid }
         fixed_deployment_created_at: { type: string, format: date-time }
         ignored_until: { type: string, format: date-time }
-        assignee_team_id: { type: string, format: uuid, description: Team in this app; mutually exclusive with assignee_account_id. }
+        assignee_team_id: { type: string, format: uuid, description: "Current team assignment within this app, mutually exclusive with the account assignee." }
 
     IssueImpactSummary:
       description: "Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24 hours."
@@ -95833,6 +95849,7 @@ components:
         coverage: { type: string }
 
     IssueFrequencyAlertRule:
+      description: "Named event-frequency threshold with a bounded observation window, cooldown and optional filters."
       type: object
       additionalProperties: false
       required: [key, enabled, environment, minimum_events, window_seconds, cooldown_seconds]
@@ -95847,6 +95864,7 @@ components:
         window_seconds: { type: integer, format: int64, minimum: 60, maximum: 86400 }
         cooldown_seconds: { type: integer, format: int64, minimum: 60, maximum: 604800 }
     IssueFrequencyAlertPolicy:
+      description: "Current revision and complete ordered set of application frequency-alert rules."
       type: object
       additionalProperties: false
       required: [revision, rules]
@@ -95857,6 +95875,7 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/IssueFrequencyAlertRule' }
     UpdateIssueFrequencyAlertPolicyRequest:
+      description: "Replacement frequency-alert rules guarded by the expected policy revision."
       type: object
       additionalProperties: false
       required: [expected_revision, rules]
@@ -95884,6 +95903,7 @@ components:
         minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
 
     PutIssueTrackerLinkRequest:
+      description: "Explicit provider ticket URL and optional title to attach to an issue group."
       type: object
       additionalProperties: false
       required: [url]
@@ -96037,6 +96057,7 @@ components:
         expected: { $ref: '#/components/schemas/IssueTrackerProviderStatus' }
 
     IssueTrackerLink:
+      description: "Stored external ticket reference with provider identity and editor metadata."
       type: object
       required: [id, original_issue_id, provider, external_key, url, created_at, updated_at]
       properties:
@@ -96051,6 +96072,7 @@ components:
         created_by_account_id: { type: string, format: uuid }
         updated_by_account_id: { type: string, format: uuid }
     ListIssueTrackerLinksResponse:
+      description: "Cursor-paginated tracker references attached to the selected issue group."
       type: object
       required: [items]
       properties:
@@ -96058,6 +96080,7 @@ components:
         next_cursor: { type: string }
 
     IssueTeam:
+      description: "Application-scoped team identity, display name, complete member roster and editor metadata."
       type: object
       required: [id, key, name, member_account_ids, created_at, updated_at]
       properties:
@@ -96069,6 +96092,7 @@ components:
         updated_at: { type: string, format: date-time }
         updated_by_account_id: { type: string, format: uuid }
     PutIssueTeamRequest:
+      description: "Replacement team display name and eligible account membership roster."
       type: object
       additionalProperties: false
       required: [name, member_account_ids]
@@ -96076,12 +96100,14 @@ components:
         name: { type: string, minLength: 1, maxLength: 64, description: Maximum 64 UTF-8 bytes without control characters. }
         member_account_ids: { type: array, minItems: 1, maxItems: 50, uniqueItems: true, items: { type: string, format: uuid } }
     ListIssueTeamsResponse:
+      description: "Teams available for issue assignment and response routing within an application."
       type: object
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/IssueTeam' } }
 
     IssueSavedViewFilters:
+      description: "Supported query filters retained by a shared application issue view."
       type: object
       additionalProperties: false
       properties:
@@ -96094,6 +96120,7 @@ components:
         team: { type: string, format: uuid, description: App-scoped team inbox; mutually exclusive with assignee. }
 
     PutIssueSavedViewRequest:
+      description: "Shared issue-view display name and validated replacement filter set."
       type: object
       additionalProperties: false
       required: [name, filters]
@@ -96101,6 +96128,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 64, description: Trimmed display name, limited to 64 UTF-8 bytes without control characters. }
         filters: { $ref: '#/components/schemas/IssueSavedViewFilters' }
     IssueSavedView:
+      description: "Named shared issue query with its stable key and creation and editor metadata."
       type: object
       required: [key, name, filters, created_at, updated_at]
       properties:
@@ -96111,6 +96139,7 @@ components:
         updated_at: { type: string, format: date-time }
         updated_by_account_id: { type: string, format: uuid }
     ListIssueSavedViewsResponse:
+      description: "Shared saved issue queries available within the selected application."
       type: object
       required: [items]
       properties:
@@ -96130,7 +96159,7 @@ components:
         route_prefix: { type: string, pattern: '^/', maxLength: 256, description: Path prefix; matches only at a path-segment boundary. }
         source_path_prefix: { type: string, minLength: 1, maxLength: 256, description: 'Local source path prefix (256 UTF-8 bytes); matches any application frame in the exception or its causes at a path-segment boundary. Backslashes and dot segments normalize; parent traversal, URLs, queries, and fragments are rejected. No glob or filesystem access.' }
         tag: { type: string, maxLength: 193, description: 'Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes. Missing keys do not match an empty value.' }
-        assignee_team_id: { type: string, format: uuid, description: Team in this app; mutually exclusive with assignee_account_id. }
+        assignee_team_id: { type: string, format: uuid, description: "Team selected by this ownership rule; cannot be combined with an account assignment." }
 
     IssueOwnershipRules:
       description: "Complete ordered app-level ownership policy. An empty rules list disables automatic assignment."
@@ -96238,6 +96267,7 @@ components:
         enabled: { type: boolean }
 
     IssueReleaseHealth:
+      description: "Observed issue and occurrence counts for one deployment within the requested environment."
       type: object
       required: [deployment_id, commit_sha, created_at, observed_requests, http_5xx_requests, http_5xx_rate, request_coverage, observed_issue_events, observed_issue_groups, new_issue_groups, regressed_issue_groups, identified_customers, unattributed_events]
       properties:
@@ -96246,7 +96276,7 @@ components:
         created_at: { type: string, format: date-time }
         observed_requests: { type: integer, format: int64, minimum: 0 }
         http_5xx_requests: { type: integer, format: int64, minimum: 0 }
-        http_5xx_rate: { type: number, format: double, nullable: true, minimum: 0, maximum: 1 }
+        http_5xx_rate: { type: [number, 'null'], format: double, minimum: 0, maximum: 1 }
         request_coverage: { type: string, enum: [observed, unknown] }
         observed_issue_events: { type: integer, format: int64, minimum: 0 }
         observed_issue_groups: { type: integer, format: int64, minimum: 0 }
@@ -96255,6 +96285,7 @@ components:
         identified_customers: { type: integer, format: int64, minimum: 0 }
         unattributed_events: { type: integer, format: int64, minimum: 0 }
     IssueReleaseComparison:
+      description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
       type: object
       required: [window_start, window_end, environment, baseline, candidate, http_5xx_rate_delta]
       properties:
@@ -96264,13 +96295,13 @@ components:
         baseline: { $ref: '#/components/schemas/IssueReleaseHealth' }
         candidate: { $ref: '#/components/schemas/IssueReleaseHealth' }
         http_5xx_rate_delta:
-          type: number
+          type: [number, 'null']
           format: double
-          nullable: true
           minimum: -1
           maximum: 1
           description: Candidate minus baseline observed HTTP 5xx rate, expressed as a fraction. Null if either has no observed requests.
     BulkIssueLifecycleAction:
+      description: "Lifecycle or assignment action applied atomically to the selected canonical issue groups."
       type: object
       additionalProperties: false
       required: [action]
@@ -96282,6 +96313,7 @@ components:
         assignee_team_id: { type: string, format: uuid, description: Only for assign; mutually exclusive with assignee_account_id. }
 
     BulkIssueActionRequest:
+      description: "Bounded issue selection and one lifecycle or assignment operation to apply atomically."
       type: object
       additionalProperties: false
       required: [issue_ids, action]
@@ -96295,6 +96327,7 @@ components:
         action:
           $ref: '#/components/schemas/BulkIssueLifecycleAction'
     BulkIssueActionResponse:
+      description: "Canonical issue groups updated by the completed atomic bulk action."
       type: object
       required: [items]
       properties:
@@ -96313,7 +96346,7 @@ components:
         assignee_account_id: { type: string, format: uuid }
         fixed_deployment_id: { type: string, format: uuid }
         ignored_until: { type: string, format: date-time }
-        assignee_team_id: { type: string, format: uuid, description: Team in this app; mutually exclusive with assignee_account_id. }
+        assignee_team_id: { type: string, format: uuid, description: "Target team for this assignment action; clear the account assignee when selecting a team." }
 
     CreateIssueIngestTokenRequest:
       description: "Create a short-lived reporting credential for one existing deployment and environment."

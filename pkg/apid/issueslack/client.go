@@ -51,7 +51,7 @@ func (c *Client) Send(ctx context.Context, claim state.IssueSlackClaim, token, b
 	if err != nil {
 		return retry(claim, "transport_error", 0, "")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return retry(claim, "rate_limited", resp.StatusCode, resp.Header.Get("Retry-After"))
 	}

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { IssueSavedViewFilters } from './IssueSavedViewFilters.js';
+/**
+ * Shared issue-view display name and validated replacement filter set.
+ */
 export type PutIssueSavedViewRequest = {
   /**
    * Trimmed display name

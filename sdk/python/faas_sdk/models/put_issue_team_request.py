@@ -11,6 +11,8 @@ T = TypeVar("T", bound="PutIssueTeamRequest")
 
 @_attrs_define
 class PutIssueTeamRequest:
+    """Replacement team display name and eligible account membership roster."""
+
     name: str
     """Maximum 64 UTF-8 bytes without control characters."""
     member_account_ids: list[UUID]

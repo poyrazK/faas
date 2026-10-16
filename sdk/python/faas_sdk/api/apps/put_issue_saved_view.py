@@ -112,7 +112,8 @@ def sync_detailed(
     Args:
         slug (str):
         view_key (str):
-        body (PutIssueSavedViewRequest):
+        body (PutIssueSavedViewRequest): Shared issue-view display name and validated replacement
+            filter set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,7 +153,8 @@ def sync(
     Args:
         slug (str):
         view_key (str):
-        body (PutIssueSavedViewRequest):
+        body (PutIssueSavedViewRequest): Shared issue-view display name and validated replacement
+            filter set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,7 +189,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         view_key (str):
-        body (PutIssueSavedViewRequest):
+        body (PutIssueSavedViewRequest): Shared issue-view display name and validated replacement
+            filter set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -225,7 +228,8 @@ async def asyncio(
     Args:
         slug (str):
         view_key (str):
-        body (PutIssueSavedViewRequest):
+        body (PutIssueSavedViewRequest): Shared issue-view display name and validated replacement
+            filter set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

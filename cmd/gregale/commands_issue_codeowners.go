@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,11 +14,11 @@ import (
 )
 
 func readIssueCodeownersFile(file string) ([]byte, error) {
-	f, err := os.Open(file)
+	f, err := openCustomerFile(file)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, api.IssueCodeownersMaxBytes+1))
 	if err != nil {
 		return nil, err
@@ -46,7 +47,7 @@ func cmdIssueCodeowners(args []string) int {
 	replace := fs.Bool("replace", false, "explicitly replace the existing ordered ownership policy")
 	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"file": true, "bindings-file": true, "source-root": true, "app": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
@@ -88,6 +89,6 @@ func cmdIssueCodeowners(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	fmt.Fprintf(osStdout, "Replaced ownership policy with %d CODEOWNERS rules. Existing issues retain their ownership.\n", len(out.Rules))
+	_, _ = fmt.Fprintf(osStdout, "Replaced ownership policy with %d CODEOWNERS rules. Existing issues retain their ownership.\n", len(out.Rules))
 	return 0
 }

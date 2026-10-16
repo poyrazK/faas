@@ -36,7 +36,7 @@ class IssueOwnershipRule:
     """Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes.
     Missing keys do not match an empty value."""
     assignee_team_id: UUID | Unset = UNSET
-    """Team in this app; mutually exclusive with assignee_account_id."""
+    """Team selected by this ownership rule; cannot be combined with an account assignment."""
 
     def to_dict(self) -> dict[str, Any]:
         assignee_account_id: str | Unset = UNSET

@@ -38,7 +38,7 @@ type LinearOAuthTokens struct {
 	ExpiresAt                 time.Time
 }
 
-var ErrLinearOAuthRejected = errors.New("Linear OAuth grant was rejected; reconnect")
+var ErrLinearOAuthRejected = errors.New("linear OAuth grant was rejected; reconnect")
 
 type LinearOAuthProvider interface {
 	ExchangeLinearOAuth(context.Context, LinearOAuthConfig, string, string) (LinearOAuthTokens, error)
@@ -66,21 +66,21 @@ func (c *Client) linearOAuthToken(ctx context.Context, form url.Values) (LinearO
 		Scope        json.RawMessage `json:"scope"`
 	}
 	if json.Unmarshal(data, &response) != nil || !strings.EqualFold(response.TokenType, "Bearer") || validateToken(response.AccessToken) != nil || validateToken(response.RefreshToken) != nil || response.ExpiresIn <= int64(api.IssueTrackerLinearOAuthRefreshSkew/time.Second) || response.ExpiresIn > int64(api.IssueTrackerLinearOAuthTokenMaxTTL/time.Second) {
-		return LinearOAuthTokens{}, errors.New("Linear OAuth token response is incomplete")
+		return LinearOAuthTokens{}, errors.New("linear OAuth token response is incomplete")
 	}
 	var scopes []string
 	var scope string
 	if json.Unmarshal(response.Scope, &scope) == nil {
 		scopes = strings.Fields(scope)
 	} else if json.Unmarshal(response.Scope, &scopes) != nil {
-		return LinearOAuthTokens{}, errors.New("Linear OAuth scopes could not be confirmed")
+		return LinearOAuthTokens{}, errors.New("linear OAuth scopes could not be confirmed")
 	}
 	have := map[string]bool{}
 	for _, s := range scopes {
 		have[s] = true
 	}
 	if !have["read"] || !have["write"] {
-		return LinearOAuthTokens{}, errors.New("Linear OAuth requires read and write scopes")
+		return LinearOAuthTokens{}, errors.New("linear OAuth requires read and write scopes")
 	}
 	return LinearOAuthTokens{response.AccessToken, response.RefreshToken, time.Now().Add(time.Duration(response.ExpiresIn) * time.Second)}, nil
 }
@@ -93,12 +93,12 @@ func (c *Client) linearOAuthPost(ctx context.Context, path string, form url.Valu
 	req.Header.Set("Accept", "application/json")
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, errors.New("Linear OAuth request outcome could not be confirmed")
+		return nil, errors.New("linear OAuth request outcome could not be confirmed")
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(res.Body, api.IssueTrackerResponseMaxBytes+1))
 	if err != nil || len(data) > api.IssueTrackerResponseMaxBytes {
-		return nil, errors.New("Linear OAuth response is unreadable")
+		return nil, errors.New("linear OAuth response is unreadable")
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		var failure struct {
@@ -108,7 +108,7 @@ func (c *Client) linearOAuthPost(ctx context.Context, path string, form url.Valu
 		if (res.StatusCode == 400 || res.StatusCode == 401) && (failure.Error == "invalid_grant" || failure.Error == "invalid_token") {
 			return nil, ErrLinearOAuthRejected
 		}
-		return nil, errors.New("Linear OAuth request failed")
+		return nil, errors.New("linear OAuth request failed")
 	}
 	return data, nil
 }

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ListIssueTeamsResponse")
 
 @_attrs_define
 class ListIssueTeamsResponse:
+    """Teams available for issue assignment and response routing within an application."""
+
     items: list[IssueTeam]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

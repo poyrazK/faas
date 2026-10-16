@@ -10,6 +10,8 @@ T = TypeVar("T", bound="IssueFrequencyAlertRule")
 
 @_attrs_define
 class IssueFrequencyAlertRule:
+    """Named event-frequency threshold with a bounded observation window, cooldown and optional filters."""
+
     key: str
     enabled: bool
     environment: str

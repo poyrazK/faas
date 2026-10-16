@@ -20,7 +20,7 @@ type LinearIdentity struct {
 func (c *Client) VerifyLinearConnection(ctx context.Context, token, teamID string) (LinearIdentity, error) {
 	id, err := uuid.Parse(teamID)
 	if err != nil || id == uuid.Nil {
-		return LinearIdentity{}, errors.New("Linear team must be a nonzero UUID")
+		return LinearIdentity{}, errors.New("linear team must be a nonzero UUID")
 	}
 	var out struct {
 		Data struct {
@@ -45,13 +45,13 @@ func (c *Client) VerifyLinearConnection(ctx context.Context, token, teamID strin
 		return LinearIdentity{}, err
 	}
 	if len(out.Errors) != 0 || out.Data.Organization == nil || out.Data.Viewer == nil || out.Data.Team == nil || string(out.Data.Team.ArchivedAt) != "null" {
-		return LinearIdentity{}, errors.New("Linear connection identity could not be confirmed")
+		return LinearIdentity{}, errors.New("linear connection identity could not be confirmed")
 	}
 	workspace, e1 := uuid.Parse(out.Data.Organization.ID)
 	viewer, e2 := uuid.Parse(out.Data.Viewer.ID)
 	team, e3 := uuid.Parse(out.Data.Team.ID)
 	if e1 != nil || e2 != nil || e3 != nil || workspace == uuid.Nil || viewer == uuid.Nil || team != id {
-		return LinearIdentity{}, errors.New("Linear returned inconsistent connection identity")
+		return LinearIdentity{}, errors.New("linear returned inconsistent connection identity")
 	}
 	return LinearIdentity{WorkspaceID: workspace.String(), TeamID: team.String(), ViewerID: viewer.String()}, nil
 }

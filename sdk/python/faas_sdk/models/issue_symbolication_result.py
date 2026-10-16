@@ -11,6 +11,8 @@ T = TypeVar("T", bound="IssueSymbolicationResult")
 
 @_attrs_define
 class IssueSymbolicationResult:
+    """Symbolication outcome and mapped frames for one reported exception in its deployment."""
+
     manifest_sha256: str
     mapped_frames: int
     unmapped_frames: int

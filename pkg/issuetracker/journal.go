@@ -144,10 +144,10 @@ func Run(ctx context.Context, dir string, r Request, token, recoveryURL string, 
 				}
 				return entry.Outcome, e
 			}
-			return entry.Outcome, fmt.Errorf("%w: %v", ErrOutcomeUnknown, e)
+			return entry.Outcome, fmt.Errorf("%w: %w", ErrOutcomeUnknown, e)
 		}
 		if err = validateStoredTicket(r, ticket); err != nil {
-			return entry.Outcome, fmt.Errorf("%w: %v", ErrOutcomeUnknown, err)
+			return entry.Outcome, fmt.Errorf("%w: %w", ErrOutcomeUnknown, err)
 		}
 		entry.Outcome.Ticket = ticket
 		entry.Outcome.State = "created"
@@ -164,7 +164,7 @@ func Run(ctx context.Context, dir string, r Request, token, recoveryURL string, 
 	normalized, e := api.NormalizeIssueTrackerLink(api.PutIssueTrackerLinkRequest{URL: linked.URL})
 	id, idErr := uuid.Parse(linked.ID)
 	if e != nil || normalized.URL != entry.Outcome.Ticket.URL || idErr != nil || id == uuid.Nil {
-		return entry.Outcome, errors.New("Gregale returned an inconsistent reference; retry linking with the same request")
+		return entry.Outcome, errors.New("gregale returned an inconsistent reference; retry linking with the same request")
 	}
 	entry.Outcome.State = "linked"
 	entry.Outcome.LinkID = linked.ID
@@ -191,11 +191,20 @@ func readReceipt(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > api.IssueTrackerResponseMaxBytes {
 		return nil, errors.New("ticket journal file must be private, regular and bounded")
 	}
-	file, err := os.Open(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, errors.New("cannot open ticket journal directory")
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(filepath.Base(path))
 	if err != nil {
 		return nil, errors.New("cannot read ticket journal")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) || opened.Mode().Perm()&0077 != 0 || opened.Size() > api.IssueTrackerResponseMaxBytes {
+		return nil, errors.New("ticket journal changed while opening")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, api.IssueTrackerResponseMaxBytes+1))
 	if err != nil || len(data) > api.IssueTrackerResponseMaxBytes {
 		return nil, errors.New("cannot read bounded ticket journal")
@@ -215,13 +224,13 @@ func writeReceipt(dir, path string, r receipt) error {
 		return errors.New("cannot create ticket journal file")
 	}
 	temp := file.Name()
-	defer os.Remove(temp)
+	defer func() { _ = os.Remove(temp) }()
 	if _, err = file.Write(data); err != nil {
-		file.Close()
+		_ = file.Close()
 		return errors.New("cannot write ticket journal")
 	}
 	if err = file.Sync(); err != nil {
-		file.Close()
+		_ = file.Close()
 		return errors.New("cannot sync ticket journal")
 	}
 	if err = file.Close(); err != nil {
@@ -230,11 +239,16 @@ func writeReceipt(dir, path string, r receipt) error {
 	if err = os.Rename(temp, path); err != nil {
 		return errors.New("cannot publish ticket journal")
 	}
-	directory, err := os.Open(dir)
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return errors.New("cannot open ticket journal directory")
 	}
-	defer directory.Close()
+	defer func() { _ = root.Close() }()
+	directory, err := root.Open(".")
+	if err != nil {
+		return errors.New("cannot open ticket journal directory")
+	}
+	defer func() { _ = directory.Close() }()
 	if err = directory.Sync(); err != nil {
 		return errors.New("cannot sync ticket journal directory")
 	}

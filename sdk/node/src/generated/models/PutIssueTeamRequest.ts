@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Replacement team display name and eligible account membership roster.
+ */
 export type PutIssueTeamRequest = {
   /**
    * Maximum 64 UTF-8 bytes without control characters.

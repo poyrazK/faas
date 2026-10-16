@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -32,7 +33,7 @@ func cmdIssueTriage(args []string) int {
 	until := fs.String("until", "", "ignore expiry, RFC3339")
 	flags, positional := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "baseline": true, "candidate": true, "environment": true, "issues": true, "action": true, "team": true, "assignee": true, "deployment": true, "until": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
@@ -42,7 +43,8 @@ func cmdIssueTriage(args []string) int {
 		return 1
 	}
 	var in api.BulkIssueActionRequest
-	if args[0] == "bulk" {
+	switch args[0] {
+	case "bulk":
 		in = api.BulkIssueActionRequest{IssueIDs: strings.Split(*ids, ","), Action: api.IssueActionRequest{Action: *action, AssigneeAccountID: *assignee, AssigneeTeamID: *team, FixedDeploymentID: *dep}}
 		for i := range in.IssueIDs {
 			in.IssueIDs[i] = strings.TrimSpace(in.IssueIDs[i])
@@ -59,13 +61,13 @@ func cmdIssueTriage(args []string) int {
 		if err != nil {
 			return printErr("Invalid bulk action", err)
 		}
-	} else if args[0] == "compare-releases" {
+	case "compare-releases":
 		b, e1 := uuid.Parse(*baseline)
 		c, e2 := uuid.Parse(*candidate)
 		if e1 != nil || e2 != nil || b == c || b == uuid.Nil || c == uuid.Nil {
 			return printErr("Invalid release comparison", fmt.Errorf("choose two distinct deployment UUIDs"))
 		}
-	} else {
+	default:
 		fmt.Fprintln(os.Stderr, usage)
 		return 1
 	}

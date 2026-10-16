@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { IssueSavedViewFilters } from './IssueSavedViewFilters.js';
+/**
+ * Named shared issue query with its stable key and creation and editor metadata.
+ */
 export type IssueSavedView = {
   key: string;
   name: string;

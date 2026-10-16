@@ -29,7 +29,7 @@ func (c *Client) VerifyLinearWorkflowState(ctx context.Context, token, teamID, s
 	}
 	w := workflow.Data.Workflow
 	if len(workflow.Errors) > 0 || w == nil || w.ID != selected.String() || w.Team.ID != team.String() || len(w.ArchivedAt) == 0 || strings.TrimSpace(string(w.ArchivedAt)) != "null" || mappedLinearState(w.Type) != wanted {
-		return errors.New("Linear workflow state must be active, belong to the linked issue's team and match the desired lifecycle")
+		return errors.New("linear workflow state must be active, belong to the linked issue's team and match the desired lifecycle")
 	}
 	return nil
 }

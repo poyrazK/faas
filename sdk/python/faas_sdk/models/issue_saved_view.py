@@ -19,9 +19,12 @@ T = TypeVar("T", bound="IssueSavedView")
 
 @_attrs_define
 class IssueSavedView:
+    """Named shared issue query with its stable key and creation and editor metadata."""
+
     key: str
     name: str
     filters: IssueSavedViewFilters
+    """Supported query filters retained by a shared application issue view."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     updated_by_account_id: UUID | Unset = UNSET

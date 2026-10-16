@@ -19,7 +19,7 @@ export type IssueActionRequest = {
   fixed_deployment_id?: string;
   ignored_until?: string;
   /**
-   * Team in this app; mutually exclusive with assignee_account_id.
+   * Target team for this assignment action; clear the account assignee when selecting a team.
    */
   assignee_team_id?: string;
 };

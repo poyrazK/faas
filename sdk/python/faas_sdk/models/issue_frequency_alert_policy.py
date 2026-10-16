@@ -14,6 +14,8 @@ T = TypeVar("T", bound="IssueFrequencyAlertPolicy")
 
 @_attrs_define
 class IssueFrequencyAlertPolicy:
+    """Current revision and complete ordered set of application frequency-alert rules."""
+
     revision: int
     rules: list[IssueFrequencyAlertRule]
 

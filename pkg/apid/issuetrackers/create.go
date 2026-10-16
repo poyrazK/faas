@@ -135,17 +135,18 @@ func (s CreationService) run(ctx context.Context, in api.CreateNativeIssueTicket
 		return creationResult(receipt), e
 	}
 	link, e := s.Host.Attach(ctx, request, issuetracker.Ticket{URL: receipt.TicketURL, ProviderID: receipt.ProviderID})
-	if e != nil {
-		return creationResult(receipt), nil
+	if e == nil {
+		if link.ID == "" || link.URL != receipt.TicketURL {
+			return creationResult(receipt), unavailable()
+		}
+		receipt.LinkID = link.ID
+		receipt, e = s.Store.LinkNativeIssueTicket(ctx, receipt)
+		if e != nil {
+			return creationResult(receipt), api.ErrCapacity("ticket exists; retry the same request to confirm attachment")
+		}
 	}
-	if link.ID == "" || link.URL != receipt.TicketURL {
-		return creationResult(receipt), unavailable()
-	}
-	receipt.LinkID = link.ID
-	receipt, e = s.Store.LinkNativeIssueTicket(ctx, receipt)
-	if e != nil {
-		return creationResult(receipt), api.ErrCapacity("ticket exists; retry the same request to confirm attachment")
-	}
+	// A failed attachment still returns the durable "created" receipt. Retrying
+	// it resumes linking without issuing a second provider creation.
 	return creationResult(receipt), nil
 }
 func (s CreationService) dispatch(ctx context.Context, p Prepared, r issuetracker.Request, receipt state.NativeIssueTicketReceipt, recoveryURL string, recoverRequested bool) (state.NativeIssueTicketReceipt, error) {

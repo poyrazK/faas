@@ -15,6 +15,8 @@ T = TypeVar("T", bound="BulkIssueActionResponse")
 
 @_attrs_define
 class BulkIssueActionResponse:
+    """Canonical issue groups updated by the completed atomic bulk action."""
+
     items: list[Issue]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

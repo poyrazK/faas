@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { IssueReleaseHealth } from './IssueReleaseHealth.js';
+/**
+ * Baseline and candidate deployment health with newly observed, recurring and resolved issue groups.
+ */
 export type IssueReleaseComparison = {
   window_start: string;
   window_end: string;

@@ -410,7 +410,7 @@ type IssueSlackCandidateDeliveryParams struct {
 
 type IssueSlackCandidateDeliveryRow struct {
 	ID                        pgtype.UUID
-	DeliverySeq               pgtype.Int8
+	DeliverySeq               int64
 	ChannelID                 string
 	DestinationID             pgtype.UUID
 	DestinationRevision       int64
@@ -444,7 +444,7 @@ type IssueSlackCandidateDeliveryRow struct {
 	LinkID                    pgtype.UUID
 	Kind                      string
 	Reason                    string
-	Details                   []byte
+	Details                   interface{}
 	Eligible                  bool
 }
 
@@ -1197,7 +1197,7 @@ type IssueSlackRetryGetParams struct {
 
 type IssueSlackRetryGetRow struct {
 	ID                        pgtype.UUID
-	DeliverySeq               pgtype.Int8
+	DeliverySeq               int64
 	ChannelID                 string
 	DestinationID             pgtype.UUID
 	DestinationRevision       int64
@@ -1225,7 +1225,7 @@ type IssueSlackRetryGetRow struct {
 	TeamID                    pgtype.UUID
 	CurrentRevision           int64
 	Enabled                   bool
-	ApplicationRetryAllowed   bool
+	ApplicationRetryAllowed   interface{}
 }
 
 func (q *Queries) IssueSlackRetryGet(ctx context.Context, db DBTX, arg IssueSlackRetryGetParams) (IssueSlackRetryGetRow, error) {

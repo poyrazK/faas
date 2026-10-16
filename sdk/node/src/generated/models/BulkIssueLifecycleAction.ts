@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Lifecycle or assignment action applied atomically to the selected canonical issue groups.
+ */
 export type BulkIssueLifecycleAction = {
   action: 'assign' | 'resolve' | 'ignore' | 'reopen';
   /**

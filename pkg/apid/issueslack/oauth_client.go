@@ -16,7 +16,7 @@ import (
 )
 
 var oauthWorkspacePattern = regexp.MustCompile(`^T[A-Z0-9]{8,31}$`)
-var ErrOAuthProvider = errors.New("Slack authorization or channel verification failed")
+var ErrOAuthProvider = errors.New("slack authorization or channel verification failed")
 
 type OAuthTokens struct {
 	Token                                             string `json:"-"`
@@ -37,7 +37,7 @@ func (c *Client) oauthCall(ctx context.Context, method, token string, form url.V
 	if err != nil {
 		return ErrOAuthProvider
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return ErrOAuthProvider
 	}

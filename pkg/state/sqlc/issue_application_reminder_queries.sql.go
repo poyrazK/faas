@@ -160,7 +160,7 @@ func (q *Queries) IssueApplicationReminderEnqueue(ctx context.Context, db DBTX, 
 }
 
 const issueApplicationReminderHistory = `-- name: IssueApplicationReminderHistory :many
-SELECT r.id, r.issue_id, r.response_id, r.sequence, r.kind, r.escalation_policy_revision, r.responsibility_team_id, r.target_team_name, r.policy_revision, r.outcome, r.created_at,COALESCE(d.status,'')::text AS delivery_status,COALESCE(t.name,NULLIF(r.target_team_name,''),'')::text AS team_name
+SELECT r.id, r.issue_id, r.response_id, r.sequence, r.policy_revision, r.outcome, r.created_at, r.kind, r.escalation_policy_revision, r.responsibility_team_id, r.target_team_name,COALESCE(d.status,'')::text AS delivery_status,COALESCE(t.name,NULLIF(r.target_team_name,''),'')::text AS team_name
 FROM issue_application_reminders r LEFT JOIN issue_team_slack_deliveries d ON d.reminder_id=r.id
 LEFT JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id LEFT JOIN app_issue_teams t ON t.id=dst.team_id
 WHERE r.issue_id=$1 ORDER BY r.created_at DESC,r.id DESC LIMIT $2
@@ -176,13 +176,13 @@ type IssueApplicationReminderHistoryRow struct {
 	IssueID                  pgtype.UUID
 	ResponseID               pgtype.UUID
 	Sequence                 int32
+	PolicyRevision           int64
+	Outcome                  string
+	CreatedAt                pgtype.Timestamptz
 	Kind                     string
 	EscalationPolicyRevision pgtype.Int8
 	ResponsibilityTeamID     pgtype.UUID
 	TargetTeamName           string
-	PolicyRevision           int64
-	Outcome                  string
-	CreatedAt                pgtype.Timestamptz
 	DeliveryStatus           string
 	TeamName                 string
 }
@@ -201,13 +201,13 @@ func (q *Queries) IssueApplicationReminderHistory(ctx context.Context, db DBTX, 
 			&i.IssueID,
 			&i.ResponseID,
 			&i.Sequence,
+			&i.PolicyRevision,
+			&i.Outcome,
+			&i.CreatedAt,
 			&i.Kind,
 			&i.EscalationPolicyRevision,
 			&i.ResponsibilityTeamID,
 			&i.TargetTeamName,
-			&i.PolicyRevision,
-			&i.Outcome,
-			&i.CreatedAt,
 			&i.DeliveryStatus,
 			&i.TeamName,
 		); err != nil {

@@ -40,11 +40,11 @@ func cmdIssueSourceMaps(args []string) int {
 			fmt.Fprintln(os.Stderr, usage)
 			return 1
 		}
-		input, err := os.Open(*file)
+		input, err := openCustomerFile(*file)
 		if err != nil {
 			return printErr("Could not read source-map manifest", err)
 		}
-		defer input.Close()
+		defer func() { _ = input.Close() }()
 		data, err := io.ReadAll(io.LimitReader(input, api.IssueSourceMapsUploadMaxBytes+1))
 		if err != nil || len(data) > api.IssueSourceMapsUploadMaxBytes {
 			return printErr("Invalid manifest", fmt.Errorf("manifest exceeds its byte bound or could not be read"))
@@ -83,6 +83,6 @@ func cmdIssueSourceMaps(args []string) int {
 	if out.Ready {
 		state = "ready"
 	}
-	fmt.Fprintf(osStdout, "Source maps %s: %d maps for deployment %s (%s)\n", state, out.MapCount, out.DeploymentID, out.ManifestSHA256)
+	_, _ = fmt.Fprintf(osStdout, "Source maps %s: %d maps for deployment %s (%s)\n", state, out.MapCount, out.DeploymentID, out.ManifestSHA256)
 	return 0
 }

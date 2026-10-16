@@ -15,6 +15,8 @@ T = TypeVar("T", bound="IssueBreadcrumb")
 
 @_attrs_define
 class IssueBreadcrumb:
+    """Bounded sanitized event context recorded before an issue occurrence."""
+
     occurred_at: datetime.datetime
     category: IssueBreadcrumbCategory
     level: IssueBreadcrumbLevel

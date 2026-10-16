@@ -20,6 +20,8 @@ T = TypeVar("T", bound="IssueSourceMapManifest")
 
 @_attrs_define
 class IssueSourceMapManifest:
+    """Portable source-map manifest with exact generated-bundle digests and original source locations."""
+
     version: IssueSourceMapManifestVersion
     artifacts: list[IssueSourceMapArtifact]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

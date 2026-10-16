@@ -12,6 +12,8 @@ T = TypeVar("T", bound="PutIssueTrackerLinkRequest")
 
 @_attrs_define
 class PutIssueTrackerLinkRequest:
+    """Explicit provider ticket URL and optional title to attach to an issue group."""
+
     url: str
     """Public GitHub issue or Linear issue HTTPS URL; maximum 512 UTF-8 bytes."""
     title: str | Unset = UNSET

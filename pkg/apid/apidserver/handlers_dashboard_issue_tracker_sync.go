@@ -221,7 +221,8 @@ func (s *server) observeDashboardTrackerPreview(w http.ResponseWriter, r *http.R
 	var catalog []issuetracker.LinearWorkflowState
 	var inbound issuetrackers.InboundPreview
 	var err error
-	if view.Provider == "linear" {
+	switch view.Provider {
+	case "linear":
 		service, ok := s.nativeLinearStatusService(w, r, acct)
 		if !ok {
 			return nil, nil, issuetrackers.InboundPreview{}, false
@@ -232,13 +233,13 @@ func (s *server) observeDashboardTrackerPreview(w http.ResponseWriter, r *http.R
 		err = e
 		snapshot = out
 		view.Status = out.Status
-	} else if view.Provider == "github" {
+	case "github":
 		out, assessment, e := s.issueTrackerServiceFor(app, acct, view.IssueID, view.LinkID).ReadInboundPreview(ctx, row)
 		inbound = assessment
 		err = e
 		snapshot = out
 		view.Status = out.Status
-	} else {
+	default:
 		api.WriteProblem(w, api.ErrValidation("provider must be GitHub or Linear"))
 		return nil, nil, issuetrackers.InboundPreview{}, false
 	}

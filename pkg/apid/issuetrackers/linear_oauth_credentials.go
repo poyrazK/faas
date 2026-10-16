@@ -38,7 +38,7 @@ func OpenLinearOAuthCredential(ids []*age.X25519Identity, expected LinearCredent
 	namespace, raw, err := secretbox.OpenBytesMulti(ids, sealed)
 	var c LinearOAuthCredential
 	if err != nil || namespace != linearOAuthNamespace || json.Unmarshal(raw, &c) != nil || c.Scope != expected || !validLinearScope(expected) || !validLinearToken(c.ClientID) || !validLinearToken(c.Tokens.AccessToken) || !validLinearToken(c.Tokens.RefreshToken) || c.Tokens.ExpiresAt.IsZero() || (c.WebhookSecret != "" && !issuetracker.ValidLinearWebhookSecret(c.WebhookSecret)) {
-		return c, errors.New("Linear OAuth credential does not match the connection")
+		return c, errors.New("linear OAuth credential does not match the connection")
 	}
 	return c, nil
 }
@@ -83,7 +83,7 @@ func OpenLinearOAuthFlow(ids []*age.X25519Identity, row state.LinearOAuthFlow) (
 	ns, raw, err := secretbox.OpenBytesMulti(ids, row.Sealed)
 	var c LinearOAuthFlowSecret
 	if err != nil || ns != linearOAuthFlowNamespace || json.Unmarshal(raw, &c) != nil || c.AppID != row.AppID || c.AccountID != row.AccountID || c.Hash != row.Hash || c.IssueID != row.IssueID || c.ExpectedRevision != row.ExpectedRevision {
-		return c, errors.New("Linear OAuth flow scope changed")
+		return c, errors.New("linear OAuth flow scope changed")
 	}
 	return c, nil
 }

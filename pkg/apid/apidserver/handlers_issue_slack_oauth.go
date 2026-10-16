@@ -185,9 +185,10 @@ func (s *server) applyDashboardSlackOAuth(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	action := r.PostForm.Get("settings_kind")
 	var err error
-	if action == "slack_oauth_disconnect" {
+	switch action {
+	case "slack_oauth_disconnect":
 		err = service.Store.DisconnectIssueSlackOAuth(ctx, app.ID, acct.ID, revision)
-	} else if action == "slack_oauth_finish" {
+	case "slack_oauth_finish":
 		nonce := r.PostForm.Get("state")
 		if !slackOAuthNonce(r, nonce) {
 			return api.ErrValidation("Slack authorization state did not match; restart consent")
@@ -196,7 +197,7 @@ func (s *server) applyDashboardSlackOAuth(w http.ResponseWriter, r *http.Request
 		if err == nil {
 			setSlackOAuthCookie(w, "")
 		}
-	} else {
+	default:
 		destinationRevision, e := strconv.ParseInt(r.PostForm.Get("destination_revision"), 10, 64)
 		if e != nil {
 			return api.ErrValidation("reload channel settings")

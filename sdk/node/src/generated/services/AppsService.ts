@@ -2548,6 +2548,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID whose source-map publication is being managed.
+     */
     deploymentId: string,
     requestBody: PublishIssueSourceMapsRequest,
   }): CancelablePromise<IssueSourceMapsMetadata> {
@@ -2587,6 +2590,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID whose source-map publication is being managed.
+     */
     deploymentId: string,
   }): CancelablePromise<IssueSourceMapsMetadata> {
     return __request(OpenAPI, {
@@ -2622,6 +2628,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Deployment UUID whose source-map publication is being managed.
+     */
     deploymentId: string,
   }): CancelablePromise<IssueSourceMapsMetadata> {
     return __request(OpenAPI, {
@@ -2687,6 +2696,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Stable key of the shared issue query to read, replace or delete.
+     */
     viewKey: string,
   }): CancelablePromise<IssueSavedView> {
     return __request(OpenAPI, {
@@ -2724,6 +2736,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Stable key of the shared issue query to read, replace or delete.
+     */
     viewKey: string,
     requestBody: PutIssueSavedViewRequest,
   }): CancelablePromise<IssueSavedView> {
@@ -2764,6 +2779,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Stable key of the shared issue query to read, replace or delete.
+     */
     viewKey: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -2830,6 +2848,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Stable application team key used to manage its identity and membership.
+     */
     teamKey: string,
   }): CancelablePromise<IssueTeam> {
     return __request(OpenAPI, {
@@ -2867,6 +2888,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Stable application team key used to manage its identity and membership.
+     */
     teamKey: string,
     requestBody: PutIssueTeamRequest,
   }): CancelablePromise<IssueTeam> {
@@ -2895,7 +2919,7 @@ export class AppsService {
   }
   /**
    * Delete an unused team.
-   * Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+   * Deletes the unused application team after checking that no issue assignments or routing rules reference it. Requires deploy-write permission and session MFA.
    * @returns void
    * @throws ApiError
    */
@@ -2907,6 +2931,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Stable application team key used to manage its identity and membership.
+     */
     teamKey: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
@@ -2946,8 +2973,17 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Baseline deployment UUID for the issue health comparison.
+     */
     baseline: string,
+    /**
+     * Candidate deployment UUID compared with the selected baseline.
+     */
     candidate: string,
+    /**
+     * Issue environment included in both deployment health observations.
+     */
     environment?: string,
   }): CancelablePromise<IssueReleaseComparison> {
     return __request(OpenAPI, {
@@ -3455,7 +3491,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Issue group UUID that owns the external tracker references.
+     */
     issueId: string,
+    /**
+     * Opaque continuation token from the preceding tracker-reference page.
+     */
     cursor?: string,
   }): CancelablePromise<ListIssueTrackerLinksResponse> {
     return __request(OpenAPI, {
@@ -3496,6 +3538,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Issue group UUID that owns the external tracker references.
+     */
     issueId: string,
     requestBody: PutIssueTrackerLinkRequest,
   }): CancelablePromise<IssueTrackerLink> {
@@ -3537,7 +3582,13 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Issue group UUID whose selected tracker reference will be removed.
+     */
     issueId: string,
+    /**
+     * Stored tracker-reference UUID to detach from the selected issue group.
+     */
     linkId: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {

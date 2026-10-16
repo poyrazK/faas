@@ -111,7 +111,8 @@ def sync_detailed(
     Args:
         slug (str):
         team_key (str):
-        body (PutIssueTeamRequest):
+        body (PutIssueTeamRequest): Replacement team display name and eligible account membership
+            roster.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,7 +151,8 @@ def sync(
     Args:
         slug (str):
         team_key (str):
-        body (PutIssueTeamRequest):
+        body (PutIssueTeamRequest): Replacement team display name and eligible account membership
+            roster.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,7 +186,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         team_key (str):
-        body (PutIssueTeamRequest):
+        body (PutIssueTeamRequest): Replacement team display name and eligible account membership
+            roster.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,7 +224,8 @@ async def asyncio(
     Args:
         slug (str):
         team_key (str):
-        body (PutIssueTeamRequest):
+        body (PutIssueTeamRequest): Replacement team display name and eligible account membership
+            roster.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

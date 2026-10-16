@@ -107,7 +107,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (BulkIssueActionRequest):
+        body (BulkIssueActionRequest): Bounded issue selection and one lifecycle or assignment
+            operation to apply atomically.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,7 +144,8 @@ def sync(
 
     Args:
         slug (str):
-        body (BulkIssueActionRequest):
+        body (BulkIssueActionRequest): Bounded issue selection and one lifecycle or assignment
+            operation to apply atomically.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,7 +176,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (BulkIssueActionRequest):
+        body (BulkIssueActionRequest): Bounded issue selection and one lifecycle or assignment
+            operation to apply atomically.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,7 +211,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (BulkIssueActionRequest):
+        body (BulkIssueActionRequest): Bounded issue selection and one lifecycle or assignment
+            operation to apply atomically.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
