@@ -331,7 +331,11 @@ func TestCampaignFaultHistoryPortableWithoutOriginalPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "recipient")
-	index, err := importTestCampaignBundle(bundle, root, true, t.TempDir())
+	claims := filepath.Join(t.TempDir(), "claims")
+	if err := os.Mkdir(claims, 0700); err != nil {
+		t.Fatal(err)
+	}
+	index, err := importTestCampaignBundle(bundle, root, true, claims)
 	if err != nil {
 		t.Fatal(err)
 	}
