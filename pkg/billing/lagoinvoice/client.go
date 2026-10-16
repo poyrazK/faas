@@ -79,6 +79,7 @@ func (c *Client) do(ctx context.Context, baseURL, key, method, path string, body
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// codeql[go/request-forgery] false-positive: NormalizeURL admits only a bare https:// origin, and apid's client dials through oci.EgressDialContext, which refuses loopback, private and metadata addresses at connect time, redirects included.
 	res, err := c.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("lago %s %s: %w", method, path, err)
