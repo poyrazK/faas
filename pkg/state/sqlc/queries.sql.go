@@ -50313,7 +50313,7 @@ func (q *Queries) LockRuntimeReleaseQualification(ctx context.Context, db DBTX, 
 
 const lockRuntimeSecretApp = `-- name: LockRuntimeSecretApp :one
 SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
-FOR SHARE
+FOR UPDATE
 `
 
 type LockRuntimeSecretAppParams struct {
@@ -66907,6 +66907,14 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = $1::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = $1::uuid),
     'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid)
+) || jsonb_build_object(
+    'deployment_cron_outcomes_deployment_id_fkey', (SELECT count(*) FROM deployment_cron_outcomes WHERE deployment_id = $1::uuid),
+    'deployment_project_release_workers_deployment_id_fkey', (SELECT count(*) FROM deployment_project_release_workers WHERE deployment_id = $1::uuid),
+    'deployment_release_env_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_env_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_release_secret_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_secret_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = $1::uuid),
+    'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = $1::uuid),
+    'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = $1::uuid)
 ))::jsonb AS borrowers
 `
 

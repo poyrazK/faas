@@ -109,6 +109,7 @@ var memDispatched = map[string]bool{
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
+	"ResolveProjectServiceBinding":                            true,
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
@@ -869,6 +870,13 @@ func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.Request
 		return o.RequestTelemetryRouteCustomers(p0, p1)
 	}
 	return s.MemStore.RequestTelemetryRouteCustomers(p0, p1)
+}
+
+func (s *Mem) ResolveProjectServiceBinding(p0 context.Context, p1, p2, p3 string, p4 ...string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
+	if o, ok := s.over.(state.ProjectServiceGraphStore); ok {
+		return o.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) ResolveEnvironmentQualificationService(p0 context.Context, p1 state.EnvironmentQualificationServiceRequest) (state.EnvironmentQualificationServiceRoute, error) {

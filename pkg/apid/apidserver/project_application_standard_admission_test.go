@@ -26,6 +26,9 @@ type standardProjectBoundaryStore interface {
 	state.ApplicationStandardResourceStore
 	state.ApplicationStandardReviewStore
 	state.ProjectReconcileStore
+	state.DeploymentCronStagingStore
+	state.PendingDeploymentCronStore
+	state.DeploymentConfigurationStore
 }
 
 func standardProjectSource(t *testing.T, names ...string) []byte {

@@ -138,3 +138,31 @@ func TestProjectCronRemovalAndStableIdentity(t *testing.T) {
 		t.Fatalf("removal=%+v %v", rows, err)
 	}
 }
+
+func TestProjectCronUnchangedPendingDeploymentDoesNotSelectBuild(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "unchanged@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanProjectCrons(t.Context(), store, acct.ID, app.ID, nil)
+	if err != nil || plan.Changed {
+		t.Fatalf("initial plan=%+v err=%v", plan, err)
+	}
+	limits, _ := api.LimitsFor(acct.Plan)
+	if _, err := store.ApplyDeploymentCronStaging(t.Context(), app.ID, state.DeploymentCronStagingParams{AccountID: acct.ID, Request: plan.Request, Limits: limits}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(state.ContextWithDeploymentSubmission(t.Context(), plan.Request.SessionID), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, TrafficPercent: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := PlanProjectCrons(t.Context(), store, acct.ID, app.ID, nil)
+	if err != nil || again.Changed || again.Reuse == nil || again.Reuse.ID != dep.ID {
+		t.Fatalf("unchanged pending plan=%+v err=%v", again, err)
+	}
+}

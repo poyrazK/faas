@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -15,17 +16,26 @@ import (
 func TestDeploymentSubmissionDoesNotHideLostReply(t *testing.T) {
 	for _, mode := range []string{"image", "commit", "source-ref", "multipart", "source-tarball"} {
 		t.Run(mode, func(t *testing.T) {
+			var mu sync.Mutex
 			attempts := 0
 			var keys []string
+			observed := func() (int, []string) {
+				mu.Lock()
+				defer mu.Unlock()
+				return attempts, append([]string(nil), keys...)
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
 					_ = json.NewEncoder(w).Encode(AppResponse{ID: "app-1", Slug: "demo"})
 					return
 				}
 				_, _ = io.Copy(io.Discard, r.Body)
+				mu.Lock()
 				attempts++
 				keys = append(keys, r.Header.Get("Idempotency-Key"))
-				if attempts == 1 {
+				first := attempts == 1
+				mu.Unlock()
+				if first {
 					connection, _, err := w.(http.Hijacker).Hijack()
 					if err != nil {
 						t.Error(err)
@@ -63,12 +73,14 @@ func TestDeploymentSubmissionDoesNotHideLostReply(t *testing.T) {
 			}
 			err := submit()
 			var remote *APIError
-			if err == nil || errors.As(err, &remote) || attempts != 1 {
-				t.Fatalf("lost response concealed: attempts=%d err=%v", attempts, err)
+			count, _ := observed()
+			if err == nil || errors.As(err, &remote) || count != 1 {
+				t.Fatalf("lost response concealed: attempts=%d err=%v", count, err)
 			}
 			err = submit()
-			if !errors.As(err, &remote) || remote.Problem.Status != 422 || attempts != 2 || len(keys) != 2 || keys[0] != "same-intent" || keys[1] != keys[0] {
-				t.Fatalf("explicit retry: attempts=%d keys=%v err=%v", attempts, keys, err)
+			count, seenKeys := observed()
+			if !errors.As(err, &remote) || remote.Problem.Status != 422 || count != 2 || len(seenKeys) != 2 || seenKeys[0] != "same-intent" || seenKeys[1] != seenKeys[0] {
+				t.Fatalf("explicit retry: attempts=%d keys=%v err=%v", count, seenKeys, err)
 			}
 		})
 	}

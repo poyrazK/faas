@@ -58,7 +58,6 @@ func PlanProjectCrons(ctx context.Context, store state.DeploymentCronStagingStor
 		}
 		if config.Crons.Status == "pending" && config.Crons.SessionID == pending.Intent.SessionID {
 			plan.Reuse = &pending.Deployment
-			plan.Changed = true
 		}
 	}
 	return plan, nil

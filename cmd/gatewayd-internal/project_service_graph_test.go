@@ -2,16 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type frozenGraphTestStore struct {
-	*state.MemStore
-	route state.EnvironmentGitOpsServiceBindingRoute
+	MemStore *state.MemStore
+	route    state.EnvironmentGitOpsServiceBindingRoute
 }
 
 func (s frozenGraphTestStore) ResolveProjectServiceBinding(context.Context, string, string, string, ...string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
@@ -39,7 +41,7 @@ func TestFrozenProjectBindingUsesCapturedProtocolAndTenantBoundary(t *testing.T)
 	}
 	frozen := frozenGraphTestStore{MemStore: store, route: state.EnvironmentGitOpsServiceBindingRoute{AccountID: account.ID,
 		TargetAppID: target.ID, TargetDeploymentID: "target", ReleaseSetID: "graph", AppProtocol: "http2", WebSocketEnabled: true}}
-	binding, managed, found, err := newServiceProxyEnvironmentBindingResolver(frozen)(ctx, caller.ID, "caller", "api")
+	binding, managed, found, err := newServiceProxyEnvironmentBindingResolver(statetest.NewMem(frozen))(ctx, caller.ID, "caller", "api")
 	if err != nil || !managed || !found || !binding.FrozenPolicy || binding.Target.AppProtocol != "http2" || !binding.Target.WebSocketEnabled {
 		t.Fatalf("frozen service settings lost: %+v %v", binding, err)
 	}
@@ -55,7 +57,7 @@ func TestFrozenProjectBindingUsesCapturedProtocolAndTenantBoundary(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = newServiceProxyBoundAuthorizer(store)(ctx, outsider.ID, target.ID); err != gateway.ErrServiceProxyDenied {
+	if _, err = newServiceProxyBoundAuthorizer(store)(ctx, outsider.ID, target.ID); !errors.Is(err, gateway.ErrServiceProxyDenied) {
 		t.Fatal("frozen route widened tenant boundary", err)
 	}
 }
