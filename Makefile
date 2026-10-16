@@ -511,7 +511,7 @@ e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated bui
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-start needs reachable PostgreSQL" >&2; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required for e2e-start" >&2; exit 1)
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "PostgreSQL is unreachable; e2e-start refuses a green no-op run" >&2; exit 1)
-	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_Start_' ./cmd/e2e/...
+	$(GO) test -race -count=1 -timeout=20m -run '^TestE2E_Start_' ./cmd/e2e/...
 
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.

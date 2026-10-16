@@ -14,8 +14,9 @@ migrate the shared `public` schema. Unset `FAAS_SKIP_PG_TESTS` and
 `FAAS_E2E_BIN_DIR`: the gate refuses skip mode and reused daemon binaries.
 The harness builds the current checkout's daemons, and the tests build its CLI.
 The command returns nonzero on failure. Use `go test -v -race -count=1
--timeout=12m -run '^TestE2E_Start_' ./cmd/e2e/...` with the same prerequisites for
+-timeout=20m -run '^TestE2E_Start_' ./cmd/e2e/...` with the same prerequisites for
 per-scenario deployment IDs and failure transcripts.
+The budget includes cold daemon builds and the complete recovery matrix.
 
 The tests run the CLI as a subprocess with terminal input and isolated config,
 cache, and session directories. They drive the actual prompts and assert:
