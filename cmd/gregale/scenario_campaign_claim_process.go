@@ -254,6 +254,10 @@ func prepareTestCampaignClaimRecovery(resolver *testCampaignBundleResolver) (tes
 }
 
 func releaseTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaignClaimAssessment, error) {
+	return releaseTestCampaignClaimChecked(resolver, nil)
+}
+
+func releaseTestCampaignClaimChecked(resolver *testCampaignBundleResolver, verify func() error) (testCampaignClaimAssessment, error) {
 	if resolver == nil {
 		return testCampaignClaimAssessment{}, errors.New("--handoff is required")
 	}
@@ -267,6 +271,11 @@ func releaseTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaig
 		return testCampaignClaimAssessment{}, err
 	}
 	defer release()
+	if verify != nil {
+		if err := verify(); err != nil {
+			return testCampaignClaimAssessment{}, err
+		}
+	}
 	if _, err := os.Lstat(resolver.Index.ClaimPath + ".lock"); os.IsNotExist(err) {
 		if err := resolver.requireClaim(true); err != nil {
 			return testCampaignClaimAssessment{}, err

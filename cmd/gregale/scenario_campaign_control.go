@@ -169,6 +169,10 @@ func testCampaignRetryCleanupTargets(ctx context.Context, client testCampaignCle
 }
 
 func cmdTestCampaignControl(mode string, args []string) int {
+	return cmdTestCampaignControlChecked(mode, args, nil, "")
+}
+
+func cmdTestCampaignControlChecked(mode string, args []string, verify func() error, endpointSHA256 string) int {
 	fs := newFlagSet("test policy "+mode, flag.ContinueOnError)
 	planPath := fs.String("plan", "", "saved campaign plan")
 	policyPath := fs.String("policy", "", "bound campaign policy (cleanup)")
@@ -254,6 +258,11 @@ func cmdTestCampaignControl(mode string, args []string) int {
 		return printErr("Campaign must be inactive before cleanup", err)
 	}
 	defer releaseRunner()
+	if verify != nil {
+		if err := verify(); err != nil {
+			return printErr("Watcher recovery evidence changed", err)
+		}
+	}
 	for _, name := range []string{testCampaignRecoverySealName, testCampaignHandoffName} {
 		if _, err := os.Lstat(filepath.Join(*directory, name)); !os.IsNotExist(err) {
 			return printErr("Campaign already sealed", errors.New("cleanup must precede reconciliation or handoff"))
@@ -287,6 +296,9 @@ func cmdTestCampaignControl(mode string, args []string) int {
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Cleanup authentication failed", err)
+		}
+		if endpointSHA256 != "" && testCampaignJSONHash(client.BaseURL()) != endpointSHA256 {
+			return printErr("Watcher API endpoint changed", errors.New("cleanup must use the receipt's API destination"))
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()

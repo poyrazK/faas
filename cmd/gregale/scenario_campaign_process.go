@@ -325,11 +325,20 @@ func prepareTestCampaignRunnerRecovery(directory string, plan testCampaignPolicy
 }
 
 func releaseTestCampaignRunnerLock(directory string, plan testCampaignPolicyPlan) (testCampaignLockAssessment, error) {
+	return releaseTestCampaignRunnerLockChecked(directory, plan, nil)
+}
+
+func releaseTestCampaignRunnerLockChecked(directory string, plan testCampaignPolicyPlan, verify func() error) (testCampaignLockAssessment, error) {
 	release, err := acquireTestCampaignRecoveryGuard(filepath.Join(directory, "runner-recovery.lock"))
 	if err != nil {
 		return testCampaignLockAssessment{}, err
 	}
 	defer release()
+	if verify != nil {
+		if err := verify(); err != nil {
+			return testCampaignLockAssessment{}, err
+		}
+	}
 	if _, err := os.Lstat(filepath.Join(directory, "runner.lock")); os.IsNotExist(err) {
 		tx, err := readFinishedTestCampaignRecovery(filepath.Join(directory, "runner-recovery.json"), "runner", directory, testCampaignJSONHash(plan))
 		if err != nil {

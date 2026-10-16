@@ -285,13 +285,25 @@ private campaign. A stable grace period begins only after process identity
 verification proves coordinator and worker termination; resource deadlines never
 supply that proof. It reuses runner-lock recovery and full-history fault cleanup,
 with finite attempts and existing bounded recovery I/O. Missing ownership proofs
-or claim exclusion remain manual recovery cases. Watch success establishes cleanup
+or unrecognized claim exclusion remain manual recovery cases. Watch success establishes cleanup
 only, preserving all execution uncertainty and immutable evidence.
 
 Watcher acceptance now exercises real coordinator, tracked-worker and watcher
 process deaths against the production HTTP API and PostgreSQL. Both transport
 outages and interruption after a committed cancellation retain uncertainty until
-verified recovery. Missing original ownership evidence or stale claim exclusion
-requires explicit operator recovery; restarted watchers cannot waive either.
+verified recovery. A missing original lock can be replaced only by a durable, inventory-bound
+watcher receipt. Stale claim exclusion qualifies only when its terminated owner
+and exact target are recorded in that receipt; foreign exclusion remains manual.
 The recovery gate requires every watcher case in addition to the portable,
 API-restart and database-outage consumer cases.
+
+A watcher syncs its private receipt before the first cleanup mutation. Successors
+validate bound inputs, immutable resource inventory and referenced progress, prove
+prior watcher termination, and record ownership transfer before releasing stale
+exclusion through the existing recovery transactions. A lifetime kernel guard
+serializes watcher takeover. Cleanup rechecks the receipt under runner and claim
+exclusion, then verifies current API outcomes rather than adopting cached absence.
+A bounded chain of 32 identities allows recovery interrupted during takeover;
+unknown workers, changed evidence and missing receipts remain blocking. The first
+receipt is created after original runner recovery, so interruption before that
+durability boundary still requires explicit operator recovery.

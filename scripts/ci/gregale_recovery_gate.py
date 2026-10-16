@@ -19,6 +19,8 @@ FILTER = (
     "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
+    "TestCampaignCleanupWatchReceiptGuards",
+    "TestCampaignCleanupWatchDurableResume",
     "TestCampaignCleanupWatchOwnership",
     "TestCampaignCleanupWatchExhaustion",
     "TestCampaignCleanupWatchCancellationAfterRecovery",
@@ -56,7 +58,7 @@ POSTGRES_REQUIRED |= {
 }
 POSTGRES_REQUIRED |= {
     "TestScenarioConsumerPostgresCleanupWatch" + suffix
-    for suffix in ("", "/api-unavailable", "/database-unavailable", "/restart", "/restart-in-flight")
+    for suffix in ("", "/api-unavailable", "/database-unavailable", "/restart", "/restart-in-flight", "/restart-twice", "/missing-receipt", "/changed-progress", "/changed-checkpoint", "/changed-handoff", "/concurrent")
 }
 GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
 STATE_GCFLAGS = "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false"

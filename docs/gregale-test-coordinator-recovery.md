@@ -401,19 +401,37 @@ certify test execution or refund attempted budget. Redirect output to a protecte
 operator log if watch-state history is required. Existing cleanup observations
 remain in the private work directory.
 
-Active or unverifiable processes are never displaced. Missing/legacy locks,
-remote-host identities, stale handoff claim exclusion, and changed or sealed
-lineage require operator inspection. The watcher does not automatically release
-handoff claim locks. After the watcher itself is interrupted following successful
-lock recovery, use the ordinary explicit cleanup command to continue: it does not
-invent ownership evidence when its original runner lock is gone. Ctrl-C stops
-between operations; an already running bounded cleanup operation finishes first.
+The private work directory now contains `cleanup-watch-receipt.json`, written
+and synced after original runner recovery and before cleanup can mutate resources.
+It binds the exact plan/policy/manifest paths and contents, checkpoint, full
+resource inventory, activated handoff index, API endpoint hash, and original
+process identity. Returned cleanup observations are referenced by name and hash;
+cached progress never substitutes for fresh API verification. No bearer or
+consumer key is stored in the receipt.
+
+Restart the same command with the same inputs to resume. A Linux kernel guard
+excludes a second watcher for the command's lifetime. The replacement verifies
+all prior receipt owners have terminated in the same boot/PID namespace, repeats
+the grace period, and durably records its successor identity before recovering
+stale exclusion. Only cleanup/recover-runner locks owned by receipt identities
+in this exact directory and plan qualify. Any workers attached to those watcher
+locks, foreign claim targets, active owners, changed checkpoints/journals/progress,
+and transferred or changed handoffs stop automatic recovery. History is bounded
+to 32 watcher identities; exceeding it requires manual inspection.
+
+Original owner recovery interrupted before the first receipt was synced still
+requires explicit recovery. Missing or legacy receipts never authorize takeover.
+Unverifiable remote-host or reboot identities also require manual inspection.
+Ctrl-C stops between operations; an already running bounded cleanup operation
+finishes first. Attempt limits apply to each watcher invocation; cumulative
+cleanup attempts are retained in the receipt.
 
 ### Cleanup watcher acceptance
 
 `make test-gregale-recovery-postgres` requires
-`TestScenarioConsumerPostgresCleanupWatch` and all four cases:
-`api-unavailable`, `database-unavailable`, `restart`, and `restart-in-flight`.
+`TestScenarioConsumerPostgresCleanupWatch` and all ten cases: API and database
+outages, restart between attempts, restart in flight, repeated restart, missing
+receipt, changed progress, changed checkpoint, changed handoff, and concurrency.
 The fixture uses the authenticated production API subprocess and PostgreSQL,
 with separate coordinator, tracked worker, and watcher processes. It kills the
 coordinator first, verifies the orphan worker still blocks cleanup, then kills
@@ -422,11 +440,12 @@ the worker and checks the stable termination grace period.
 Transport outages must persist three generations of unverified fault/session
 inventory while the SQL credential oracle still sees the original key as usable.
 Restoring connectivity lets the surviving watcher finish, including recovery
-from a lost cancellation response. Killing the watcher between attempts instead
-requires explicit cleanup when its original runner lock is gone. Killing it
-after a cancellation commits but before the response arrives leaves stale
-runner/claim exclusion: another watcher must stop for manual inspection, then
-explicit `recover-claim --execute` and repeated cleanup safely finish.
+from a lost cancellation response. Killing the watcher between attempts or
+after a cancellation commits but before its response arrives must now permit
+verified automatic takeover from the durable receipt. Repeated watcher deaths
+must preserve every prior owner identity. Missing or changed evidence must stop
+the replacement without resource mutations; a concurrent watcher cannot displace
+the active owner. Restoring the original test evidence allows normal recovery.
 
 Every case checks revoked credentials, absent sessions and registrations,
 creation fencing, unchanged frozen bundle evidence, and no repeated fixture or

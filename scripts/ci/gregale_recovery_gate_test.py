@@ -43,11 +43,11 @@ class RecoveryGateEventsTest(unittest.TestCase):
 
     def test_postgres_acceptance_requires_both_race_orders_and_restarts(self):
         required = GATE.POSTGRES_REQUIRED
-        self.assertEqual(14, len(required))
+        self.assertEqual(20, len(required))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.json"
             path.write_text(json.dumps({"Action": "pass", "Test": "TestScenarioConsumerPostgresPortableRecovery"}))
-            self.assertEqual(13, len(GATE.test_events(path, required)["missing_acceptance_tests"]))
+            self.assertEqual(19, len(GATE.test_events(path, required)["missing_acceptance_tests"]))
             path.write_text("\n".join(json.dumps({"Action": "pass", "Test": name}) for name in required))
             self.assertFalse(GATE.test_events(path, required)["errors"])
 

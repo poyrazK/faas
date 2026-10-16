@@ -65,7 +65,7 @@ func TestScenarioConsumerPostgresCleanupWatch(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("process identity acceptance requires Linux")
 	}
-	for _, mode := range []string{"api-unavailable", "database-unavailable", "restart", "restart-in-flight"} {
+	for _, mode := range []string{"api-unavailable", "database-unavailable", "restart", "restart-in-flight", "restart-twice", "missing-receipt", "changed-progress", "changed-checkpoint", "changed-handoff", "concurrent"} {
 		t.Run(mode, func(t *testing.T) { testConsumerPostgresPortableRecovery(t, false, false, "watch:"+mode) })
 	}
 }
@@ -276,27 +276,48 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 	}
 	assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, true)
 	assertCleanupWatchOutage(t, work)
-	if mode == "restart" {
+	if mode == "concurrent" {
+		other := startCleanupWatchAcceptanceProcess(t, "watcher", args, env...)
+		other.wait(t, 1)
+		var receipt testCampaignWatchReceipt
+		if err := readTestCampaignJSON(filepath.Join(work, testCampaignWatchReceiptName), &receipt); err != nil {
+			t.Fatal(err)
+		}
+		if receipt.Owner.PID != watcher.cmd.Process.Pid {
+			t.Fatal("concurrent watcher changed receipt ownership")
+		}
+	}
+	if mode == "restart" || mode == "restart-twice" || mode == "missing-receipt" || strings.HasPrefix(mode, "changed-") {
 		watcher.killed(t)
 		if _, err := os.Lstat(filepath.Join(work, "runner.lock")); !os.IsNotExist(err) {
 			t.Fatal("cleanup exclusion was not released before interruption")
 		}
-		// A new watcher must not replace missing ownership evidence with a timer.
-		retryArgs := append([]string{}, args...)
-		retryArgs[len(retryArgs)-1] = "2"
-		retry := startCleanupWatchAcceptanceProcess(t, "watcher", retryArgs, env...)
-		retry.state(t, "manual_inspection_required")
-		retry.wait(t, 2)
-		assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, true)
+		if mode == "missing-receipt" || strings.HasPrefix(mode, "changed-") {
+			testCleanupWatchRejectChangedEvidence(t, mode, args, env, root, work)
+			assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, true)
+		}
+		retry := startCleanupWatchAcceptanceProcess(t, "watcher", args, env...)
+		retry.state(t, "owner_terminated_grace_period")
+		if mode == "restart-twice" {
+			retry.state(t, "cleanup_unresolved")
+			retry.killed(t)
+			retry = startCleanupWatchAcceptanceProcess(t, "watcher", args, env...)
+			retry.state(t, "owner_terminated_grace_period")
+		}
 		setOutage(false)
-		cleanupArgs := append([]string{"cleanup"}, args[1:len(args)-6]...)
-		cleanupArgs = append(cleanupArgs, "--journal", "--faults", "--fault-history")
-		// The first response is lost after durable cancellation. Repeating the
-		// explicit cleanup must inspect that outcome rather than provision again.
-		first := startCleanupWatchAcceptanceProcess(t, "cleanup", cleanupArgs, env...)
-		first.wait(t, 3)
-		second := startCleanupWatchAcceptanceProcess(t, "cleanup", cleanupArgs, env...)
-		second.wait(t, 0)
+		retry.state(t, "cleanup_complete")
+		retry.wait(t, 0)
+		var receipt testCampaignWatchReceipt
+		if err := readTestCampaignJSON(filepath.Join(work, testCampaignWatchReceiptName), &receipt); err != nil {
+			t.Fatal(err)
+		}
+		minimum := 1
+		if mode == "restart-twice" {
+			minimum = 2
+		}
+		if !receipt.Complete || receipt.Attempts < 2 || receipt.Progress == nil || len(receipt.PreviousOwners) < minimum || receipt.Owner.PID != retry.cmd.Process.Pid {
+			t.Fatal("replacement watcher did not persist recovery progress")
+		}
 	} else if mode == "restart-in-flight" {
 		// Kill the watcher after SQL cancellation commits but before its reply
 		// reaches the client. Its runner and handoff exclusion remain on disk.
@@ -324,18 +345,17 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 			t.Fatal("in-flight interruption did not retain runner exclusion", err)
 		}
 		retry := startCleanupWatchAcceptanceProcess(t, "watcher", args, env...)
-		retry.state(t, "manual_inspection_required")
-		retry.wait(t, 2)
-		// Explicit claim recovery verifies the dead watcher, removes its stale
-		// exclusions transactionally, and preserves execution uncertainty.
-		recovery := startCleanupWatchAcceptanceProcess(t, "cleanup", []string{"recover-claim", "--handoff", filepath.Join(root, "bundle-index.json"), "--execute"}, env...)
-		recovery.wait(t, 0)
-		cleanupArgs := append([]string{"cleanup"}, args[1:len(args)-6]...)
-		cleanupArgs = append(cleanupArgs, "--journal", "--faults", "--fault-history")
-		for i := 0; i < 2; i++ {
-			cleanup := startCleanupWatchAcceptanceProcess(t, "cleanup", cleanupArgs, env...)
-			cleanup.wait(t, 0)
+		retry.state(t, "owner_terminated_grace_period")
+		retry.state(t, "cleanup_complete")
+		retry.wait(t, 0)
+		var receipt testCampaignWatchReceipt
+		if err := readTestCampaignJSON(filepath.Join(work, testCampaignWatchReceiptName), &receipt); err != nil {
+			t.Fatal(err)
 		}
+		if !receipt.Complete || len(receipt.PreviousOwners) != 1 || receipt.Owner.PID != retry.cmd.Process.Pid {
+			t.Fatal("in-flight takeover did not persist its successor")
+		}
+
 	} else {
 		setOutage(false)
 		watcher.state(t, "cleanup_complete")
@@ -394,5 +414,66 @@ func assertCleanupWatchOutage(t *testing.T, work string) {
 	}
 	if !found {
 		t.Fatal("watcher did not persist outage evidence")
+	}
+}
+
+func testCleanupWatchRejectChangedEvidence(t *testing.T, mode string, args, env []string, root, work string) {
+	t.Helper()
+	path := filepath.Join(work, testCampaignWatchReceiptName)
+	var receipt testCampaignWatchReceipt
+	if err := readTestCampaignJSON(path, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	switch mode {
+	case "changed-progress":
+		if receipt.Progress == nil {
+			t.Fatal("outage did not save progress receipt")
+		}
+		path = filepath.Join(work, receipt.Progress.Name)
+	case "changed-checkpoint":
+		path = filepath.Join(work, "checkpoint.json")
+	case "changed-handoff":
+		path = filepath.Join(root, "bundle-index.json")
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode == "missing-receipt" {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(before, &fields); err != nil {
+			t.Fatal(err)
+		}
+		switch mode {
+		case "changed-progress":
+			fields["operation_complete"] = json.RawMessage("true")
+		case "changed-checkpoint":
+			fields["halted"] = json.RawMessage("false")
+		case "changed-handoff":
+			fields["nonce"] = json.RawMessage(`"changed"`)
+		}
+		mustCampaignFaultJSON(t, path, fields)
+	}
+	retryArgs := append([]string{}, args...)
+	retryArgs[len(retryArgs)-1] = "2"
+	retry := startCleanupWatchAcceptanceProcess(t, "watcher", retryArgs, env...)
+	if mode == "missing-receipt" {
+		retry.state(t, "manual_inspection_required")
+		retry.wait(t, 2)
+	} else {
+		retry.wait(t, 1)
+	}
+	// Evidence must stay untouched by the rejected successor.
+	if mode == "missing-receipt" {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatal("missing receipt was silently recreated")
+		}
+	}
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
 	}
 }

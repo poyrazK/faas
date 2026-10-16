@@ -98,42 +98,74 @@ func cmdTestCampaignCleanupWatch(args []string) int {
 	if fs.NArg() != 0 || rejectUnexpectedFlagArgs(fs) || !*execute || *plan == "" || *policy == "" || *directory == "" || *interval < time.Second || *interval > time.Hour || *grace < time.Second || *grace > 24*time.Hour || *attempts < 1 || *attempts > 2880 {
 		return printErr("Invalid cleanup watcher options", errors.New("--execute, --plan, --policy and --directory required; durations and attempts must be within documented bounds"))
 	}
-	var err error
-	*directory, err = filepath.Abs(*directory)
+	w, err := newTestCampaignWatchRecovery(testCampaignWatchPaths{Plan: *plan, Policy: *policy, Manifest: *manifest, Directory: *directory, Handoff: *handoff})
 	if err != nil {
-		return printErr("Invalid directory", err)
+		return printErr("Invalid watcher recovery scope", err)
 	}
-	var original testCampaignPolicyPlan
-	if err := readTestCampaignJSON(*plan, &original); err != nil {
-		return printErr("Invalid plan", err)
+	releaseWatch, err := acquireTestCampaignRecoveryGuard(filepath.Join(w.Paths.Directory, "cleanup-watch.lock"))
+	if err != nil {
+		return printErr("Watcher ownership unavailable", err)
 	}
-	planHash := testCampaignJSONHash(original)
-	unchanged := func() bool {
-		var current testCampaignPolicyPlan
-		return readTestCampaignJSON(*plan, &current) == nil && testCampaignJSONHash(current) == planHash
+	defer releaseWatch()
+	if err := w.load(); err != nil {
+		return printErr("Watcher recovery requires manual inspection", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	inspect := func() (string, bool, error) {
-		var p testCampaignPolicyPlan
-		var cp testCampaignCheckpoint
-		if err := readTestCampaignJSON(*plan, &p); err != nil {
+		if w.Receipt != nil {
+			stamp, err := w.resumeStamp(true)
+			return stamp, err == nil, err
+		}
+		p, cp, _, _, binding, err := w.inputs()
+		if err != nil {
 			return "", false, err
 		}
-		if testCampaignJSONHash(p) != planHash {
-			return "", false, errors.New("watch target plan changed")
+		if binding != w.BindingSHA256 {
+			return "", false, errors.New("watch target inputs changed")
 		}
-		if err := readTestCampaignJSON(filepath.Join(*directory, "checkpoint.json"), &cp); err != nil {
-			return "", false, err
-		}
-		if cp.SchemaVersion != 1 || cp.PlanSHA256 != testCampaignJSONHash(p) || !testCampaignCheckpointLineageMatches(cp, p) {
-			return "", false, errors.New("checkpoint binding changed")
-		}
-		assessment, err := inspectTestCampaignRunnerLock(*directory, p, cp)
+		assessment, err := inspectTestCampaignRunnerLock(w.Paths.Directory, p, cp)
 		return testCampaignJSONHash(assessment), assessment.Recoverable, err
 	}
-	recoverArgs := []string{"--plan", *plan, "--directory", *directory, "--handoff", *handoff, "--execute"}
-	cleanupArgs := []string{"--plan", *plan, "--policy", *policy, "--manifest", *manifest, "--directory", *directory, "--handoff", *handoff, "--journal", "--faults", "--fault-history", "--execute"}
+	recoverArgs := []string{"--plan", w.Paths.Plan, "--directory", w.Paths.Directory, "--handoff", w.Paths.Handoff, "--execute"}
+	cleanupArgs := []string{"--plan", w.Paths.Plan, "--policy", w.Paths.Policy, "--manifest", w.Paths.Manifest, "--directory", w.Paths.Directory, "--handoff", w.Paths.Handoff, "--journal", "--faults", "--fault-history", "--execute"}
+	recoverOwner := func() bool {
+		if w.Receipt != nil {
+			if err := w.resume(); err != nil {
+				printErr("Cannot resume watcher recovery", err)
+				return false
+			}
+			return true
+		}
+		if cmdTestCampaignRecoverLock(recoverArgs) != 0 {
+			return false
+		}
+		if err := w.recordInitial(); err != nil {
+			printErr("Cannot persist watcher recovery authority", err)
+			return false
+		}
+		return true
+	}
+	cleanup := func() bool {
+		verified := false
+		code := cmdTestCampaignControlChecked("cleanup", cleanupArgs, func() error {
+			if err := w.validate(false); err != nil {
+				return err
+			}
+			verified = true
+			return nil
+		}, w.EndpointSHA256)
+		if !verified {
+			stop()
+			return false
+		}
+		if err := w.saveProgress(code == 0); err != nil {
+			printErr("Cannot persist watcher cleanup progress", err)
+			stop()
+			return false
+		}
+		return code == 0
+	}
 	observe := func(state string, attempt int) error {
 		return json.NewEncoder(os.Stdout).Encode(struct {
 			SchemaVersion int       `json:"schema_version"`
@@ -142,7 +174,5 @@ func cmdTestCampaignCleanupWatch(args []string) int {
 			ObservedAt    time.Time `json:"observed_at"`
 		}{1, state, attempt, time.Now().UTC()})
 	}
-	return watchTestCampaignCleanup(ctx, *interval, *grace, *attempts, inspect,
-		func() bool { return unchanged() && cmdTestCampaignRecoverLock(recoverArgs) == 0 },
-		func() bool { return unchanged() && cmdTestCampaignControl("cleanup", cleanupArgs) == 0 }, observe)
+	return watchTestCampaignCleanup(ctx, *interval, *grace, *attempts, inspect, recoverOwner, cleanup, observe)
 }
