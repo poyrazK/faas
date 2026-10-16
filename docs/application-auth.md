@@ -42,9 +42,58 @@ Verify the tokens wherever they are used:
   then write row-level security policies (see below).
 - **Edge JWT rules:** `gregale edge-rules create --app APP --kind jwt
   --match-host HOST --jwt-auth shop-auth` requires a valid token on a route.
+- **Your own backend:** the Go and Python SDKs (see below).
 
 Sign-out and bans end refresh immediately. A token already issued stays valid
 for edge-only checks until it expires, at most 600 seconds later.
+
+### In your backend
+
+The Go and Python SDKs check a token's ES256 signature against the Auth app's
+published keys, its issuer (`https://<auth-host>/auth/v1`), its audience
+(`authenticated`) and its expiry, allowing 60 seconds of clock skew. They cache
+the keys for five minutes and refetch at most every 30 seconds when a token
+names an unknown key, so key rotation needs no restart and a parked Auth app is
+not woken by verification. Like edge rules, a verified token stays valid until
+it expires; `Authorize` asks the Auth app, which also checks that the session
+is still active.
+
+Go (`github.com/poyrazK/faas/sdk/go/auth`, standard library only):
+
+```go
+client, err := auth.New("https://shop-auth.gregale.app")
+if err != nil {
+	return err
+}
+// 401 without a valid token, 503 when the keys cannot be fetched.
+mux.Handle("/api/docs/", client.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.FromContext(r.Context()) // claims.Subject is the user ID
+	token, _ := auth.BearerToken(r)
+	ok, err := client.Authorize(r.Context(), token, "read", auth.Resource(orgID, "doc", docID))
+	// ...
+})))
+```
+
+Python (`pip install 'faas_sdk[auth]'`), here as a FastAPI dependency:
+
+```python
+from fastapi import Header, HTTPException
+from faas_sdk.auth import AuthClient, AuthUnavailableError, InvalidTokenError, NoTokenError, bearer_token, resource
+
+auth = AuthClient("https://shop-auth.gregale.app")
+
+async def current_user(authorization: str | None = Header(None)):
+    try:
+        return await auth.verify_async(bearer_token(authorization))
+    except (NoTokenError, InvalidTokenError):
+        raise HTTPException(401)
+    except AuthUnavailableError:
+        raise HTTPException(503)
+
+# allowed = await auth.authorize_async(token, "read", resource(org_id, "doc", doc_id))
+```
+
+`verify` and `authorize` are the synchronous forms for Flask or Django.
 
 ## Your data
 
