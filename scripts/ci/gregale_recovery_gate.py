@@ -40,6 +40,11 @@ REQUIRED = {
     "TestCampaignRecoveryGuardProtocol",
     "TestCampaignRecoveryProcessReapedDuringStatRead",
 }
+POSTGRES_REQUIRED = {
+    "TestScenarioConsumerPostgres" + mode + suffix
+    for mode in ("PortableRecovery", "RestartRecovery")
+    for suffix in ("", "/cancel-first", "/create-first")
+}
 GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
 STATE_GCFLAGS = "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false"
 
@@ -107,7 +112,8 @@ def main():
     stages = []
     summary = {"schema_version": 1, "run_id": run_id, "package": PACKAGE,
                "filter": FILTER, "required_acceptance_tests": sorted(REQUIRED),
-               "format_sources_requested": args.format, "postgres_requested": args.postgres, "stages": stages, "passed": False}
+               "format_sources_requested": args.format, "postgres_requested": args.postgres,
+               "required_postgres_acceptance_tests": sorted(POSTGRES_REQUIRED) if args.postgres else [], "stages": stages, "passed": False}
 
     def save():
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -231,11 +237,9 @@ def main():
                     return 1
                 env["GREGALE_CONSUMER_ACCEPTANCE_BINARY"] = str(server)
                 acceptance = run("postgres-acceptance", [go, "test", "-p=1", STATE_GCFLAGS, GCFLAGS,
-                    "-json", "-count=1", "-timeout=8m", "-run", "^TestScenarioConsumerPostgresPortableRecovery$", PACKAGE],
+                    "-json", "-count=1", "-timeout=8m", "-run", "^TestScenarioConsumerPostgres(PortableRecovery|RestartRecovery)$", PACKAGE],
                     timeout=600, stdout="postgres-acceptance.json")
-                required = {"TestScenarioConsumerPostgresPortableRecovery" + suffix
-                            for suffix in ("", "/cancel-first", "/create-first")}
-                acceptance["tests"] = test_events(output / "postgres-acceptance.json", required)
+                acceptance["tests"] = test_events(output / "postgres-acceptance.json", POSTGRES_REQUIRED)
                 acceptance["passed"] = acceptance["passed"] and not acceptance["tests"]["errors"]
                 save()
         summary["passed"] = all(stage["passed"] for stage in stages)

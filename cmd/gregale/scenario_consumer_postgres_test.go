@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,28 +17,105 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type consumerAcceptanceBackend struct {
-	client  *api.Client
-	store   *state.PgStore
-	account string
-	token   string
+	client                           *api.Client
+	store                            *state.PgStore
+	account, token, database, schema string
+	mu                               sync.Mutex
+	process                          *consumerAcceptanceProcess
+	crashes                          atomic.Int32
+	restarts                         int
 }
 
-func startConsumerAcceptanceBackend(t *testing.T) consumerAcceptanceBackend {
+type consumerAcceptanceProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	done   chan error
+	output bytes.Buffer
+	once   sync.Once
+	killed atomic.Bool
+	err    error
+}
+
+func (p *consumerAcceptanceProcess) stop(crash bool) error {
+	p.once.Do(func() {
+		if crash {
+			if err := p.cmd.Process.Kill(); err != nil {
+				p.err = fmt.Errorf("kill API fixture: %w", err)
+				return
+			}
+		}
+		p.stdin.Close()
+		select {
+		case err := <-p.done:
+			if crash {
+				var exited *exec.ExitError
+				if !errors.As(err, &exited) {
+					p.err = errors.New("API fixture was not killed")
+					return
+				}
+				status, ok := exited.Sys().(syscall.WaitStatus)
+				if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+					p.err = errors.New("API fixture did not exit with SIGKILL")
+					return
+				}
+				p.killed.Store(true)
+			} else if err != nil {
+				p.err = fmt.Errorf("API fixture failed: %w\n%s", err, p.output.String())
+			}
+		case <-time.After(10 * time.Second):
+			_ = p.cmd.Process.Kill()
+			<-p.done
+			p.err = errors.New("API fixture did not stop")
+		}
+	})
+	return p.err
+}
+
+func startConsumerAcceptanceBackend(t *testing.T) *consumerAcceptanceBackend {
 	t.Helper()
-	binary := os.Getenv("GREGALE_CONSUMER_ACCEPTANCE_BINARY")
-	if binary == "" {
+	if os.Getenv("GREGALE_CONSUMER_ACCEPTANCE_BINARY") == "" {
 		t.Skip("run make test-gregale-recovery-postgres")
 	}
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	b := &consumerAcceptanceBackend{store: state.NewPgStore(pool)}
+	account, err := b.store.CreateAccount(ctx, "consumer-acceptance@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.account = account.ID
+	plain, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.store.CreateAPIKey(ctx, account.ID, hash, "consumer-acceptance", api.ScopesAdminOnly); err != nil {
+		t.Fatal(err)
+	}
+	b.token = plain
+	if err := pool.QueryRow(ctx, `select current_database(),current_schema()`).Scan(&b.database, &b.schema); err != nil {
+		t.Fatal(err)
+	}
+	b.start(t)
+	return b
+}
+
+func (b *consumerAcceptanceBackend) start(t *testing.T) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
 	read, write, err := os.Pipe()
@@ -45,38 +123,36 @@ func startConsumerAcceptanceBackend(t *testing.T) consumerAcceptanceBackend {
 		t.Fatal(err)
 	}
 	defer read.Close()
-	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestScenarioConsumerAcceptanceServer$", "-test.timeout=3m")
-	cmd.Env = append(os.Environ(), "GREGALE_CONSUMER_ACCEPTANCE_SERVER=1")
-	cmd.ExtraFiles = []*os.File{write}
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	stdin, err := cmd.StdinPipe()
+	p := &consumerAcceptanceProcess{done: make(chan error, 1)}
+	p.cmd = exec.CommandContext(ctx, os.Getenv("GREGALE_CONSUMER_ACCEPTANCE_BINARY"), "-test.run=^TestScenarioConsumerAcceptanceServer$", "-test.timeout=3m")
+	p.cmd.Env = append(os.Environ(), "GREGALE_CONSUMER_ACCEPTANCE_SERVER=1")
+	p.cmd.ExtraFiles = []*os.File{write}
+	p.cmd.Stdout = &p.output
+	p.cmd.Stderr = &p.output
+	p.stdin, err = p.cmd.StdinPipe()
 	if err != nil {
 		write.Close()
 		t.Fatal(err)
 	}
-	if err := cmd.Start(); err != nil {
+	if err := p.cmd.Start(); err != nil {
 		write.Close()
+		p.stdin.Close()
 		t.Fatal(err)
 	}
 	write.Close()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() { p.done <- p.cmd.Wait() }()
 	t.Cleanup(func() {
-		stdin.Close()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("API fixture failed: %v\n%s", err, output.String())
-			}
-		case <-time.After(10 * time.Second):
-			cancel()
-			<-done
-			t.Error("API fixture did not stop")
+		if err := p.stop(false); err != nil {
+			t.Error(err)
 		}
 	})
-	var ready struct{ URL, Token, AccountID, Database, Schema string }
+	if err := json.NewEncoder(p.stdin).Encode(struct{ Database, Schema string }{b.database, b.schema}); err != nil {
+		t.Fatal("select API fixture database", err)
+	}
+	var ready struct {
+		URL, Database, Schema string
+		PID                   int
+	}
 	decoded := make(chan error, 1)
 	go func() { decoded <- json.NewDecoder(read).Decode(&ready) }()
 	select {
@@ -87,21 +163,50 @@ func startConsumerAcceptanceBackend(t *testing.T) consumerAcceptanceBackend {
 	case <-time.After(45 * time.Second):
 		t.Fatal("API fixture readiness timed out")
 	}
-	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if ready.Database != b.database || ready.Schema != b.schema || ready.PID != p.cmd.Process.Pid {
+		t.Fatal("API fixture identity changed")
+	}
+	b.mu.Lock()
+	b.process = p
+	b.mu.Unlock()
+	b.client = api.NewClient(ready.URL, b.token)
+	// This authenticated read proves the original bearer survived the restart.
+	if _, err := b.client.GetScenarioTestRegistration(ctx, strings.Repeat("f", 32)); err != nil {
+		t.Fatal("persisted authentication failed", err)
+	}
+}
+
+func (b *consumerAcceptanceBackend) crash() error {
+	b.mu.Lock()
+	p := b.process
+	b.mu.Unlock()
+	if err := p.stop(true); err != nil {
+		return err
+	}
+	b.crashes.Add(1)
+	return nil
+}
+
+func (b *consumerAcceptanceBackend) restart(t *testing.T, d *consumerAcceptanceDelivery) {
+	t.Helper()
+	b.mu.Lock()
+	old := b.process
+	b.mu.Unlock()
+	if !old.killed.Load() {
+		t.Fatal("restart requires a verified API process crash")
+	}
+	b.start(t)
+	if old.cmd.Process.Pid == b.process.cmd.Process.Pid {
+		t.Fatal("API process was reused")
+	}
+	target, err := url.Parse(b.client.BaseURL())
 	if err != nil {
-		t.Fatal("invalid acceptance database config")
+		t.Fatal(err)
 	}
-	cfg.ConnConfig.Database = ready.Database
-	if cfg.ConnConfig.RuntimeParams == nil {
-		cfg.ConnConfig.RuntimeParams = map[string]string{}
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{ready.Schema}.Sanitize() + ",public"
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal("connect to acceptance database", err)
-	}
-	t.Cleanup(pool.Close)
-	return consumerAcceptanceBackend{api.NewClient(ready.URL, ready.Token), state.NewPgStore(pool), ready.AccountID, ready.Token}
+	d.mu.Lock()
+	d.target = target
+	d.mu.Unlock()
+	b.restarts++
 }
 
 // Only transport delivery is changed. All responses and durable effects are
@@ -109,12 +214,14 @@ func startConsumerAcceptanceBackend(t *testing.T) consumerAcceptanceBackend {
 type consumerAcceptanceDelivery struct {
 	target                         *url.URL
 	createFirst                    bool
+	crashAfterCommit               func() error
 	lostRun, delayedRun            string
 	entered, release, committed    chan struct{}
 	releaseOnce                    sync.Once
 	mu                             sync.Mutex
 	lostCreate, lostCancel, parked bool
 	key                            api.ConsumerKeyResponse
+	lostConsumerID                 string
 	puts, keys, cancels            int
 }
 
@@ -126,10 +233,13 @@ func (d *consumerAcceptanceDelivery) ServeHTTP(w http.ResponseWriter, r *http.Re
 		return
 	}
 	req := r.Clone(r.Context())
-	req.URL.Scheme = d.target.Scheme
-	req.URL.Host = d.target.Host
+	d.mu.Lock()
+	target := *d.target
+	d.mu.Unlock()
+	req.URL.Scheme = target.Scheme
+	req.URL.Host = target.Host
 	req.RequestURI = ""
-	req.Host = d.target.Host
+	req.Host = target.Host
 	response, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
 		http.Error(w, "upstream unavailable", 502)
@@ -165,11 +275,18 @@ func (d *consumerAcceptanceDelivery) ServeHTTP(w http.ResponseWriter, r *http.Re
 func TestScenarioConsumerPostgresPortableRecovery(t *testing.T) {
 	// adr: 984 — a recipient recovers real HTTP/SQL effects after delivery failures.
 	for _, order := range []string{"cancel-first", "create-first"} {
-		t.Run(order, func(t *testing.T) { testConsumerPostgresPortableRecovery(t, order == "create-first") })
+		t.Run(order, func(t *testing.T) { testConsumerPostgresPortableRecovery(t, order == "create-first", false) })
 	}
 }
 
-func testConsumerPostgresPortableRecovery(t *testing.T, createFirst bool) {
+func TestScenarioConsumerPostgresRestartRecovery(t *testing.T) {
+	// adr: 984 — receipts, credentials and fences survive real API process deaths.
+	for _, order := range []string{"cancel-first", "create-first"} {
+		t.Run(order, func(t *testing.T) { testConsumerPostgresPortableRecovery(t, order == "create-first", true) })
+	}
+}
+
+func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart bool) {
 	t.Helper()
 	backend := startConsumerAcceptanceBackend(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -177,6 +294,9 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst bool) {
 	f := newCampaignFaultHistoryFixture(t)
 	target, _ := url.Parse(backend.client.BaseURL())
 	delivery := &consumerAcceptanceDelivery{target: target, createFirst: createFirst, lostRun: strings.Repeat("1", 32), delayedRun: strings.Repeat("2", 32), entered: make(chan struct{}), release: make(chan struct{}), committed: make(chan struct{})}
+	if restart {
+		delivery.crashAfterCommit = backend.crash
+	}
 	proxy := httptest.NewServer(delivery)
 	t.Cleanup(proxy.Close)
 	t.Cleanup(delivery.releaseCreation)
@@ -209,6 +329,21 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst bool) {
 		} else {
 			if _, _, err := provisionTestConsumers(ctx, client, session.App.Slug, f.scenarios["checkout"].Consumers, j.RunID, time.Minute, writer); err == nil {
 				t.Fatal("lost response was not observed")
+			}
+		}
+		if restart && i != 1 {
+			backend.restart(t, delivery)
+			record := writer.journal.Faults.Consumers["customer"]
+			receipt, err := client.LookupScenarioTestConsumer(ctx, j.RunID, "customer", api.ScenarioTestConsumerRequest{AppID: record.AppID, ExpiresAt: record.ExpiresAt})
+			recovered, verify := verifiedTestConsumerReceipt(receipt, j.RunID, "customer", api.ScenarioTestConsumerRequest{AppID: record.AppID, ExpiresAt: record.ExpiresAt}, record.CreationIntentSHA256)
+			delivery.mu.Lock()
+			originalID := delivery.lostConsumerID
+			delivery.mu.Unlock()
+			if record.ID != "" {
+				originalID = record.ID
+			}
+			if err != nil || verify != nil || recovered.Status != "active" || recovered.ID != originalID {
+				t.Fatal("creation receipt did not survive restart")
 			}
 		}
 		journals[i] = writer.journal
@@ -281,9 +416,29 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst bool) {
 		t.Error("inspection cancelled creation")
 	}
 	delivery.mu.Unlock()
+	assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, true)
+	for _, o := range inspect.Faults {
+		expected := "active"
+		if o.RunID == journals[1].RunID {
+			expected = "pending"
+		}
+		if o.Consumers["customer"] != expected {
+			t.Fatal("read-only inspection changed consumer state")
+		}
+	}
 	first, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
 	if err == nil || first.Complete {
 		t.Fatal("lost cancellation response certified completion")
+	}
+	if restart {
+		backend.restart(t, delivery)
+		// The current generation was revoked before the cancellation response loss.
+		assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, false)
+		proof, err := client.LookupScenarioTestConsumer(ctx, journals[1].RunID, "customer", req)
+		if err != nil || !validTestConsumerCancellation(proof, delayed) {
+			t.Fatal("cancellation proof did not survive restart")
+		}
+		delivery.releaseCreation()
 	}
 	select {
 	case err := <-late:
@@ -360,6 +515,9 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst bool) {
 	if keys != 1 || cancels != 1 {
 		t.Fatal("cleanup replayed key provisioning or cancellation", keys, cancels)
 	}
+	if restart && (backend.crashes.Load() != 3 || backend.restarts != 3) {
+		t.Fatal("API crash boundaries were not exercised", backend.crashes.Load(), backend.restarts)
+	}
 	for _, body := range campaignFaultFrozenBytes(t, []string{root}) {
 		if bytes.Contains(body, []byte(key.Key)) {
 			t.Fatal("credential persisted in portable evidence")
@@ -373,7 +531,7 @@ func isConflictAcceptance(err error) bool {
 	return errors.As(err, &e) && e.Problem.Status == 409
 }
 
-func assertConsumerAcceptanceKey(t *testing.T, b consumerAcceptanceBackend, app string, key api.ConsumerKeyResponse, want bool) {
+func assertConsumerAcceptanceKey(t *testing.T, b *consumerAcceptanceBackend, app string, key api.ConsumerKeyResponse, want bool) {
 	t.Helper()
 	if key.Key == "" || key.Prefix == "" {
 		t.Fatal("lost key response did not contain a credential")
@@ -427,6 +585,11 @@ func (d *consumerAcceptanceDelivery) afterForward(r *http.Request, status int, b
 	if r.Method == "PUT" && strings.Contains(r.URL.Path, "/consumers/") {
 		d.puts++
 		if strings.Contains(r.URL.Path, "/"+d.lostRun+"/") && !d.lostCreate && status == 200 {
+			var receipt api.ScenarioTestConsumerReceipt
+			if err := json.Unmarshal(body, &receipt); err != nil || receipt.Consumer == nil {
+				return false, errors.New("invalid creation response")
+			}
+			d.lostConsumerID = receipt.Consumer.ID
 			d.lostCreate = true
 			drop = true
 		}
@@ -444,7 +607,14 @@ func (d *consumerAcceptanceDelivery) afterForward(r *http.Request, status int, b
 			d.lostCancel = true
 			drop = true
 		}
-		d.releaseCreation()
+		if d.crashAfterCommit == nil {
+			d.releaseCreation()
+		}
+	}
+	if drop && d.crashAfterCommit != nil {
+		if err := d.crashAfterCommit(); err != nil {
+			return false, err
+		}
 	}
 	return drop, nil
 }

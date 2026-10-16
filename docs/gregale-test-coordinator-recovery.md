@@ -298,14 +298,14 @@ when the original machines and earlier recipients no longer exist.
 
 Run `make test-gregale-recovery-postgres` with `DATABASE_URL` pointing to a
 local disposable PostgreSQL cluster. The target includes the portable gate and
-requires both end-to-end race orderings to pass; missing infrastructure or a
+requires both end-to-end race orderings, with and without API restarts, to pass; missing infrastructure or a
 skipped acceptance test fails the gate. `FAAS_PGTEST_TEMPLATE_DATABASE=1` enables
 the existing private database clone harness and requires database creation rights.
 The ordinary `make test-gregale-recovery` remains available without PostgreSQL.
 CI runs the PostgreSQL target against its own PostgreSQL 16 service.
 
 The CLI acceptance binary starts the real authenticated API test server in a
-separate process with an isolated, migrated PgStore. A delivery proxy holds a
+separate process with an isolated, migrated PgStore owned by the parent test. A delivery proxy holds a
 creation request and discards selected successful responses, while every durable
 effect still goes through the production API handlers. It covers lost consumer,
 key and cancellation responses, and deterministically exercises creation before
@@ -321,3 +321,16 @@ and verified cancellation or revocation without claiming test execution passed.
 Frozen imported evidence must remain byte-identical and contain no credential.
 This is HTTP/SQL portable recovery acceptance; it does not qualify VM execution
 or demonstrate a deployment on a second physical host.
+
+Restart acceptance uses real SIGKILL and verifies the process exit signal before
+starting a new API process against the same database and schema. It keeps the
+original account and bearer, without migrating or reseeding the child server.
+The delivery proxy kills the API after observing committed consumer creation,
+key creation and cancellation, before delivering the worker's successful response.
+Fresh authenticated lookups must recover the original creation receipt and the
+cancellation proof. A creation held before cancellation is released only after
+the replacement API is ready, and must still conflict. A credential revoked
+before the crash must remain unusable after restart. The recipient then repeats
+cleanup with unchanged frozen evidence and verifies resource absence without
+claiming test execution completed. The gate requires all three crash boundaries
+for each ordering. PostgreSQL stays running; this does not test database crashes.

@@ -41,13 +41,13 @@ class RecoveryGateEventsTest(unittest.TestCase):
         self.assertIsNone(re.search(GATE.FILTER, "TestCompletion_FishScriptIsSyntacticallyValid"))
         self.assertIsNone(re.search(GATE.FILTER, "TestCompletion_ZshScriptIsSyntacticallyValid"))
 
-    def test_postgres_acceptance_requires_both_race_orders(self):
-        required = {"TestScenarioConsumerPostgresPortableRecovery" + suffix
-                    for suffix in ("", "/cancel-first", "/create-first")}
+    def test_postgres_acceptance_requires_both_race_orders_and_restarts(self):
+        required = GATE.POSTGRES_REQUIRED
+        self.assertEqual(6, len(required))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.json"
             path.write_text(json.dumps({"Action": "pass", "Test": "TestScenarioConsumerPostgresPortableRecovery"}))
-            self.assertEqual(2, len(GATE.test_events(path, required)["missing_acceptance_tests"]))
+            self.assertEqual(5, len(GATE.test_events(path, required)["missing_acceptance_tests"]))
             path.write_text("\n".join(json.dumps({"Action": "pass", "Test": name}) for name in required))
             self.assertFalse(GATE.test_events(path, required)["errors"])
 

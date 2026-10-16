@@ -260,3 +260,12 @@ and lose committed consumer, key and cancellation responses. Acceptance requires
 safe repeated recipient cleanup, disabled credentials, unchanged frozen evidence,
 and resource completion that preserves execution uncertainty. Missing or skipped
 PostgreSQL acceptance is a gate failure; the portable-only gate remains available.
+
+Restart acceptance moves isolated database ownership to the CLI test parent.
+Child API processes own only their listeners and pools. Real SIGKILL after
+committed consumer, key and cancellation responses must leave the original SQL
+state intact. A new process uses the same account, bearer, database and schema;
+read-only lookups recover receipts and cancellation proofs before recipient
+cleanup resumes. Both creation/cancellation orderings must pass across restarts,
+including a delayed request reaching the replacement API and revoked credentials
+remaining disabled. No database crash or VM restart is inferred from this evidence.
