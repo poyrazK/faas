@@ -126,3 +126,8 @@ The CLI command `events deadline-alert-investigate APP --alert-file PATH` expose
 this helper with `--limit`, `--cursor`, a human table and global `--json` output.
 It accepts one saved Go/CLI alert object and preserves full continuation tokens.
 See [CLI investigation](event-deadline-alert-investigation.md#cli-investigation).
+
+Node consumers can use `investigateEventDeadlineAlert(checkpoint, reference, options)`
+with an exact retained incident/sequence pair. It derives the query from validated
+checkpoint policy and returns one current page with separate notification and
+observation clocks. See [Node investigation](event-deadline-node-investigation.md).

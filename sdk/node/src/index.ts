@@ -550,3 +550,6 @@ export { EVENT_DEADLINE_REASONS, type EventDeadlineReason, type EventDeadlineTar
 
 export { EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, type EventDeadlineRatioOptions,
   type EventDeadlineRatioSample } from './event-deadline-ratio.js';
+
+export { investigateEventDeadlineAlert, type EventDeadlineInvestigationOptions,
+  type EventDeadlineInvestigationQuery, type EventDeadlineInvestigation } from './event-deadline-investigation.js';

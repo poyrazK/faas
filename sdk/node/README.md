@@ -3452,3 +3452,10 @@ with a qualifying cohort. Decisions use exact BigInt arithmetic; display values
 are approximate and alerts retain the source count sample. Ratio selections use
 version 2 Node checkpoints; existing count-only selections stay at version 1. See
 [ratio validation and compatibility](../../docs/event-deadline-node-watch.md#expired-backlog-ratios).
+
+`investigateEventDeadlineAlert(checkpoint, { incidentId, sequence }, { limit: 25 })`
+maps an exact retained Node alert to one current read-only triage page. It validates
+the checkpoint and returned scope/cohort, preserves opaque cursor continuation and
+keeps the saved notification time separate from current observation clocks. Ratio
+alerts list the expired numerator only. See
+[investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).

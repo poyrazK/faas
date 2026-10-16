@@ -5,6 +5,11 @@ The Node SDK exports `watchEventSubscriptionDeadlines(target, options)` from
 without sampling, modifying subscriptions, replaying deliveries or sending messages.
 Configure the SDK client/authentication normally before starting the watch.
 
+For current recipient identities after an alert, use
+[`investigateEventDeadlineAlert`](event-deadline-node-investigation.md) with the saved
+checkpoint and exact incident/sequence pair. It derives matching filters and reads
+one bounded page without changing the checkpoint or delivery state.
+
 ```ts
 import {
   watchEventSubscriptionDeadlines,

@@ -36,6 +36,11 @@ surface aliases the options, alert reference and investigation result types. It
 supports Go/CLI `EventDeliveryHealthAlert` objects, not Node/Python checkpoint alerts.
 No new server route, API schema or database migration is required.
 
+Node consumers have a separate
+[`investigateEventDeadlineAlert`](event-deadline-node-investigation.md) helper that
+selects an exact retained incident/sequence pair from a validated Node checkpoint.
+It preserves the same current-membership distinction using Node's checkpoint format.
+
 ## Selection from the metric
 
 | Alert metric | Current triage selection |
