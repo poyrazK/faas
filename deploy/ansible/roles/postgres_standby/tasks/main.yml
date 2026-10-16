@@ -226,6 +226,13 @@
         group: postgres
         mode: "0600"
 
+    # postgres_promote.yml masks PostgreSQL on a primary it retires; seeding
+    # that host as the new standby is the deliberate way back.
+    - name: postgres_standby — unmask a retired primary's cluster
+      ansible.builtin.systemd_service:
+        name: "postgresql@{{ postgres_major_version }}-main.service"
+        masked: false
+
     - name: postgres_standby — start the replica
       ansible.builtin.service:
         name: "postgresql@{{ postgres_major_version }}-main.service"

@@ -1,0 +1,194 @@
+# ADR-1344 §8: promote the warm standby's PostgreSQL replica.
+#
+# faas_promote_mode=planned (switchover; the primary is healthy):
+#   stops every faas unit and PostgreSQL on the primary, masks PostgreSQL
+#   there so nothing restarts it, waits until the standby has replayed the
+#   primary's shutdown checkpoint, then promotes. No committed transaction is
+#   lost.
+# faas_promote_mode=failover (the primary is gone):
+#   promotes without touching the primary. You must fence it first (power it
+#   off, or make sure its PostgreSQL can never come back) and name it in
+#   faas_promote_fenced_primary. Everything the standby had not received is
+#   lost; the play reports how far behind it was.
+#
+# Promotion only moves the database. The control-plane daemons, the compute
+# nodes' endpoints and the public origin follow by the steps in
+# docs/runbooks/ControlPlaneFailover.md.
+
+- name: Check the promotion request and the standby
+  hosts: postgres_standby
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Require a known mode and exactly one primary and one standby
+      ansible.builtin.assert:
+        that:
+          - faas_promote_mode | default('') in ['planned', 'failover']
+          - groups['control_plane'] | default([]) | length == 1
+          - groups['postgres_standby'] | default([]) | length == 1
+        fail_msg: >-
+          Set -e faas_promote_mode=planned (switchover) or failover, with one
+          control-plane host and one postgres_standby host in the inventory.
+        quiet: true
+
+    - name: Require the fenced primary to be named for a failover
+      ansible.builtin.assert:
+        that:
+          - faas_promote_fenced_primary | default('') == (groups['control_plane'] | default(['']))[0]
+        fail_msg: >-
+          A failover promotes without stopping the primary. Fence
+          {{ (groups['control_plane'] | default(['']))[0] }} first (power it
+          off), then rerun with -e faas_promote_fenced_primary={{ (groups['control_plane'] | default(['']))[0] }}.
+        quiet: true
+      when: faas_promote_mode == 'failover'
+
+    - name: Read the standby's replication state
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -X
+          - -A
+          - -t
+          - -F
+          - " "
+          - -c
+          - >-
+            SELECT pg_is_in_recovery()::int,
+                   COALESCE((SELECT status FROM pg_stat_wal_receiver), 'none'),
+                   COALESCE(pg_last_wal_receive_lsn()::text, 'none'),
+                   COALESCE(pg_last_wal_replay_lsn()::text, 'none'),
+                   COALESCE(extract(epoch FROM now() - pg_last_xact_replay_timestamp())::bigint::text, 'none')
+      become_user: postgres
+      register: promote_standby_state
+      changed_when: false
+
+    - name: Report the standby's state
+      ansible.builtin.debug:
+        msg: >-
+          in_recovery receiver received_lsn replayed_lsn seconds_since_last_replayed_commit:
+          {{ promote_standby_state.stdout }}
+
+    - name: Require a standby in recovery, streaming for a planned switchover
+      ansible.builtin.assert:
+        that:
+          - promote_standby_state.stdout.split(' ')[0] == '1'
+          - faas_promote_mode == 'failover' or promote_standby_state.stdout.split(' ')[1] == 'streaming'
+        fail_msg: >-
+          {{ inventory_hostname }} is not a streaming standby
+          ({{ promote_standby_state.stdout }}). A planned switchover needs it
+          streaming so it receives the primary's final WAL.
+        quiet: true
+
+- name: Stop and fence the primary (planned switchover)
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Skip unless this is a planned switchover
+      ansible.builtin.meta: end_host
+      when: faas_promote_mode != 'planned'
+
+    - name: Find the primary's cluster
+      ansible.builtin.command: pg_lsclusters --no-header
+      register: promote_primary_clusters
+      changed_when: false
+
+    - name: Remember the primary's cluster version and data directory
+      ansible.builtin.set_fact:
+        promote_primary_version: "{{ (promote_primary_clusters.stdout_lines | select('search', ' main ') | first).split()[0] }}"
+        promote_primary_data_dir: "{{ (promote_primary_clusters.stdout_lines | select('search', ' main ') | first).split()[5] }}"
+
+    # Every daemon and timer that writes to the database goes first, so the
+    # shutdown below cuts off nothing mid-flight on this host. Compute nodes
+    # lose the database until they follow the new primary; warm traffic keeps
+    # flowing (ADR-1344 P1 static stability).
+    - name: Stop every faas unit on the primary
+      ansible.builtin.command:
+        argv: [systemctl, stop, "faas-*.socket", "faas-*.service", "faas-*.timer"]
+      changed_when: true
+
+    # A fast shutdown disconnects clients, writes a shutdown checkpoint and
+    # waits for the walsenders to send everything up to it.
+    - name: Stop PostgreSQL on the primary
+      ansible.builtin.service:
+        name: "postgresql@{{ promote_primary_version }}-main.service"
+        state: stopped
+
+    # Fence: nothing, including a reboot, starts this copy as a second
+    # primary. Rebuilding it as the new standby unmasks it.
+    - name: Mask PostgreSQL on the old primary
+      ansible.builtin.systemd_service:
+        name: "postgresql@{{ promote_primary_version }}-main.service"
+        masked: true
+
+    - name: Read the primary's shutdown checkpoint
+      ansible.builtin.command:
+        argv: ["/usr/lib/postgresql/{{ promote_primary_version }}/bin/pg_controldata", "{{ promote_primary_data_dir }}"]
+      environment:
+        LC_ALL: C
+      register: promote_primary_controldata
+      changed_when: false
+
+    - name: Record the shutdown state and checkpoint
+      ansible.builtin.set_fact:
+        promote_primary_cluster_state: "{{ promote_primary_controldata.stdout_lines | select('match', 'Database cluster state:') | first | split(':') | last | trim }}"
+        promote_primary_checkpoint_lsn: "{{ promote_primary_controldata.stdout_lines | select('match', 'Latest checkpoint location:') | first | split(':') | last | trim }}"
+
+    - name: Require a clean shutdown
+      ansible.builtin.assert:
+        that:
+          - promote_primary_cluster_state == 'shut down'
+          - promote_primary_checkpoint_lsn is match('^[0-9A-F]+/[0-9A-F]+$')
+        fail_msg: >-
+          The primary did not shut down cleanly ({{ promote_primary_cluster_state }},
+          checkpoint {{ promote_primary_checkpoint_lsn }}); its final WAL may
+          not have reached the standby. Investigate before promoting.
+        quiet: true
+
+- name: Promote the standby
+  hosts: postgres_standby
+  gather_facts: false
+  become: true
+  tasks:
+    # The standby must have replayed the shutdown checkpoint record itself;
+    # replay past its start location means every commit before it is here.
+    - name: Wait until the standby has replayed the primary's shutdown checkpoint
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -X
+          - -A
+          - -t
+          - -c
+          - "SELECT pg_last_wal_replay_lsn() > '{{ hostvars[groups['control_plane'][0]].promote_primary_checkpoint_lsn }}'::pg_lsn"
+      become_user: postgres
+      register: promote_caught_up
+      changed_when: false
+      until: (promote_caught_up.stdout | trim) == 't'
+      retries: 60
+      delay: 2
+      when: faas_promote_mode == 'planned'
+
+    - name: Promote the standby to primary
+      ansible.builtin.command:
+        argv: [psql, -X, -A, -t, -v, ON_ERROR_STOP=1, -c, "SELECT pg_promote(true, 120)"]
+      become_user: postgres
+      register: promote_result
+      changed_when: true
+      failed_when: (promote_result.stdout | trim) != 't'
+
+    - name: Confirm the new primary accepts writes
+      ansible.builtin.command:
+        argv: [psql, -X, -A, -t, -c, "SELECT pg_is_in_recovery()"]
+      become_user: postgres
+      register: promote_recovery
+      changed_when: false
+      failed_when: (promote_recovery.stdout | trim) != 'f'
+
+    - name: Next steps
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is now the primary. Follow
+          docs/runbooks/ControlPlaneFailover.md: update the manifest so this
+          host is the control plane, converge it, repoint the compute nodes
+          and the public origin.

@@ -104,8 +104,8 @@ primary.
 
 ## Promotion
 
-Promotion and planned switchover have their own procedure, which covers
-fencing the old primary, starting the daemons on the new host and pointing
-the compute nodes at it. Do not run `pg_promote()` on its own: the
+Promotion and planned switchover follow `docs/runbooks/ControlPlaneFailover.md`
+(`make postgres-promote`), which fences the old primary, starts the daemons
+on the new host and points the compute nodes at it. Do not run `pg_promote()` on its own: the
 control-plane daemons connect over the local socket and only run on the
 primary's host.
