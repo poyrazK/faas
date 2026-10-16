@@ -10,12 +10,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1160
+// adr: 1353
 func TestDefaultRouteProbeStoreMemStore(t *testing.T) {
 	checkDefaultRouteProbeStore(t, state.NewMemStore())
 }
 
-// adr: 1160
+// adr: 1353
 func TestDefaultRouteProbeStorePostgres(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {

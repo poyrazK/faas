@@ -21105,7 +21105,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id
 ORDER BY window_start, method, path;
 
 -- name: ListDefaultRouteProbeTargets :many
--- ADR-1160: request apps on the safe release policy with an in-flight
+-- ADR-1353: request apps on the safe release policy with an in-flight
 -- default-scope canary and a serving predecessor. apid probes the default
 -- path on both so a quiet canary is judged on evidence. An app with several
 -- serving predecessors returns several rows and is skipped by the caller.
@@ -21125,7 +21125,7 @@ ORDER BY a.id, d.id, s.id
 LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: RouteProbeTotalsByDeployment :many
--- ADR-1160: probe totals per deployment over a canary stage, for meterd's
+-- ADR-1353: probe totals per deployment over a canary stage, for meterd's
 -- circuit breaker.
 SELECT deployment_id::text AS deployment_id, sum(requests)::bigint AS requests,
  sum(server_errors)::bigint AS server_errors, sum(unauthenticated)::bigint AS unauthenticated
@@ -21581,7 +21581,7 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
 -- name: ReleaseRunsCrossedBy :many
--- ADR-1331: release tasks of other deployments in a rollback target's scope
+-- ADR-1355: release tasks of other deployments in a rollback target's scope
 -- that started after the target last served (serving_ended_at), or after it
 -- was created if it never served. Any started task counts: a failed migration
 -- may still have committed changes.
@@ -21598,7 +21598,7 @@ WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(a
 ORDER BY t.started_at, t.id;
 
 -- name: ReleaseMigrationDatabases :many
--- ADR-1331: managed PostgreSQL databases whose migration binding delivers a
+-- ADR-1355: managed PostgreSQL databases whose migration binding delivers a
 -- secret into this app scope, the rows a release task receives.
 SELECT DISTINCT db.id::text AS database_id, db.name
 FROM app_secrets s

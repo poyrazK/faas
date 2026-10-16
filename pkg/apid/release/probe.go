@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// DefaultProbePath is what apid probes on a safe-policy canary (ADR-1160):
+// DefaultProbePath is what apid probes on a safe-policy canary (ADR-1353):
 // the path the post-readiness hosting smoke already checks once. Probes keep
 // checking it on the candidate and its predecessor while the canary runs, so
 // a quiet release is judged on evidence instead of on the absence of errors.

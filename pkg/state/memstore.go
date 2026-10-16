@@ -280,9 +280,9 @@ type MemStore struct {
 	// environmentWorkloadQueueServingAcks can arrive before the controller has
 	// created the serving receipt; keyed per graph/binding to mirror Postgres.
 	environmentWorkloadQueueServingAcks map[string]map[string]EnvironmentWorkloadServingQueueAck
-	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1160).
+	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1353).
 	rollbackPrepared map[string]time.Time
-	// rollbackRecords mirrors deployment_rollbacks (ADR-1160).
+	// rollbackRecords mirrors deployment_rollbacks (ADR-1353).
 	rollbackRecords map[string]RollbackRecord
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
@@ -8051,7 +8051,7 @@ func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deplo
 	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
-// RecoverRolloutForDeploymentWithDecision mirrors PgStore (ADR-1237).
+// RecoverRolloutForDeploymentWithDecision mirrors PgStore (ADR-1354).
 func (m *MemStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
@@ -8059,7 +8059,7 @@ func (m *MemStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, 
 	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, decision)
 }
 
-// RecoverRolloutWithDecision mirrors PgStore (ADR-1237).
+// RecoverRolloutWithDecision mirrors PgStore (ADR-1354).
 func (m *MemStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	return m.recoverRollout(ctx, appID, "", "", action, reason, decision)
 }
@@ -8215,7 +8215,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, auditID, nil
 	}
 
-	// ADR-1237: the transition records its decision, or clears a stale one.
+	// ADR-1354: the transition records its decision, or clears a stale one.
 	target.RolloutDecision = cloneRawJSON(decision)
 	switch action {
 	case "advance":
@@ -9027,7 +9027,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
-	// A prepared rollback is consumed by its promotion (ADR-1160).
+	// A prepared rollback is consumed by its promotion (ADR-1353).
 	defer func() {
 		if err == nil {
 			delete(m.rollbackPrepared, id)

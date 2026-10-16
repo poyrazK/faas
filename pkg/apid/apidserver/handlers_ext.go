@@ -2431,7 +2431,7 @@ func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
-// two entry points cannot drift. It also opens the ADR-1160 outcome ledger
+// two entry points cannot drift. It also opens the ADR-1353 outcome ledger
 // row; the returned receipt is nil only when that write failed, and the
 // rollback itself still proceeds.
 func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {

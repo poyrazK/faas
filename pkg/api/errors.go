@@ -86,7 +86,7 @@ type Problem struct {
 	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
 	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
 	// CrossedReleases and RestorePoints explain rollback_crosses_release
-	// (ADR-1331).
+	// (ADR-1355).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
@@ -874,7 +874,7 @@ const (
 	// verified. The current serving deployment is left untouched.
 	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
 	// CodeRollbackCrossesRelease means release commands ran after the
-	// rollback target last served (ADR-1331). Rollback does not undo them,
+	// rollback target last served (ADR-1355). Rollback does not undo them,
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"

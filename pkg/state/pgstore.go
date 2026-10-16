@@ -8941,7 +8941,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 }
 
 // RecoverRolloutWithDecision is RecoverRollout recording the validated
-// api.RolloutDecision behind the transition (ADR-1237).
+// api.RolloutDecision behind the transition (ADR-1354).
 func (s *PgStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	return s.recoverRollout(ctx, appID, "", "", action, reason, nil, decision)
 }
@@ -8957,7 +8957,7 @@ func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploy
 }
 
 // RecoverRolloutForDeploymentWithDecision is the exact abort recording the
-// circuit-breaker evidence that decided it (ADR-1237).
+// circuit-breaker evidence that decided it (ADR-1354).
 func (s *PgStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
@@ -8993,7 +8993,7 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 }
 
 // decision is the validated api.RolloutDecision behind the transition
-// (ADR-1237). It is written in the same UPDATE as the rollout-state change so
+// (ADR-1354). It is written in the same UPDATE as the rollout-state change so
 // the rollout outcome webhook trigger sees it; nil clears the column, except
 // on the worker lease expiry abort, which records abort_worker_lease_expired.
 func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit, decision json.RawMessage) (Deployment, int64, error) {
@@ -9714,7 +9714,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 			}
 		}
 	}
-	// ADR-1160: a prepared rollback is consumed by its promotion. Clearing it
+	// ADR-1353: a prepared rollback is consumed by its promotion. Clearing it
 	// in this transaction means a failed promotion keeps the marker for retry.
 	if _, err := tx.Exec(ctx, `update deployments set rollback_prepared_at = null where id = $1 and rollback_prepared_at is not null`, id); err != nil {
 		return fmt.Errorf("state: clear rollback marker: %w", err)
@@ -25179,7 +25179,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&canaryStepStartedAt, &d.CanaryStages, &d.RolloutState,
 		&rolloutStartedAt, &rolloutCompletedAt, &rolloutAbortedAt,
 		&d.RolloutAbortedReason, &serviceRolloutHandoff,
-		// ADR-1237: nullable jsonb; NULL scans to a nil slice.
+		// ADR-1354: nullable jsonb; NULL scans to a nil slice.
 		&rolloutDecision,
 		// ADR-124 deployment queue controls (migration 00391/00491). The
 		// scan order mirrors the SELECT projection above — see the

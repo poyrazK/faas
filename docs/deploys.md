@@ -102,7 +102,7 @@ that was serving when the migration ran is the usual case and needs nothing
 extra: that code already ran against the migrated schema. Rolling back
 further is different. If a release command ran after the target last served,
 the rollback is refused with `rollback_crosses_release`
-([ADR-1331](adr/1331-releases-that-change-the-database.md)):
+([ADR-1355](adr/1355-releases-that-change-the-database.md)):
 
 ```text
 This rollback crosses release commands that ran after its target last served:
@@ -221,7 +221,7 @@ the previous one is ready again. If a rollout wedges,
 
 A production release of an app that already serves traffic rolls out on the
 `adaptive` ladder with first-wake 5xx rollback even when the deploy names no
-rollout policy ([ADR-1160](adr/1160-safe-releases-by-default.md)). This covers
+rollout policy ([ADR-1353](adr/1353-safe-releases-by-default.md)). This covers
 `gregale deploy`, GitHub App pushes, the API, and Terraform. It does not
 apply to an app's first deploy, PR previews, named project environments, or
 service, worker, and job apps, which keep their own rollout behavior.
@@ -290,7 +290,7 @@ deprecated `--canary-preset`) always wins over the default.
 ### Why a rollout advanced, waits, or stopped
 
 Gregale records the evidence behind every rollout decision
-([ADR-1237](adr/1237-explained-rollout-decisions.md)): the request, 5xx, probe,
+([ADR-1354](adr/1354-explained-rollout-decisions.md)): the request, 5xx, probe,
 latency, OOM, and restart counts for both revisions, and which rule decided.
 `gregale deployment wait --rollout` prints why a stage is waiting and why each
 stage advanced:

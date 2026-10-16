@@ -3727,7 +3727,7 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 		prepared.RolloutState != "pending" || prepared.CanaryPreset != "none" {
 		t.Fatalf("prepared rollback target = %+v", prepared)
 	}
-	// ADR-1160: imaged reads this marker to promote the older revision
+	// ADR-1353: imaged reads this marker to promote the older revision
 	// without the latest-revision fence.
 	if markers, ok := fx.Store.(state.RollbackPreparedStore); ok {
 		isPrepared, err := markers.DeploymentRollbackPrepared(fx.Ctx, fx.Deployment.ID)

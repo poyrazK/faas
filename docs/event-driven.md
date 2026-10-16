@@ -627,7 +627,7 @@ Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
 breaker, a person, or the worker lease expiry decided the outcome, the payload
 also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
 restart counts for both revisions behind it
-([ADR-1237](adr/1237-explained-rollout-decisions.md)). An outcome is enqueued once per
+([ADR-1354](adr/1354-explained-rollout-decisions.md)). An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.

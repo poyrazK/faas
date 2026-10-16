@@ -1,4 +1,4 @@
-# ADR-1160 · Safe releases by default
+# ADR-1353 · Safe releases by default
 
 - **Status:** accepted; drills passed on the n2 metal node 2026-10-10 (see Rollout)
 - **Date:** 2026-10-09

@@ -84,8 +84,8 @@ const (
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
 	imageRunsFile                    = "image_runs.go"       // ADR-1161 — docker-run-shaped image run DTOs
-	rolloutDecisionFile              = "rollout_decision.go" // ADR-1237 explained rollout decisions
-	releaseRollbackFile              = "release_rollback.go" // ADR-1331 releases that change the database
+	rolloutDecisionFile              = "rollout_decision.go" // ADR-1354 explained rollout decisions
+	releaseRollbackFile              = "release_rollback.go" // ADR-1355 releases that change the database
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -412,8 +412,8 @@ var dtoExclude = map[string]bool{
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
 	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
 	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldRequest":          true, // ADR-1237 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldResponse":         true, // ADR-1237 loopback-only meterd ↔ apid hold route
+	"RecordRolloutHoldRequest":          true, // ADR-1354 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":         true, // ADR-1354 loopback-only meterd ↔ apid hold route
 	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
 	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract

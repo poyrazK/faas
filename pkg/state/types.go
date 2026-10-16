@@ -1904,7 +1904,7 @@ type AppManifest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
-	// ReleasePolicy (ADR-1160): "" / "safe" or "immediate".
+	// ReleasePolicy (ADR-1353): "" / "safe" or "immediate".
 	ReleasePolicy string `json:"release_policy,omitempty"`
 	// ReleaseProbePaths (ADR-1351): GET paths the default rollout probe checks
 	// instead of "/".
@@ -2623,7 +2623,7 @@ type Deployment struct {
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
 	// RolloutDecision is the api.RolloutDecision recorded with the latest
-	// rollout transition (ADR-1237), or nil. Holds never write it.
+	// rollout transition (ADR-1354), or nil. Holds never write it.
 	RolloutDecision json.RawMessage `json:"rollout_decision,omitempty"`
 	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
 	// barriers for zero-step service rollouts. Empty for ordinary canaries and
@@ -5695,7 +5695,7 @@ const (
 	DeployMCPTaskHoldCancelled  DeploymentAuditKind = "deploy.mcp_task_hold_cancelled"
 	DeployWorkerDrainStarted    DeploymentAuditKind = "deploy.worker_drain_started"
 	DeployWorkerDrainCompleted  DeploymentAuditKind = "deploy.worker_drain_completed"
-	// DeployRolloutHeld records why a canary step is held (ADR-1237). Its
+	// DeployRolloutHeld records why a canary step is held (ADR-1354). Its
 	// data is {"decision": api.RolloutDecision}; repeats of the same rule are
 	// deduplicated for api.RolloutHoldRefreshInterval.
 	DeployRolloutHeld DeploymentAuditKind = "deploy.rollout_held"

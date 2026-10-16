@@ -1,11 +1,11 @@
-# ADR-1237 · Explained rollout decisions
+# ADR-1354 · Explained rollout decisions
 
 - **Status:** proposed; n2 drill passed 2026-10-14 (see Rollout)
 - **Date:** 2026-10-14
-- **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (rollback outcome notifications were a follow-up), [ADR-224](224-account-scoped-release-webhooks.md) release payloads
+- **Amends:** [ADR-1353](1353-safe-releases-by-default.md) (rollback outcome notifications were a follow-up), [ADR-224](224-account-scoped-release-webhooks.md) release payloads
 - **Follows:** [ADR-122](122-safe-releases.md) deployment audit, [ADR-456](456-saved-canary-route-health-decisions.md) saved route health decisions
 - **Decision:** Record the evidence behind every decision the safe-release circuit breaker makes about a rollout: why a stage advanced, why it is held, and why it was aborted. Show it on the deployment, in the deployment audit timeline, in `gregale deployment wait --rollout` and `deployment summary`, and in the `rollout.completed` and `rollout.aborted` webhooks.
-- **Why:** ADR-1160 made a health-gated canary the default for production releases, but its decisions reach only meterd's log and a metric. A customer whose release sits at 1% sees no reason; an aborted release says only "5xx error rate regression". On production-us, `deployment wait --rollout` printed nothing for ten minutes while meterd held a canary for too few requests. A safety default that cannot explain itself is one customers turn off.
+- **Why:** ADR-1353 made a health-gated canary the default for production releases, but its decisions reach only meterd's log and a metric. A customer whose release sits at 1% sees no reason; an aborted release says only "5xx error rate regression". On production-us, `deployment wait --rollout` printed nothing for ten minutes while meterd held a canary for too few requests. A safety default that cannot explain itself is one customers turn off.
 - **Rejected alternatives:** Writing every hold onto the deployment row (triggers such as `binding_promotion_revision` fire on any update of `deployments`); one audit row per 30 s tick (unbounded noise); a second history table like ADR-456's `route_health_history` (the deployment audit timeline already exists, is customer-readable, and is what the dashboard renders).
 
 ## Context

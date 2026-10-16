@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-16
-- **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (default probe of `GET /`), [ADR-1321](1321-evidence-paced-default-rollouts.md) (probe cadence)
+- **Amends:** [ADR-1353](1353-safe-releases-by-default.md) (default probe of `GET /`), [ADR-1321](1321-evidence-paced-default-rollouts.md) (probe cadence)
 - **Follows:** [ADR-847](847-synthetic-route-probes.md) route probes
 - **Decision:** An app may name up to three paths (`release_probe_paths`) that the default rollout probe checks instead of `GET /`. Each round splits the 20 probes per revision across them. An empty list keeps `GET /`.
 - **Why:** The default probe checks only `GET /`. An app whose `/` needs a login answers 401, so its rollouts fall back to the timer and the 5-minute no-news bound. An API whose `/` is a static page proves little about the code that changed. Letting the app name the routes it cares about fixes both without a route health gate.

@@ -114,7 +114,7 @@ func (h releaseHistory) rollback(t *testing.T, req api.RollbackRequest) (int, ap
 }
 
 // TestRollbackToPreviousReleaseCrossesNothing: v3's release ran while v2
-// served, so the usual rollback stays one request (ADR-1331).
+// served, so the usual rollback stays one request (ADR-1355).
 func TestRollbackToPreviousReleaseCrossesNothing(t *testing.T) {
 	h := newReleaseHistory(t, "release-previous")
 	if code, p := h.rollback(t, api.RollbackRequest{TargetDeploymentID: &h.v2.ID}); code != http.StatusAccepted {

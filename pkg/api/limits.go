@@ -415,7 +415,7 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
-// Verified rollback outcomes (ADR-1160). apid resolves each plain rollback
+// Verified rollback outcomes (ADR-1353). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
 // RollbackOutcomeTimeout passes. The timeout covers a cold-boot activation
@@ -426,13 +426,13 @@ const RollbackOutcomeBatchSize = 100
 
 // CanaryLowTrafficMaxHold bounds how long the canary circuit breaker holds a
 // stage past its dwell time only because too few requests arrived to compare
-// the candidate with its predecessor (ADR-1160). After the bound, the stage
+// the candidate with its predecessor (ADR-1353). After the bound, the stage
 // advances if no negative evidence was observed: zero candidate 5xx and a
 // readable, zero OOM-kill signal. Unavailable signals still hold indefinitely.
 // Plan-independent: it bounds a wait, it does not price anything.
 const CanaryLowTrafficMaxHold = 5 * time.Minute
 
-// Explained rollout decisions (ADR-1237). A decision record is aggregate-only
+// Explained rollout decisions (ADR-1354). A decision record is aggregate-only
 // evidence, bounded so a malformed worker request cannot grow the deployment
 // row or its audit timeline. A held canary records its hold again only after
 // RolloutHoldRefreshInterval unless the hold's rule changes, so a long hold
@@ -9975,7 +9975,7 @@ const (
 // Rounds are claimed once per app and minute. The worker polls every
 // RouteHealthProbePollInterval so a minute's round starts within about
 // that long of the minute (ADR-1321), and a round may take
-// RouteHealthProbeRoundTimeout. The ADR-1160 default probe sends
+// RouteHealthProbeRoundTimeout. The ADR-1353 default probe sends
 // DefaultRouteProbeRequestsPerRound per deployment, the circuit breaker's
 // request floor (canary.CircuitBreakerMinRequests), so one round inside a
 // canary stage is enough evidence.

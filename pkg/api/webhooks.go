@@ -163,7 +163,7 @@ type RolloutCompletedWebhookPayload struct {
 	RolloutState   string `json:"rollout_state"`
 	TrafficPercent int    `json:"traffic_percent"`
 	CompletedAt    string `json:"completed_at"`
-	// Decision is the advance evidence that completed the rollout (ADR-1237).
+	// Decision is the advance evidence that completed the rollout (ADR-1354).
 	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
@@ -177,7 +177,7 @@ type RolloutAbortedWebhookPayload struct {
 	Reason         string `json:"reason"`
 	AbortedAt      string `json:"aborted_at"`
 	// Decision is the abort evidence when the circuit breaker or a recorded
-	// manual or lease-expiry transition aborted the rollout (ADR-1237).
+	// manual or lease-expiry transition aborted the rollout (ADR-1354).
 	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 

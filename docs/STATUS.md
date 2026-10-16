@@ -9,7 +9,7 @@ historical.
 
 ## Releases that change the database — 2026-10-15
 
-[ADR-1331](adr/1331-releases-that-change-the-database.md): a rollback whose
+[ADR-1355](adr/1355-releases-that-change-the-database.md): a rollback whose
 target has not served since a later release command ran is refused with
 `rollback_crosses_release` unless acknowledged (`--acknowledge-releases`, a
 typed confirmation at a terminal, or `acknowledge_releases` in the API). The
@@ -35,7 +35,7 @@ about 9 minutes; all six safe-release drill cases passed, leakcheck clean.
 
 ## Explained rollout decisions — 2026-10-14
 
-[ADR-1237](adr/1237-explained-rollout-decisions.md) records the evidence behind
+[ADR-1354](adr/1354-explained-rollout-decisions.md) records the evidence behind
 every decision the safe-release circuit breaker makes: why a canary stage
 advanced, is held, or was aborted, with the request, 5xx, probe, latency, OOM
 and restart counts for both revisions. It is stored with the transition
@@ -52,7 +52,7 @@ spec parity, and the apidserver Safe Deploy tests pass on the node.
 
 ## Safe releases by default — 2026-10-13
 
-[ADR-1160](adr/1160-safe-releases-by-default.md) makes the balanced health-gated
+[ADR-1353](adr/1353-safe-releases-by-default.md) makes the balanced health-gated
 canary with first-wake 5xx rollback the default for production releases,
 bounds low-traffic canary holds, judges quiet canaries on ADR-847 probes of
 `/`, adds a crash-loop gate, and fixes plain rollback of image, GitHub, and

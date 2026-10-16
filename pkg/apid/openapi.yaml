@@ -65531,7 +65531,7 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1352); immediate moves all traffic at once."
+          description: "Default rollout for production releases that name no rollout policy (ADR-1353). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1352); immediate moves all traffic at once."
           type: string
           enum: [safe, fast, immediate]
         release_probe_paths:
@@ -67584,7 +67584,7 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Default rollout for production releases that name no rollout policy (ADR-1160, ADR-1352). Omit for safe."
+          description: "Default rollout for production releases that name no rollout policy (ADR-1353, ADR-1352). Omit for safe."
           type: string
           enum: [safe, fast, immediate]
         release_probe_paths:
@@ -68262,7 +68262,7 @@ components:
           minimum: 0
           maximum: 604800
         release_policy:
-          description: "Set the default rollout for production releases (ADR-1160, ADR-1352). Omit for no change."
+          description: "Set the default rollout for production releases (ADR-1353, ADR-1352). Omit for no change."
           type: [string, "null"]
           enum: [safe, fast, immediate, null]
         release_probe_paths:
@@ -69010,7 +69010,7 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Effective default rollout for production releases (ADR-1160, ADR-1352)."
+          description: "Effective default rollout for production releases (ADR-1353, ADR-1352)."
           type: string
           enum: [safe, fast, immediate]
         release_probe_paths:
@@ -69884,13 +69884,13 @@ components:
           description: "Operator or orchestrator reason recorded when the rollout is aborted."
         rollout_decision:
           $ref: '#/components/schemas/RolloutDecision'
-          description: "Evidence recorded with the latest rollout transition (ADR-1237). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort."
+          description: "Evidence recorded with the latest rollout transition (ADR-1354). It explains an outcome only when its kind matches: an advance record for completion, an abort record for an abort."
         rollout_hold:
           $ref: '#/components/schemas/RolloutDecision'
-          description: "The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1237). Filled on GET /v1/deployments/{id} and the deployment summary."
+          description: "The newest hold recorded since the current canary step started, while the rollout is in flight (ADR-1354). Filled on GET /v1/deployments/{id} and the deployment summary."
         release:
           $ref: '#/components/schemas/DeploymentRelease'
-          description: "The deployment's release command run, for a deployment that declares one (ADR-1331). Filled on GET /v1/deployments/{id} and the deployment summary."
+          description: "The deployment's release command run, for a deployment that declares one (ADR-1355). Filled on GET /v1/deployments/{id} and the deployment summary."
         rollback_operation:
           $ref: '#/components/schemas/RollbackOperation'
         service_rollout_handoff:
@@ -70131,10 +70131,10 @@ components:
           example: 1
         decision:
           $ref: '#/components/schemas/RolloutDecision'
-          description: "Reserved for Gregale's Safe Deploy worker (ADR-1237). Public requests that set it are rejected with 422."
+          description: "Reserved for Gregale's Safe Deploy worker (ADR-1354). Public requests that set it are rejected with 422."
 
     RolloutDecision:
-      description: "Evidence behind one decision about a rollout (ADR-1237): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text."
+      description: "Evidence behind one decision about a rollout (ADR-1354): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text."
       type: object
       required: [kind, rule, step, traffic_percent, decided_at]
       properties:
@@ -70151,7 +70151,7 @@ components:
         stable_deployment_id: { type: string, format: uuid }
         candidate: { $ref: '#/components/schemas/RolloutDecisionSample' }
         stable: { $ref: '#/components/schemas/RolloutDecisionSample' }
-        probes_included: { type: boolean, description: "The 5xx sample included synthetic probes of the app (ADR-1160)." }
+        probes_included: { type: boolean, description: "The 5xx sample included synthetic probes of the app (ADR-1353)." }
         signals: { $ref: '#/components/schemas/RolloutDecisionSignals' }
         decided_at: { type: string, format: date-time }
 
@@ -70257,7 +70257,7 @@ components:
 
     RollbackOperation:
       type: object
-      description: Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1160) reports preparing until its target serves (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
+      description: Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1353) reports preparing until its target serves (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another operation.
       required: [id, app_id, scope, target_deployment_id, current_deployment_id, status, service, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
@@ -70314,10 +70314,10 @@ components:
           description: One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
         acknowledge_releases:
           type: boolean
-          description: "Roll back although release commands ran after the target last served (ADR-1331). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+          description: "Roll back although release commands ran after the target last served (ADR-1355). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
 
     RollbackCrossedRelease:
-      description: "A release command that ran after a rollback target last served (ADR-1331). A rollback does not undo it."
+      description: "A release command that ran after a rollback target last served (ADR-1355). A rollback does not undo it."
       type: object
       required: [deployment_id, status, started_at]
       properties:
@@ -70329,7 +70329,7 @@ components:
         started_at: { type: string, format: date-time }
 
     ReleaseRestorePoint:
-      description: "The moment before the earliest crossed release for one managed PostgreSQL database the app's release commands can migrate (ADR-1331), with the command that restores it into a new database."
+      description: "The moment before the earliest crossed release for one managed PostgreSQL database the app's release commands can migrate (ADR-1355), with the command that restores it into a new database."
       type: object
       required: [database_id, database_name, point_in_time, command]
       properties:
@@ -70341,7 +70341,7 @@ components:
           example: "gregale postgres restore 0123... --name orders-before-v42 --point-in-time 2026-10-15T10:02:13Z"
 
     ReleaseDatabaseRef:
-      description: "A managed PostgreSQL database a release command can migrate (ADR-1331)."
+      description: "A managed PostgreSQL database a release command can migrate (ADR-1355)."
       type: object
       required: [id, name]
       properties:
@@ -70349,7 +70349,7 @@ components:
         name: { type: string }
 
     DeploymentRelease:
-      description: "A deployment's release command run (ADR-1331)."
+      description: "A deployment's release command run (ADR-1355)."
       type: object
       required: [status]
       properties:
@@ -88801,11 +88801,11 @@ components:
         crossed_releases:
           type: array
           items: { $ref: '#/components/schemas/RollbackCrossedRelease' }
-          description: "rollback_crosses_release: release commands the rollback would not undo (ADR-1331)."
+          description: "rollback_crosses_release: release commands the rollback would not undo (ADR-1355)."
         restore_points:
           type: array
           items: { $ref: '#/components/schemas/ReleaseRestorePoint' }
-          description: "rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1331)."
+          description: "rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1355)."
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
@@ -90960,7 +90960,7 @@ components:
         completed_at: { type: string, format: date-time }
         decision:
           $ref: '#/components/schemas/RolloutDecision'
-          description: "The advance evidence that completed the rollout (ADR-1237)."
+          description: "The advance evidence that completed the rollout (ADR-1354)."
       additionalProperties: true
 
     RolloutAbortedWebhookPayload:
@@ -90976,7 +90976,7 @@ components:
         aborted_at: { type: string, format: date-time }
         decision:
           $ref: '#/components/schemas/RolloutDecision'
-          description: "The abort evidence when the circuit breaker, a person, or the worker lease expiry aborted the rollout (ADR-1237). Aborts by route monitors, alert rollbacks and profile gates carry only reason."
+          description: "The abort evidence when the circuit breaker, a person, or the worker lease expiry aborted the rollout (ADR-1354). Aborts by route monitors, alert rollbacks and profile gates carry only reason."
       additionalProperties: true
 
     ErrorNewWebhookPayload:

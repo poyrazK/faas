@@ -279,7 +279,7 @@ type AppManifest struct {
 	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
 	// ReleasePolicy selects how a production release with a serving
 	// predecessor rolls out when the deploy names no rollout policy
-	// (ADR-1160). Empty or "safe" is the adaptive health-gated canary with
+	// (ADR-1353). Empty or "safe" is the adaptive health-gated canary with
 	// first-wake 5xx rollback; "fast" the aggressive ladder with the same
 	// rollback (ADR-1352); "immediate" moves all traffic at once.
 	ReleasePolicy string `json:"release_policy,omitempty"`
@@ -290,7 +290,7 @@ type AppManifest struct {
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
 
-// Release policies (ADR-1160). The empty string reads as ReleasePolicySafe.
+// Release policies (ADR-1353). The empty string reads as ReleasePolicySafe.
 const (
 	ReleasePolicySafe      = "safe"
 	ReleasePolicyImmediate = "immediate"

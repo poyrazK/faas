@@ -4061,7 +4061,7 @@ Get/update one app or run a deployment-attached command
 | `--pre-auth <off|observe|enforce>` | per-source pre-auth limit mode; enforce first prints the 24h readiness check | one of `off` · `observe` · `enforce` |
 | `--pre-auth-rps <N>` | pre-auth requests per second per source |  |
 | `--pre-auth-burst <N>` | pre-auth burst per source |  |
-| `--release-policy <safe|fast|immediate>` | default rollout for production releases (ADR-1160, ADR-1352) | one of `safe` · `fast` · `immediate` |
+| `--release-policy <safe|fast|immediate>` | default rollout for production releases (ADR-1353, ADR-1352) | one of `safe` · `fast` · `immediate` |
 | `--release-probe-paths <PATH,PATH>` | GET paths (at most 3) the default rollout probe checks instead of /; empty restores / (ADR-1351) |  |
 | `--health-path <PATH>` | set the monitor-facing health path |  |
 | `--health-path-wakes` | allow health probes to wake the app |  |

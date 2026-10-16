@@ -383,7 +383,7 @@ served since a later release command ran is refused with
 `rollback_crosses_release`, which gives the `gregale postgres restore`
 command for each database the release commands can migrate, at the moment
 before the earliest of them
-([ADR-1331](adr/1331-releases-that-change-the-database.md); see
+([ADR-1355](adr/1355-releases-that-change-the-database.md); see
 [Releases that change the database](deploys.md#releases-that-change-the-database)).
 
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`

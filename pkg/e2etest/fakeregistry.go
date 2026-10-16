@@ -267,7 +267,7 @@ func FailingLivenessImageAboveBase(repo, helloBody string) (fakeImage, string) {
 
 // DelayedRootFailureImageAboveBase is HelloImageAboveBase whose / answers 500
 // after its first few requests, so the release passes the post-readiness
-// smoke and then fails / under synthetic probes (ADR-1160).
+// smoke and then fails / under synthetic probes (ADR-1353).
 func DelayedRootFailureImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root-after-requests", "3")
 }

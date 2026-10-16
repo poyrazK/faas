@@ -2,9 +2,9 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-16
-- **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (release policy), [ADR-1321](1321-evidence-paced-default-rollouts.md) (`--safe`)
+- **Amends:** [ADR-1353](1353-safe-releases-by-default.md) (release policy), [ADR-1321](1321-evidence-paced-default-rollouts.md) (`--safe`)
 - **Decision:** `gregale deploy --rollout safe|fast|immediate` is the one way to choose how a release reaches traffic, and the app's `release_policy` accepts the same three words as its stored default. At a terminal, `gregale deploy` follows a canary rollout live to 100%; Ctrl-C detaches and leaves the rollout running. `--safe`, `--canary-preset` and `--canary-stages` keep working for existing scripts and are marked deprecated; `--traffic-percent`, `--no-traffic` and `--rollback-on-5xx` stay, because they set a split, a dark deployment and the rollback opt-out rather than a rollout speed.
-- **Why:** `gregale deploy` has about 71 flags, and six of them overlap on how a release rolls out (`--canary-preset`, `--canary-stages`, `--safe`, `--traffic-percent`, `--no-traffic`, `--rollback-on-5xx`). Since ADR-1160 and ADR-1321, the default is already the right choice for almost every release, so the question a person asks is "safe, fast or now?". And `deploy` returned at 1%, so the person had to run `deployment wait --rollout` to see the release they had just shipped finish.
+- **Why:** `gregale deploy` has about 71 flags, and six of them overlap on how a release rolls out (`--canary-preset`, `--canary-stages`, `--safe`, `--traffic-percent`, `--no-traffic`, `--rollback-on-5xx`). Since ADR-1353 and ADR-1321, the default is already the right choice for almost every release, so the question a person asks is "safe, fast or now?". And `deploy` returned at 1%, so the person had to run `deployment wait --rollout` to see the release they had just shipped finish.
 - **Rejected alternatives:** Removing the old flags (they are in CI scripts and the GitHub Action; removal needs a major CLI version). Following the rollout in CI as well (it would lengthen every pipeline by the rollout's minutes without a person watching; `--rollout safe` waits on purpose). A `--rollout custom` that takes a ladder (custom ladders are rare and `--canary-stages` still serves them).
 
 ## Decision
@@ -21,11 +21,11 @@
 
 ### `release_policy`
 
-The stored default accepts `safe`, `fast` and `immediate`. `fast` makes the ADR-1160 default fill the `aggressive` ladder instead of `adaptive`, with the same first-wake rollback and probes. `gregale app <slug> --release-policy fast` sets it. This is the "config file" home for the rollout choice: the app manifest, next to `release_probe_paths` (ADR-1351).
+The stored default accepts `safe`, `fast` and `immediate`. `fast` makes the ADR-1353 default fill the `aggressive` ladder instead of `adaptive`, with the same first-wake rollback and probes. `gregale app <slug> --release-policy fast` sets it. This is the "config file" home for the rollout choice: the app manifest, next to `release_probe_paths` (ADR-1351).
 
 ### Following the rollout
 
-When stdout is a terminal, the session is not `--non-interactive`, and the deployment goes live with a canary, `gregale deploy` keeps printing the rollout's progress and decisions (ADR-1237) until it completes or aborts, then prints the usual receipt. Ctrl-C prints how to follow it again and exits 0: the rollout runs on Gregale, not in the CLI. In CI, under `--json`, or with `--no-wait`, deploy returns at the first stage as before.
+When stdout is a terminal, the session is not `--non-interactive`, and the deployment goes live with a canary, `gregale deploy` keeps printing the rollout's progress and decisions (ADR-1354) until it completes or aborts, then prints the usual receipt. Ctrl-C prints how to follow it again and exits 0: the rollout runs on Gregale, not in the CLI. In CI, under `--json`, or with `--no-wait`, deploy returns at the first stage as before.
 
 ### The older flags
 

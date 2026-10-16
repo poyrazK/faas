@@ -206,7 +206,7 @@ func main() {
 		_, _ = w.Write(body)
 	})
 	// A release that passes its post-readiness smoke and then fails /, which
-	// only synthetic probes see on a quiet app (ADR-1160).
+	// only synthetic probes see on a quiet app (ADR-1353).
 	var rootRequests atomic.Int64
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if *gitOpsResilience && !waitGitOpsRequestDelay(w, r) {

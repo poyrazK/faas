@@ -3642,7 +3642,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
-	// ADR-1160: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// ADR-1353: a plain rollback (manual or first-wake 5xx auto-rollback)
 	// deliberately activates an older revision. Like a checked rollback it
 	// must skip the latest-revision fence and the source-branch freshness
 	// check, which would otherwise supersede every rollback target.

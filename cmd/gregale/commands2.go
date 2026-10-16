@@ -4517,7 +4517,7 @@ func cmdRollback(args []string) int {
 	if err != nil {
 		return printErr("Rollback failed", err)
 	}
-	// ADR-1160: a plain rollback waits until the previous release actually
+	// ADR-1353: a plain rollback waits until the previous release actually
 	// serves again and reports the measured recovery. An older server that
 	// returns no receipt keeps the request-only output below.
 	if !noWait && dep.RollbackOperation != nil && dep.RollbackOperation.ID != "" {
@@ -4551,7 +4551,7 @@ func validateRollbackFlags(checked bool, to, current, reason string, wait bool, 
 	case checked && current == "":
 		return errors.New("--expected-current requires a deployment id or vN revision")
 	case current == "" && reason != "":
-		// A plain rollback waits for its outcome by default (ADR-1160), so
+		// A plain rollback waits for its outcome by default (ADR-1353), so
 		// --wait is accepted there; only --reason needs the checked form.
 		return errors.New("--reason only applies to a checked rollback: add --to <deployment|vN> --expected-current <deployment|vN>, or drop it")
 	case current != "" && to == "":

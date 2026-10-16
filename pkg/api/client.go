@@ -2290,7 +2290,7 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 }
 
 // RollbackWithRequest sends a full rollback request, for fields such as
-// AcknowledgeReleases (ADR-1331) that the narrower helpers do not carry.
+// AcknowledgeReleases (ADR-1355) that the narrower helpers do not carry.
 func (c *Client) RollbackWithRequest(ctx context.Context, slug string, req RollbackRequest) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", req, &out, "")

@@ -621,7 +621,7 @@ type CreateAppRequest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
-	// ReleasePolicy (ADR-1160): "safe" (default) or "immediate".
+	// ReleasePolicy (ADR-1353): "safe" (default) or "immediate".
 	ReleasePolicy string `json:"release_policy,omitempty"`
 	// ReleaseProbePaths (ADR-1351): up to ReleaseProbePathsMax GET paths the
 	// default rollout probe checks instead of "/".
@@ -1030,7 +1030,7 @@ type UpdateAppRequest struct {
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
-	// ReleasePolicy (ADR-1160) replaces the app's default rollout for
+	// ReleasePolicy (ADR-1353) replaces the app's default rollout for
 	// production releases: "safe" or "immediate".
 	ReleasePolicy *string `json:"release_policy,omitempty"`
 	// ReleaseProbePaths (ADR-1351) replaces the paths the default rollout
@@ -1940,7 +1940,7 @@ type AppResponse struct {
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// ReleasePolicy is the effective default rollout for production
-	// releases (ADR-1160): "safe" or "immediate".
+	// releases (ADR-1353): "safe" or "immediate".
 	ReleasePolicy string `json:"release_policy"`
 	// ReleaseProbePaths are the paths the default rollout probe checks; empty
 	// means "/" (ADR-1351).
@@ -3429,15 +3429,15 @@ type DeploymentResponse struct {
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
 	// RolloutDecision is the evidence recorded with the latest rollout
-	// transition (ADR-1237). It explains an outcome only when its kind matches:
+	// transition (ADR-1354). It explains an outcome only when its kind matches:
 	// an advance record for completion, an abort record for an abort.
 	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
 	// RolloutHold is the newest hold recorded since the current canary step
-	// started, while the rollout is in flight (ADR-1237). Only single-deployment
+	// started, while the rollout is in flight (ADR-1354). Only single-deployment
 	// reads and the deployment summary fill it.
 	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
 	// Release is the deployment's release command run, for a deployment that
-	// declares one (ADR-1331). Only single-deployment reads and the
+	// declares one (ADR-1355). Only single-deployment reads and the
 	// deployment summary fill it.
 	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
@@ -3606,7 +3606,7 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
-	// Decision is the circuit-breaker evidence for this advance (ADR-1237).
+	// Decision is the circuit-breaker evidence for this advance (ADR-1354).
 	// Reserved for the lease-bound internal worker; public requests reject it.
 	Decision *RolloutDecision `json:"decision,omitempty"`
 }
@@ -3865,7 +3865,7 @@ type RollbackRequest struct {
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
 
 	// AcknowledgeReleases lets the rollback proceed although release
-	// commands ran after its target last served (ADR-1331). Without it such a
+	// commands ran after its target last served (ADR-1355). Without it such a
 	// rollback is refused with rollback_crosses_release. Automated rollbacks
 	// never set it.
 	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
@@ -12091,7 +12091,7 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
-	// Decision is the circuit-breaker evidence for the abort (ADR-1237).
+	// Decision is the circuit-breaker evidence for the abort (ADR-1354).
 	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 

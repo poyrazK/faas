@@ -88,7 +88,7 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 	return nil
 }
 
-// defaultRouteProbeTargets lists safe-policy canaries for the ADR-1160
+// defaultRouteProbeTargets lists safe-policy canaries for the ADR-1353
 // default probe. A failed read only skips default probes this minute.
 func (s *server) defaultRouteProbeTargets(ctx context.Context) []state.RouteProbeTarget {
 	store, ok := s.store.(state.DefaultRouteProbeStore)
@@ -161,7 +161,7 @@ func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RoutePr
 }
 
 // routeProbeRound picks one round's probes: ADR-847 selectors whose organic
-// evidence is sparse, plus the ADR-1160 default probe for a safe-policy
+// evidence is sparse, plus the ADR-1353 default probe for a safe-policy
 // canary, and the predecessor to probe beside the candidate.
 func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget) ([]routeProbePlan, string, error) {
 	plans, stableID := []routeProbePlan{}, target.StableID

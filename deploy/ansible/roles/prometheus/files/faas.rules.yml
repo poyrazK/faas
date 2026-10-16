@@ -547,7 +547,7 @@ groups:
           description: "APID could not complete a Safe Deploy emergency sweep or abort. Inspect the active canary and recover traffic manually if its predecessor is still serving."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
-      # ADR-1160 verified rollback outcomes. A failed outcome means a plain
+      # ADR-1353 verified rollback outcomes. A failed outcome means a plain
       # rollback (manual, dashboard, or first-wake 5xx auto-rollback) never
       # served: the release it meant to replace is still live.
       - alert: FaasRollbackNotRestored

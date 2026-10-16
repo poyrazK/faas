@@ -1,8 +1,8 @@
-# ADR-1331 · Releases that change the database
+# ADR-1355 · Releases that change the database
 
 - **Status:** proposed; verified on n2 2026-10-15 (see Rollout)
 - **Date:** 2026-10-15
-- **Amends:** [ADR-1160](1160-safe-releases-by-default.md) (rollback targets), [ADR-122](122-safe-releases.md) (rollback)
+- **Amends:** [ADR-1353](1353-safe-releases-by-default.md) (rollback targets), [ADR-122](122-safe-releases.md) (rollback)
 - **Follows:** the release phase (release commands run as app tasks before a candidate boots), managed PostgreSQL migration bindings and restore-to-new-database
 - **Decision:** A rollback whose target has not served since a later release command ran is refused with `409 rollback_crosses_release` unless the caller acknowledges it. The problem lists each such release and, for every managed PostgreSQL database the app's release commands can migrate, the point in time just before that release, as a ready `gregale postgres restore` command. Automated rollbacks never acknowledge. Each deployment that has a release command reports it as `release` (status, start and finish times, migratable databases).
 - **Why:** A release command, typically a migration, must succeed before the new version serves, and then nothing tracks it. Rollback restores old code, never the database. A rollback to the release that was serving when the migration ran is safe enough: that code already ran on the migrated schema for the whole rollout. But a rollback further back runs code on a schema it has never seen, and nothing says so. The restore needed to undo the migration exists (managed PostgreSQL restores any point in its window), but a customer would have to work out the timestamp themselves, under pressure.
