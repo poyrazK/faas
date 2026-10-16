@@ -530,7 +530,7 @@ func TestDashboardHandler_Billing_PaidPlan(t *testing.T) {
 		"https://billing.example.com/portal?account=" + acct.ID,
 		"Last invoice",
 		"2026-07-31",
-		"€12.40",
+		"$12.40",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("paid-plan body missing %q\n--- body ---\n%s", want, body)
