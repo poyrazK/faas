@@ -235,7 +235,12 @@ func (r *streamRecorder) WriteHeader(status int) {
 
 func (r *streamRecorder) Write(p []byte) (int, error) {
 	r.WriteHeader(http.StatusOK)
-	if r.status < 200 || r.status > 299 || r.err != nil {
+	if r.err != nil {
+		// The reader gave up, such as on an input past its size: stop the copy.
+		return 0, r.err
+	}
+	if r.status < 200 || r.status > 299 {
+		// A refusal's body is not the stream the reader wants.
 		return len(p), nil
 	}
 	if _, err := r.w.Write(p); err != nil {

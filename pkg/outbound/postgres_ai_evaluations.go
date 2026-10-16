@@ -250,8 +250,8 @@ func clampedMS(value *int64) *int64 {
 // route has no active canary. The route is already locked.
 func startEvaluatedCanary(ctx context.Context, tx pgx.Tx, job AIEvaluationJob, routeID uuid.UUID, raw []byte) (bool, error) {
 	var request api.PutOutboundAIRouteCanaryRequest
-	if json.Unmarshal(raw, &request) != nil {
-		return false, nil
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return false, nil //nolint:nilerr // a stored canary that does not parse starts nothing; the verdict still stands.
 	}
 	request = request.Normalized()
 	if !request.Valid() || request.Target != job.Position {
