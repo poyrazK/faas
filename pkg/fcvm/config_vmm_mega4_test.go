@@ -303,6 +303,13 @@ func TestJailerCommand_Mega4(t *testing.T) {
 		if !containsKV(with, "memory.max=1024") {
 			t.Errorf("memory.max=1024 missing: %v", with)
 		}
+		if containsKV(with, "memory.high=") {
+			t.Errorf("app VMs carry no memory.high: %v", with)
+		}
+		db := JailerCommand(JailerSpec{Instance: "i", UID: 1, GID: 1, Networkless: true, MemoryMaxBytes: 2048, MemoryHighBytes: 1024})
+		if !containsKV(db, "memory.max=2048") || !containsKV(db, "memory.high=1024") {
+			t.Errorf("database VM memory.max/high missing: %v", db)
+		}
 	})
 
 	t.Run("explicit exec-file overrides default", func(t *testing.T) {

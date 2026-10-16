@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -271,5 +272,17 @@ func TestConsoleLogIsCapped(t *testing.T) {
 	body, _ := os.ReadFile(f.Name())
 	if !strings.HasSuffix(string(body), "LAST") {
 		t.Fatalf("the log lost the latest output: %q", body[max(0, len(body)-10):])
+	}
+}
+
+// A database VM is held at its billable RAM by memory.high and killed only
+// past a writeback burst above it: its volume writes leave host page cache
+// in its cgroup, which writeback cleans after the fact.
+func TestDatabaseMemoryLimits(t *testing.T) {
+	if got, want := databaseMemoryMaxBytes(384), int64(384+api.PerVMOverheadMB+api.DatabaseVMWritebackBurstMB)<<20; got != want {
+		t.Fatalf("memory.max for 384 MiB = %d, want %d", got, want)
+	}
+	if databaseMemoryMaxBytes(384) <= int64(api.BillableRAMMB(384))<<20 {
+		t.Fatal("memory.max must sit above memory.high (the billable RAM)")
 	}
 }

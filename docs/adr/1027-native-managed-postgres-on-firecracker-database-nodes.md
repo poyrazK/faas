@@ -117,6 +117,22 @@ Application compute stays stateless and the stateful base-image denylist is
 unchanged: customers still cannot deploy PostgreSQL images as apps. Database
 nodes are the one sanctioned stateful workload, operated by the platform.
 
+### §11 amendment: database VM memory cgroup
+
+§11 caps every VM's cgroup at `memory.max` = RAM + 8 MB. A database VM
+keeps that as `memory.high` and gets `memory.max` =
+RAM + 8 MB + `api.DatabaseVMWritebackBurstMB` (56 MB). Its volume is a
+Firecracker drive with the writeback cache, so its writes leave host page
+cache charged to its cgroup. Under a hard cap at RAM + 8 MB, a hot guest
+left no room for pages writeback had not yet cleaned, and a bulk write was
+OOM-killed. On metal, filling a 384 MiB VM's volume with 586 MiB killed its
+firecracker at 355 MiB of guest memory. With `memory.high` the kernel
+throttles and reclaims above RAM + 8 MB instead. The same fill peaked
+6 MiB over it and returned under it. So the steady state, dbsched's
+admission charge (`BillableRAMMB`) and metering all stay at RAM + 8 MB;
+only the transient, reclaimable burst exceeds it, at most 56 MB per VM.
+App VMs are unchanged.
+
 ### vmmd surface
 
 A database node enables database VMs with a `[database_vms]` table in

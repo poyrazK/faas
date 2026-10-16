@@ -4478,6 +4478,14 @@ const (
 	// PerVMOverheadMB is added to every instance's ram_mb for admission and
 	// billing (VMM + jailer + TAP slack, spec §1, §4.7).
 	PerVMOverheadMB = 8
+	// DatabaseVMWritebackBurstMB is how far a database VM's memory.max sits
+	// above its memory.high, which is BillableRAMMB (ADR-1027). The VM's
+	// volume writes leave host page cache charged to its cgroup; with only
+	// PerVMOverheadMB of room, dirty pages writeback has not cleaned yet got
+	// a write-heavy database OOM-killed. memory.high throttles and reclaims
+	// above BillableRAMMB, so the steady state, admission and metering stay
+	// at BillableRAMMB; only this transient burst may exceed it.
+	DatabaseVMWritebackBurstMB = 56
 	// MeasuredChargeFloorMB and MeasuredChargeHeadroomPercent define the
 	// ADR-909 (proposed) charge: what admission by measured memory would book
 	// for a running instance. schedd only reports it (shadow mode); admission

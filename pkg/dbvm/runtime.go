@@ -480,6 +480,13 @@ func (r *Runtime) writeSpecConfig(vm *databaseVM, spec Spec) error {
 	return os.Chown(path, vm.lease.UID, vm.lease.GID)
 }
 
+// databaseMemoryMaxBytes is a database VM's memory.max: its billable RAM
+// and room for host page cache its volume writes leave dirty. memory.high
+// holds it at the billable RAM otherwise (api.DatabaseVMWritebackBurstMB).
+func databaseMemoryMaxBytes(memMiB int) int64 {
+	return int64(api.BillableRAMMB(memMiB)+api.DatabaseVMWritebackBurstMB) << 20
+}
+
 func (r *Runtime) launch(vm *databaseVM, req BootRequest) error {
 	if err := fcvm.EnsureCgroupParentControllers(r.cfg.ParentCgroup); err != nil {
 		return err
@@ -487,7 +494,8 @@ func (r *Runtime) launch(vm *databaseVM, req BootRequest) error {
 	argv := append(fcvm.JailerCommand(fcvm.JailerSpec{
 		Instance: vm.jailID, UID: vm.lease.UID, GID: vm.lease.GID, ExecFile: r.fcReal,
 		Networkless: true, ChrootBase: r.cfg.JailBase, ParentCgroup: r.cfg.ParentCgroup,
-		MemoryMaxBytes: int64(api.BillableRAMMB(req.MemSizeMiB)) << 20,
+		MemoryMaxBytes:  databaseMemoryMaxBytes(req.MemSizeMiB),
+		MemoryHighBytes: int64(api.BillableRAMMB(req.MemSizeMiB)) << 20,
 	}), "--config-file", fcvm.VMConfigName)
 	console, err := os.OpenFile(filepath.Join(vm.dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {

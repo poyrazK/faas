@@ -656,6 +656,10 @@ type JailerSpec struct {
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
 	MemoryMaxBytes int64
+	// MemoryHighBytes, when set, is the cgroup's memory.high: above it the
+	// kernel throttles and reclaims instead of killing. Database VMs set it
+	// below MemoryMaxBytes (ADR-1027); app VMs leave it unset.
+	MemoryHighBytes int64
 	// Networkless omits jailer's --netns argument for disposable execution
 	// guests. Ordinary app and job VMs always retain their tenant namespace.
 	Networkless bool
@@ -759,6 +763,9 @@ func JailerCommand(s JailerSpec) []string {
 	)
 	if s.MemoryMaxBytes > 0 {
 		args = append(args, "--cgroup", fmt.Sprintf("memory.max=%d", s.MemoryMaxBytes))
+	}
+	if s.MemoryHighBytes > 0 {
+		args = append(args, "--cgroup", fmt.Sprintf("memory.high=%d", s.MemoryHighBytes))
 	}
 	args = append(args,
 		"--",
