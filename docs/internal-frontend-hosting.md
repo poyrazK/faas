@@ -393,7 +393,8 @@ leases; customer billing and domain onboarding remain pilot boundaries in both m
 Use the [hosting qualification procedure](internal-frontend-hosting-qualification.md)
 to enable explicit API/database fault checks, publication retry recovery, actual
 cold/warm measurements, optional dedicated control-plane resource snapshots,
-account quota/cleanup assertions, custom-domain lifecycle, and traffic observations.
+account quota/cleanup assertions, custom-domain lifecycle, traffic observations,
+and independently scoped provider-failure/recovery scenarios.
 These phases remain unqualified unless their observations complete.
 
 ## Account storage accounting

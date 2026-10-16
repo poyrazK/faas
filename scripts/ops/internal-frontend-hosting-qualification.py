@@ -21,6 +21,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from internal_frontend_hosting_probes import PilotProbes
 from internal_frontend_hosting_acceptance import AcceptanceChecks
+from internal_frontend_hosting_provider_faults import ProviderFaultChecks
 
 ROOT = Path(__file__).resolve().parents[2]
 API_PATH = '/v1/internal/hosting/sites'
@@ -196,7 +197,7 @@ def manifest(files):
     ]}
 
 
-class Qualification(PilotProbes, AcceptanceChecks):
+class Qualification(PilotProbes, AcceptanceChecks, ProviderFaultChecks):
     def __init__(self, args, env=None, http=None):
         self.args = args
         self.env = dict(os.environ if env is None else env)
@@ -208,11 +209,15 @@ class Qualification(PilotProbes, AcceptanceChecks):
                               'check_publication_recovery': False, 'outage_duration': 1200,
                               'outage_interval': 30, 'edge_samples': 0, 'runner_region': '', 'resource_profile': False,
                               'check_usage': False, 'check_traffic': False, 'custom_domain': '',
-                              'domain_controller': None}.items():
+                              'domain_controller': None, 'provider_controller': None,
+                              'check_domain_recovery': False, 'domain_recovery_review': None,
+                              'check_domain_provider_outage': False, 'check_analytics_outage': False,
+                              'provider_timeout': 2400, 'provider_observation_seconds': 180}.items():
             if not hasattr(args, name):
                 setattr(args, name, default)
         self.configure_probes(require, decode_json, execute, Failure)
         self.configure_acceptance()
+        self.configure_provider_faults()
         self.probe_digest, self.probe_uuid = digest, UUID
         self.report = {'version': 2, 'scope': 'internal-static-frontend-hosting', 'status': 'running',
                        'started_at': utc_now(), 'checks': {}, 'public_launch_qualified': False,
@@ -400,6 +405,7 @@ class Qualification(PilotProbes, AcceptanceChecks):
         self.report['cli_sha256'] = digest(binary.read_bytes())
         self.check_private_endpoints()
         self.prepare_acceptance()
+        self.prepare_provider_faults()
         self.checked('preflight')
 
     def interrupted_release(self, files):
@@ -514,7 +520,10 @@ class Qualification(PilotProbes, AcceptanceChecks):
             self.checked('first_deployment', **self.expect_file('/', first, old['index.html']))
             self.access_contract(first, old)
             if self.args.custom_domain:
-                self.ready_domain()
+                if self.args.check_domain_recovery:
+                    self.ambiguous_domain_recovery(first, old)
+                else:
+                    self.ready_domain()
                 self.domain_contract('first_deployment', first, old)
             self.checked('edge_cache_hit', **self.expect_file('/', first, old['index.html'], cache_hit=True))
             self.checked('access_denied_after_cache_hit', http_status=self.denied())
@@ -555,6 +564,8 @@ class Qualification(PilotProbes, AcceptanceChecks):
             self.check_usage_snapshot('after_rollback')
             if self.args.custom_domain:
                 self.domain_contract('rollback', first, old)
+                if self.args.check_domain_provider_outage:
+                    self.domain_provider_outage(first, old)
             if self.site.get('durable_routing'):
                 if self.args.edge_samples:
                     self.edge_observations(first, old['index.html'])
@@ -574,6 +585,8 @@ class Qualification(PilotProbes, AcceptanceChecks):
             self.check_usage_snapshot('after_retirement')
             if self.args.check_traffic:
                 self.traffic_observations()
+                if self.args.check_analytics_outage:
+                    self.analytics_provider_outage(first, old)
             if self.args.custom_domain:
                 self.remove_domain()
 
@@ -655,13 +668,22 @@ class Qualification(PilotProbes, AcceptanceChecks):
             self.report['failure'] = 'Qualification did not complete; inspect the last successful check and configured services'
         finally:
             try:
+                self.restore_provider_fault()
+            except (Failure, OSError, ValueError, KeyError, TypeError):
+                self.report['status'] = 'failed'
+                self.report['provider_fault']['status'] = 'restore_failed'
+                self.report['provider_fault']['action'] = 'Restore the recorded provider fault with its scoped controller before deleting the site or clearing DNS'
+            try:
                 self.restore_outage()
             except (Failure, OSError, ValueError, KeyError, TypeError):
                 self.report['status'] = 'failed'
                 self.report['outage_recovery']['status'] = 'failed'
                 self.report['outage_recovery']['action'] = 'Restore the recorded fault with the dedicated pilot controller before continuing'
             try:
-                self.cleanup()
+                if self.provider_fault is not None:
+                    self.report['cleanup'] = {'status': 'blocked', 'action': 'Confirm provider fault restoration before site/provider cleanup; preserve DNS'}
+                else:
+                    self.cleanup()
             except (Failure, OSError, ValueError, KeyError, TypeError):
                 self.report['status'] = 'failed'
                 self.report['cleanup'] = {'status': 'failed', 'site_id': self.site.get('id') if self.site else None,
@@ -703,6 +725,13 @@ def main():
     parser.add_argument('--check-traffic', action='store_true', help='Wait for nonzero approximate provider observations; requires API and Worker analytics opt-ins')
     parser.add_argument('--custom-domain', default='', help='Disposable external CNAME subdomain, never reused after this run')
     parser.add_argument('--domain-controller', type=Path, help='Absolute isolated DNS/Access controller; required with --custom-domain')
+    parser.add_argument('--provider-controller', type=Path, help='Absolute scoped provider-fault controller with independent watchdog restoration')
+    parser.add_argument('--check-domain-recovery', action='store_true', help='Drop a successful create response and require an explicit run-bound provider-ID review')
+    parser.add_argument('--domain-recovery-review', type=Path, help='New absolute JSON review file supplied by the operator after the recorded ambiguous create')
+    parser.add_argument('--check-domain-provider-outage', action='store_true', help='Isolate only apid domain-provider management and verify serving/reconciliation recovery')
+    parser.add_argument('--check-analytics-outage', action='store_true', help='Isolate only apid analytics queries, outlast its cache and verify reporting recovery')
+    parser.add_argument('--provider-timeout', type=int, default=2400, help='Seconds to await provider reconciliation, including the active-domain 30-minute poll')
+    parser.add_argument('--provider-observation-seconds', type=int, default=180, help='Seconds to observe an established provider fault, minimum three minutes')
     args = parser.parse_args()
     if args.edge_timeout <= 0 or args.cleanup_timeout <= 0:
         parser.error('timeouts must be positive')

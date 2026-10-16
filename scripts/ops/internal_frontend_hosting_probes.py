@@ -192,7 +192,7 @@ class PilotProbes:
         return {'elapsed_ms': round(elapsed, 3), 'cache': cache, 'colo': colo, 'generation': int(generation)}
 
     def cold_release(self, label, count):
-        files = {f'probe-{index}.html': f'<!doctype html><title>{uuid.uuid4()} {label} {index}</title>'.encode()
+        files = {('index.html' if index == 0 else f'probe-{index}.html'): f'<!doctype html><title>{uuid.uuid4()} {label} {index}</title>'.encode()
                  for index in range(count)}
         request = {'spa_fallback': False, 'files': [
             {'path': name, 'sha256': self.probe_digest(body), 'size': len(body), 'content_type': 'text/html'}

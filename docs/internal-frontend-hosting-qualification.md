@@ -308,8 +308,10 @@ DNS is cleared only after site/provider catalog cleanup and an owned terminal
 head can be confirmed. If those checks fail, evidence retains `dns_cleanup:
 "required"` and recovery identity; preserve DNS and follow the
 [standard-plan recovery procedure](internal-frontend-hosting-domains.md#retry-remove-and-recover).
-A `provider_conflict` stops the normal scenario. The runner never chooses an
-unbound provider ID, resets a create marker, or automatically invokes recovery.
+A `provider_conflict` stops the normal scenario. The normal scenario never chooses an
+unbound provider ID, resets a create marker, or invokes recovery. The separately
+opted-in provider-failure scenario below permits one recovery request only after
+a run-bound operator review.
 A successful normal lifecycle does **not** qualify ambiguous-create recovery,
 domain-provider outages, or certificate renewal.
 
@@ -327,10 +329,156 @@ is working. A provider/API error fails this scenario and cannot become zero
 traffic. Allow enough time for the first write, provider ingestion, and the API's
 one-minute query cache when selecting the timeout. There is no exact request or
 byte assertion: sampling, ingestion delay, and other authorized pilot traffic
-make those totals approximate. These checks do not qualify provider-query
+make those totals approximate. These checks alone do not qualify provider-query
 outage/recovery, actual delivered bytes, CPU, R2 operations, or billing. Follow
 the independent [traffic runbook](internal-frontend-hosting-traffic.md) for
 credentials, privacy, retention, and provider charges.
+
+## Qualify provider failures and reviewed recovery
+
+Three additional scenarios are independently opt-in. They use a separate
+operator-owned provider fault controller, alongside the existing DNS/Access
+controller. No real fault controller or provider credentials are bundled. The
+portable fixture suite exercises all three without live provisioning.
+
+For a later explicitly provisioned, isolated durable pilot, add the desired
+flags to the extended acceptance command:
+
+```bash
+--provider-controller /absolute/operator/pilot-provider-controller \
+--check-domain-recovery \
+--domain-recovery-review /absolute/private/new-provider-review.json \
+--check-domain-provider-outage \
+--check-analytics-outage
+```
+
+The two domain scenarios require `--custom-domain` and its DNS controller.
+Analytics isolation requires `--check-traffic` and the existing independent
+analytics feature switches; it can run without a custom domain. Invalid flag
+combinations, an existing review file, and a missing controller fail before site
+creation. All product flags remain independent and default off.
+
+`--provider-timeout` defaults to 2400 seconds, bounded to 180..3600. An active
+domain is normally reconciled only every 30 minutes: the runner waits for that
+scheduled provider call and does not modify SQL schedules or accelerate the
+reconciler. Select a timeout that covers that interval. After a fault is actually
+observed, `--provider-observation-seconds` defaults to 180, bounded to 180..600.
+Allow at least two hours for the complete live run, plus operator review time,
+and use API and both Access identities valid for that window.
+
+### Scoped provider fault controller
+
+Invoke `[ABSOLUTE_EXECUTABLE, COMMAND]` without a shell. Each command receives
+this JSON identity on standard input and must return **all fields unchanged**:
+
+```json
+{
+  "version": 1,
+  "api_origin": "https://api.pilot.example",
+  "account_id": "QUALIFICATION_ACCOUNT_UUID",
+  "origin_id": "ORIGIN_FINGERPRINT",
+  "worker_name": "gregale-internal-pilot",
+  "site_id": "SITE_UUID",
+  "domain_id": "CLAIM_UUID",
+  "hostname": "pilot.external-qualification.example",
+  "mode": "domain_api",
+  "run_id": "FAULT_RUN_UUID",
+  "duration": 2700
+}
+```
+
+For read-only `describe`, the site/domain IDs, mode, run ID and duration are
+empty/zero because the site has not been created. A hostname may be empty for
+analytics-only qualification. After creation, each fault's exact scope is
+persisted before its first command, and kept unchanged for restoration and
+inspection. Refuse mismatched identities and overlapping faults. Commands have
+a 45-second timeout and a 16 KiB JSON response bound. They inherit only the same
+basic process/proxy/CA/SSH-agent environment as the DNS controller. They receive
+no runner API, Access, Cloudflare, R2 or AWS credentials. Never return raw request
+bodies, SQL, tokens or upstream errors in evidence fields.
+
+| Command | Required behavior and additional response |
+|---|---|
+| `describe` | Read-only independent pilot verification; `dedicated: true`, `modes` listing supported names below |
+| `enter` | Journal exclusive scope and install an independent watchdog before applying the fault; return `automatic_restore_at` as Unix seconds |
+| `status` | Independently inspect the scoped fault; `fault_active: true`, `api_running: true`, plus actual request/object counters |
+| `leave` | Idempotently restore only this run's changes; `fault_active: false`; safe when enter applied but lost its response, or never applied |
+| `inspect` | Read-only retained journal and provider activity for this exact run, even after leave; `fault_active: false` after restoration and the counters below |
+
+Watchdog restoration must be between `duration + 30` and `duration + 300`
+seconds from the enter response. Duration covers the initial timeout,
+observation window, and a two-minute command margin. Preserve restoration if
+the runner is killed. Do not change feature flags, Access policies, the serving
+Worker, tenant DNS, PostgreSQL availability, or Worker R2/JWKS connectivity to
+simulate a provider management failure.
+
+| Mode | Fault and independent evidence |
+|---|---|
+| `create_response` | For this exact new hostname, let the provider create succeed, record its actual object, then lose the response to apid. Count **all** create requests for that hostname through restoration/inspection. Return `create_requests`, `provider_objects`, `dropped_responses`; each must remain exactly 1. Keep the journal armed for read-only counting after restoration. |
+| `domain_api` | Isolate only apid's custom-hostname/Access management API traffic for this bound claim. Leave existing edge Access enforcement, DNS/TLS, Worker, R2 and the main API available. Count real failed management requests in `failed_requests`, and successful management requests after restoration in `successful_requests_after_restore`. |
+| `analytics_query` | Isolate only apid's Analytics Engine SQL requests for the canonical site in this scope. Leave collection, the main API and serving intact. Count real failed queries and successful queries after restoration in the same two counters. |
+
+These are pilot-specific mechanisms, such as an independently monitored scoped
+provider proxy. Configure them using protected operator mechanisms. A controller
+assertion alone cannot qualify: the runner also requires actual API conflict/error
+state, successful management reads, and exact authorized serving while Access
+continues denying anonymous requests.
+
+### Lost create-response recovery
+
+The fault is armed before Gregale's proof TXT/CNAME are installed. Once the API
+reports the durable create marker, an unbound provider ID, and `provider_conflict`,
+the runner observes the whole configured window. It requires another completed
+reconciliation attempt without another create, implicit binding, or marker/revision
+change. Canonical serving must continue. This window also exceeds the current
+160-second recovery fence; the API independently enforces that fence.
+
+The fault is restored and independent counters rechecked before operator review.
+Evidence then contains `domain_recovery_review.status: "required"` and its
+`identity` object: version, API/account/storage origin/Worker, site/claim/hostname,
+fault run ID, provider origin and expected revision. Follow the
+[standard-plan recovery procedure](internal-frontend-hosting-domains.md#retry-remove-and-recover)
+to review provider activity, ownership, account/zone, hostname and exact object
+UUID. Copy that identity **unchanged** into the new review JSON file and add only
+`"provider_id": "REVIEWED_PROVIDER_UUID"`. Write a temporary regular file and
+atomically rename it to the configured absolute review path. The runner rejects
+stale/foreign/extra fields, symlinks, oversized or malformed reviews; it never
+obtains a candidate UUID from the fault controller or hostname search.
+
+The runner submits one revision-fenced recovery POST. If its transport response
+is lost, it reads the claim for the exact reviewed provider and the next revision;
+it never repeats the POST. A rejected or uncertain unconfirmed request fails the
+scenario and needs fresh review outside that run. Success requires DNS/TLS/Access
+and serving recovery, plus another independent proof of exactly one provider
+create/object/dropped response. Preserve uncertain claim state and DNS if recovery
+or cleanup cannot complete.
+
+### Bound domain-provider and analytics outages
+
+For `domain_api`, the runner waits for the normal scheduled reconciliation to
+report `provider_unavailable` with an increased completed-attempt count. The bound
+provider/Access IDs and published alias generation must remain unchanged. During
+the observation window it checks exact warm canonical/alias bytes, anonymous Access
+denial, and separate unique cold paths through both hostnames. After restoration,
+a later successful reconciliation must clear the error on the same binding; the
+controller must observe an actual successful provider request.
+
+For `analytics_query`, a cached successful report cannot qualify the outage.
+The runner waits for the actual no-store 503 `hosting_traffic_unavailable` after
+query-cache expiry and independently recorded failed queries. Disabled-feature or
+API errors do not qualify. Exact warm and cold serving continues through the
+observation window. After restoration, the full approximate traffic report must
+validate again with nonzero observations and a successful new provider query.
+Unavailable traffic never becomes zero traffic or a serving dependency.
+
+Provider faults restore in `finally`, including applied writes with lost command
+responses. A failed restoration is retried at the run boundary. Until restoration
+is acknowledged, site deletion and DNS cleanup are **blocked**, and the report
+retains the fault identity and recovery action. After a forced kill, inspect all
+`provider_faults` journal identities, confirm watchdog restoration and idempotent
+leave for the outstanding run, then finish site/provider cleanup before clearing
+owned DNS. Each completed check references its fault run ID; only complete
+failure, serving, and recovery evidence removes that scenario from `not_run`.
 
 ## Interpret acceptance reports
 

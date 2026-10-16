@@ -232,7 +232,7 @@ class AcceptanceChecks:
         self.report['custom_domain'].update(id=self.domain['id'], status='claimed')
         self.save()
 
-    def ready_domain(self):
+    def wait_domain(self, name, predicate, timeout=None):
         require = self.probe_require
         last_records = None
         def ready():
@@ -260,12 +260,23 @@ class AcceptanceChecks:
                 self.save()  # Arm cleanup before a DNS command can lose its response.
                 require(self.domain_control('sync', records).get('applied') is True, 'Domain DNS synchronization was not acknowledged')
                 last_records = records
+            return predicate(row)
+        return self.wait(name, ready, timeout)
+
+    def read_domain(self):
+        rows = self.api('GET', '/' + self.site['id'] + '/domains')
+        self.domain = self.accept_domain(next((r for r in rows if r.get('id') == self.domain['id']), None))
+        return self.domain
+
+    def ready_domain(self):
+        require = self.probe_require
+        def ready(row):
             require(row.get('last_error_code') != 'provider_conflict',
                     'Ambiguous domain creation requires explicit reviewed provider-ID recovery; automatic adoption is refused')
             return row.get('state') == 'active' and row.get('details', {}).get('tls_status') == 'active' and \
                 re.fullmatch(r'[0-9a-f]{64}', row.get('details', {}).get('access_aud', '')) is not None and \
                 type(row.get('generation')) is int and row['generation'] > 0 and row.get('published_generation') == row['generation']
-        self.wait('custom-domain DNS, TLS, Access and publication', ready)
+        self.wait_domain('custom-domain DNS, TLS, Access and publication', ready)
         token = self.domain_control('token').get('access_token', '')
         require(isinstance(token, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,16384}', token) is not None,
                 'The dedicated domain controller did not supply an Access JWT')
