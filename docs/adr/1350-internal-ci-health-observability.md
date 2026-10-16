@@ -1,4 +1,4 @@
-# ADR-1345: Internal CI health and bounded worker observations
+# ADR-1350: Internal CI health and bounded worker observations
 
 - Status: implemented behind existing default-off internal gates
 - Date: 2026-10-16

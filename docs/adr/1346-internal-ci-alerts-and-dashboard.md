@@ -2,7 +2,7 @@
 
 - Status: implemented with every shipped CI flag off
 - Date: 2026-10-16
-- Extends: ADR-1345
+- Extends: ADR-1350
 
 ## Decision
 
