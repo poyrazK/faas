@@ -6,8 +6,10 @@
 # /etc/hosts block still needs a private address for every peer. Facts are
 # cached by deploy/ansible/ansible.cfg and consumed by bootstrap.yml.
 
+# ADR-1027 database nodes are validated the same way: one role, the
+# matching box role, a supported OS, systemd and a private address.
 - name: Validate the bare-metal fleet before a role-limited bootstrap
-  hosts: control_plane:compute_nodes
+  hosts: control_plane:compute_nodes:database_nodes
   gather_facts: true
   become: false
   any_errors_fatal: true
@@ -26,19 +28,21 @@
     - name: Require exactly one production role per host
       ansible.builtin.assert:
         that:
-          - (group_names | intersect(['control_plane', 'compute_nodes']) | length) == 1
+          - (group_names | intersect(['control_plane', 'compute_nodes', 'database_nodes']) | length) == 1
         fail_msg: >-
           {{ inventory_hostname }} must belong to exactly one of
-          control_plane or compute_nodes; got {{ group_names | join(', ') }}.
+          control_plane, compute_nodes or database_nodes; got {{ group_names | join(', ') }}.
 
     - name: Require the host variable to agree with its inventory role
       ansible.builtin.assert:
         that:
-          - faas_box_role | default('') in ['control-plane', 'compute-only']
+          - faas_box_role | default('') in ['control-plane', 'compute-only', 'database']
           - >-
             (faas_box_role == 'control-plane' and 'control_plane' in group_names)
             or
             (faas_box_role == 'compute-only' and 'compute_nodes' in group_names)
+            or
+            (faas_box_role == 'database' and 'database_nodes' in group_names)
         fail_msg: >-
           {{ inventory_hostname }} has faas_box_role={{ faas_box_role | default('unset') }}
           but inventory groups are {{ group_names | join(', ') }}.
@@ -80,7 +84,7 @@
           requires systemd.
 
 - name: Validate the complete peer address map
-  hosts: control_plane:compute_nodes
+  hosts: control_plane:compute_nodes:database_nodes
   gather_facts: false
   become: false
   any_errors_fatal: true
@@ -93,5 +97,5 @@
           peer {{ item }} has no cached private address. Run the preflight
           against the complete inventory and provide faas_private_address
           for providers whose default route is public.
-      loop: "{{ (groups['control_plane'] + groups['compute_nodes']) | unique }}"
+      loop: "{{ (groups['control_plane'] + groups['compute_nodes'] + groups['database_nodes'] | default([])) | unique }}"
       run_once: true
