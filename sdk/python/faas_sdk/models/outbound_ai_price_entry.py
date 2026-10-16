@@ -33,6 +33,9 @@ class OutboundAIPriceEntry:
     """Charged per minute of transcribed audio."""
     millicents_per_million_characters: int | Unset = UNSET
     """Charged per million characters of speech input."""
+    millicents_per_video_second: int | Unset = UNSET
+    """Charged per second of generated video (ADR-1370). A model_prefix of <model>@<resolution>, such as
+    veo-3.1-generate-001@4k, prices that resolution apart."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +58,8 @@ class OutboundAIPriceEntry:
         millicents_per_audio_minute = self.millicents_per_audio_minute
 
         millicents_per_million_characters = self.millicents_per_million_characters
+
+        millicents_per_video_second = self.millicents_per_video_second
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -79,6 +84,8 @@ class OutboundAIPriceEntry:
             field_dict["millicents_per_audio_minute"] = millicents_per_audio_minute
         if millicents_per_million_characters is not UNSET:
             field_dict["millicents_per_million_characters"] = millicents_per_million_characters
+        if millicents_per_video_second is not UNSET:
+            field_dict["millicents_per_video_second"] = millicents_per_video_second
 
         return field_dict
 
@@ -105,6 +112,8 @@ class OutboundAIPriceEntry:
 
         millicents_per_million_characters = d.pop("millicents_per_million_characters", UNSET)
 
+        millicents_per_video_second = d.pop("millicents_per_video_second", UNSET)
+
         outbound_ai_price_entry = cls(
             model_prefix=model_prefix,
             input_millicents_per_mtok=input_millicents_per_mtok,
@@ -116,6 +125,7 @@ class OutboundAIPriceEntry:
             millicents_per_image=millicents_per_image,
             millicents_per_audio_minute=millicents_per_audio_minute,
             millicents_per_million_characters=millicents_per_million_characters,
+            millicents_per_video_second=millicents_per_video_second,
         )
 
         outbound_ai_price_entry.additional_properties = d

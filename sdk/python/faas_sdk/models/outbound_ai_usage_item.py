@@ -38,6 +38,8 @@ class OutboundAIUsageItem:
     """Seconds of transcribed audio."""
     characters: int
     """Characters of speech input."""
+    video_seconds: int
+    """Seconds of generated video (ADR-1370)."""
     cost_millicents: int | Unset = UNSET
     """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
     unpriced model."""
@@ -68,6 +70,8 @@ class OutboundAIUsageItem:
 
         characters = self.characters
 
+        video_seconds = self.video_seconds
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -86,6 +90,7 @@ class OutboundAIUsageItem:
                 "images": images,
                 "audio_seconds": audio_seconds,
                 "characters": characters,
+                "video_seconds": video_seconds,
             }
         )
         if cost_millicents is not UNSET:
@@ -120,6 +125,8 @@ class OutboundAIUsageItem:
 
         characters = d.pop("characters")
 
+        video_seconds = d.pop("video_seconds")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -135,6 +142,7 @@ class OutboundAIUsageItem:
             images=images,
             audio_seconds=audio_seconds,
             characters=characters,
+            video_seconds=video_seconds,
             cost_millicents=cost_millicents,
         )
 

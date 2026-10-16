@@ -61943,6 +61943,9 @@ components:
         ai_log_export:
           type: boolean
           description: Whether each settled app call writes one metadata line to the app's log drains (ADR-1340).
+        ai_allow_unmetered:
+          type: boolean
+          description: Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1370).
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -62025,6 +62028,13 @@ components:
         log_export:
           type: boolean
           description: Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider.
+        allow_unmetered:
+          type: boolean
+          description: >-
+            Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets, vector
+            stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
+            outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
+            caps (ADR-1370). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -62040,7 +62050,7 @@ components:
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -62055,6 +62065,7 @@ components:
         images: { type: integer, format: int64, minimum: 0, description: Images billed per image (ADR-997). }
         audio_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of transcribed audio. }
         characters: { type: integer, format: int64, minimum: 0, description: Characters of speech input. }
+        video_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of generated video (ADR-1370). }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -62249,6 +62260,14 @@ components:
         millicents_per_image: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per image when a call reports no output image tokens. }
         millicents_per_audio_minute: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per minute of transcribed audio. }
         millicents_per_million_characters: { type: integer, format: int64, minimum: 0, maximum: 1000000000, description: Charged per million characters of speech input. }
+        millicents_per_video_second:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000000
+          description: >-
+            Charged per second of generated video (ADR-1370). A model_prefix of <model>@<resolution>, such as
+            veo-3.1-generate-001@4k, prices that resolution apart.
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.

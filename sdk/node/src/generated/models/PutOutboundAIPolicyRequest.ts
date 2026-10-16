@@ -23,6 +23,10 @@ export type PutOutboundAIPolicyRequest = {
    */
   log_export?: boolean;
   /**
+   * Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets, vector stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403 outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the caps (ADR-1370). Requires ai_provider.
+   */
+  allow_unmetered?: boolean;
+  /**
    * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_token_limit?: number | null;

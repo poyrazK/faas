@@ -35,6 +35,11 @@ class PutOutboundAIPolicyRequest:
     log_export: bool | Unset = UNSET
     """Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or
     completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider."""
+    allow_unmetered: bool | Unset = UNSET
+    """Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets,
+    vector stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
+    outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
+    caps (ADR-1370). Requires ai_provider."""
     user_daily_token_limit: int | None | Unset = UNSET
     """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
     user_daily_cost_limit_millicents: int | None | Unset = UNSET
@@ -64,6 +69,8 @@ class PutOutboundAIPolicyRequest:
         request_log_content = self.request_log_content
 
         log_export = self.log_export
+
+        allow_unmetered = self.allow_unmetered
 
         user_daily_token_limit: int | None | Unset
         if isinstance(self.user_daily_token_limit, Unset):
@@ -95,6 +102,8 @@ class PutOutboundAIPolicyRequest:
             field_dict["request_log_content"] = request_log_content
         if log_export is not UNSET:
             field_dict["log_export"] = log_export
+        if allow_unmetered is not UNSET:
+            field_dict["allow_unmetered"] = allow_unmetered
         if user_daily_token_limit is not UNSET:
             field_dict["user_daily_token_limit"] = user_daily_token_limit
         if user_daily_cost_limit_millicents is not UNSET:
@@ -140,6 +149,8 @@ class PutOutboundAIPolicyRequest:
 
         log_export = d.pop("log_export", UNSET)
 
+        allow_unmetered = d.pop("allow_unmetered", UNSET)
+
         def _parse_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -168,6 +179,7 @@ class PutOutboundAIPolicyRequest:
             request_log_enabled=request_log_enabled,
             request_log_content=request_log_content,
             log_export=log_export,
+            allow_unmetered=allow_unmetered,
             user_daily_token_limit=user_daily_token_limit,
             user_daily_cost_limit_millicents=user_daily_cost_limit_millicents,
         )

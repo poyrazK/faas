@@ -6755,6 +6755,7 @@ type OutboundAiPriceEntry struct {
 	MillicentsPerImage             pgtype.Int8
 	MillicentsPerAudioMinute       pgtype.Int8
 	MillicentsPerMillionCharacters pgtype.Int8
+	MillicentsPerVideoSecond       pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -6894,6 +6895,7 @@ type OutboundAiUsageDaily struct {
 	Images               int64
 	AudioSeconds         int64
 	Characters           int64
+	VideoSeconds         int64
 }
 
 type OutboundAiUserUsageDaily struct {
@@ -6979,6 +6981,7 @@ type OutboundIntegration struct {
 	AiModerationModel              pgtype.Text
 	AiModerationCategories         []string
 	AiModerationOnError            string
+	AiAllowUnmetered               bool
 }
 
 type OutboundIntegrationApp struct {

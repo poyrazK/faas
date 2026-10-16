@@ -25,5 +25,9 @@ export type OutboundAIPriceEntry = {
    * Charged per million characters of speech input.
    */
   millicents_per_million_characters?: number;
+  /**
+   * Charged per second of generated video (ADR-1370). A model_prefix of <model>@<resolution>, such as veo-3.1-generate-001@4k, prices that resolution apart.
+   */
+  millicents_per_video_second?: number;
 };
 

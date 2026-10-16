@@ -7900,6 +7900,7 @@
       "millicents_per_audio_minute",
       "millicents_per_image",
       "millicents_per_million_characters",
+      "millicents_per_video_second",
       "model_prefix",
       "output_image_millicents_per_mtok",
       "output_millicents_per_mtok",
@@ -8075,7 +8076,8 @@
       "requests",
       "updated_at",
       "usage_date",
-      "usage_unknown_requests"
+      "usage_unknown_requests",
+      "video_seconds"
     ],
     "kind": "operational"
   },
@@ -8172,6 +8174,7 @@
     "table": "outbound_integrations",
     "columns": [
       "account_id",
+      "ai_allow_unmetered",
       "ai_content_blocked_terms",
       "ai_content_email",
       "ai_content_iban",

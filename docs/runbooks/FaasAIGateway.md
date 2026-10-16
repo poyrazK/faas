@@ -120,6 +120,19 @@ These ADR-1360 features are customer settings; none pages.
   (no captures, a deleted judge integration). Many `outbound_ai_evaluation_interrupted`
   failures point at outboundd restarts during long evaluations.
 
+## Unmetered calls
+
+ADR-1370 refuses writes the gateway cannot meter; none pages.
+
+- **Refusals.** `outbound_rejections_total{reason="outbound_ai_endpoint_unmetered"}`
+  counts them. A customer whose SDK needs an endpoint outside the lists (the
+  ADR has them) either sets `--allow-unmetered on` or asks for the endpoint to
+  be metered or listed as free. Add a free endpoint only when its provider
+  documents it as free of charge.
+- **Allowed.** `outbound_ai_unmetered_calls_total` counts calls let through.
+  Their spend is outside the caps; a customer surprised by a provider bill
+  should check this first.
+
 ## Failure drills
 
 `pkg/outbound/ai_gateway_drills_test.go` runs these against Postgres on every

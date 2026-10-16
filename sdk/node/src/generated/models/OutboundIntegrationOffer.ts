@@ -65,6 +65,10 @@ export type OutboundIntegrationOffer = {
    */
   ai_log_export?: boolean;
   /**
+   * Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1370).
+   */
+  ai_allow_unmetered?: boolean;
+  /**
    * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_token_limit?: number | null;

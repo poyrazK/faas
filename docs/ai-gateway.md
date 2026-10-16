@@ -46,8 +46,11 @@ account during the preview; contact support to have it turned on for yours.
 - **Log export.** Send each call's metadata to your app's log drains, HTTP or
   OpenTelemetry, as one JSON line. Prompts and completions are never
   exported.
-- **Media.** Image generation, transcription and speech are metered and capped
-  like chat.
+- **Media.** Image generation, transcription, speech and Veo video generation
+  are metered and capped like chat.
+- **No unmetered spend.** Calls the gateway cannot meter, such as realtime
+  client secrets, vector stores or fine-tuning, are refused unless you allow
+  them for the integration.
 
 ## Set up
 
@@ -130,6 +133,7 @@ canary only if the new model does not do worse.
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. |
 | `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
+| `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
 | `413 outbound_ai_batch_too_large` | The batch is larger than the gateway can size. |
 

@@ -898,6 +898,34 @@ unencrypted, like app logs, so do not turn capture on for traffic you may not
 store. E-mail addresses, payment cards, IBANs and secrets in captures are
 always replaced with `[REDACTED:kind]` (ADR-997).
 
+## AI unmetered calls
+
+A hard cap holds only for calls the gateway meters, so a write on an AI
+integration goes through only when the gateway meters its endpoint or knows it
+to be free (ADR-1370).
+
+- **Metered:** chat completions, Responses, completions, embeddings, images,
+  audio, batches, and Veo video generation.
+- **Known free:** file uploads, token counting, OpenAI moderation,
+  cancellations, conversation items and stored-completion updates. The ADR
+  lists them per provider.
+- **Refused:** any other `POST`, and every `PUT` or `PATCH`, with
+  `403 outbound_ai_endpoint_unmetered`. Examples:
+  - realtime client secrets and calls, which let a browser spend with the
+    provider directly;
+  - vector stores and containers, billed by storage and session;
+  - fine-tuning jobs (OpenAI is winding its fine-tuning platform down);
+  - Gemini context caches and batch mode, and Vertex batch and tuning jobs;
+  - Bedrock `async-invoke`;
+  - any endpoint a provider adds later.
+- **Unchanged:** reads (`GET`, `HEAD`) and `DELETE`.
+
+`gregale ai policy <id> --allow-unmetered on` (or `"allow_unmetered": true`)
+lets refused calls through as before. They carry `X-Gregale-AI-Unmetered:
+allowed`, their spend is outside the integration's caps, and
+`outbound_ai_unmetered_calls_total` counts them by integration. Operator
+integrations take `ai_allow_unmetered` in `outboundd.toml`.
+
 ## AI media metering
 
 See [ADR-997](../adr/997-ai-gateway-media-metering-content-guardrails-replay.md).
@@ -913,13 +941,17 @@ like chat calls:
   per audio second (Whisper) or in tokens (gpt-4o-transcribe).
 - **Speech:** `audio/speech`, billed per input character (tts-1) or settled
   at its reservation when the model has no character price.
+- **Video:** Veo `predictLongRunning` on Gemini and Vertex AI (ADR-1370),
+  billed per second of generated video at the price for its resolution.
 
 Price lists take media prices next to token prices:
 
 - `input-image` and `output-image` per million image tokens;
 - `image` per image;
 - `audio-minute` per minute of input audio;
-- `characters` per million characters.
+- `characters` per million characters;
+- `video-second` per second of video. A `model=<model>@<resolution>` entry,
+  such as `veo-3.1-generate-001@4k`, prices one resolution apart.
 
 For example:
 
@@ -929,8 +961,9 @@ gregale ai prices set <id> --price model=dall-e-3,image=0.04 \
 ```
 
 The built-in catalog carries these prices for the image, transcription and
-speech models LiteLLM lists. `gregale ai usage` shows images, audio seconds and
-characters in its MEDIA column.
+speech models LiteLLM lists, and Veo's per-second prices by resolution.
+`gregale ai usage` shows images, audio seconds, characters and video seconds in
+its MEDIA column.
 
 Reservations use the unit a model is priced in:
 
@@ -938,6 +971,14 @@ Reservations use the unit a model is priced in:
   token-priced model reserves 8,192 output tokens per image.
 - **Transcription:** the upload's estimated duration at 16 kbit/s.
 - **Speech:** the input characters.
+- **Video:** `durationSeconds` (default 8) times the videos asked for
+  (`numberOfVideos`, or Vertex's `sampleCount`, default 1), at `resolution`
+  (default `720p`). A successful creation settles at that amount: the provider
+  bills the seconds it was asked for, and the operation it returns reports no
+  usage. A video whose operation later fails is still counted.
+  - **Unmetered video:** a request the gateway cannot read (over 32 MiB), whose
+    parameters are out of range, or whose model has no price per second.
+    Unmetered video is refused unless the integration allows unmetered calls.
 
 ## AI content guardrails
 

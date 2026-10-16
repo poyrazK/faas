@@ -40,5 +40,9 @@ export type OutboundAIUsageItem = {
    * Characters of speech input.
    */
   characters: number;
+  /**
+   * Seconds of generated video (ADR-1370).
+   */
+  video_seconds: number;
 };
 
