@@ -7,7 +7,10 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	pgq "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 )
 
 // Mode is how a query is maintained.
@@ -64,6 +67,7 @@ type Plan struct {
 	SQL        string
 	NParams    int
 	ParamTypes []string
+	Columns    []liveproto.Column // the result columns subscribers see
 	Mode       Mode
 	Reason     string // why ModeRecompute was chosen
 
@@ -109,6 +113,10 @@ type Plan struct {
 	// Subqueries holds one pair cache per keyed subquery in WHERE.
 	Subqueries []SubqueryPlan
 
+	// Order, when set, maintains an ORDER BY ... LIMIT window (ModeLineage):
+	// RowSQL and RowRestricted read at most a window's worth of rows each.
+	Order *OrderPlan
+
 	// outer lists the relations of the FROM clause; subquery relations
 	// follow them.
 	outer []int
@@ -139,6 +147,40 @@ var timeDependent = map[string]bool{
 	"now": true, "transaction_timestamp": true, "statement_timestamp": true,
 }
 
+// resultColumns names each result column's type as clients parse it: the
+// type name (int8, timestamptz, _int4), or a domain's base type name.
+func resultColumns(ctx context.Context, conn *pgx.Conn, fields []pgconn.FieldDescription) ([]liveproto.Column, error) {
+	oids := make([]uint32, len(fields))
+	for i, f := range fields {
+		oids[i] = f.DataTypeOID
+	}
+	rows, err := conn.Query(ctx, `
+		SELECT t.oid, coalesce(b.typname, t.typname)::text
+		FROM pg_type t LEFT JOIN pg_type b ON t.typtype = 'd' AND b.oid = t.typbasetype
+		WHERE t.oid = ANY($1)`, oids)
+	if err != nil {
+		return nil, fmt.Errorf("livequery: result column types: %w", err)
+	}
+	defer rows.Close()
+	names := map[uint32]string{}
+	for rows.Next() {
+		var oid uint32
+		var name string
+		if err := rows.Scan(&oid, &name); err != nil {
+			return nil, fmt.Errorf("livequery: scan column type: %w", err)
+		}
+		names[oid] = name
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("livequery: result column types: %w", err)
+	}
+	out := make([]liveproto.Column, len(fields))
+	for i, f := range fields {
+		out[i] = liveproto.Column{Name: f.Name, Type: names[f.DataTypeOID]}
+	}
+	return out, nil
+}
+
 // Compile parses, validates and rewrites a query. conn is used for catalog
 // lookups and to prepare (but never execute) the rewritten statements.
 func Compile(ctx context.Context, conn *pgx.Conn, sql string) (*Plan, error) {
@@ -157,6 +199,9 @@ func Compile(ctx context.Context, conn *pgx.Conn, sql string) (*Plan, error) {
 	}
 	p := &Plan{SQL: sql, NParams: len(desc.ParamOIDs), Tables: map[uint32][]int{}, TableNames: map[uint32]string{}}
 	if err := checkNodes(sel); err != nil {
+		return nil, err
+	}
+	if p.Columns, err = resultColumns(ctx, conn, desc.Fields); err != nil {
 		return nil, err
 	}
 	for k, oid := range desc.ParamOIDs {
@@ -310,8 +355,8 @@ func recomputeReason(sel *pgq.SelectStmt, hasAgg, hasWindow bool) string {
 		return "WITH clause"
 	case len(sel.DistinctClause) > 0 && (!plainDistinct(sel) || len(sel.GroupClause) > 0 || hasAgg):
 		return "DISTINCT ON or DISTINCT with aggregates"
-	case len(sel.SortClause) > 0, sel.LimitCount != nil, sel.LimitOffset != nil:
-		return "ORDER BY or LIMIT"
+	case hasOrder(sel) && (len(sel.GroupClause) > 0 || hasAgg || sel.HavingClause != nil || len(sel.DistinctClause) > 0):
+		return "ORDER BY or LIMIT with grouping or DISTINCT"
 	case len(sel.WindowClause) > 0, hasWindow:
 		return "window function"
 	case len(sel.ValuesLists) > 0:
@@ -421,6 +466,17 @@ func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.Select
 		p.Mode = ModeLineage
 		rowSel := cloneSelect(sel)
 		rowSel.TargetList = p.withParams(append(rowSel.TargetList, lineage...))
+		if hasOrder(sel) {
+			switch {
+			case hasOuter:
+				return recomputeError("ORDER BY or LIMIT with outer joins")
+			case len(subs) > 0:
+				return recomputeError("ORDER BY or LIMIT with subqueries")
+			}
+			if err := p.compileOrder(ctx, conn, sel, rowSel); err != nil {
+				return err
+			}
+		}
 		if err := p.restrictRows(rowSel); err != nil {
 			return err
 		}

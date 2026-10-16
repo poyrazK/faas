@@ -34,6 +34,7 @@ type member struct {
 	argText []*string
 	ready   bool
 	columns []string
+	win     *window // ordered windows
 
 	result *keyedSet // lineage mode: result rows; recompute mode: rows by multiset ID
 	input  *keyedSet // group mode: input rows (values = group keys)
@@ -49,6 +50,14 @@ func (g *planGroup) aggCount() int {
 		return 0
 	}
 	return len(g.plan.Agg.Specs)
+}
+
+// orderCount is the number of the query's own sort items.
+func (g *planGroup) orderCount() int {
+	if g.plan.Order == nil {
+		return 0
+	}
+	return g.plan.Order.NUser
 }
 
 // batchArgs returns the leading parameters of a batched statement for the
@@ -83,7 +92,7 @@ func (g *planGroup) read(ctx context.Context, tx pgx.Tx, sql string, ms []*membe
 	if err != nil {
 		return nil, resultShape{}, err
 	}
-	shape, err := shapeOf(names, g.plan.Relations, g.plan.NGroups, g.aggCount())
+	shape, err := shapeOf(names, g.plan.Relations, g.plan.NGroups, g.aggCount(), g.orderCount())
 	if err != nil {
 		return nil, shape, err
 	}
@@ -123,6 +132,12 @@ func (g *planGroup) readKeyed(ctx context.Context, tx pgx.Tx, sql string, ms []*
 				r.group = encodeValues(r.values)
 			} else {
 				r.values = pick(values, shape.visible)
+			}
+			if g.plan.Order != nil {
+				r.sort = pick(values, shape.order)
+				for _, rel := range g.plan.outer {
+					r.sort = append(r.sort, pick(values, shape.lineage[rel])...)
+				}
 			}
 			r.enc = encodeValues(append(slices.Clone(r.values), r.aggs...))
 			set[rowID(r.lineage...)] = r
@@ -201,14 +216,21 @@ func (g *planGroup) step(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*mem
 		return out, nil
 	}
 	before := make(map[*member]map[string]*keyedRow, len(ready))
+	beforeOrder := make(map[*member][]string, len(ready))
 	for _, m := range ready {
 		before[m] = m.snapshotRows()
+		if m.win != nil {
+			beforeOrder[m] = slices.Clone(m.win.visible())
+		}
 	}
 	var err error
 	switch {
 	case full || g.plan.Mode == ModeRecompute:
 		g.stats.Rebuilds++
 		err = g.rebuild(ctx, tx, ready)
+	case g.plan.Mode == ModeLineage && g.plan.Order != nil:
+		g.stats.Keyed++
+		err = g.maintainOrder(ctx, tx, ready, g.keysFor(cs))
 	case g.plan.Mode == ModeLineage:
 		g.stats.Keyed++
 		err = g.maintainLineage(ctx, tx, ready, g.keysFor(cs))
@@ -224,7 +246,11 @@ func (g *planGroup) step(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*mem
 		return nil, err
 	}
 	for _, m := range ready {
-		if d := diffRows(before[m], m.snapshotRows()); !d.Empty() {
+		d := diffRows(before[m], m.snapshotRows())
+		if m.win != nil {
+			m.orderDelta(&d, beforeOrder[m])
+		}
+		if !d.Empty() {
 			out[m] = d
 		}
 	}
@@ -280,6 +306,9 @@ func (g *planGroup) rebuild(ctx context.Context, tx pgx.Tx, ms []*member) error 
 		}
 		return nil
 	case ModeLineage:
+		if p.Order != nil {
+			return g.rebuildOrder(ctx, tx, ms)
+		}
 		fresh, shape, err := g.readKeyed(ctx, tx, p.RowSQL, ms, nil, false)
 		if err != nil {
 			return err
@@ -538,6 +567,12 @@ func (m *member) snapshotRows() map[string]*keyedRow {
 		}
 		return out
 	}
+	if m.win != nil {
+		for _, id := range m.win.visible() {
+			out[id] = m.result.rows[id]
+		}
+		return out
+	}
 	for id, r := range m.result.rows {
 		out[id] = r
 	}
@@ -545,6 +580,13 @@ func (m *member) snapshotRows() map[string]*keyedRow {
 }
 
 func (m *member) rows() []Row {
+	if m.win != nil && m.group.plan.Order.Ordered {
+		var out []Row
+		for _, id := range m.win.visible() {
+			out = append(out, Row{ID: id, Values: m.result.rows[id].values})
+		}
+		return out
+	}
 	snap := m.snapshotRows()
 	out := make([]Row, 0, len(snap))
 	for id, r := range snap {

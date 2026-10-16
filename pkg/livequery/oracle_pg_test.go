@@ -75,7 +75,10 @@ func pickOne[T any](r *rand.Rand, xs []T) T { return xs[r.IntN(len(xs))] }
 
 // fromClause builds a 1-3 table FROM clause and returns the aliases used.
 func (s oracleSchema) fromClause(r *rand.Rand) (string, []string, map[string]string) {
-	joins := []string{"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"}
+	return s.fromJoins(r, []string{"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"})
+}
+
+func (s oracleSchema) fromJoins(r *rand.Rand, joins []string) (string, []string, map[string]string) {
 	tables := map[string]string{}
 	x := pickOne(r, s.tables)
 	tables["x"] = x
@@ -98,6 +101,12 @@ func (s oracleSchema) fromClause(r *rand.Rand) (string, []string, map[string]str
 }
 
 func (s oracleSchema) predicate(r *rand.Rand, aliases []string, tables map[string]string, params *[]any) string {
+	return s.predicateOf(r, aliases, tables, params, 12)
+}
+
+// predicateOf draws from the first kinds predicate kinds; kinds 7 and above
+// are subqueries.
+func (s oracleSchema) predicateOf(r *rand.Rand, aliases []string, tables map[string]string, params *[]any, kinds int) string {
 	var preds []string
 	for range r.IntN(3) {
 		a := pickOne(r, aliases)
@@ -106,7 +115,7 @@ func (s oracleSchema) predicate(r *rand.Rand, aliases []string, tables map[strin
 		if s.composite[u] {
 			uid = "q.k1"
 		}
-		switch r.IntN(12) {
+		switch r.IntN(kinds) {
 		case 7:
 			preds = append(preds, fmt.Sprintf("%s.ref IN (SELECT %s FROM %s q WHERE q.a %% 2 = 0)", a, uid, u))
 		case 8:
@@ -141,6 +150,9 @@ func (s oracleSchema) predicate(r *rand.Rand, aliases []string, tables map[strin
 }
 
 func (s oracleSchema) randomQuery(r *rand.Rand) oracleQuery {
+	if r.IntN(100) < envInt("LIVEQUERY_ORACLE_WINDOW_PERCENT", 17) {
+		return s.windowQuery(r)
+	}
 	from, aliases, tables := s.fromClause(r)
 	var params []any
 	where := s.predicate(r, aliases, tables, &params)
@@ -193,6 +205,59 @@ func (s oracleSchema) randomQuery(r *rand.Rand) oracleQuery {
 		t := pickOne(r, s.tables)
 		return oracleQuery{sql: fmt.Sprintf("SELECT count(*) AS n, sum(a) AS sa FROM %s WHERE ref IN (SELECT a FROM %s)", t, pickOne(r, s.tables))}
 	}
+}
+
+// windowQuery returns an ORDER BY ... LIMIT query over inner joins: sort
+// items with ties, both directions and NULL orders, a collation, positions
+// and output names, sort keys left out of the select list, OFFSET, and
+// limits that are constants, parameters, NULL or absent.
+func (s oracleSchema) windowQuery(r *rand.Rand) oracleQuery {
+	from, aliases, tables := s.fromJoins(r, []string{"JOIN"})
+	var params []any
+	where := s.predicateOf(r, aliases, tables, &params, 7)
+	a := pickOne(r, aliases)
+	cols := []string{fmt.Sprintf("%s.s AS s0", a)}
+	if r.IntN(3) > 0 {
+		cols = append(cols, fmt.Sprintf("%s.a AS a0", pickOne(r, aliases)), fmt.Sprintf("coalesce(%s.b, 0) + %s.a AS e", pickOne(r, aliases), a))
+	}
+	var items []string
+	for range r.IntN(4) {
+		b := pickOne(r, aliases)
+		item := pickOne(r, []string{
+			b + ".a", b + ".s", b + ".n", b + ".b", "(" + b + ".a % 3)", b + `.s COLLATE "C"`, "coalesce(" + b + ".s, 'zz')", "1",
+		})
+		if len(cols) > 1 && r.IntN(5) == 0 {
+			item = pickOne(r, []string{"e", "a0", "2"})
+		}
+		item += pickOne(r, []string{"", " ASC", " DESC"}) + pickOne(r, []string{"", "", " NULLS FIRST", " NULLS LAST"})
+		items = append(items, item)
+	}
+	sql := "SELECT " + strings.Join(cols, ", ") + " FROM " + from + where
+	if len(items) > 0 {
+		sql += " ORDER BY " + strings.Join(items, ", ")
+	}
+	switch r.IntN(6) {
+	case 0:
+		if len(items) > 0 {
+			break
+		}
+		sql += " LIMIT 3"
+	case 1:
+		params = append(params, pickOne(r, []any{int64(2), int64(5), nil}))
+		sql += fmt.Sprintf(" LIMIT $%d", len(params))
+	case 2:
+		sql += " LIMIT ALL"
+	default:
+		sql += fmt.Sprintf(" LIMIT %d", 1+r.IntN(6))
+	}
+	switch r.IntN(4) {
+	case 0:
+		sql += fmt.Sprintf(" OFFSET %d", r.IntN(4))
+	case 1:
+		params = append(params, int64(r.IntN(3)))
+		sql += fmt.Sprintf(" OFFSET $%d", len(params))
+	}
+	return oracleQuery{sql: sql, args: params}
 }
 
 // aggregates returns a random list of incrementally maintainable aggregates.
@@ -337,10 +402,13 @@ func TestOracleRandomWorkloads(t *testing.T) {
 			total.Rebuilds += stats.Rebuilds
 			total.Verified += stats.Verified
 			total.ExpandedKeys += stats.ExpandedKeys
+			total.WindowRanks += stats.WindowRanks
+			total.WindowRefills += stats.WindowRefills
 		})
 	}
 	t.Logf("oracle totals: %+v", total)
-	if total.Keyed == 0 || total.ExpandedKeys == 0 || total.Incremental == 0 {
+	mixed := envInt("LIVEQUERY_ORACLE_WINDOW_PERCENT", 17) < 100
+	if total.Keyed == 0 || total.WindowRanks == 0 || mixed && (total.ExpandedKeys == 0 || total.Incremental == 0) {
 		t.Fatalf("incremental paths not exercised: %+v", total)
 	}
 }
@@ -357,11 +425,12 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	registered := 0
 	for attempts := 0; registered < nqueries && attempts < nqueries*5; attempts++ {
 		q := schema.randomQuery(r)
-		if _, err := h.engine.Register(ctx, fmt.Sprintf("q%d", registered), q.sql, q.args...); err != nil {
+		p, err := h.engine.Register(ctx, fmt.Sprintf("q%d", registered), q.sql, q.args...)
+		if err != nil {
 			t.Logf("skip query (%v): %s", err, q.sql)
 			continue
 		}
-		h.clients[fmt.Sprintf("q%d", registered)] = client{}
+		h.clients[fmt.Sprintf("q%d", registered)] = &client{plan: p}
 		t.Logf("q%d %v: %s", registered, q.args, q.sql)
 		registered++
 	}
@@ -373,7 +442,7 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 		if _, err := h.engine.Register(ctx, dup, g.plan.SQL, m.args...); err != nil {
 			t.Fatal(err)
 		}
-		h.clients[dup] = client{}
+		h.clients[dup] = &client{plan: g.plan}
 		for v := range 2 {
 			if g.plan.NParams == 0 {
 				break
@@ -386,7 +455,7 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 			if _, err := h.engine.Register(ctx, id, g.plan.SQL, args...); err != nil {
 				t.Fatal(err)
 			}
-			h.clients[id] = client{}
+			h.clients[id] = &client{plan: g.plan}
 		}
 	}
 	modes := map[string]int{}
@@ -397,6 +466,9 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 		}
 		if g.plan.Agg != nil {
 			modes["incremental-agg"] += len(g.members)
+		}
+		if g.plan.Order != nil {
+			modes["window"] += len(g.members)
 		}
 	}
 	t.Logf("seed %d: tables %v, queries by mode %v", seed, schema.tables, modes)

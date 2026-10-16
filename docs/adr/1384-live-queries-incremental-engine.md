@@ -98,11 +98,18 @@ const q = data.from('messages').select('*, author(*)').eq('channel_id', id)
 - A database is enabled with `gregale postgres live enable <database>` (API
   `POST /v1/databases/{id}/live`). Enabling issues the per-database live secret
   and injects `GREGALE_LIVE_SECRET` into apps bound to the database.
-- Subscriptions travel over an app's realtime endpoint as new v2 frame types
-  (`live.subscribe`, `live.rows`, `live.changes`, `live.progress`, `live.error`).
+- Subscriptions travel over an app's realtime endpoint as new v2 frame types.
   The endpoint's app must hold a binding to the target database.
+  - Client frames: `live.subscribe`, `live.renew`, `live.unsubscribe`.
+  - Server frames: `live.rows`, `live.changes`, `live.progress`,
+    `live.renewed`, `live.error`.
 - Each change carries `upsert` (opaque row ID and row) or `remove` (row ID);
-  each batch carries the `xid8` transaction IDs it covers.
+  each batch carries the `xid8` transaction IDs it covers and the snapshot the
+  result now reflects. An ordered result also carries its row order whenever
+  rows were added or moved.
+- `pkg/livequery/liveproto` defines the frames and a reference client. Its
+  session fixtures (`testdata/sessions.json`) are the conformance suite that
+  the JavaScript SDK runs too.
 
 ### 2. Architecture and data path
 
@@ -177,10 +184,15 @@ The engine maintains results in rounds. Each round is a consistent snapshot:
 A client therefore always holds exactly the result of the query at some
 committed snapshot: a transaction's effects appear all at once or not at all,
 and results move forward monotonically. Rounds run back-to-back while changes
-arrive and stop when the slot is idle; batching under load is automatic. Each
-round also emits `live.progress` with the highest decoded `xid8`, so
-`awaitTxId` resolves for writes that do not change the query. pgoutput reports
-32-bit xids; the engine extends them to `xid8` with the current epoch.
+arrive and stop when the slot is idle; batching under load is automatic.
+
+Every result frame carries S. After a round's changes, realtimed sends
+`live.progress` with S for the database: every live subscription on it now
+reflects S, even one whose rows did not change. `awaitTxId(x)` resolves once
+the subscription's snapshot makes x visible, by the rules of
+`pg_visible_in_snapshot`. A highest-xid watermark could not decide this,
+because transactions commit out of xid order. pgoutput reports 32-bit xids;
+the engine extends them to `xid8` with the current epoch.
 
 Delivery to clients is at-least-once per result version. A reconnecting client
 presents its version; realtimed sends the missing deltas if it still holds them,
@@ -231,7 +243,7 @@ the clause that used a parameter (WHERE, the select list) is dropped.
 | `min`, `max` | Incremental on insert; group recomputed when the current extreme is removed |
 | Holistic aggregates (`string_agg`, `array_agg`, `json_agg`, percentiles, `mode`) | Affected groups recomputed |
 | DISTINCT, HAVING | DISTINCT as GROUP BY with counts; HAVING filters maintained groups |
-| ORDER BY with LIMIT/OFFSET | Top-k over the maintained input; a bounded refill query when rows leave the window |
+| ORDER BY with LIMIT/OFFSET | Ordered window ranked by the database; a bounded refill query when rows leave the window (see Phase 1 progress) |
 | Window functions | Affected partitions recomputed |
 | EXISTS, IN, NOT EXISTS subqueries | Semi- and anti-join lineage |
 | Uncorrelated scalar subqueries | Tracked as a single dependency; dependents recomputed when its value changes |
@@ -281,12 +293,39 @@ is a later step.
 
 **Sealed mode.**
 
-- The backend seals `{database, sql, params, settings, exp, kid}` with the
-  per-database live secret using AES-256-GCM (available in Web Crypto, so
-  sealing also works in edge runtimes). Sealing is local and makes no network
-  call.
-- Seals expire after 60 seconds by default and 5 minutes at most. Renewal keeps
-  the subscription when the query fingerprint matches.
+- The backend seals `{db, sql, params, iat, exp}` with the per-database live
+  secret. Sealing is local and makes no network call. `pkg/livequery/seal`
+  implements it:
+  - **Secret:** `glsk1_<kid>_<key>`, a 16-hex-digit key ID and 32 bytes of key
+    material.
+  - **Seal:** `gls1.<kid>.<nonce ‖ ciphertext>`. The cipher is AES-256-GCM
+    under HKDF-SHA256(key, "gregale live seal v1"), and `gls1.<kid>` is
+    authenticated as additional data.
+  - **Parameters:** PostgreSQL text values (null is NULL), so the database
+    parses each one as its parameter's type.
+  - **Web Crypto:** every primitive is available there, so edge runtimes
+    can seal. A known-answer vector (`testdata/vector.json`) is reproduced
+    byte for byte by Web Crypto in Node.
+- Key IDs are unique across databases. A seal opens only with its own
+  database's key, and the key ring refuses a payload that names another
+  database. Rotation keeps the previous key until a retirement time (default
+  overlap 24 hours). Removing a key revokes its outstanding seals at once.
+- Limits (`pkg/api/limits.go`):
+  - SQL up to 32 KiB, 256 parameters of 16 KiB each (as Neon);
+  - a sealed payload up to 48 KiB;
+  - lifetime from 1 second to 5 minutes, default 60 seconds;
+  - 30 seconds of clock skew.
+- The seal carries no session settings. Settings that RLS policies read would
+  need per-plan-group isolation inside a round's single snapshot transaction.
+  RLS mode covers per-user policies until then.
+- **Renewal and staleness:**
+  - `live.rows` and `live.renewed` tell the browser when its seal expires,
+    since it cannot read the seal.
+  - The SDK renews before then with `live.renew` and a fresh seal. Renewal
+    keeps the subscription only when the query fingerprint (database, SQL,
+    parameters) matches.
+  - A subscription whose seal lapses turns stale (`live.error seal_expired`,
+    not closed) and receives nothing until renewed.
 - Sealed queries execute as the database binding's live reader role, whose
   table grants the customer controls.
 - Revocation:
@@ -477,6 +516,57 @@ Phase 0 did not cover:
     subqueries outside WHERE.
   - Soak with these predicates mixed into joins and aggregates: 25 seeds,
     26,728 transactions, 10,495 comparisons, zero divergences.
+- **Ordered windows** (ORDER BY ... LIMIT [OFFSET] over inner joins):
+  - The engine keeps each member's window: the first LIMIT + OFFSET rows,
+    ordered by the query's sort items, then every relation's primary key.
+    With ties a query may return any of the tied rows; the keys pick one
+    answer and make the order total.
+  - A change re-reads only the rows derived from changed keys, with the
+    window's LIMIT. PostgreSQL ranks them against the rest of the window in
+    one batched statement, using the query's own types, collations
+    (`pg_collation_for`) and NULL ordering.
+  - A full window keeps only candidates that rank up to its old last row:
+    rows past it, which the engine does not hold, could outrank the rest.
+    Only a window that loses rows nothing replaces is read again.
+  - Edits that leave the sort values unchanged update rows in place, and
+    members with no affected rows are skipped.
+  - For a latest-N feed, a new row enters and pushes the last one out with
+    no refill.
+  - LIMIT and OFFSET may be constants, parameters, ALL or NULL. LIMIT
+    without ORDER BY keeps a key-ordered window and an unordered result.
+  - Still recompute:
+    - grouped or DISTINCT queries with ORDER BY or LIMIT;
+    - outer joins and subqueries with ORDER BY or LIMIT (their caches would
+      span the whole table);
+    - FETCH WITH TIES, ORDER BY USING, and array or record sort keys.
+  - The oracle checks each window row by row and in order against the
+    window query, and the visible rows against the query with its
+    tie-breakers.
+  - Soaks, with every delta also passing through the frame contract, had
+    zero divergences:
+
+    | Workload | Seeds | Transactions | Comparisons | Re-ranks | Refills |
+    |---|---|---|---|---|---|
+    | Windows only (ties, mixed directions and NULL orders, collations, positions, output names, hidden sort keys, OFFSET, parameter and NULL limits) | 15 | 11,007 | 7,762 | 1,986 | 318 |
+    | Mixed with every other mode | 25 | 18,211 | 6,803 | 436 | 58 |
+
+  - Benchmark: 1,000 latest-10 feeds over 200 customers, 200 writes/s.
+    Statement time per round is medians across runs on the loaded laptop;
+    end-to-end commit-to-delta stayed the same at this scale, since other
+    queries dominate it:
+
+    | Maintenance | Feed statement time per round |
+    |---|---|
+    | Recompute (re-reads every member's 10 rows) | 2.0 ms |
+    | Windows (changed rows, then one rank statement) | 1.4–1.6 ms |
+
+    Windows re-read rows only for members whose rows changed, so the gap
+    grows with window size and join cost.
+- **Sealed queries and the frame contract** (section 5 and section 1): seals,
+  the key ring and the frames. The oracle harness now sends every engine
+  delta through JSON frames into the reference client, which checks
+  versions, snapshots, transaction visibility and ordering. After each
+  round, every client must see every applied transaction.
 
 ## Consequences
 

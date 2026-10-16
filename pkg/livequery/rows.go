@@ -39,6 +39,7 @@ type keyedRow struct {
 	lineage []string
 	group   string // group input: encodeValues of the group key values
 	enc     string // encodeValues of values and aggs
+	sort    []*string // ordered windows: the sort item values, tie-breakers included
 }
 
 // keyedSet indexes rows by each relation's lineage key.
@@ -121,10 +122,14 @@ type resultShape struct {
 	lineage [][]int // relation -> key column positions
 	groups  []int   // group key positions
 	aggs    []int   // aggregate argument positions (-1 for count(*))
+	order   []int   // sort item positions
 }
 
-func shapeOf(fields []string, relations []*Relation, groups, aggs int) (resultShape, error) {
-	s := resultShape{sub: -1, lineage: make([][]int, len(relations)), groups: make([]int, groups), aggs: make([]int, aggs)}
+func shapeOf(fields []string, relations []*Relation, groups, aggs, orders int) (resultShape, error) {
+	s := resultShape{sub: -1, lineage: make([][]int, len(relations)), groups: make([]int, groups), aggs: make([]int, aggs), order: make([]int, orders)}
+	for i := range s.order {
+		s.order[i] = -1
+	}
 	for i := range s.groups {
 		s.groups[i] = -1
 	}
@@ -151,6 +156,8 @@ func shapeOf(fields []string, relations []*Relation, groups, aggs int) (resultSh
 			s.groups[g] = pos
 		case scan(name, hiddenPrefix+"a%d", &g) && g < aggs:
 			s.aggs[g] = pos
+		case scan(name, hiddenPrefix+"o%d", &g) && g < orders:
+			s.order[g] = pos
 		case scan(name, hiddenPrefix+"p%d", &g):
 		default:
 			return s, fmt.Errorf("livequery: unexpected hidden column %s", name)

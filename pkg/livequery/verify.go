@@ -47,6 +47,9 @@ func (m *member) verify(ctx context.Context, tx pgx.Tx) error {
 			return err
 		}
 	}
+	if m.win != nil {
+		return m.verifyWindow(ctx, tx)
+	}
 	_, rows, err := queryText(ctx, tx, p.SQL, m.args)
 	if err != nil {
 		return fmt.Errorf("oracle query: %w", err)
@@ -75,6 +78,46 @@ func (m *member) verify(ctx context.Context, tx pgx.Tx) error {
 			}
 			return fmt.Errorf("divergence (mode %s): row %q (lineage %q) maintained %d times, expected %d times",
 				p.Mode, printable(enc), lineage, n, want[enc])
+		}
+	}
+	return nil
+}
+
+// verifyWindow compares an ordered window, row by row and in order, with the
+// window query, and the visible rows with the query and its tie-breakers.
+func (m *member) verifyWindow(ctx context.Context, tx pgx.Tx) error {
+	g := m.group
+	o := g.plan.Order
+	names, rows, err := queryText(ctx, tx, o.WindowSQL, m.args)
+	if err != nil {
+		return fmt.Errorf("oracle window query: %w", err)
+	}
+	shape, err := shapeOf(names, g.plan.Relations, 0, 0, o.NUser)
+	if err != nil {
+		return err
+	}
+	if len(rows) != len(m.win.ids) {
+		return fmt.Errorf("divergence in window: %d rows, expected %d", len(m.win.ids), len(rows))
+	}
+	for i, values := range rows {
+		id := rowID(shape.lineageOf(values)...)
+		enc := encodeValues(pick(values, shape.visible))
+		got := m.result.rows[m.win.ids[i]]
+		if m.win.ids[i] != id || got == nil || got.enc != enc {
+			return fmt.Errorf("divergence in window at %d: expected lineage %q values %q", i, shape.lineageOf(values), printable(enc))
+		}
+	}
+	_, rows, err = queryText(ctx, tx, o.OrderedSQL, m.args)
+	if err != nil {
+		return fmt.Errorf("oracle query: %w", err)
+	}
+	visible := m.win.visible()
+	if len(rows) != len(visible) {
+		return fmt.Errorf("divergence (ordered): %d rows, expected %d", len(visible), len(rows))
+	}
+	for i, values := range rows {
+		if enc := encodeValues(values); m.result.rows[visible[i]].enc != enc {
+			return fmt.Errorf("divergence (ordered) at %d: %q, expected %q", i, printable(m.result.rows[visible[i]].enc), printable(enc))
 		}
 	}
 	return nil

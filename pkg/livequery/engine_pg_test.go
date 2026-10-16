@@ -2,46 +2,62 @@ package livequery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 )
 
-// client materializes a subscription from deltas, as an SDK would.
-type client map[string]string
+// client is a subscriber as the SDK sees it: every delta travels as JSON
+// live frames into the protocol's reference client, which refuses frames
+// that break the contract.
+type client struct {
+	plan   *Plan
+	result liveproto.Result
+}
 
-func (c client) apply(t *testing.T, d Delta) {
+func (c *client) apply(t *testing.T, d Delta) {
 	t.Helper()
-	if d.Reset {
-		for id := range c {
-			delete(c, id)
-		}
-		for _, r := range d.Rows {
-			c[r.ID] = encodeValues(r.Values)
-		}
-		return
+	frames, err := d.Frames(c.plan, "db", c.result.Version, 0)
+	if err != nil {
+		t.Fatalf("render %s: %v", d.Query, err)
 	}
-	for _, id := range d.Removes {
-		if _, ok := c[id]; !ok {
-			t.Fatalf("delta removes unknown row %s", id)
-		}
-		delete(c, id)
-	}
-	for _, r := range d.Upserts {
-		c[r.ID] = encodeValues(r.Values)
+	for _, f := range frames {
+		c.deliver(t, f)
 	}
 }
 
-func (c client) equal(rows []Row) error {
-	if len(c) != len(rows) {
-		return fmt.Errorf("client holds %d rows, engine %d", len(c), len(rows))
+func (c *client) deliver(t *testing.T, frame any) {
+	t.Helper()
+	data, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, r := range rows {
-		if c[r.ID] != encodeValues(r.Values) {
-			return fmt.Errorf("client row %s = %q, engine %q", r.ID, printable(c[r.ID]), printable(encodeValues(r.Values)))
+	parsed, err := liveproto.ParseServerFrame(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.result.Apply(parsed); err != nil {
+		t.Fatalf("client refused %s: %v", data, err)
+	}
+}
+
+// equal compares the client with the engine: in order for ordered queries,
+// by row ID otherwise.
+func (c *client) equal(rows []Row) error {
+	got := c.result.Rows()
+	if len(got) != len(rows) {
+		return fmt.Errorf("client holds %d rows, engine %d", len(got), len(rows))
+	}
+	for i, r := range rows {
+		if got[i].ID != r.ID || encodeValues(got[i].Values) != encodeValues(r.Values) {
+			return fmt.Errorf("client row %d = %s %q, engine %s %q", i, got[i].ID, printable(encodeValues(got[i].Values)), r.ID, printable(encodeValues(r.Values)))
 		}
 	}
 	return nil
@@ -51,7 +67,7 @@ type harness struct {
 	t       *testing.T
 	pool    *pgxpool.Pool
 	engine  *Engine
-	clients map[string]client
+	clients map[string]*client
 	rounds  int
 	trace   []string
 }
@@ -70,7 +86,7 @@ func newHarness(t *testing.T, schema string) *harness {
 	t.Cleanup(func() { _ = capture.Close() })
 	e := NewEngine(pool, capture)
 	e.VerifyEachRound = true
-	h := &harness{t: t, pool: pool, engine: e, clients: map[string]client{}}
+	h := &harness{t: t, pool: pool, engine: e, clients: map[string]*client{}}
 	if os.Getenv("LIVEQUERY_TRACE") != "" {
 		e.Trace = func(line string) { h.trace = append(h.trace, line) }
 	}
@@ -83,7 +99,7 @@ func (h *harness) register(id, sql string, args ...any) *Plan {
 	if err != nil {
 		h.t.Fatalf("register %s: %v", id, err)
 	}
-	h.clients[id] = client{}
+	h.clients[id] = &client{plan: p}
 	return p
 }
 
@@ -114,6 +130,19 @@ func (h *harness) round() []Delta {
 			h.t.Fatalf("round %d query %s: %v", h.rounds, d.Query, err)
 		}
 	}
+	if len(deltas) == 0 {
+		return deltas
+	}
+	// The round's progress frame: every client now sees every transaction
+	// the round applied, whether or not its rows changed (awaitTxId).
+	for _, c := range h.clients {
+		c.deliver(h.t, ProgressFrame("db", deltas[0].Snapshot))
+		for _, xid := range deltas[0].Xids {
+			if !c.result.Sees(xid) {
+				h.t.Fatalf("round %d: client does not see applied transaction %s at %s", h.rounds, strconv.FormatUint(xid, 10), c.result.Snapshot)
+			}
+		}
+	}
 	return deltas
 }
 
@@ -138,10 +167,13 @@ func TestEngineMaintainsEveryMode(t *testing.T) {
 			SELECT c.id, c.name, count(m.id) AS n, max(m.body) AS last, string_agg(m.body, ',' ORDER BY m.id) AS bodies
 			FROM channels c LEFT JOIN messages m ON m.channel_id = c.id GROUP BY c.id, c.name HAVING count(m.id) < 3`),
 		"latest": h.register("latest", `SELECT id, body FROM messages ORDER BY id DESC LIMIT 2`),
+		"top_channels": h.register("top_channels", `
+			SELECT channel_id, count(*) AS n FROM messages GROUP BY channel_id ORDER BY n DESC, channel_id LIMIT 2`),
 	}
 	if plans["inbox"].Mode != ModeLineage || plans["empty_channels"].Mode != ModeLineage ||
-		plans["counts"].Mode != ModeGroup || plans["latest"].Mode != ModeRecompute {
-		t.Fatalf("unexpected modes: %v %v %v %v", plans["inbox"].Mode, plans["empty_channels"].Mode, plans["counts"].Mode, plans["latest"].Mode)
+		plans["counts"].Mode != ModeGroup || plans["latest"].Order == nil || plans["top_channels"].Mode != ModeRecompute {
+		t.Fatalf("unexpected modes: %v %v %v %v %v", plans["inbox"].Mode, plans["empty_channels"].Mode, plans["counts"].Mode,
+			plans["latest"].Order, plans["top_channels"].Mode)
 	}
 	h.round()
 	for _, step := range []string{

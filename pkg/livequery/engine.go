@@ -37,14 +37,19 @@ type Delta struct {
 	Query    string
 	Snapshot string
 	Xids     []uint64 // transactions this round applied, as xid8
-	Reset    bool     // Rows replaces the whole result
+	Reset    bool     // Rows replaces the whole result, in order for ordered queries
 	Rows     []Row
 	Upserts  []Row
 	Removes  []string
+	// Order is an ordered query's row IDs in order after the delta, set when
+	// rows were added or moved.
+	Order []string
 }
 
 // Empty reports whether the delta changes nothing.
-func (d Delta) Empty() bool { return !d.Reset && len(d.Upserts) == 0 && len(d.Removes) == 0 }
+func (d Delta) Empty() bool {
+	return !d.Reset && len(d.Upserts) == 0 && len(d.Removes) == 0 && d.Order == nil
+}
 
 // Stats counts what the engine did, so tests can show which paths ran.
 type Stats struct {
@@ -56,6 +61,8 @@ type Stats struct {
 	Rebuilds     int // full re-evaluations (recompute mode, truncation), per plan group
 	Verified     int // oracle comparisons
 	ExpandedKeys int // preserved-side keys added for outer joins
+	WindowRanks   int // ordered windows re-ranked
+	WindowRefills int // ordered windows read again after losing rows
 	Statements   int // maintenance statements executed (excluding the oracle)
 	// StatementTime is the time spent in maintenance statements, including
 	// reading their rows.
@@ -127,6 +134,11 @@ func (e *Engine) Register(ctx context.Context, id, sql string, args ...any) (*Pl
 	m := g.byArgs[key]
 	if m == nil {
 		m = &member{group: g, idx: int32(len(g.members)), args: args, argText: text}
+		if g.plan.Order != nil {
+			if m.win, err = newWindow(g.plan.Order, text); err != nil {
+				return nil, err
+			}
+		}
 		g.members = append(g.members, m)
 		g.byArgs[key] = m
 	}

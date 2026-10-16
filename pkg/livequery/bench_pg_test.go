@@ -17,7 +17,7 @@ const benchSchema = `
 	CREATE TABLE customers (id bigint PRIMARY KEY, name text NOT NULL, region text NOT NULL);
 	CREATE TABLE orders (id bigint PRIMARY KEY, customer_id bigint NOT NULL, status text NOT NULL,
 		amount numeric(12,2) NOT NULL, created_at timestamptz NOT NULL);
-	CREATE INDEX orders_customer ON orders (customer_id);
+	CREATE INDEX orders_customer ON orders (customer_id, created_at);
 	CREATE INDEX orders_created ON orders (created_at);
 	INSERT INTO customers SELECT g, 'c' || g, 'r' || (g % 8) FROM generate_series(1, 10000) g;
 	INSERT INTO orders SELECT g, 1 + (g % 10000), CASE WHEN g % 3 = 0 THEN 'open' ELSE 'done' END,
@@ -49,6 +49,20 @@ func TestBenchLiveQueries(t *testing.T) {
 		h.register(fmt.Sprintf("customer%d", i), `
 			SELECT o.id, o.status, o.amount, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
 			WHERE o.customer_id = $1`, int64(i))
+	}
+	// LIVEQUERY_BENCH_FEED adds a latest-10 feed per subscriber: "window"
+	// maintains it incrementally; "recompute" writes it with a LEFT JOIN,
+	// which returns the same rows but falls back to recompute.
+	if feed := os.Getenv("LIVEQUERY_BENCH_FEED"); feed != "" {
+		join := map[string]string{"window": "JOIN", "recompute": "LEFT JOIN"}[feed]
+		for i := 1; i <= subs; i++ {
+			p := h.register(fmt.Sprintf("feed%d", i), `
+				SELECT o.id, o.amount, c.name FROM orders o `+join+` customers c ON c.id = o.customer_id
+				WHERE o.customer_id = $1 ORDER BY o.created_at DESC LIMIT 10`, int64(1+i%200))
+			if i == 1 {
+				t.Logf("feed: mode %s %s window=%v", p.Mode, p.Reason, p.Order != nil)
+			}
+		}
 	}
 	extra := map[string]string{
 		"regions": `SELECT c.region, count(*) AS n, sum(o.amount) AS total FROM orders o JOIN customers c ON c.id = o.customer_id
