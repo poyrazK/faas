@@ -1,6 +1,6 @@
 -- +goose Up
 -- Internal metadata only; no Jobs, dispatch triggers or VM allocation.
-CREATE TABLE ci_pipeline_revisions (
+CREATE TABLE IF NOT EXISTS ci_pipeline_revisions (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,39}$'),
@@ -11,7 +11,7 @@ CREATE TABLE ci_pipeline_revisions (
  UNIQUE (account_id, id)
 );
 
-CREATE TABLE ci_runs (
+CREATE TABLE IF NOT EXISTS ci_runs (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  revision_id uuid NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE ci_runs (
      OR (status = 'cancelled' AND blocked_reason = '' AND finished_at IS NOT NULL))
 );
 
-CREATE TABLE ci_run_events (
+CREATE TABLE IF NOT EXISTS ci_run_events (
  account_id uuid NOT NULL,
  run_id uuid NOT NULL,
  sequence integer NOT NULL CHECK (sequence BETWEEN 1 AND 2),
@@ -41,8 +41,8 @@ CREATE TABLE ci_run_events (
  CHECK ((sequence = 1 AND event_type = 'blocked') OR (sequence = 2 AND event_type = 'cancelled'))
 );
 
-CREATE INDEX ci_runs_account_created_idx ON ci_runs(account_id, created_at DESC, id);
-CREATE INDEX ci_revisions_account_created_idx ON ci_pipeline_revisions(account_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS ci_runs_account_created_idx ON ci_runs(account_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS ci_revisions_account_created_idx ON ci_pipeline_revisions(account_id, created_at DESC, id);
 
 -- +goose Down
 DROP TABLE ci_run_events;

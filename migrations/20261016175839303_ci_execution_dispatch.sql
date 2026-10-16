@@ -1,11 +1,11 @@
 -- +goose Up
 -- ADR-1339: bounded apid reconciliation; no native instance ownership changes.
-CREATE TABLE ci_dispatch_budget (lock_id boolean PRIMARY KEY CHECK(lock_id));
-INSERT INTO ci_dispatch_budget VALUES(true);
+CREATE TABLE IF NOT EXISTS ci_dispatch_budget (lock_id boolean PRIMARY KEY CHECK(lock_id));
+INSERT INTO ci_dispatch_budget VALUES(true) ON CONFLICT (lock_id) DO NOTHING;
 ALTER TABLE ci_executions
- ADD COLUMN next_reconcile_at timestamptz NOT NULL DEFAULT now(),
- ADD COLUMN reconcile_failures integer NOT NULL DEFAULT 0 CHECK(reconcile_failures BETWEEN 0 AND 16);
-CREATE INDEX ci_executions_dispatch_idx ON ci_executions(next_reconcile_at,id)
+ ADD COLUMN IF NOT EXISTS next_reconcile_at timestamptz NOT NULL DEFAULT now(),
+ ADD COLUMN IF NOT EXISTS reconcile_failures integer NOT NULL DEFAULT 0 CHECK(reconcile_failures BETWEEN 0 AND 16);
+CREATE INDEX IF NOT EXISTS ci_executions_dispatch_idx ON ci_executions(next_reconcile_at,id)
  WHERE mode='jobs' AND status IN ('queued','running','cancelling');
 
 -- +goose Down

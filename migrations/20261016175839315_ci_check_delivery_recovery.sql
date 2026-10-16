@@ -1,9 +1,15 @@
 -- +goose Up
 -- apid admits immutable retry intent; githubd applies it to delivery bookkeeping.
-ALTER TABLE ci_execution_checks ADD COLUMN retry_generation integer NOT NULL DEFAULT 0
+ALTER TABLE ci_execution_checks ADD COLUMN IF NOT EXISTS retry_generation integer NOT NULL DEFAULT 0
  CHECK(retry_generation BETWEEN 0 AND 3);
-ALTER TABLE ci_execution_checks ADD CONSTRAINT ci_execution_checks_account_execution_key UNIQUE(account_id,execution_id);
-CREATE TABLE ci_execution_check_retries (
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'ci_execution_checks'::regclass AND conname = 'ci_execution_checks_account_execution_key') THEN
+  ALTER TABLE ci_execution_checks ADD CONSTRAINT ci_execution_checks_account_execution_key UNIQUE(account_id,execution_id);
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS ci_execution_check_retries (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
  execution_id uuid NOT NULL,

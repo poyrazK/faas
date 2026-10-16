@@ -1,6 +1,6 @@
 -- +goose Up
 -- Runtime grants are issued only through a host lease proof; never through HTTP.
-CREATE TABLE ci_job_runtime (
+CREATE TABLE IF NOT EXISTS ci_job_runtime (
  attempt_id uuid PRIMARY KEY REFERENCES ci_job_attempts(attempt_id) ON DELETE CASCADE,
  instance_id uuid NOT NULL REFERENCES instances(id),
  capability_hash bytea NOT NULL CHECK (octet_length(capability_hash) = 32),
@@ -15,7 +15,7 @@ CREATE TABLE ci_job_runtime (
  CHECK ((transfer_token IS NULL) = (transfer_until IS NULL)),
  CHECK (expires_at > created_at)
 );
-CREATE TABLE ci_job_runtime_objects (
+CREATE TABLE IF NOT EXISTS ci_job_runtime_objects (
  attempt_id uuid NOT NULL REFERENCES ci_job_runtime(attempt_id) ON DELETE CASCADE,
  name text NOT NULL CHECK (octet_length(name) BETWEEN 1 AND 512),
  digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),

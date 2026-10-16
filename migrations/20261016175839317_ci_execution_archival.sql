@@ -1,10 +1,16 @@
 -- +goose Up
 -- Keep parent identity and foreign keys; only detailed Jobs history is compacted.
-ALTER TABLE ci_executions ADD COLUMN archived_at timestamptz;
-ALTER TABLE ci_executions ADD CONSTRAINT ci_execution_archive_valid CHECK(archived_at IS NULL OR
- (mode='jobs' AND status IN ('succeeded','failed','cancelled') AND finished_at IS NOT NULL AND lease_until IS NULL
- AND octet_length(snapshot::text)<=1024));
-CREATE TABLE ci_execution_archives (
+ALTER TABLE ci_executions ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'ci_executions'::regclass AND conname = 'ci_execution_archive_valid') THEN
+  ALTER TABLE ci_executions ADD CONSTRAINT ci_execution_archive_valid CHECK(archived_at IS NULL OR
+   (mode='jobs' AND status IN ('succeeded','failed','cancelled') AND finished_at IS NOT NULL AND lease_until IS NULL
+   AND octet_length(snapshot::text)<=1024));
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS ci_execution_archives (
  account_id uuid NOT NULL,
  execution_id uuid PRIMARY KEY,
  receipt jsonb NOT NULL CHECK(jsonb_typeof(receipt)='object' AND octet_length(receipt::text)<=16384),
@@ -12,7 +18,7 @@ CREATE TABLE ci_execution_archives (
  FOREIGN KEY(account_id,execution_id) REFERENCES ci_executions(account_id,id) ON DELETE CASCADE,
  CHECK(receipt->>'execution_id' IS NOT NULL AND receipt->>'execution_id'=execution_id::text)
 );
-CREATE INDEX ci_execution_archives_account_idx ON ci_execution_archives(account_id,archived_at DESC,execution_id);
+CREATE INDEX IF NOT EXISTS ci_execution_archives_account_idx ON ci_execution_archives(account_id,archived_at DESC,execution_id);
 
 -- +goose Down
 -- +goose StatementBegin

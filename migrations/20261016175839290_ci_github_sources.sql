@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE ci_github_bindings (
+CREATE TABLE IF NOT EXISTS ci_github_bindings (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,39}$'),
@@ -18,11 +18,11 @@ CREATE TABLE ci_github_bindings (
  CHECK (jsonb_array_length(push_branches) + jsonb_array_length(pr_branches) > 0)
 );
 
-ALTER TABLE ci_runs ADD COLUMN github_source jsonb
+ALTER TABLE ci_runs ADD COLUMN IF NOT EXISTS github_source jsonb
  CHECK (github_source IS NULL OR (jsonb_typeof(github_source) = 'object' AND octet_length(github_source::text) <= 65536));
 
 -- githubd writes authenticated, compact inbox snapshots. apid alone creates runs.
-CREATE TABLE ci_github_triggers (
+CREATE TABLE IF NOT EXISTS ci_github_triggers (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  binding_id uuid NOT NULL,
@@ -44,9 +44,9 @@ CREATE TABLE ci_github_triggers (
      OR (status <> 'processing' AND lease_token IS NULL AND lease_until IS NULL)),
  CHECK ((status = 'admitted' AND run_id IS NOT NULL) OR (status <> 'admitted' AND run_id IS NULL))
 );
-CREATE INDEX ci_github_triggers_due_idx ON ci_github_triggers(account_id,next_attempt_at,created_at) WHERE status IN ('pending','processing');
+CREATE INDEX IF NOT EXISTS ci_github_triggers_due_idx ON ci_github_triggers(account_id,next_attempt_at,created_at) WHERE status IN ('pending','processing');
 
-CREATE TABLE ci_github_checks (
+CREATE TABLE IF NOT EXISTS ci_github_checks (
  account_id uuid NOT NULL,
  run_id uuid NOT NULL,
  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','ignored','dead')),
@@ -63,7 +63,7 @@ CREATE TABLE ci_github_checks (
      OR (status <> 'sending' AND lease_token IS NULL AND lease_until IS NULL)),
  CHECK (status <> 'sent' OR check_id > 0)
 );
-CREATE INDEX ci_github_checks_due_idx ON ci_github_checks(account_id,next_attempt_at,created_at) WHERE status IN ('pending','sending');
+CREATE INDEX IF NOT EXISTS ci_github_checks_due_idx ON ci_github_checks(account_id,next_attempt_at,created_at) WHERE status IN ('pending','sending');
 
 -- +goose Down
 DROP TABLE ci_github_checks;

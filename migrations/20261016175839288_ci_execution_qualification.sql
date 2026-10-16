@@ -1,6 +1,6 @@
 -- +goose Up
 -- Separate from metadata receipts: no conversion, trigger, daemon or dispatch.
-CREATE TABLE ci_executions (
+CREATE TABLE IF NOT EXISTS ci_executions (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  revision_id uuid NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE ci_executions (
  CHECK ((status IN ('queued', 'running', 'cancelling') AND finished_at IS NULL)
      OR (status IN ('succeeded', 'failed', 'cancelled') AND finished_at IS NOT NULL AND lease_until IS NULL))
 );
-CREATE INDEX ci_executions_account_created_idx ON ci_executions(account_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS ci_executions_account_created_idx ON ci_executions(account_id, created_at DESC, id);
 
 -- +goose Down
 DROP TABLE ci_executions;

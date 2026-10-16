@@ -1,8 +1,8 @@
--- filename: 20261016100642065_ci_execution_profiles.sql
+-- filename: 20261016175839307_ci_execution_profiles.sql
 
 -- +goose Up
 -- Saved internal intent only. No trigger, automatic admission or flag enablement.
-CREATE TABLE ci_execution_profiles (
+CREATE TABLE IF NOT EXISTS ci_execution_profiles (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  name text NOT NULL CHECK(name ~ '^[a-z][a-z0-9-]{0,39}$'),
@@ -19,7 +19,7 @@ CREATE TABLE ci_execution_profiles (
  UNIQUE(account_id,name),
  UNIQUE(account_id,id)
 );
-CREATE INDEX ci_execution_profiles_account_created_idx ON ci_execution_profiles(account_id,created_at DESC,id);
+CREATE INDEX IF NOT EXISTS ci_execution_profiles_account_created_idx ON ci_execution_profiles(account_id,created_at DESC,id);
 
 -- +goose Down
 DROP TABLE ci_execution_profiles;

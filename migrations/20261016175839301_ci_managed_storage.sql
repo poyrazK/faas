@@ -1,11 +1,11 @@
 -- +goose Up
 -- One short global lock serializes CI storage reservations, never blob I/O.
-CREATE TABLE ci_storage_budget (lock_id boolean PRIMARY KEY CHECK(lock_id));
-INSERT INTO ci_storage_budget VALUES(true);
+CREATE TABLE IF NOT EXISTS ci_storage_budget (lock_id boolean PRIMARY KEY CHECK(lock_id));
+INSERT INTO ci_storage_budget VALUES(true) ON CONFLICT (lock_id) DO NOTHING;
 
 -- Deliberately survives account/execution deletion so orphan payloads retain
 -- recovery authority. Physical object IDs are immutable and never reused.
-CREATE TABLE ci_managed_objects (
+CREATE TABLE IF NOT EXISTS ci_managed_objects (
  object_key text PRIMARY KEY CHECK(octet_length(object_key) BETWEEN 1 AND 1024),
  id uuid NOT NULL UNIQUE,
  account_id uuid NOT NULL,
@@ -27,9 +27,9 @@ CREATE TABLE ci_managed_objects (
  CHECK(state!='ready' OR ready_at IS NOT NULL),
  CHECK((state='deleted') = (deleted_at IS NOT NULL))
 );
-CREATE INDEX ci_managed_objects_account_idx ON ci_managed_objects(account_id,state);
-CREATE INDEX ci_managed_objects_attempt_idx ON ci_managed_objects(attempt_id);
-CREATE INDEX ci_managed_objects_retention_idx ON ci_managed_objects(state,expires_at,created_at);
+CREATE INDEX IF NOT EXISTS ci_managed_objects_account_idx ON ci_managed_objects(account_id,state);
+CREATE INDEX IF NOT EXISTS ci_managed_objects_attempt_idx ON ci_managed_objects(attempt_id);
+CREATE INDEX IF NOT EXISTS ci_managed_objects_retention_idx ON ci_managed_objects(state,expires_at,created_at);
 
 -- +goose Down
 -- +goose StatementBegin

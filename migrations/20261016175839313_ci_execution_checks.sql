@@ -1,6 +1,6 @@
 -- +goose Up
 -- githubd owns delivery bookkeeping. apid owns execution versions and intent.
-CREATE TABLE ci_execution_checks (
+CREATE TABLE IF NOT EXISTS ci_execution_checks (
  account_id uuid NOT NULL,
  execution_id uuid PRIMARY KEY,
  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','ignored','dead')),
@@ -19,7 +19,7 @@ CREATE TABLE ci_execution_checks (
  CHECK((delivered_version=0 AND delivered_digest='' AND check_id=0)
     OR (delivered_version>0 AND delivered_digest<>'' AND check_id>0))
 );
-CREATE INDEX ci_execution_checks_due_idx ON ci_execution_checks(account_id,next_attempt_at,created_at,execution_id)
+CREATE INDEX IF NOT EXISTS ci_execution_checks_due_idx ON ci_execution_checks(account_id,next_attempt_at,created_at,execution_id)
  WHERE status IN ('pending','sending','sent');
 
 -- +goose Down

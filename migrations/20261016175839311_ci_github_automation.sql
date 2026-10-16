@@ -1,7 +1,7 @@
--- filename: 20261016102712482_ci_github_automation.sql
+-- filename: 20261016175839311_ci_github_automation.sql
 
 -- +goose Up
-CREATE TABLE ci_automation_policies (
+CREATE TABLE IF NOT EXISTS ci_automation_policies (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  binding_id uuid NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE ci_automation_policies (
  UNIQUE(account_id,id)
 );
 
-CREATE TABLE ci_automation_events (
+CREATE TABLE IF NOT EXISTS ci_automation_events (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  binding_id uuid NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE ci_automation_events (
     OR (status<>'processing' AND lease_token IS NULL AND lease_until IS NULL)),
  CHECK((status='admitted' AND execution_id IS NOT NULL) OR (status<>'admitted' AND execution_id IS NULL))
 );
-CREATE INDEX ci_automation_events_due_idx ON ci_automation_events(account_id,next_attempt_at,created_at,id)
+CREATE INDEX IF NOT EXISTS ci_automation_events_due_idx ON ci_automation_events(account_id,next_attempt_at,created_at,id)
  WHERE status IN ('pending','processing');
 
 -- +goose Down

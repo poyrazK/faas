@@ -1,6 +1,6 @@
 -- +goose Up
 -- Fixed diagnostic slots, never a work/admission lease. No host or account labels.
-CREATE TABLE ci_worker_health (
+CREATE TABLE IF NOT EXISTS ci_worker_health (
  worker text NOT NULL CHECK(worker IN ('dispatcher','metadata_admission','automation_admission','metadata_checks','execution_checks','retention')),
  slot integer NOT NULL CHECK(slot BETWEEN 0 AND 7),
  token uuid NOT NULL,

@@ -1,13 +1,19 @@
 -- +goose Up
 -- Fresh, explicit Jobs executions only. Blocked ci_runs are never converted.
-ALTER TABLE ci_executions DROP CONSTRAINT ci_executions_mode_check;
+ALTER TABLE ci_executions DROP CONSTRAINT IF EXISTS ci_executions_mode_check;
 ALTER TABLE ci_executions ADD CONSTRAINT ci_executions_mode_check CHECK (mode IN ('qualification', 'jobs'));
-ALTER TABLE ci_executions ADD CONSTRAINT ci_executions_compute_check CHECK (
- (mode = 'jobs' AND snapshot->'compute' IS NOT NULL AND jsonb_typeof(snapshot->'compute') = 'object')
- OR (mode = 'qualification' AND (snapshot->'compute' IS NULL OR snapshot->'compute' = 'null'::jsonb))
-);
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'ci_executions'::regclass AND conname = 'ci_executions_compute_check') THEN
+  ALTER TABLE ci_executions ADD CONSTRAINT ci_executions_compute_check CHECK (
+   (mode = 'jobs' AND snapshot->'compute' IS NOT NULL AND jsonb_typeof(snapshot->'compute') = 'object')
+   OR (mode = 'qualification' AND (snapshot->'compute' IS NULL OR snapshot->'compute' = 'null'::jsonb))
+  );
+ END IF;
+END $$;
+-- +goose StatementEnd
 
-CREATE TABLE ci_job_attempts (
+CREATE TABLE IF NOT EXISTS ci_job_attempts (
  attempt_id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  execution_id uuid NOT NULL,
@@ -24,7 +30,7 @@ CREATE TABLE ci_job_attempts (
  CHECK (run_id IS NULL OR run_id = attempt_id),
  CHECK (output IS NULL OR run_id IS NOT NULL)
 );
-CREATE INDEX ci_job_attempts_account_execution_idx ON ci_job_attempts(account_id, execution_id);
+CREATE INDEX IF NOT EXISTS ci_job_attempts_account_execution_idx ON ci_job_attempts(account_id, execution_id);
 
 -- +goose Down
 -- Do not silently discard the only recovery authority for a live Jobs run.
