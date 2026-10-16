@@ -78,7 +78,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`context`](#context) | Show linked targets, configuration sources, and missing defaults |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events (linked app or interactive picker) |
-| [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
+| [`metrics`](#metrics) | Per-app or account-wide metrics, or the service map (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (linked app or interactive picker) |
@@ -5070,7 +5070,11 @@ gregale crons update --app my-api --interactive
 
 Delete one cron rule
 
-`gregale crons rm <id>`
+`gregale crons rm [--yes] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | accepted for scripts; crons rm does not prompt |  |
 
 ### crons run
 
@@ -11080,7 +11084,7 @@ List one bounded page of retained business work
 | `--scope <SCOPE>` | explicit deployment environment | required |
 | `--tenant <UUID>` | optional platform tenant filter |  |
 | `--name <NAME>` | operation name |  |
-| `--state <STATE>` | business state | one of `accepted` · `running` · `succeeded` · `failed` · `cancelled` · `requires_reconciliation` |
+| `--state <STATE>` | business state | one of `accepted` · `running` · `waiting` · `succeeded` · `failed` · `cancelled` · `requires_reconciliation` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | next page cursor |  |
 
@@ -11133,6 +11137,21 @@ Read retained execution generations and attempt counts
 | `--after <N>` | event sequence or execution generation watermark |  |
 | `--limit <N>` | page size, 1–100 |  |
 
+### customer-operations timeline
+
+Read one chronological history of events, attempts and deliveries
+
+`gregale customer-operations timeline --app <SLUG> [--timeout <D>] [--limit <N>] [--cursor <CURSOR>] [--all] [--logs] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application; account mode only | required |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | next timeline page cursor |  |
+| `--all` | follow cursors to the end |  |
+| `--logs` | print archived instance log lines inside each HTTP attempt |  |
+
 ### customer-operations watch
 
 Watch changed status; exit 0 success, 1 failure/cancel, 4 reconciliation, 124 timeout, 130 interrupt
@@ -11172,6 +11191,39 @@ Request cancellation at an observed generation
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
 | `--self` | use authenticated tenant routes; omit --app |  |
+
+### customer-operations signal
+
+Deliver a named event to a waiting operation, by ID or by business subject
+
+`gregale customer-operations signal --app <SLUG> [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [<id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--event <NAME>` | event the operation waits for | required |
+| `--signal-id <ID>` | stable idempotency key; repeat it to retry safely | required |
+| `--payload <JSON>` | JSON payload |  |
+| `--payload-file <PATH>` | file holding the JSON payload |  |
+| `--scope <SCOPE>` | environment, for a subject signal |  |
+| `--operation <NAME>` | operation name, for a subject signal |  |
+| `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
+
+### customer-operations approve
+
+Decide a declared approval on a waiting operation (ADR-1194)
+
+`gregale customer-operations approve [--app <SLUG>] [--timeout <D>] --expected-generation <N> --step <STEP> --decision <DECISION> [--comment <TEXT>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
+| `--step <STEP>` | declared approval step | required |
+| `--decision <DECISION>` | approval decision | required; one of `approved` · `rejected` |
+| `--comment <TEXT>` | optional note recorded with the decision |  |
 
 ### customer-operations recover
 
@@ -12285,14 +12337,15 @@ Save filters as a named view
 
 ## metrics
 
-Per-app or account-wide metrics (slug defaults to linked context)
+Per-app or account-wide metrics, or the service map (slug defaults to linked context)
 
-`gregale metrics [<slug>] [--range <WINDOW>] [--account]`
+`gregale metrics [<slug>] [--range <WINDOW>] [--account] [--services]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` |
 | `--account` | account-wide roll-up |  |
+| `--services` | service map of app-to-app calls (default range 1h) |  |
 
 
 ## analytics
@@ -12387,6 +12440,318 @@ Open a CLI docs page (open docs [&lt;slug&gt;])
 Manage orgs, members, and workspace activity
 
 `gregale orgs [<subcommand>]`
+
+### orgs standards
+
+Manage versioned application standards
+
+#### orgs standards assignments
+
+Inspect current versions and revisions, including inactive assignments
+
+`gregale orgs standards assignments <list|show>`
+
+Examples:
+
+```sh
+gregale orgs standards assignments list --org acme --limit 100
+gregale orgs standards assignments show --org acme --id ASSIGNMENT_UUID
+```
+
+##### orgs standards assignments list
+
+Page retained organization assignments
+
+`gregale orgs standards assignments list --org <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <UUID>` | last assignment UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards assignments show
+
+Read the current assignment revision and admission version
+
+`gregale orgs standards assignments show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | assignment UUID | required |
+
+#### orgs standards reviews
+
+Preview assignment changes and inspect saved reviews
+
+`gregale orgs standards reviews <preview|show|approve>`
+
+##### orgs standards reviews preview
+
+Save affected applications and blockers without activating a change
+
+`gregale orgs standards reviews preview --org <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--file <PATH>` | assignment review JSON file | required |
+
+##### orgs standards reviews show
+
+Inspect a saved review and its expiry
+
+`gregale orgs standards reviews show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | review UUID | required |
+
+##### orgs standards reviews approve
+
+Approve the exact saved review; admin only, release gated
+
+`gregale orgs standards reviews approve --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | review UUID | required |
+| `--file <PATH>` | approval_hash JSON file | required |
+
+#### orgs standards operation
+
+Inspect rollout progress or apply gated operator controls
+
+`gregale orgs standards operation <pause|resume|abort> --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+
+##### orgs standards operation pause
+
+Pause outstanding rollout targets; admin only, release gated
+
+`gregale orgs standards operation pause --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+| `--file <PATH>` | expected_updated_at JSON file | required |
+
+##### orgs standards operation resume
+
+Resume a paused rollout; admin only, release gated
+
+`gregale orgs standards operation resume --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+| `--file <PATH>` | expected_updated_at JSON file | required |
+
+##### orgs standards operation abort
+
+Stop outstanding targets and retain installed settings; admin only, release gated
+
+`gregale orgs standards operation abort --org <SLUG> --id <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | operation UUID | required |
+| `--file <PATH>` | expected_updated_at JSON file | required |
+
+#### orgs standards exceptions
+
+Inspect history or manage bounded exceptions
+
+`gregale orgs standards exceptions <approve|revoke> --org <SLUG> --app <UUID> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--after <UUID>` | last exception UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards exceptions approve
+
+Approve one field with a reason and expiry; admin only, release gated
+
+`gregale orgs standards exceptions approve --org <SLUG> --app <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
+
+##### orgs standards exceptions revoke
+
+Revoke an exception and retain its history; admin only, release gated
+
+`gregale orgs standards exceptions revoke --org <SLUG> --app <UUID> --file <PATH> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
+| `--id <UUID>` | exception UUID | required |
+
+#### orgs standards local-intent
+
+Replace permitted local settings with revision checks; release gated
+
+`gregale orgs standards local-intent --org <SLUG> --app <UUID> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+| `--file <PATH>` | complete mutation JSON including expected_revision | required |
+
+#### orgs standards application
+
+Inspect application adoption and installed standards
+
+`gregale orgs standards application --org <SLUG> --app <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--app <UUID>` | application UUID | required |
+
+#### orgs standards destinations
+
+Manage immutable logging destination references
+
+`gregale orgs standards destinations <list|show|create>`
+
+##### orgs standards destinations list
+
+List organization resources
+
+`gregale orgs standards destinations list --org <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <UUID>` | last resource UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards destinations show
+
+Inspect an immutable resource; credentials are omitted
+
+`gregale orgs standards destinations show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | resource UUID | required |
+
+##### orgs standards destinations create
+
+Create an immutable resource from JSON
+
+`gregale orgs standards destinations create --org <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--file <PATH>` | resource JSON file; credentials are sealed server-side | required |
+
+#### orgs standards publishers
+
+Manage immutable trusted publisher references
+
+`gregale orgs standards publishers <list|show|create>`
+
+##### orgs standards publishers list
+
+List organization resources
+
+`gregale orgs standards publishers list --org <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <UUID>` | last resource UUID from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+##### orgs standards publishers show
+
+Inspect an immutable resource; credentials are omitted
+
+`gregale orgs standards publishers show --org <SLUG> --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--id <UUID>` | resource UUID | required |
+
+##### orgs standards publishers create
+
+Create an immutable resource from JSON
+
+`gregale orgs standards publishers create --org <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--file <PATH>` | resource JSON file; credentials are sealed server-side | required |
+
+#### orgs standards list
+
+List the organization&#39;s latest standard versions
+
+`gregale orgs standards list --org <SLUG> [--after <SLUG>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--after <SLUG>` | last standard slug from the previous page |  |
+| `--limit <N>` | page size (1..100) |  |
+
+#### orgs standards show
+
+Inspect an immutable standard version
+
+`gregale orgs standards show --org <SLUG> --standard <SLUG> [--version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--standard <SLUG>` | standard slug | required |
+| `--version <N>` | version; omitted reads the latest |  |
+
+#### orgs standards publish
+
+Publish a candidate version; does not activate it
+
+`gregale orgs standards publish --org <SLUG> --standard <SLUG> --file <PATH> --expected-version <N> [--description <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--standard <SLUG>` | standard slug | required |
+| `--file <PATH>` | standard definition JSON file | required |
+| `--expected-version <N>` | current version; 0 creates a new standard | required |
+| `--description <TEXT>` | version description |  |
+
+Examples:
+
+```sh
+gregale orgs standards publish --org acme --standard production-baseline --file standard.json --expected-version 0
+```
 
 ### orgs ls
 
@@ -12687,7 +13052,7 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 Show the running Auth settings, or change them and restart the app
 
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--scope <SCOPE>] <name>`
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--scope <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12703,12 +13068,27 @@ Show the running Auth settings, or change them and restart the app
 | `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
 | `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
 | `--authz <FILE>` | JSON file declaring custom roles and policies (applied on restart) |  |
+| `--events <on|off>` | publish user lifecycle events (auth.user.*) to Gregale&#39;s event bus | one of `on` · `off` |
+| `--passkeys <on|off>` | let users sign in with a passkey | one of `on` · `off` |
+| `--passkey-rp-id <DOMAIN>` | parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app&#39;s host |  |
+| `--brand-name <NAME>` | name shown on the hosted pages and in emails, or none for the site&#39;s host |  |
+| `--brand-color <#RRGGBB>` | #rrggbb accent colour for the hosted pages, or none |  |
+| `--brand-logo-url <URL>` | HTTPS URL of the logo on the hosted pages, or none |  |
+| `--captcha <PROVIDER>` | CAPTCHA on sign-up and sign-in: turnstile, hcaptcha or off | one of `turnstile` · `hcaptcha` · `off` |
+| `--captcha-site-key <KEY>` | the CAPTCHA provider&#39;s site key (public) |  |
+| `--captcha-secret-stdin` | read the CAPTCHA provider&#39;s secret key from stdin (prompted on a terminal) |  |
+| `--activity-retention <DAYS>` | days to keep sign-in activity, or forever |  |
+| `--sms <PROVIDER>` | phone sign-in by text message through your own SMS account, or off | one of `twilio` · `twilio_verify` · `messagebird` · `textlocal` · `vonage` · `off` |
+| `--sms-account <ID>` | Twilio account SID or Vonage API key |  |
+| `--sms-sender <SENDER>` | Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from |  |
+| `--sms-secret-stdin` | read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin |  |
 | `--scope <SCOPE>` | environment scope |  |
 
 Examples:
 
 ```sh
 gregale auth config shop-auth
+gregale auth config shop-auth --events on
 gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on
 ```
 
@@ -12860,6 +13240,25 @@ Examples:
 ```sh
 gregale auth import shop-auth --file users.jsonl --dry-run
 printf '%s' "$ADMIN_KEY" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin
+```
+
+### auth activity
+
+List sign-ins, sign-ups and account changes, newest first
+
+`gregale auth activity [--user <ID>] [--search <TEXT>] [--limit <N>] [--admin-key-stdin] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--user <ID>` | only this user&#39;s activity (user ID) |  |
+| `--search <TEXT>` | an event such as login, or part of an email address |  |
+| `--limit <N>` | entries to show (1-100) |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+Examples:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
 ```
 
 

@@ -38,6 +38,11 @@ The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for raw-body handling and delivery-ID deduplication guidance.
 
+`github.com/poyrazK/faas/sdk/go/auth` verifies application Auth access tokens
+and checks permissions in your backend: `auth.New`, `Verify`, `Require`
+middleware and `Authorize`. See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 Managed Go workloads can use the runtime Flags client, request middleware, and
 service transport. See [the Go Flags guide](../../docs/flags.md#use-flags-in-a-go-http-application)
 for customer targeting, decision evidence, and propagation examples.
@@ -435,6 +440,26 @@ home for the wire DTOs.
 - ADR-038 (issue #266): documents the split contract between the SDK and the daemon.
 - PR plan: `/.claude/plans/lets-create-imp-plan-bubbly-engelbart.md` (the 14-PR sequence).
 
+
+### Application standards
+
+`PreviewApplicationStandardAssignment` saves affected applications, effective
+settings and blockers without activating a change. `GetApplicationStandardReview`
+reads that saved preview; its expiry and hash do not replace fresh approval
+validation. `GetApplicationStandardOperation` returns queued/persisted/observed
+progress. `GetApplicationStandardEnrollment` separates desired, persisted and
+observed revisions and includes the installed exception deadline when present.
+`ListApplicationStandardExceptions` returns UUID-ordered approval, revocation
+and expiry history, including the server's `AsOf` time and an exclusive cursor.
+
+Request and response types are exported from the SDK package, including
+`ApplicationStandardReviewRequest`, `ApplicationStandardReview`,
+`ApplicationStandardOperation`, and `ApplicationStandardExceptionList`.
+`ApplicationStandardSettings` stores normalized `json.RawMessage` values by
+field; `ApplicationStandardDefinition` stores typed rules with a JSON value.
+Read routes require read scope and active organization membership; preview
+requires write scope and owner/admin authority. Activation and exception
+mutation APIs remain gated pending runtime acceptance.
 ## Object lifecycle
 
 The public client exposes `GetObjectBucketLifecycle`,

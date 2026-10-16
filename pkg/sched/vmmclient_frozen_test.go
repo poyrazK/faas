@@ -36,7 +36,7 @@ func (n *frozenNode) FreezeInstance(_ context.Context, r *vmmdpb.FreezeInstanceR
 
 func (n *frozenNode) ThawInstance(_ context.Context, r *vmmdpb.ThawInstanceRequest) (*vmmdpb.ThawInstanceResponse, error) {
 	n.thaw = r
-	return &vmmdpb.ThawInstanceResponse{Instance: r.GetInstance(), ImageHealthcheckVerified: r.GetImageHealthcheckRequired()}, nil
+	return &vmmdpb.ThawInstanceResponse{Instance: r.GetInstance(), ImageHealthcheckVerified: r.GetImageHealthcheckRequired(), AfterRestoreRan: r.GetRunAfterRestore()}, nil
 }
 
 func frozenClient(t *testing.T, node *frozenNode) *sched.VMMClient {
@@ -66,9 +66,10 @@ func TestVMMClientFreezeAndThaw(t *testing.T) {
 	if rep != want || node.freeze.GetInstance() != "inst" || !node.freeze.GetReclaim() {
 		t.Fatalf("FreezeInstance = %+v (request %v), want %+v", rep, node.freeze, want)
 	}
-	verified, err := client.ThawInstance(t.Context(), "inst", true)
-	if err != nil || !verified || node.thaw.GetInstance() != "inst" || !node.thaw.GetImageHealthcheckRequired() {
-		t.Fatalf("ThawInstance = %v, %v (request %v)", verified, err, node.thaw)
+	result, err := client.ThawInstance(t.Context(), "inst", sched.ThawRequest{ImageHealthcheckRequired: true, RunAfterRestore: true})
+	if err != nil || !result.HealthcheckVerified || !result.AfterRestoreRan || node.thaw.GetInstance() != "inst" ||
+		!node.thaw.GetImageHealthcheckRequired() || !node.thaw.GetRunAfterRestore() {
+		t.Fatalf("ThawInstance = %+v, %v (request %v)", result, err, node.thaw)
 	}
 }
 

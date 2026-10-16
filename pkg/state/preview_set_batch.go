@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -258,11 +259,17 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		}
 	}
 	original := make(map[string]App)
+	addressIndexBefore := maps.Clone(m.serviceAddressIndex)
+	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
 	var inserted []string
 	rollback := func(err error) ([]App, error) {
 		for _, id := range inserted {
 			delete(m.apps, id)
+			delete(m.applicationStandardEnrollments, id)
+			m.eraseStandardAppExceptionsLocked(id)
+			m.deleteStandardMaterializationControlsLocked(id)
 		}
+		m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBefore, addressCursorsBefore
 		for id, app := range original {
 			m.apps[id] = app
 		}

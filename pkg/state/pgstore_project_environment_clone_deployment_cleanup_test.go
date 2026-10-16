@@ -294,7 +294,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "replacement"} {
+	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "replacement"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -314,6 +314,8 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, "INSERT INTO log_events_default(occurred_at,account_id,app_id,deployment_id,source,message) VALUES('2000-01-01',$1,$2,$3,'runtime','racing')", l.Operation.AccountID, native.Plan.Workloads[0].AppID, id)
 		case "drain_plan":
 			_, err = tx.Exec(ctx, drainPlanDeploymentBorrowerSQL, id)
+		case "retirement_journal":
+			_, err = tx.Exec(ctx, "LOCK TABLE environment_workload_retirements IN ROW EXCLUSIVE MODE")
 		case "replacement":
 			_, err = tx.Exec(ctx, `INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('id',$1::text,'scope',$2::text))).* FROM deployments d WHERE d.id=$3`, id, l.Operation.TargetEnvironment, native.Plan.Workloads[0].SourceDeploymentID)
 		}

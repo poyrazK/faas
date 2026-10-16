@@ -5,6 +5,8 @@
 import type { CreateInboundWebhookEndpointRequest } from '../models/CreateInboundWebhookEndpointRequest.js';
 import type { InboundWebhookEndpointResponse } from '../models/InboundWebhookEndpointResponse.js';
 import type { InboundWebhookReceiptResponse } from '../models/InboundWebhookReceiptResponse.js';
+import type { OperationWebhookBindingResponse } from '../models/OperationWebhookBindingResponse.js';
+import type { PutOperationWebhookBindingRequest } from '../models/PutOperationWebhookBindingRequest.js';
 import type { PutWebhookAutomationBindingRequest } from '../models/PutWebhookAutomationBindingRequest.js';
 import type { UpdateInboundWebhookEndpointRequest } from '../models/UpdateInboundWebhookEndpointRequest.js';
 import type { WebhookAutomationBindingResponse } from '../models/WebhookAutomationBindingResponse.js';
@@ -370,6 +372,169 @@ export class InboundWebhooksService {
     });
   }
   /**
+   * Route a verified endpoint to a customer operation (ADR-1193).
+   * One binding per endpoint, owned by the same app. The platform tenant is
+   * the operation owner; it must be active and linked to the app through an
+   * active tenant surface, and it is never derived from provider payload.
+   * The named operation must exist on the environment's live deployment;
+   * every event resolves it again and admission pins it. expected_version is
+   * zero for creation and the returned version for updates.
+   * take_over_delivery must be true. Automation and managed exclusive
+   * operation bindings must be removed first. An empty event_types list
+   * admits every verified event; other types are acknowledged as ignored.
+   *
+   * @returns OperationWebhookBindingResponse Saved operation binding with its new revision.
+   * @throws ApiError
+   */
+  public static putOperationWebhookBinding({
+    slug,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint whose future verified events start a customer operation.
+     */
+    id: string,
+    /**
+     * Explicit delivery takeover, operation, owner and event selection.
+     */
+    requestBody: PutOperationWebhookBindingRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<OperationWebhookBindingResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/operation-binding',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `The platform tenant is suspended.`,
+        404: `code: not_found`,
+        409: `Binding revision (operation_webhook_binding_conflict) or routing mode conflict (inbound_webhook_routing_conflict).`,
+        413: `Request body exceeds 4 KiB.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect an endpoint's customer operation binding.
+   * Returns the bound operation, owner, event selection and revision.
+   * @returns OperationWebhookBindingResponse Current operation binding for this endpoint.
+   * @throws ApiError
+   */
+  public static getOperationWebhookBinding({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint whose future verified events start a customer operation.
+     */
+    id: string,
+  }): CancelablePromise<OperationWebhookBindingResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/operation-binding',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Stop starting customer operations from future webhook events.
+   * Operations already admitted through the endpoint, and their event receipts, are retained.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOperationWebhookBinding({
+    slug,
+    id,
+    expectedVersion,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint whose future verified events start a customer operation.
+     */
+    id: string,
+    /**
+     * Current operation binding revision returned by a previous read or update.
+     */
+    expectedVersion: number,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/operation-binding',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'expected_version': expectedVersion,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Binding revision conflict (operation_webhook_binding_conflict).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Inspect a verified provider event and its automation admission.
    * Returns the captured decision and scheduler progress for a retained provider event.
    * @returns WebhookAutomationReceiptResponse Receipt, routing status and admitted run ID when retained.
@@ -432,6 +597,11 @@ export class InboundWebhooksService {
    * fanout work. Paused, unpublished or type-unmatched events are durably ignored;
    * content filters are evaluated by the scheduler. Provider retries return the
    * original receipt; changed content for the same event ID returns 409.
+   * An operation-bound endpoint (ADR-1193) admits one customer operation per
+   * provider event, owned by the binding's platform tenant, with input
+   * {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+   * preview admission or an unavailable operation returns 503 with
+   * Retry-After so the provider retries.
    *
    * @returns any Verified and durably accepted, duplicated, or ignored after callback closure.
    * @throws ApiError

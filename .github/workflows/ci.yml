@@ -659,9 +659,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-pg-1: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - uses: actions/setup-node@v7
         with:
           node-version: '22.10.0'
@@ -679,6 +686,11 @@ jobs:
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: unit tests (pg shard 1)
         # APID test DWARF generation exceeds hosted-runner memory on cold builds.
         # Omit debug metadata for API and newly instrumented state; keep optimization.
@@ -699,6 +711,10 @@ jobs:
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
           go test -json -race -count=1 -p 4 -timeout=45m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
+
+      - name: application-standard ledger recovery tests
+        # This recovery API deliberately refuses TCP, including localhost.
+        run: scripts/ci/with-pg16-unix.sh go test -race -count=1 -p 1 -timeout=20m ./pkg/db -run '^TestApplicationStandardLedgerRecovery'
 
       - name: upload public API state-adapter coverage
         uses: actions/upload-artifact@v4
@@ -769,9 +785,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-pg-1: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: select this part's tests
         id: select
         run: |
@@ -859,18 +882,33 @@ jobs:
           # All shards compile the identical ./pkg/state race test binary, so
           # they share one cache entry (written by shard 1 only, below).
           key: go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-state: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-state-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: verify complete state inventory
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
           go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -check -list-file=coverage/state-inventory.txt
+      - name: install PostgreSQL 16 recovery runtime
+        run: |
+          scripts/ci/use-https-ubuntu-mirrors.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
       - name: state tests (shard ${{ matrix.shard }})
         run: |
+          # Recovery with an actual serving receipt requires local database authority.
+          scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@v4
         with:
@@ -1186,9 +1224,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-pure-1: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       # The pkg/sched test compile peaked near 15 GB of compiler RSS and
       # pkg/fcvm's tests near 6 GB. With both in flight under -p 4 the 16 GB
       # hosted runner ran out of memory and GitHub reported "The runner has
@@ -1279,9 +1324,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-pure-2: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pure-2-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: unit tests (pure Go shard 2)
         env:
           # See pure shard 1: PRs use Go's test cache; main re-runs + shuffles.
@@ -1348,9 +1400,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-container-contract: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-container-contract-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: require portable container contracts
         run: |
           set -o pipefail
@@ -1470,9 +1529,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-checks: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
       # Restore the module cache before setup-go downloads the requested
       # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
       # a cache hit untar over the toolchain's existing files and can hang the
@@ -2150,7 +2216,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install ruamel.yaml 'openapi-python-client==0.29.0' pytest pytest-asyncio httpx
-          python -m pip install -e .
+          python -m pip install -e '.[auth]'
       - name: gen + assert clean diff
         working-directory: sdk/python
         run: |
@@ -2222,9 +2288,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-load: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-load-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: download Go modules with retry
         env:
           GOPROXY: https://proxy.golang.org,direct
@@ -2338,9 +2411,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-migrations: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
       - name: verify-secrets.sh static check
         run: |
           set -euo pipefail
@@ -2402,7 +2482,7 @@ jobs:
       - name: migrations replay-safety (new migrations only)
         env:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
-        run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
+        run: bash scripts/ci/migrations-replay-safety.sh
 
       - name: migration full-suite impact checker tests
         run: scripts/ci/migration-full-suite-needed_test.sh
@@ -2489,9 +2569,16 @@ jobs:
           # All four shards compile the identical non-race ./migrations test
           # binary, so they share one cache entry (written by shard 1 only).
           key: go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-migrations-history: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-migrations-history-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
             go-migrations-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: verify complete migration inventory
         run: |
@@ -2663,9 +2750,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-e2e: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
@@ -2745,9 +2839,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-e2e: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
@@ -2822,9 +2923,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-e2e: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail
@@ -2899,9 +3007,16 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          # Full CI never saves go-e2e: it runs nightly, on dispatch and as the
+          # release gate, never on main pushes. The trailing keys fall back to
+          # the families ci-light saves on main, so a gate run does not build Go cold.
           restore-keys: |
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-go${{ env.GO_VERSION }}-
+            go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-1-${{ runner.os }}-
+            go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-checks-${{ runner.os }}-
       - name: install postgresql-client
         run: |
           set -euo pipefail

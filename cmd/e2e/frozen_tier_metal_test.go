@@ -1,9 +1,9 @@
 //go:build metal
 
 // adr: 1151 — the frozen tier through the real daemons: schedd freezes an
-// idle function instance through vmmd instead of parking it, its billing
-// interval closes while it is frozen, the next request through the gateway
-// thaws the same VM, and deleting the app retires a frozen VM.
+// idle function or app instance through vmmd instead of parking it, its
+// billing interval closes while it is frozen, the next request through the
+// gateway thaws the same VM, and deleting the app retires a frozen VM.
 package e2e_test
 
 import (
@@ -23,7 +23,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestFrozenTierMetal(t *testing.T) {
+func TestFrozenTierMetal(t *testing.T) { runFrozenTierMetal(t, false) }
+
+// TestFrozenTierAppMetal freezes a request-mode app, which needs schedd's
+// frozen_tier_apps switch as well (ADR-1151 step 3).
+func TestFrozenTierAppMetal(t *testing.T) { runFrozenTierMetal(t, true) }
+
+func runFrozenTierMetal(t *testing.T, appsTier bool) {
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping metal frozen tier test")
 	}
@@ -52,6 +58,11 @@ func TestFrozenTierMetal(t *testing.T) {
 	if err := h.SetScheddEnv("FAAS_FROZEN_TIER", "1"); err != nil {
 		t.Fatal(err)
 	}
+	if appsTier {
+		if err := h.SetScheddEnv("FAAS_FROZEN_TIER_APPS", "1"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := h.RestartSchedd(); err != nil {
 		t.Fatalf("restart schedd with the frozen tier on: %v", err)
 	}
@@ -59,7 +70,14 @@ func TestFrozenTierMetal(t *testing.T) {
 	img, _ := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
 	falsy := false
-	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "frozen", Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
+	create := api.CreateAppRequest{Slug: "frozen", Type: "app", RequireAuthn: &falsy}
+	if appsTier {
+		// The thaw must run the app's after_restore hook and confirm it, or
+		// schedd parks the frozen VM and the request below lands on another
+		// instance. The fixture server answers POST / with 200.
+		create.AfterRestore = &api.AfterRestoreHook{Path: "/"}
+	}
+	if got := postOK(t, h, key, "/v1/apps", create); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "frozen")
@@ -99,14 +117,17 @@ func TestFrozenTierMetal(t *testing.T) {
 	if _, err := e2etest.WaitForDeploymentLive(context.Background(), t, pool, dep.ID, 15*time.Minute); err != nil {
 		t.Fatalf("deployment did not go live: %v", err)
 	}
-	// Only function apps are frozen. A function deploy needs a function
-	// runner image built in a builder VM; this test deploys the prebuilt
-	// hello image as an app and then marks the app a function, which is all
-	// the frozen tier reads. The runtime stays empty: a runtime would make
-	// wakes boot that runner's base drive instead of the deployed image's.
-	if _, err := pool.Exec(context.Background(),
-		`update apps set type = 'function' where id = $1`, appID); err != nil {
-		t.Fatalf("mark app a function: %v", err)
+	// Without the apps switch only functions are frozen. A function deploy
+	// needs a function runner image built in a builder VM; this test deploys
+	// the prebuilt hello image as an app and then marks the app a function,
+	// which is all the frozen tier reads. The runtime stays empty: a runtime
+	// would make wakes boot that runner's base drive instead of the deployed
+	// image's. With the apps switch the app freezes as an app.
+	if !appsTier {
+		if _, err := pool.Exec(context.Background(),
+			`update apps set type = 'function' where id = $1`, appID); err != nil {
+			t.Fatalf("mark app a function: %v", err)
+		}
 	}
 	setAppIdleTimeout(t, h, key, "frozen", api.IdleTimeoutFloorSeconds)
 

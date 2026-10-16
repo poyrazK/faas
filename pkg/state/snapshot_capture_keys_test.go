@@ -3,6 +3,8 @@ package state
 import (
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestSnapshotCapturePairKeys(t *testing.T) {
@@ -32,5 +34,19 @@ func TestSnapshotCapturePairKeys(t *testing.T) {
 	}
 	if IsSnapshotCaptureKey(SnapMemKey("dep")) {
 		t.Fatal("legacy key treated as deletable capture")
+	}
+}
+
+func TestSnapshotCaptureTokenRequiresCanonicalCoupledNamespace(t *testing.T) {
+	token := uuid.NewString()
+	for _, tier := range []string{SnapshotTierInit, SnapshotTierWarm} {
+		if got, ok := SnapshotCaptureToken(SnapshotCaptureMemKey("dep", tier, token)); !ok || got != token {
+			t.Fatal("valid capture token was lost")
+		}
+	}
+	for _, key := range []string{SnapMemKey("dep"), "snap/dep/captures/" + token + "/mem", SnapshotCaptureMemKey("dep", SnapshotTierInit, "arbitrary"), SnapshotCaptureMemKey("dep", SnapshotTierInit, uuid.Nil.String()), SnapshotCaptureMemKey("dep", SnapshotTierInit, strings.ReplaceAll(token, "-", ""))} {
+		if _, ok := SnapshotCaptureToken(key); ok {
+			t.Fatal("noncanonical namespace gained a catalog token")
+		}
 	}
 }

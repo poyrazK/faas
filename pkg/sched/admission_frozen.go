@@ -59,6 +59,32 @@ func (l *NodeLedger) Freeze(instance string, chargeMB int) bool {
 	return true
 }
 
+// ShrinkFrozenCharge rebooks a frozen reservation at chargeMB after vmmd
+// compressed the VM's memory (ADR-906 decision 6). A charge never grows
+// here, and never drops below MeasuredChargeFloorMB. It returns false for
+// an unknown or unfrozen instance.
+func (l *NodeLedger) ShrinkFrozenCharge(instance string, chargeMB int) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[instance]
+	if e == nil || !e.frozen {
+		return false
+	}
+	chargeMB = max(chargeMB, api.MeasuredChargeFloorMB)
+	if chargeMB >= e.admissionMB {
+		return true
+	}
+	if node := l.resident[e.nodeID]; node != nil {
+		node.residentRAM -= e.admissionMB - chargeMB
+		node.frozenRAM -= e.admissionMB - chargeMB
+	}
+	e.admissionMB = chargeMB
+	return true
+}
+
 // admitFrozen_locked books a frozen reservation directly: schedd's ledger
 // seed after a restart finds FROZEN rows whose VMs are already resident.
 // Like other seed reservations it is not refused for headroom.
