@@ -37,6 +37,9 @@ func CollectAlertsOnce(ctx context.Context, store state.OperatorAlertHistoryStor
 	if err == nil {
 		err = store.RecordOperatorAlertSnapshot(pollCtx, snapshot)
 		reason = "persistence_failed"
+		if errors.Is(err, state.ErrInvalidArgument) {
+			reason = "snapshot_rejected"
+		}
 	}
 	if err == nil {
 		return nil
@@ -48,11 +51,25 @@ func CollectAlertsOnce(ctx context.Context, store state.OperatorAlertHistoryStor
 	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
 		reason = "timeout"
 	}
+	var diagnostics *api.ObsAlertCollectionRejection
+	if reason == "snapshot_rejected" {
+		d := collectionRejection(groups, now)
+		if api.ValidObsAlertCollectionRejection(now, d) {
+			diagnostics = &d
+		}
+	}
 	// The poll budget may have expired. Saving its outcome gets a fresh,
 	// independently bounded context; shutdown still leaves missing evidence.
 	failureCtx, cancelFailure := context.WithTimeout(ctx, api.ObsAlertCollectionOutcomeWriteBudget)
 	defer cancelFailure()
-	if writeErr := store.RecordOperatorAlertFailure(failureCtx, now, reason); writeErr != nil {
+	var writeErr error
+	if diagnostics != nil {
+		writeErr = store.RecordOperatorAlertRejection(failureCtx, now, *diagnostics)
+	} else {
+		// Unrepresentable diagnostics must not erase the failure receipt.
+		writeErr = store.RecordOperatorAlertFailure(failureCtx, now, reason)
+	}
+	if writeErr != nil {
 		return fmt.Errorf("record failed alert collection: %w", writeErr)
 	}
 	return fmt.Errorf("collect platform alert history: %w", err)

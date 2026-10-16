@@ -74,15 +74,31 @@ func (m *MemStore) RecordOperatorAlertSnapshot(ctx context.Context, input Operat
 }
 
 func (m *MemStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time, reasons ...string) error {
+	reason, err := collectionFailureReason(reasons)
+	if err != nil {
+		return err
+	}
+	return m.recordOperatorAlertFailure(ctx, at, reason, nil)
+}
+
+func (m *MemStore) RecordOperatorAlertRejection(ctx context.Context, at time.Time, d api.ObsAlertCollectionRejection) error {
+	encoded, err := encodeOperatorAlertRejection(at, d)
+	if err != nil {
+		return err
+	}
+	copy, err := decodeOperatorAlertRejection(at, encoded)
+	if err != nil {
+		return err
+	}
+	return m.recordOperatorAlertFailure(ctx, at, "snapshot_rejected", copy)
+}
+
+func (m *MemStore) recordOperatorAlertFailure(ctx context.Context, at time.Time, reason string, d *api.ObsAlertCollectionRejection) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if at.IsZero() {
 		return ErrInvalidArgument
-	}
-	reason, err := collectionFailureReason(reasons)
-	if err != nil {
-		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -90,6 +106,12 @@ func (m *MemStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time,
 	if at.After(m.operatorAlertCollection.LastAttemptAt) {
 		m.operatorAlertCollection.LastAttemptAt = at
 		m.operatorAlertCollectionOutcomes = append(m.operatorAlertCollectionOutcomes, OperatorAlertCollectionOutcome{AttemptedAt: at, Outcome: "failure", Reason: reason})
+		if d != nil {
+			if m.operatorAlertCollectionDiagnostics == nil {
+				m.operatorAlertCollectionDiagnostics = map[time.Time]api.ObsAlertCollectionRejection{}
+			}
+			m.operatorAlertCollectionDiagnostics[at] = *d
+		}
 	}
 	return nil
 }

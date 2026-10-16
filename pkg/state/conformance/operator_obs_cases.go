@@ -54,6 +54,14 @@ func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	if err := fx.Store.RecordOperatorAlertFailure(fx.Ctx, now.Add(100*time.Millisecond), "timeout"); err != nil {
 		t.Fatal(err)
 	}
+	rejection := api.ObsAlertCollectionRejection{Scope: "rejected_snapshot", Reason: "no_alert_rules_observed", Items: []api.ObsRuleHealthItem{}, Limit: api.ObsAlertCollectionRejectionItemsMax}
+	if err := fx.Store.RecordOperatorAlertRejection(fx.Ctx, now.Add(150*time.Millisecond), rejection); err != nil {
+		t.Fatal(err)
+	}
+	details, err := fx.Store.OperatorAlertCollectionHistory(fx.Ctx, state.OperatorAlertCollectionHistoryFilter{Since: now.Add(-time.Hour), Now: now.Add(150 * time.Millisecond), IncludeDetails: true})
+	if err != nil || len(details.Failures) != 2 || details.Failures[0].DiagnosticsState != "recorded" || details.Failures[0].Diagnostics == nil || details.Failures[0].Diagnostics.Reason != "no_alert_rules_observed" || details.Failures[1].DiagnosticsState != "unknown" {
+		t.Fatalf("durable rejection: %+v %v", details, err)
+	}
 	retained, c, err := fx.Store.OperatorAlertEpisode(fx.Ctx, episode.ID)
 	if err != nil || retained.Status(c, now) != "unknown" || !retained.Triage.Acknowledged {
 		t.Fatalf("failed source: %+v %v", retained, err)

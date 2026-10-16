@@ -83,12 +83,24 @@ func (s *PgStore) RecordOperatorAlertSnapshot(ctx context.Context, input Operato
 }
 
 func (s *PgStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time, reasons ...string) error {
-	if at.IsZero() {
-		return ErrInvalidArgument
-	}
 	reason, err := collectionFailureReason(reasons)
 	if err != nil {
 		return err
+	}
+	return s.recordOperatorAlertFailure(ctx, at, reason, nil)
+}
+
+func (s *PgStore) RecordOperatorAlertRejection(ctx context.Context, at time.Time, d api.ObsAlertCollectionRejection) error {
+	encoded, err := encodeOperatorAlertRejection(at, d)
+	if err != nil {
+		return err
+	}
+	return s.recordOperatorAlertFailure(ctx, at, "snapshot_rejected", encoded)
+}
+
+func (s *PgStore) recordOperatorAlertFailure(ctx context.Context, at time.Time, reason string, diagnostics []byte) error {
+	if at.IsZero() {
+		return ErrInvalidArgument
 	}
 	at = at.UTC().Truncate(time.Microsecond)
 	tx, err := s.pool.Begin(ctx)
@@ -108,7 +120,7 @@ func (s *PgStore) RecordOperatorAlertFailure(ctx context.Context, at time.Time, 
 	if err := q.OperatorAlertCollectionFailed(ctx, tx, stamp); err != nil {
 		return fmt.Errorf("collection failure status: %w", err)
 	}
-	if err := q.OperatorAlertInsertCollectionOutcome(ctx, tx, sqlc.OperatorAlertInsertCollectionOutcomeParams{AttemptedAt: stamp, Outcome: "failure", Reason: reason}); err != nil {
+	if err := q.OperatorAlertInsertCollectionOutcome(ctx, tx, sqlc.OperatorAlertInsertCollectionOutcomeParams{AttemptedAt: stamp, Outcome: "failure", Reason: reason, Diagnostics: diagnostics}); err != nil {
 		return fmt.Errorf("record collection failure: %w", err)
 	}
 	return tx.Commit(ctx)

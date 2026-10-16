@@ -24,6 +24,27 @@ func (m *MemStore) OperatorAlertCollectionHistory(ctx context.Context, input Ope
 	if err != nil {
 		return out, err
 	}
+	if f.IncludeDetails {
+		out.Failures = []api.ObsAlertCollectionFailure{}
+		for i := len(out.Outcomes) - 1; i >= 0 && len(out.Failures) < api.ObsAlertCollectionFailureDetailsMax; i-- {
+			r := out.Outcomes[i]
+			if r.Outcome != "failure" || r.AttemptedAt.Before(f.Since) {
+				continue
+			}
+			var d *api.ObsAlertCollectionRejection
+			if stored, ok := m.operatorAlertCollectionDiagnostics[r.AttemptedAt]; ok {
+				encoded, encodeErr := encodeOperatorAlertRejection(r.AttemptedAt, stored)
+				if encodeErr != nil {
+					return out, encodeErr
+				}
+				d, err = decodeOperatorAlertRejection(r.AttemptedAt, encoded)
+				if err != nil {
+					return out, err
+				}
+			}
+			out.Failures = append(out.Failures, collectionFailureDetail(r.AttemptedAt, r.Reason, d))
+		}
+	}
 	return out, ctx.Err()
 }
 
@@ -46,6 +67,7 @@ func (m *MemStore) operatorAlertCollectionOutcomesLocked(since, now time.Time) (
 func (m *MemStore) pruneAlertCollectionOutcomesLocked(before time.Time) {
 	count := 0
 	for count < len(m.operatorAlertCollectionOutcomes) && count < api.ObsAlertCollectionHistoryPruneBatch && m.operatorAlertCollectionOutcomes[count].AttemptedAt.Before(before) {
+		delete(m.operatorAlertCollectionDiagnostics, m.operatorAlertCollectionOutcomes[count].AttemptedAt)
 		count++
 	}
 	// Drop the old backing array so expired receipts do not stay resident.

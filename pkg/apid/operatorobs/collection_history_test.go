@@ -33,21 +33,21 @@ func TestAlertCollectionHistoryCoverageAndProspectiveUnknown(t *testing.T) {
 	if err := store.RecordOperatorAlertFailure(t.Context(), since.Add(3*time.Minute), "snapshot_rejected"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := AlertCollectionHistory(t.Context(), store, true, since, now)
+	out, err := AlertCollectionHistory(t.Context(), store, true, since, now, false)
 	if err != nil || len(out.Items) != 6 || out.Truncated || out.Coverage.State != "partial" || out.Coverage.Successes != 1 || out.Coverage.Failures != 2 || out.Coverage.SuccessfulObservationMicroseconds != int64(time.Minute/time.Microsecond) || out.Coverage.FailedObservationMicroseconds != int64(90*time.Second/time.Microsecond) || out.Coverage.UnknownMicroseconds != int64(150*time.Second/time.Microsecond) {
 		t.Fatalf("coverage: %+v %v", out, err)
 	}
 	if !out.Items[0].Until.Equal(now) || out.Items[0].State != "unknown" || !out.Items[5].From.Equal(since) || out.Items[5].State != "unknown" {
 		t.Fatalf("timeline: %+v", out.Items)
 	}
-	unknown, err := AlertCollectionHistory(t.Context(), state.NewMemStore(), false, since, now)
+	unknown, err := AlertCollectionHistory(t.Context(), state.NewMemStore(), false, since, now, false)
 	if err != nil || unknown.Coverage.State != "unknown" || unknown.Coverage.UnknownMicroseconds != unknown.Coverage.WindowMicroseconds || len(unknown.Items) != 1 || unknown.Collection.CollectionState != "disabled" {
 		t.Fatalf("pre-rollout: %+v %v", unknown, err)
 	}
 	// Carry-in evidence can cover the boundary without counting as a new
 	// attempt in the requested window. It expires at its original deadline.
 	from := since.Add(105 * time.Second)
-	clipped, err := AlertCollectionHistory(t.Context(), store, true, from, from.Add(30*time.Second))
+	clipped, err := AlertCollectionHistory(t.Context(), store, true, from, from.Add(30*time.Second), false)
 	if err != nil || clipped.Coverage.Successes != 0 || clipped.Coverage.Failures != 0 || clipped.Coverage.State != "observed" || clipped.TotalIntervals != 1 {
 		t.Fatalf("carry-in: %+v %v", clipped, err)
 	}
@@ -75,7 +75,7 @@ func TestAlertCollectionHistoryPreviewAndWindow(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err := AlertCollectionHistory(t.Context(), store, true, since, now)
+	out, err := AlertCollectionHistory(t.Context(), store, true, since, now, false)
 	if err != nil || !out.Truncated || len(out.Items) != out.Limit || out.TotalIntervals != 206 || out.Coverage.Failures != 205 || out.Coverage.WindowMicroseconds != out.Coverage.SuccessfulObservationMicroseconds+out.Coverage.FailedObservationMicroseconds+out.Coverage.UnknownMicroseconds {
 		t.Fatalf("bounded preview: %+v %v", out, err)
 	}

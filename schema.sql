@@ -26932,6 +26932,8 @@ CREATE TABLE public.operator_alert_collection_outcomes (
     attempted_at timestamp with time zone NOT NULL,
     outcome text NOT NULL,
     reason text NOT NULL,
+    diagnostics jsonb,
+    CONSTRAINT operator_alert_collection_diagnostics_check CHECK (((diagnostics IS NULL) OR ((outcome = 'failure'::text) AND (reason = 'snapshot_rejected'::text) AND (jsonb_typeof(diagnostics) = 'object'::text) AND (octet_length((diagnostics)::text) <= 32768) AND (diagnostics @> '{"scope": "rejected_snapshot"}'::jsonb)))),
     CONSTRAINT operator_alert_collection_outcomes_attempted_at_check CHECK (isfinite(attempted_at)),
     CONSTRAINT operator_alert_collection_outcomes_check CHECK ((((outcome = 'success'::text) AND (reason = ''::text)) OR ((outcome = 'failure'::text) AND (reason <> ''::text)))),
     CONSTRAINT operator_alert_collection_outcomes_outcome_check CHECK ((outcome = ANY (ARRAY['success'::text, 'failure'::text]))),

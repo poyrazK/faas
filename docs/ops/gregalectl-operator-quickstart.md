@@ -776,6 +776,33 @@ outcomes and unknown intervals. No older history is inferred from the latest
 collection timestamps. The history survives restart and is retained for 30 days;
 cleanup removes at most 5000 expired outcomes per existing retention pass.
 
+Add `--details` to investigate individual failed attempts, for example
+`gregalectl obs collection-history --since 2026-10-16T00:00:00Z --details --json`.
+The API equivalent is `GET /v1/admin/obs/collection-history?details=true`.
+`failure_details` contains at most 20 newest failed attempts inside the requested
+window, with a complete `total_failures` and explicit truncation. These are
+individual attempts; the cadence timeline can coalesce several attempts into
+one interval. A carry-in receipt does not enter this failed-attempt preview.
+
+For newly rejected readable snapshots, `diagnostics_state=recorded` includes
+complete loaded-rule/group counts and up to 10 unhealthy rule/group items,
+bounded to 16 KiB of compact JSON per attempt. Each item carries hashed identity,
+safe names, closed issue codes, evaluation time/age at the attempt, error
+presence and a repository-safe runbook when available. The preview is ordered
+by issue priority then hashed group/item identity. It excludes raw queries,
+evaluation errors, labels and absolute paths. Several issues can be observed;
+they do not prove an underlying root cause or which issue first rejected the
+snapshot. `collector_validation_failed` means the rejection has no matching
+rule-level diagnostic; it does not manufacture a cause.
+
+Older receipts, unreadable sources, timeouts, persistence failures and
+unrepresentable diagnostic metadata use `diagnostics_state=unknown` and null
+diagnostics. A recorded empty source uses `no_alert_rules_observed` with known
+zero rule counts. Nothing is backfilled from today's rule-health response.
+Recovery preserves earlier evidence, which expires with its 30-day receipt.
+The opt-in details read shares the existing five-second snapshot budget and
+operator authorization; the default view and analytics omit diagnostic bodies.
+
 A recorded outcome supplies at most 60 seconds of cadence evidence, ending
 sooner when the next outcome arrives. Missing polls, process downtime and
 unrecordable storage failures become unknown after that evidence expires.

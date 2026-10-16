@@ -995,7 +995,7 @@ var cliCommands = []cliCommand{
 				Name: subObsRecurrence, Short: "Inspect retained alert repeats and observed recovery gaps", Flags: []cliFlag{{Name: "since", Short: "activation-cohort lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
 			},
 			{
-				Name: subObsCollectionHistory, Short: "Inspect prospective collection outcomes and unknown intervals", Flags: []cliFlag{{Name: "since", Short: "collection-history lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+				Name: subObsCollectionHistory, Short: "Inspect prospective collection outcomes and unknown intervals", Flags: []cliFlag{{Name: "since", Short: "collection-history lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "details", Short: "include retained diagnostics for recent failed attempts"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
 			},
 			{
 				Name: subObsNotificationHealth, Short: "Inspect alert notification pipeline evidence", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},

@@ -64,6 +64,7 @@ type OperatorAlertHistoryStore interface {
 	OperatorAlertHistoryReader
 	RecordOperatorAlertSnapshot(context.Context, OperatorAlertSnapshot) error
 	RecordOperatorAlertFailure(context.Context, time.Time, ...string) error
+	RecordOperatorAlertRejection(context.Context, time.Time, api.ObsAlertCollectionRejection) error
 	PruneOperatorAlertHistory(context.Context, time.Time, int) (int, error)
 }
 

@@ -6100,6 +6100,7 @@ type OperatorAlertCollectionOutcome struct {
 	AttemptedAt pgtype.Timestamptz
 	Outcome     string
 	Reason      string
+	Diagnostics []byte
 }
 
 type OperatorAlertEpisode struct {

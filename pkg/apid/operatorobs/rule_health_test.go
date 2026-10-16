@@ -70,6 +70,9 @@ func TestRuleHealthAssessmentMatchesCollectorRejection(t *testing.T) {
 			groups := historyRules(now, false)
 			tc.change(&groups[0])
 			out := assessRuleHealth(groups, RuleHealth(t.Context(), nil, now), now)
+			if d := collectionRejection(groups, now); !api.ValidObsAlertCollectionRejection(now, d) {
+				t.Fatalf("unpersistable rejection diagnostics: %+v", d)
+			}
 			item := out.Items[0]
 			_, err := alertSnapshot(groups, now)
 			if item.State != tc.want || (err == nil) != (out.State == "healthy") {

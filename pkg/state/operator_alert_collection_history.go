@@ -14,11 +14,15 @@ type OperatorAlertCollectionOutcome struct {
 	Reason      string
 }
 
-type OperatorAlertCollectionHistoryFilter struct{ Since, Now time.Time }
+type OperatorAlertCollectionHistoryFilter struct {
+	Since, Now     time.Time
+	IncludeDetails bool
+}
 
 type OperatorAlertCollectionHistorySnapshot struct {
 	Collection OperatorAlertCollection
 	Outcomes   []OperatorAlertCollectionOutcome
+	Failures   []api.ObsAlertCollectionFailure
 }
 
 type OperatorAlertCollectionHistoryReader interface {

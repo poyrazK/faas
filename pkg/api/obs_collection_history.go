@@ -27,10 +27,41 @@ type ObsAlertCollectionHistoryInterval struct {
 }
 
 type ObsAlertCollectionHistory struct {
+	FailureDetails *ObsAlertCollectionFailureDetails   `json:"failure_details,omitempty"`
 	Coverage       ObsAlertCollectionCoverage          `json:"coverage"`
 	Collection     ObsAlertCollectionHealth            `json:"collection"`
 	Items          []ObsAlertCollectionHistoryInterval `json:"items"`
 	TotalIntervals int                                 `json:"total_intervals"`
 	Limit          int                                 `json:"limit"`
 	Truncated      bool                                `json:"truncated"`
+}
+
+// FailureDetails is opt-in. It describes attempts, separately from coalesced
+// cadence intervals; missing historical diagnostics never means healthy rules.
+type ObsAlertCollectionFailureDetails struct {
+	Items         []ObsAlertCollectionFailure `json:"items"`
+	TotalFailures int64                       `json:"total_failures"`
+	Limit         int                         `json:"limit"`
+	Truncated     bool                        `json:"truncated"`
+	Limitations   []string                    `json:"limitations"`
+}
+
+type ObsAlertCollectionFailure struct {
+	AttemptedAt      time.Time                    `json:"attempted_at"`
+	Reason           string                       `json:"reason"`
+	DiagnosticsState string                       `json:"diagnostics_state"`
+	Diagnostics      *ObsAlertCollectionRejection `json:"diagnostics"`
+}
+
+// Rejection contains observations from the exact rejected source snapshot,
+// including complete counts and a bounded unhealthy-first metadata preview.
+// It does not assert that every issue triggered the collector's first rejection.
+type ObsAlertCollectionRejection struct {
+	Scope      string              `json:"scope"`
+	Reason     string              `json:"reason"`
+	Totals     ObsRuleHealthTotals `json:"totals"`
+	Items      []ObsRuleHealthItem `json:"items"`
+	TotalItems int                 `json:"total_items"`
+	Limit      int                 `json:"limit"`
+	Truncated  bool                `json:"truncated"`
 }

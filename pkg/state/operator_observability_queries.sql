@@ -421,8 +421,13 @@ WHERE e.started_at>=sqlc.arg(since)::timestamptz AND e.started_at<=sqlc.arg(as_o
 ORDER BY e.started_at DESC,e.id DESC LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: OperatorAlertInsertCollectionOutcome :exec
-INSERT INTO operator_alert_collection_outcomes(attempted_at,outcome,reason)
-VALUES (sqlc.arg(attempted_at)::timestamptz,sqlc.arg(outcome)::text,sqlc.arg(reason)::text);
+INSERT INTO operator_alert_collection_outcomes(attempted_at,outcome,reason,diagnostics)
+VALUES (sqlc.arg(attempted_at)::timestamptz,sqlc.arg(outcome)::text,sqlc.arg(reason)::text,sqlc.narg(diagnostics)::jsonb);
+
+-- name: OperatorAlertCollectionFailures :many
+SELECT attempted_at,reason,diagnostics FROM operator_alert_collection_outcomes
+WHERE outcome='failure' AND attempted_at>=sqlc.arg(since)::timestamptz AND attempted_at<=sqlc.arg(as_of)::timestamptz
+ORDER BY attempted_at DESC LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: OperatorAlertCollectionOutcomes :many
 SELECT attempted_at,outcome,reason FROM operator_alert_collection_outcomes

@@ -67,6 +67,44 @@ func (q *Queries) OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at
 	return err
 }
 
+const operatorAlertCollectionFailures = `-- name: OperatorAlertCollectionFailures :many
+SELECT attempted_at,reason,diagnostics FROM operator_alert_collection_outcomes
+WHERE outcome='failure' AND attempted_at>=$1::timestamptz AND attempted_at<=$2::timestamptz
+ORDER BY attempted_at DESC LIMIT $3::integer
+`
+
+type OperatorAlertCollectionFailuresParams struct {
+	Since    pgtype.Timestamptz
+	AsOf     pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorAlertCollectionFailuresRow struct {
+	AttemptedAt pgtype.Timestamptz
+	Reason      string
+	Diagnostics []byte
+}
+
+func (q *Queries) OperatorAlertCollectionFailures(ctx context.Context, db DBTX, arg OperatorAlertCollectionFailuresParams) ([]OperatorAlertCollectionFailuresRow, error) {
+	rows, err := db.Query(ctx, operatorAlertCollectionFailures, arg.Since, arg.AsOf, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertCollectionFailuresRow{}
+	for rows.Next() {
+		var i OperatorAlertCollectionFailuresRow
+		if err := rows.Scan(&i.AttemptedAt, &i.Reason, &i.Diagnostics); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAlertCollectionLock = `-- name: OperatorAlertCollectionLock :one
 SELECT last_attempt_at, last_success_at FROM operator_alert_collection WHERE singleton FOR UPDATE
 `
@@ -95,15 +133,21 @@ type OperatorAlertCollectionOutcomesParams struct {
 	RowLimit int32
 }
 
-func (q *Queries) OperatorAlertCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertCollectionOutcomesParams) ([]OperatorAlertCollectionOutcome, error) {
+type OperatorAlertCollectionOutcomesRow struct {
+	AttemptedAt pgtype.Timestamptz
+	Outcome     string
+	Reason      string
+}
+
+func (q *Queries) OperatorAlertCollectionOutcomes(ctx context.Context, db DBTX, arg OperatorAlertCollectionOutcomesParams) ([]OperatorAlertCollectionOutcomesRow, error) {
 	rows, err := db.Query(ctx, operatorAlertCollectionOutcomes, arg.Since, arg.AsOf, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []OperatorAlertCollectionOutcome{}
+	items := []OperatorAlertCollectionOutcomesRow{}
 	for rows.Next() {
-		var i OperatorAlertCollectionOutcome
+		var i OperatorAlertCollectionOutcomesRow
 		if err := rows.Scan(&i.AttemptedAt, &i.Outcome, &i.Reason); err != nil {
 			return nil, err
 		}
@@ -308,18 +352,24 @@ func (q *Queries) OperatorAlertEpisodes(ctx context.Context, db DBTX, arg Operat
 }
 
 const operatorAlertInsertCollectionOutcome = `-- name: OperatorAlertInsertCollectionOutcome :exec
-INSERT INTO operator_alert_collection_outcomes(attempted_at,outcome,reason)
-VALUES ($1::timestamptz,$2::text,$3::text)
+INSERT INTO operator_alert_collection_outcomes(attempted_at,outcome,reason,diagnostics)
+VALUES ($1::timestamptz,$2::text,$3::text,$4::jsonb)
 `
 
 type OperatorAlertInsertCollectionOutcomeParams struct {
 	AttemptedAt pgtype.Timestamptz
 	Outcome     string
 	Reason      string
+	Diagnostics []byte
 }
 
 func (q *Queries) OperatorAlertInsertCollectionOutcome(ctx context.Context, db DBTX, arg OperatorAlertInsertCollectionOutcomeParams) error {
-	_, err := db.Exec(ctx, operatorAlertInsertCollectionOutcome, arg.AttemptedAt, arg.Outcome, arg.Reason)
+	_, err := db.Exec(ctx, operatorAlertInsertCollectionOutcome,
+		arg.AttemptedAt,
+		arg.Outcome,
+		arg.Reason,
+		arg.Diagnostics,
+	)
 	return err
 }
 

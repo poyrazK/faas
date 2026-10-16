@@ -1069,7 +1069,8 @@ export class AdminService {
   /**
    * Inspect prospective collection outcomes and missing-observation intervals.
    * Requires operator read scope, MFA and the operator allowlist. Accepts one
-   * optional nonempty since timestamp, default 24 hours and maximum 30 days.
+   * optional nonempty since timestamp, default 24 hours and maximum 30 days,
+   * and an optional details=true or details=false flag.
    * Reads prospective immutable collection outcomes from one read-only
    * snapshot with a five-second budget. Success commits atomically with
    * retained episode changes; failures contain closed sanitized reason codes.
@@ -1085,24 +1086,41 @@ export class AdminService {
    * More than 100000 read outcomes returns 400 requiring a narrower since.
    * Totals precede a newest-first preview of at most 200 coalesced intervals
    * with explicit truncation. Current disabled configuration does not erase
-   * historical evidence. No lifecycle or triage writes occur on GET.
+   * historical evidence. With details=true, also returns up to 20 newest failed
+   * attempts inside [since, as_of] from the same snapshot, separately from
+   * coalesced intervals. Every failure counts toward the complete total,
+   * including those without diagnostics. Recorded rejection diagnostics
+   * describe the exact bounded source snapshot at attempted_at, never a
+   * later live rule-health read. Complete rule/group counts precede up to
+   * 10 unhealthy rule/group items and 16 KiB of compact diagnostic JSON.
+   * Missing older diagnostics and unreadable sources remain unknown.
+   * Observed issues do not prove the underlying root cause or which issue
+   * triggered the collector's first rejection. No raw query, evaluation
+   * error, label, absolute path or arbitrary runbook URL is retained.
+   * No lifecycle or triage writes occur on GET.
    *
    * @returns ObsAlertCollectionHistory Exact cadence coverage totals and a bounded newest-first collection interval preview.
    * @throws ApiError
    */
   public static getObsAlertCollectionHistory({
     since,
+    details = false,
   }: {
     /**
      * Inclusive collection-outcome lower bound for a prospective retained coverage window.
      */
     since?: string,
+    /**
+     * Include a bounded newest-first preview of failed attempts and their captured rejection diagnostics; accepts exactly true or false once.
+     */
+    details?: boolean,
   }): CancelablePromise<ObsAlertCollectionHistory> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/collection-history',
       query: {
         'since': since,
+        'details': details,
       },
       errors: {
         400: `Invalid collection-history query or read exceeding 100000 outcomes; narrow since.`,

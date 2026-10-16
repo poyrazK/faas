@@ -45002,7 +45002,8 @@ paths:
       summary: Inspect prospective collection outcomes and missing-observation intervals.
       description: |
         Requires operator read scope, MFA and the operator allowlist. Accepts one
-        optional nonempty since timestamp, default 24 hours and maximum 30 days.
+        optional nonempty since timestamp, default 24 hours and maximum 30 days,
+        and an optional details=true or details=false flag.
         Reads prospective immutable collection outcomes from one read-only
         snapshot with a five-second budget. Success commits atomically with
         retained episode changes; failures contain closed sanitized reason codes.
@@ -45018,12 +45019,27 @@ paths:
         More than 100000 read outcomes returns 400 requiring a narrower since.
         Totals precede a newest-first preview of at most 200 coalesced intervals
         with explicit truncation. Current disabled configuration does not erase
-        historical evidence. No lifecycle or triage writes occur on GET.
+        historical evidence. With details=true, also returns up to 20 newest failed
+        attempts inside [since, as_of] from the same snapshot, separately from
+        coalesced intervals. Every failure counts toward the complete total,
+        including those without diagnostics. Recorded rejection diagnostics
+        describe the exact bounded source snapshot at attempted_at, never a
+        later live rule-health read. Complete rule/group counts precede up to
+        10 unhealthy rule/group items and 16 KiB of compact diagnostic JSON.
+        Missing older diagnostics and unreadable sources remain unknown.
+        Observed issues do not prove the underlying root cause or which issue
+        triggered the collector's first rejection. No raw query, evaluation
+        error, label, absolute path or arbitrary runbook URL is retained.
+        No lifecycle or triage writes occur on GET.
       parameters:
         - in: query
           name: since
           description: Inclusive collection-outcome lower bound for a prospective retained coverage window.
           schema: { type: string, format: date-time }
+        - in: query
+          name: details
+          description: Include a bounded newest-first preview of failed attempts and their captured rejection diagnostics; accepts exactly true or false once.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Exact cadence coverage totals and a bounded newest-first collection interval preview.
@@ -64600,6 +64616,9 @@ components:
       description: Complete bounded collection cadence totals with a newest-first interval preview and current collection metadata.
       required: [coverage, collection, items, total_intervals, limit, truncated]
       properties:
+        failure_details:
+          description: Opt-in failed-attempt evidence from the same read snapshot; omitted unless details=true and absent on older servers.
+          $ref: '#/components/schemas/ObsAlertCollectionFailureDetails'
         coverage: { $ref: '#/components/schemas/ObsAlertCollectionCoverage' }
         collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
         items:
@@ -64610,6 +64629,51 @@ components:
         total_intervals: { type: integer, minimum: 1, maximum: 200001 }
         limit: { type: integer, const: 200 }
         truncated: { type: boolean, description: Whether older coalesced intervals are omitted from this preview while coverage totals remain complete. }
+    ObsAlertCollectionFailureDetails:
+      type: object
+      description: Failed attempts within the inclusive requested window, independent of cadence carry-in and coalesced intervals.
+      required: [items, total_failures, limit, truncated, limitations]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          description: Newest failed attempts first; diagnostics may be unknown on any item.
+          items: { $ref: '#/components/schemas/ObsAlertCollectionFailure' }
+        total_failures: { type: integer, format: int64, minimum: 0, maximum: 100000, description: Complete failed-attempt count matching coverage.failures before preview truncation. }
+        limit: { type: integer, const: 20 }
+        truncated: { type: boolean, description: Whether older failed attempts are omitted from the details preview. }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsAlertCollectionFailure:
+      type: object
+      description: One immutable failed-attempt receipt with optional sanitized evidence captured from its rejected source snapshot.
+      required: [attempted_at, reason, diagnostics_state, diagnostics]
+      properties:
+        attempted_at: { type: string, format: date-time }
+        reason: { type: string, enum: [collection_failed, source_read_failed, snapshot_rejected, timeout, persistence_failed] }
+        diagnostics_state: { type: string, enum: [recorded, unknown], description: Recorded only when typed historical rejection evidence is present; unknown never implies healthy rules. }
+        diagnostics:
+          description: Null for old receipts or failures without a rejected readable source; present only for snapshot_rejected.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertCollectionRejection' }
+            - { type: 'null' }
+    ObsAlertCollectionRejection:
+      type: object
+      description: Sanitized observations from the exact rejected source; complete counts and an unhealthy-first preview, bounded to 16 KiB of compact JSON.
+      required: [scope, reason, totals, items, total_items, limit, truncated]
+      properties:
+        scope: { type: string, enum: [rejected_snapshot] }
+        reason: { type: string, enum: [rule_diagnostics_present, no_alert_rules_observed, collector_validation_failed], description: "Distinguishes observed rule issues, a known empty loaded inventory, and rejection without a matching rule-level diagnostic." }
+        totals: { $ref: '#/components/schemas/ObsRuleHealthTotals' }
+        items:
+          type: array
+          maxItems: 10
+          description: Unhealthy rules and invalid empty groups, ordered by issue priority then hashed group and item identity; ages refer to attempted_at.
+          items: { $ref: '#/components/schemas/ObsRuleHealthItem' }
+        total_items: { type: integer, minimum: 0, maximum: 8192, description: Complete count of unhealthy diagnostic items before the persisted preview is bounded. }
+        limit: { type: integer, const: 10 }
+        truncated: { type: boolean, description: Whether the item or byte bound omitted diagnostic items included in complete totals. }
     ObsAlertRecurrence:
       type: object
       description: Retained activation-cohort recurrence evidence with complete totals and a ranked preview.

@@ -18,7 +18,7 @@ func TestCmdObsCollectionHistory(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	since := now.Add(-time.Hour).Format(time.RFC3339Nano)
 	store := state.NewMemStore()
-	response, err := operatorobs.AlertCollectionHistory(t.Context(), store, true, now.Add(-time.Hour), now)
+	response, err := operatorobs.AlertCollectionHistory(t.Context(), store, true, now.Add(-time.Hour), now, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestCmdObsCollectionHistory(t *testing.T) {
 	if err := store.RecordOperatorAlertFailure(t.Context(), now.Add(-time.Second), "timeout"); err != nil {
 		t.Fatal(err)
 	}
-	response, err = operatorobs.AlertCollectionHistory(t.Context(), store, true, now.Add(-time.Hour), now)
+	response, err = operatorobs.AlertCollectionHistory(t.Context(), store, true, now.Add(-time.Hour), now, false)
 	if err != nil {
 		t.Fatal(err)
 	}

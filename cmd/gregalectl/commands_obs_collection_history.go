@@ -17,6 +17,7 @@ func cmdObsCollectionHistory(args []string) int {
 	fs := flag.NewFlagSet(subObsCollectionHistory, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
 	since := fs.String("since", "", "collection-history lower bound (RFC3339)")
+	details := fs.Bool("details", false, "include retained diagnostics for recent failed attempts")
 	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
@@ -41,8 +42,15 @@ func cmdObsCollectionHistory(args []string) int {
 		return 2
 	}
 	path := operatorobs.AlertCollectionHistoryPath
+	query := url.Values{}
 	if *since != "" {
-		path += "?" + url.Values{"since": {*since}}.Encode()
+		query.Set("since", *since)
+	}
+	if *details {
+		query.Set("details", "true")
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
 	}
 	var out api.ObsAlertCollectionHistory
 	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+path, *token, "collection-history", &out); err != nil {
@@ -53,6 +61,10 @@ func cmdObsCollectionHistory(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs collection-history: invalid response")
 		return 1
 	}
+	if *details && out.FailureDetails == nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs collection-history: historical failure details unknown (not supplied by server)")
+		return 1
+	}
 	if *jsonOut || jsonOutput || jsonFlagEnabled(args) {
 		return emitOperatorJSON(out)
 	}
@@ -61,6 +73,9 @@ func cmdObsCollectionHistory(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "collection=%s intervals=%d limit=%d truncated=%t\n", out.Collection.CollectionState, out.TotalIntervals, out.Limit, out.Truncated)
 	for _, item := range out.Items {
 		_, _ = fmt.Fprintf(osStdout, "from=%s until=%s state=%s reason=%s\n", item.From.UTC().Format(time.RFC3339Nano), item.Until.UTC().Format(time.RFC3339Nano), item.State, item.Reason)
+	}
+	if out.FailureDetails != nil {
+		writeCollectionFailureDetails(osStdout, *out.FailureDetails)
 	}
 	return 0
 }

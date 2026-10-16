@@ -48,6 +48,11 @@ func TestObsAlertCollectionHistoryReadOnlyAndFailures(t *testing.T) {
 			t.Fatalf("bad query: %s %d %s", q, rec.Code, rec.Body)
 		}
 	}
+	for _, q := range []string{"?details=", "?details=1", "?details=True", "?details=true&details=false", "?details=true&unknown=1", "?details=true&since="} {
+		if rec := e.Do(t, "GET", path+q, nil, nil); rec.Code != 400 {
+			t.Fatalf("bad details query: %s %d %s", q, rec.Code, rec.Body)
+		}
+	}
 	*(*e.S()).Store() = statetest.NewStore(&obsCollectionHistoryFailure{Store: store})
 	rec = e.Do(t, "GET", path, nil, nil)
 	if rec.Code != 503 || strings.Contains(rec.Body.String(), "private database") {
@@ -57,6 +62,43 @@ func TestObsAlertCollectionHistoryReadOnlyAndFailures(t *testing.T) {
 	rec = e.Do(t, "GET", path, nil, nil)
 	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "narrow since") {
 		t.Fatalf("bound: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestObsAlertCollectionHistoricalRejectionDetails(t *testing.T) {
+	e := gapEnv(t)
+	store := *(*e.S()).Store()
+	now := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Second)
+	d := api.ObsAlertCollectionRejection{Scope: "rejected_snapshot", Reason: "no_alert_rules_observed", Items: []api.ObsRuleHealthItem{}, Limit: api.ObsAlertCollectionRejectionItemsMax}
+	if err := store.RecordOperatorAlertFailure(t.Context(), now.Add(-time.Second), "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordOperatorAlertRejection(t.Context(), now, d); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.OperatorAlertCollectionStatus(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, details := range []string{"true", "false"} {
+		rec := e.Do(t, "GET", operatorobs.AlertCollectionHistoryPath+"?details="+details, nil, nil)
+		var out api.ObsAlertCollectionHistory
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("response: %d %s", rec.Code, rec.Body)
+		}
+		if details == "false" {
+			if out.FailureDetails != nil {
+				t.Fatal("unrequested details exposed")
+			}
+			continue
+		}
+		if out.FailureDetails == nil || out.FailureDetails.TotalFailures != 2 || len(out.FailureDetails.Items) != 2 || out.FailureDetails.Items[0].DiagnosticsState != "recorded" || out.FailureDetails.Items[0].Diagnostics == nil || out.FailureDetails.Items[0].Diagnostics.Reason != "no_alert_rules_observed" || out.FailureDetails.Items[1].DiagnosticsState != "unknown" || out.FailureDetails.Items[1].Diagnostics != nil {
+			t.Fatalf("details: %s", rec.Body)
+		}
+	}
+	after, err := store.OperatorAlertCollectionStatus(t.Context())
+	if err != nil || after != before {
+		t.Fatalf("GET changed evidence: %+v %v", after, err)
 	}
 }
 

@@ -32,7 +32,30 @@ func (s *PgStore) OperatorAlertCollectionHistory(ctx context.Context, input Oper
 	if err != nil {
 		return out, err
 	}
+	if f.IncludeDetails {
+		out.Failures, err = pgAlertCollectionFailures(ctx, q, tx, f)
+		if err != nil {
+			return out, err
+		}
+	}
 	return out, tx.Commit(ctx)
+}
+
+func pgAlertCollectionFailures(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, f OperatorAlertCollectionHistoryFilter) ([]api.ObsAlertCollectionFailure, error) {
+	rows, err := q.OperatorAlertCollectionFailures(ctx, tx, sqlc.OperatorAlertCollectionFailuresParams{Since: pgtype.Timestamptz{Time: f.Since, Valid: true}, AsOf: pgtype.Timestamptz{Time: f.Now, Valid: true}, RowLimit: api.ObsAlertCollectionFailureDetailsMax})
+	if err != nil {
+		return nil, fmt.Errorf("collection failure details: %w", err)
+	}
+	out := []api.ObsAlertCollectionFailure{}
+	for _, r := range rows {
+		at := r.AttemptedAt.Time.UTC()
+		d, err := decodeOperatorAlertRejection(at, r.Diagnostics)
+		if err != nil {
+			return nil, fmt.Errorf("collection rejection diagnostics: %w", err)
+		}
+		out = append(out, collectionFailureDetail(at, r.Reason, d))
+	}
+	return out, nil
 }
 
 func pgAlertCollectionOutcomes(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, since, now time.Time) ([]OperatorAlertCollectionOutcome, error) {

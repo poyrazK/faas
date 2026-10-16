@@ -2,6 +2,7 @@ package operatorobs
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,7 +27,23 @@ func CollectionHistorySince(raw string, now time.Time) (time.Time, error) {
 	return since, nil
 }
 
-func AlertCollectionHistory(ctx context.Context, reader state.OperatorAlertCollectionHistoryReader, enabled bool, since, now time.Time) (api.ObsAlertCollectionHistory, error) {
+func CollectionHistoryQuery(raw string, forceQuery bool) (string, bool, error) {
+	q, err := url.ParseQuery(raw)
+	if err != nil || forceQuery {
+		return "", false, state.ErrInvalidArgument
+	}
+	for key, values := range q {
+		if len(values) != 1 || values[0] == "" || key != "since" && key != "details" {
+			return "", false, state.ErrInvalidArgument
+		}
+	}
+	if q.Has("details") && q.Get("details") != "true" && q.Get("details") != "false" {
+		return "", false, state.ErrInvalidArgument
+	}
+	return q.Get("since"), q.Get("details") == "true", nil
+}
+
+func AlertCollectionHistory(ctx context.Context, reader state.OperatorAlertCollectionHistoryReader, enabled bool, since, now time.Time, details bool) (api.ObsAlertCollectionHistory, error) {
 	out := api.ObsAlertCollectionHistory{Items: []api.ObsAlertCollectionHistoryInterval{}, Limit: api.ObsAlertCollectionHistoryIntervalsMax}
 	if _, err := CollectionHistorySince(since.Format(time.RFC3339Nano), now); err != nil {
 		return out, err
@@ -34,7 +51,7 @@ func AlertCollectionHistory(ctx context.Context, reader state.OperatorAlertColle
 	since, now = since.UTC().Truncate(time.Microsecond), now.UTC().Truncate(time.Microsecond)
 	ctx, cancel := context.WithTimeout(ctx, api.ObsAlertCollectionHistoryBudget)
 	defer cancel()
-	snap, err := reader.OperatorAlertCollectionHistory(ctx, state.OperatorAlertCollectionHistoryFilter{Since: since, Now: now})
+	snap, err := reader.OperatorAlertCollectionHistory(ctx, state.OperatorAlertCollectionHistoryFilter{Since: since, Now: now, IncludeDetails: details})
 	if err != nil {
 		return out, err
 	}
@@ -43,6 +60,9 @@ func AlertCollectionHistory(ctx context.Context, reader state.OperatorAlertColle
 		return out, err
 	}
 	out.Coverage, out.Collection = coverage, collectionHealth(snap.Collection, enabled, now)
+	if details {
+		out.FailureDetails = &api.ObsAlertCollectionFailureDetails{Items: snap.Failures, TotalFailures: coverage.Failures, Limit: api.ObsAlertCollectionFailureDetailsMax, Truncated: coverage.Failures > int64(len(snap.Failures)), Limitations: []string{"prospective_rejected_snapshots_only", "missing_diagnostics_are_unknown", "issues_observed_not_proven_root_cause", "unreadable_sources_have_no_rule_diagnostics", "preview_bounded_counts_cover_complete_window"}}
+	}
 	out.TotalIntervals = len(intervals)
 	out.Truncated = out.TotalIntervals > out.Limit
 	for i := len(intervals) - 1; i >= 0 && len(out.Items) < out.Limit; i-- {
