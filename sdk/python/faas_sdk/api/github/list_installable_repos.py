@@ -103,6 +103,8 @@ def sync_detailed(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,6 +148,8 @@ def sync(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,6 +188,8 @@ async def asyncio_detailed(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -225,6 +231,8 @@ async def asyncio(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
