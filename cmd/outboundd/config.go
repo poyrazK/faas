@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -44,6 +45,25 @@ type Config struct {
 	// during a staged preview rollout (ADR-998); empty or "*" admits every
 	// entitled account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
 	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
+	// PublicListenAddr enables the AI gateway's public listener for callers
+	// outside Gregale that present an access token (ADR-1360). It must be a
+	// loopback address: Caddy terminates TLS in front of it.
+	PublicListenAddr string `toml:"public_listen_addr"`
+}
+
+// validatePublicListen refuses a public listener that is not on loopback.
+func (c *Config) validatePublicListen() error {
+	if c.PublicListenAddr == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(c.PublicListenAddr)
+	if err != nil {
+		return fmt.Errorf("outboundd: public_listen_addr: %w", err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("outboundd: public_listen_addr %q must be a loopback IP address behind the TLS proxy", c.PublicListenAddr)
+	}
+	return nil
 }
 
 // AIGatewayRollout resolves the staged rollout from the TOML setting and the
@@ -180,6 +200,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.Integrations == nil {
 		c.Integrations = make(map[string]IntegrationConfig)
+	}
+	if err := c.validatePublicListen(); err != nil {
+		return nil, err
 	}
 	return c, nil
 }

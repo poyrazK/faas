@@ -224,17 +224,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_replay_not_authorized", "The replay cannot use this outbound integration", "")
 		return
 	}
-	// ADR-1340: a moderation check calls in process for the account's own
-	// customer AI integrations, like a replay.
-	moderator, isModeration := moderationPrincipalFromContext(r.Context())
-	if isModeration && !moderationAllowed(integration, moderator) {
-		writeProblem(w, http.StatusForbidden, "outbound_moderation_not_authorized", "The moderation check cannot use this outbound integration", "")
+	// ADR-1340, ADR-1360: the gateway's own checks, evaluations and batch
+	// reads call in process for the account's own customer AI
+	// integrations, like a replay.
+	internal, isInternal := internalPrincipalFromContext(r.Context())
+	if isInternal && !internalAllowed(integration, internal) {
+		writeProblem(w, http.StatusForbidden, "outbound_internal_not_authorized", "The gateway's own call cannot use this outbound integration", "")
 		return
 	}
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
 	var isExecution bool
-	if !isReplay && !isModeration {
+	if !isReplay && !isInternal {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return
 		}
@@ -246,8 +247,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	principalID := ""
 	if isReplay {
 		principalID = "replay:" + replay.replayID
-	} else if isModeration {
-		principalID = "moderation:" + moderator.accountID
+	} else if isInternal {
+		principalID = internal.caller + ":" + internal.accountID
 	} else if isExecution {
 		if h.ExecutionAuthorizer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
@@ -278,7 +279,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = appID
 	}
 	var allowedRoute bool
-	if isExecution || isReplay || isModeration {
+	if isExecution || isReplay || isInternal {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
@@ -340,6 +341,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
 		return
+	}
+	// ADR-1360: a batch creation is admitted at the batch's estimate.
+	var batch *AIBatch
+	if aiPlan != nil && aiPlan.endpoint.batch {
+		if batch, ok = h.planBatch(w, r, integration, aiPlan, aiReq, path, appID, bindingAppID, metricIntegrationID); !ok {
+			return
+		}
 	}
 	var reserve aiReservation
 	var guard AIGuardrails
@@ -404,10 +412,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	if batch != nil {
+		// The batch's reservation is stored before the provider sees the
+		// batch, so no batch the provider runs is ever uncounted.
+		if !h.reserveBatch(ctx, w, *batch, metricIntegrationID) {
+			return
+		}
+		defer h.dropUnconfirmedBatch(ctx, batch)
+	}
 	// ADR-1340: the moderation check runs after admission, so a call its
 	// caps refuse never pays for one. Replays and checks are not checked.
 	var moderation aiModerationOutcome
-	if aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isModeration && integration.AIContentPolicy.Moderation.Active() {
+	if aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isInternal && integration.AIContentPolicy.Moderation.Active() {
 		var proceed bool
 		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
 			return
@@ -471,7 +487,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		setReplayableBody(upstreamReq, aiReq.body)
 		cacheBody = aiReq.body
 	}
-	cacheEligible := workflowIdentity == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
+	cacheEligible := workflowIdentity == nil && batch == nil && (outboundCacheRequestEligible(upstreamReq, integration.ResponseCacheTTLSeconds) ||
 		aiCacheEligible(upstreamReq, aiReq, integration.ResponseCacheTTLSeconds))
 	cacheKey := ""
 	if cacheEligible {
@@ -628,6 +644,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_response_too_large", "Outbound provider response exceeds the gateway limit", "")
 		return
 	}
+	if batch != nil {
+		h.finishBatchCreation(ctx, w, resp, batch, metricIntegrationID)
+		return
+	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
@@ -675,6 +695,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+	if token, ok := accessTokenFromContext(r.Context()); ok {
+		// ADR-1360: an access token acts as its app, on AI integrations only.
+		if !token.allows(integration) {
+			writeProblem(w, http.StatusForbidden, "outbound_access_token_not_allowed", "This access token cannot use this outbound integration", "")
+			return "", false
+		}
+		return token.AppID, true
+	}
 	if identity, ok := relayIdentityFromContext(r.Context()); ok {
 		// ADR-989: the relay connection's platform identity is the caller.
 		// Token-authenticated integrations stay unreachable through it.

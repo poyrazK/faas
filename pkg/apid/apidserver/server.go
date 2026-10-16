@@ -2968,6 +2968,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))
 	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateReplay)))))
 	mux.HandleFunc("GET /v1/outbound/ai-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetReplay)))))
+	// ADR-1360: evaluations before a canary, and access tokens for callers
+	// outside Gregale.
+	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateEvaluation)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListEvaluations)))))
+	mux.HandleFunc("GET /v1/outbound/ai-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetEvaluation)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/ai-access-tokens/{token}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.RevokeAccessToken)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-content-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutContentPolicy)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 

@@ -564,6 +564,13 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-1340: canary rows and export lines.
 		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
 		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
+		// ADR-1360: settled batches, evaluations with their items, and
+		// tokens that expired or were revoked.
+		{`DELETE FROM outbound_ai_batches WHERE state = 'settled' AND settled_at < now() - make_interval(days => $1::int)`, api.OutboundAIBatchRetentionDays},
+		{`DELETE FROM outbound_ai_evaluations WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIEvaluationRetentionDays},
+		{`DELETE FROM outbound_ai_access_tokens
+		   WHERE least(expires_at, COALESCE(revoked_at, expires_at)) < now() - make_interval(days => $1::int)`,
+			api.OutboundAIAccessTokenRetentionDays},
 	} {
 		command, err := b.pool.Exec(ctx, statement.sql, statement.age)
 		if err != nil {

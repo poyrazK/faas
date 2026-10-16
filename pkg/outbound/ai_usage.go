@@ -195,10 +195,18 @@ const AIUsageCallerReplay = "replay"
 // AIUsageCallerModeration aggregates moderation checks (ADR-1340).
 const AIUsageCallerModeration = "moderation"
 
+// AIUsageCallerEvaluation aggregates evaluations' candidate and judge calls
+// (ADR-1360).
+const AIUsageCallerEvaluation = "evaluation"
+
 // appCaller reports whether a settled caller is an app ID, which has app
 // budgets, minute counters and alert webhooks.
 func appCaller(caller string) bool {
-	return caller != AIUsageCallerRuns && caller != AIUsageCallerReplay && caller != AIUsageCallerModeration
+	switch caller {
+	case AIUsageCallerRuns, AIUsageCallerReplay, AIUsageCallerModeration, AIUsageCallerEvaluation, aiBatchReader:
+		return false
+	}
+	return true
 }
 
 // aiUsageOverflowModel collects models beyond the per-day distinct cap.

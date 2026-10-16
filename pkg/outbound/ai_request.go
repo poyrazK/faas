@@ -43,7 +43,12 @@ func readAIRequest(r *http.Request, integration Integration, path string) (*aiRe
 	if integration.AIProvider == "" || r.Method != http.MethodPost || r.Body == nil || r.Body == http.NoBody {
 		return nil, nil, nil
 	}
-	if r.ContentLength > api.OutboundAIRequestBufferMaxBytes {
+	limit := api.OutboundAIRequestBufferMaxBytes
+	if classifyAIEndpoint(integration.AIProvider, path).batch {
+		// ADR-1360: a batch creation is sized from its body.
+		limit = api.OutboundAIBatchBodyMaxBytes
+	}
+	if r.ContentLength > limit {
 		if !multipartRequest(r.Header.Get("Content-Type")) {
 			return nil, nil, nil
 		}
@@ -56,12 +61,12 @@ func readAIRequest(r *http.Request, integration Integration, path string) (*aiRe
 		r.Body = prefixedReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), r.Body), src: r.Body}
 		return nil, multipartFields(r.Header.Get("Content-Type"), prefix), nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, api.OutboundAIRequestBufferMaxBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return nil, nil, err
 	}
 	form := multipartFields(r.Header.Get("Content-Type"), body)
-	if int64(len(body)) > api.OutboundAIRequestBufferMaxBytes {
+	if int64(len(body)) > limit {
 		r.Body = prefixedReadCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), src: r.Body}
 		return nil, form, nil
 	}

@@ -219,6 +219,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// worse than their route's first target.
 	canaryEvaluator := &outbound.AIRouteCanaryEvaluator{Store: backend, Metrics: outboundMetrics, Log: log}
 	go canaryEvaluator.Run(ctx)
+	// ADR-1360: provider batches are settled here once they finish, and
+	// evaluations replay captured calls against a candidate model.
+	batchWorker := &outbound.AIBatchWorker{Backend: backend, Usage: backend, Handler: handler, Log: log}
+	go batchWorker.Run(ctx)
+	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go evaluationWorker.Run(ctx)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err
@@ -241,6 +247,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
 	}
+	publicServer := startPublicServer(cfg, handler, backend, log)
 	var metricsServer *http.Server
 	if cfg.MetricsAddr != "" {
 		metricsMux := http.NewServeMux()
@@ -269,6 +276,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if metricsServer != nil {
 			_ = metricsServer.Shutdown(shutdownCtx)
 		}
+		if publicServer != nil {
+			_ = publicServer.Shutdown(shutdownCtx)
+		}
 		if shutdownRelay != nil {
 			shutdownRelay(shutdownCtx)
 		}
@@ -283,6 +293,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// startPublicServer serves access-token callers on the public listener when
+// one is configured (ADR-1360). It carries no control or metrics endpoints.
+func startPublicServer(cfg *Config, handler *outbound.Handler, tokens outbound.AIAccessTokenStore, log *slog.Logger) *http.Server {
+	if cfg.PublicListenAddr == "" {
+		return nil
+	}
+	public := &outbound.PublicHandler{Handler: handler, Tokens: tokens}
+	server := &http.Server{
+		Addr:              cfg.PublicListenAddr,
+		Handler:           trace.HTTPHandler("outboundd-public", public),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       cfg.ReadTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
+		MaxHeaderBytes:    64 << 10,
+	}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("outboundd: public http", "err", err)
+		}
+	}()
+	log.Info("outbound AI gateway public listener", "addr", cfg.PublicListenAddr)
+	return server
 }
 
 // aiUsagePruner removes AI usage rollups past their retention (ADR-988).

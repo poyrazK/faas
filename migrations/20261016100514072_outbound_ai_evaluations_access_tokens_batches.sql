@@ -104,7 +104,9 @@ CREATE TABLE IF NOT EXISTS outbound_ai_access_tokens (
         CHECK (cardinality(integration_ids) <= 32 AND expires_at > created_at)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS outbound_ai_access_tokens_hash_idx ON outbound_ai_access_tokens (token_hash);
-CREATE UNIQUE INDEX IF NOT EXISTS outbound_ai_access_tokens_name_idx ON outbound_ai_access_tokens (app_id, name);
+-- A revoked token's name can be reused.
+CREATE UNIQUE INDEX IF NOT EXISTS outbound_ai_access_tokens_name_idx ON outbound_ai_access_tokens (app_id, name)
+    WHERE revoked_at IS NULL;
 
 -- A batch's reservation counts in admission until it is settled.
 CREATE TABLE IF NOT EXISTS outbound_ai_batches (
@@ -115,6 +117,9 @@ CREATE TABLE IF NOT EXISTS outbound_ai_batches (
     binding_app_id uuid,
     provider text NOT NULL,
     provider_batch_id text,
+    request_path text NOT NULL,
+    request_query text NOT NULL DEFAULT '',
+    model text NOT NULL,
     requests integer NOT NULL,
     reserved_tokens bigint NOT NULL,
     reserved_cost_millicents bigint NOT NULL,
@@ -130,6 +135,8 @@ CREATE TABLE IF NOT EXISTS outbound_ai_batches (
         CHECK (provider IN ('openai', 'azure_openai', 'anthropic')
                AND (caller IN ('runs') OR caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
                AND (provider_batch_id IS NULL OR (length(provider_batch_id) BETWEEN 1 AND 128 AND provider_batch_id ~ '^[A-Za-z0-9_-]+$'))
+               AND length(request_path) BETWEEN 1 AND 2048 AND length(request_query) <= 2048
+               AND length(model) BETWEEN 1 AND 128 AND model ~ '^[ -~]+$'
                AND requests >= 0 AND reserved_tokens >= 0 AND reserved_cost_millicents >= 0 AND checks >= 0),
     CONSTRAINT outbound_ai_batches_state_chk
         CHECK ((state = 'pending' AND provider_batch_id IS NULL AND settled_at IS NULL)

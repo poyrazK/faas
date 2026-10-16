@@ -237,6 +237,44 @@ func (c *Client) PromoteOutboundAIRouteCanary(ctx context.Context, routeID strin
 	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary/promote", nil, &out)
 }
 
+// CreateOutboundAIEvaluation evaluates a route target against the route's
+// first target (ADR-1360). The evaluation runs later; read it back with
+// GetOutboundAIEvaluation.
+func (c *Client) CreateOutboundAIEvaluation(ctx context.Context, routeID string, req CreateOutboundAIEvaluationRequest) (OutboundAIEvaluation, error) {
+	var out OutboundAIEvaluation
+	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/evaluations", req, &out)
+}
+
+// ListOutboundAIEvaluations lists a route's latest evaluations.
+func (c *Client) ListOutboundAIEvaluations(ctx context.Context, routeID string) (OutboundAIEvaluationList, error) {
+	var out OutboundAIEvaluationList
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/evaluations", nil, &out)
+}
+
+// GetOutboundAIEvaluation reads an evaluation with its samples.
+func (c *Client) GetOutboundAIEvaluation(ctx context.Context, evaluationID string) (OutboundAIEvaluation, error) {
+	var out OutboundAIEvaluation
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-evaluations/"+url.PathEscape(evaluationID), nil, &out)
+}
+
+// CreateOutboundAIAccessToken issues an AI gateway access token for an app
+// (ADR-1360). The secret is returned only here.
+func (c *Client) CreateOutboundAIAccessToken(ctx context.Context, appSlug string, req CreateOutboundAIAccessTokenRequest) (CreatedOutboundAIAccessToken, error) {
+	var out CreatedOutboundAIAccessToken
+	return out, c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens", req, &out)
+}
+
+// ListOutboundAIAccessTokens lists an app's AI gateway access tokens.
+func (c *Client) ListOutboundAIAccessTokens(ctx context.Context, appSlug string) (OutboundAIAccessTokenList, error) {
+	var out OutboundAIAccessTokenList
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens", nil, &out)
+}
+
+// RevokeOutboundAIAccessToken revokes one of an app's access tokens.
+func (c *Client) RevokeOutboundAIAccessToken(ctx context.Context, appSlug, tokenID string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens/"+url.PathEscape(tokenID), nil, nil)
+}
+
 // DeleteOutboundAIRouteCanary ends a route's canary.
 func (c *Client) DeleteOutboundAIRouteCanary(ctx context.Context, routeID string) error {
 	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", nil, nil)

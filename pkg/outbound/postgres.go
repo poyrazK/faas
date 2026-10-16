@@ -395,9 +395,16 @@ func lockAdmissionState(ctx context.Context, tx pgx.Tx, lock admissionLock) (loc
 		WITH expired AS (
 		    DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2 RETURNING lease_id)
 		SELECT count(*)::int, COALESCE(min(expires_at), $2),
-		       COALESCE(sum(ai_reserved_tokens), 0)::bigint,
-		       COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $3), 0)::bigint,
-		       COALESCE(sum(ai_reserved_cost_millicents), 0)::bigint,
+		       -- ADR-1360: a created batch's reservation counts until it settles.
+		       (COALESCE(sum(ai_reserved_tokens), 0) +
+		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,
+		       (COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $3), 0) +
+		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled' AND binding_app_id = $3))::bigint,
+		       (COALESCE(sum(ai_reserved_cost_millicents), 0) +
+		        (SELECT COALESCE(sum(reserved_cost_millicents), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,
 		       COALESCE(bool_or(lease_id = (SELECT circuit_probe_lease_id FROM outbound_admission_state
 		                                     WHERE integration_id = $1)), false)
 		  FROM outbound_admission_leases

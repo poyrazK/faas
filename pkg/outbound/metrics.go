@@ -34,6 +34,8 @@ type Metrics struct {
 	aiContentFindings      *prometheus.CounterVec
 	aiMedia                *prometheus.CounterVec
 	aiReplays              *prometheus.CounterVec
+	aiEvaluations          *prometheus.CounterVec
+	aiBatches              *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
@@ -138,6 +140,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_replays_total",
 			Help: "AI replays the worker finished, by state (done or failed) (ADR-997).",
 		}, []string{"state"}),
+		aiEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_evaluations_total",
+			Help: "AI evaluations the worker finished, by result (pass, fail, or failed) (ADR-1360).",
+		}, []string{"result"}),
+		aiBatches: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_batches_settled_total",
+			Help: "Provider batches the worker settled, by outcome (known, unknown, or error) (ADR-1360).",
+		}, []string{"outcome"}),
 		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_route_canary_calls_total",
 			Help: "Calls of routes with an active canary, by the target tried first (canary or baseline) (ADR-1340).",
@@ -178,6 +188,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiContentFindings,
 		m.aiMedia,
 		m.aiReplays,
+		m.aiEvaluations,
+		m.aiBatches,
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
 		m.aiModeration,
@@ -315,6 +327,22 @@ func (m *Metrics) ObserveAIReplay(state string) {
 		return
 	}
 	m.aiReplays.WithLabelValues(state).Inc()
+}
+
+// ObserveAIEvaluation counts one finished evaluation.
+func (m *Metrics) ObserveAIEvaluation(result string) {
+	if m == nil || m.aiEvaluations == nil {
+		return
+	}
+	m.aiEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIBatchSettled counts one settled provider batch.
+func (m *Metrics) ObserveAIBatchSettled(outcome AIUsageOutcome) {
+	if m == nil || m.aiBatches == nil {
+		return
+	}
+	m.aiBatches.WithLabelValues(string(outcome)).Inc()
 }
 
 func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {

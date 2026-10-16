@@ -36,28 +36,42 @@ type aiModerationOutcome struct {
 	categories []string
 }
 
-// moderationPrincipal marks an in-process moderation call. Only the
-// moderation step creates it.
-type moderationPrincipal struct {
+// internalPrincipal marks an in-process call the gateway makes for an
+// account: a moderation check (ADR-1340), an evaluation's candidate or judge
+// call, or a batch's status and results reads (ADR-1360). caller names its
+// usage; outcome, when set, receives the call's settlement.
+type internalPrincipal struct {
 	accountID string
+	caller    string
+	outcome   *replayOutcome
 }
 
-type moderationPrincipalKey struct{}
+type internalPrincipalKey struct{}
 
-func withModerationPrincipal(ctx context.Context, principal moderationPrincipal) context.Context {
-	return context.WithValue(ctx, moderationPrincipalKey{}, principal)
+func withInternalPrincipal(ctx context.Context, principal internalPrincipal) context.Context {
+	return context.WithValue(ctx, internalPrincipalKey{}, principal)
 }
 
-func moderationPrincipalFromContext(ctx context.Context) (moderationPrincipal, bool) {
-	principal, ok := ctx.Value(moderationPrincipalKey{}).(moderationPrincipal)
+func internalPrincipalFromContext(ctx context.Context) (internalPrincipal, bool) {
+	principal, ok := ctx.Value(internalPrincipalKey{}).(internalPrincipal)
 	return principal, ok
 }
 
-// moderationAllowed admits a moderation call to the account's own customer
-// AI integrations only, as replays are (ADR-997).
-func moderationAllowed(integration Integration, principal moderationPrincipal) bool {
+// internalAllowed admits an internal call to the account's own customer AI
+// integrations only, as replays are (ADR-997).
+func internalAllowed(integration Integration, principal internalPrincipal) bool {
 	return integration.AccountID == principal.accountID && integration.OwnerKind == IntegrationOwnerCustomer &&
 		integration.ProviderAuthMode == ProviderAuthManaged && integration.AIProvider != ""
+}
+
+// internalCallContext is a fresh context for an internal call: it carries
+// none of the parent request's values, such as its relay identity or route
+// attempt, only its trace and cancellation, plus a deadline.
+func internalCallContext(parent context.Context, principal internalPrincipal, timeout time.Duration) (context.Context, context.CancelFunc) {
+	base := oteltrace.ContextWithSpan(context.Background(), oteltrace.SpanFromContext(parent))
+	ctx, cancel := context.WithTimeout(withInternalPrincipal(base, principal), timeout)
+	stop := context.AfterFunc(parent, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 var errModerationUnavailable = errors.New("outbound: the moderation check could not run")
@@ -110,33 +124,23 @@ func (h *Handler) runModeration(ctx context.Context, accountID string, policy ap
 		return nil, errModerationUnavailable
 	}
 	integration, err := h.Resolver.Integration(ctx, policy.IntegrationID)
-	if err != nil || !moderationAllowed(integration, moderationPrincipal{accountID: accountID}) {
+	if err != nil || !internalAllowed(integration, internalPrincipal{accountID: accountID}) {
 		return nil, errModerationUnavailable
 	}
 	attempt, err := buildModerationAttempt(integration, policy, text)
 	if err != nil {
 		return nil, err
 	}
-	// The check carries none of the caller's request values, such as its
-	// relay identity or route attempt: only its trace and cancellation.
-	base := oteltrace.ContextWithSpan(context.Background(), oteltrace.SpanFromContext(ctx))
-	callCtx, cancel := context.WithTimeout(withModerationPrincipal(base, moderationPrincipal{accountID: accountID}),
-		api.OutboundAIModerationCallTimeoutSeconds*time.Second)
-	defer cancel()
-	stop := context.AfterFunc(ctx, cancel)
-	defer stop()
-	request := routeAttemptRequest(&http.Request{Method: http.MethodPost, Header: http.Header{"Content-Type": {"application/json"}}},
-		integration.ID, attempt.path, attempt.rawQuery, attempt.body, true).WithContext(callCtx) //nolint:contextcheck // the check must not inherit the caller's request values; AfterFunc carries its cancellation.
-	recorder := &replayRecorder{header: make(http.Header), now: time.Now}
-	serveReplay(h, recorder, request, attempt.translator)
-	if recorder.aborted || recorder.status < 200 || recorder.status > 299 {
+	call := h.internalCall(ctx, internalPrincipal{accountID: accountID, caller: AIUsageCallerModeration},
+		integration.ID, attempt, api.OutboundAIModerationCallTimeoutSeconds*time.Second)
+	if !call.succeeded() {
 		return nil, errModerationUnavailable
 	}
 	var found []string
 	if policy.Kind == api.OutboundAIModerationKindOpenAI {
-		found, err = openAIModerationCategories(recorder.body)
+		found, err = openAIModerationCategories(call.body)
 	} else {
-		found, err = classifierCategories(recorder.body)
+		found, err = classifierCategories(call.body)
 	}
 	if err != nil {
 		return nil, err

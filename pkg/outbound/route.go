@@ -133,14 +133,26 @@ func parseRoutePath(escapedPath string) (string, string, bool) {
 	return routeID, "/" + rest, true
 }
 
+// routeCallerAccount names the account of a caller that may use routes:
+// a relay caller (ADR-989) or an access token's app (ADR-1360). Their
+// identity is not tied to one integration.
+func routeCallerAccount(ctx context.Context) (string, bool) {
+	if token, ok := accessTokenFromContext(ctx); ok {
+		return token.AccountID, true
+	}
+	if principal, ok := relayPrincipalFromContext(ctx); ok {
+		return principal.accountID(), true
+	}
+	return "", false
+}
+
 // serveRoute tries a route's targets in order through the ordinary
 // integration path, so each attempt keeps its own bindings, budgets,
-// retries and AI accounting. Only relay callers can use routes: their
-// identity is not tied to one integration.
+// retries and AI accounting.
 func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := relayPrincipalFromContext(r.Context())
+	callerAccount, ok := routeCallerAccount(r.Context())
 	if !ok {
-		writeProblem(w, http.StatusForbidden, "outbound_route_requires_relay", "AI routes are available only through GREGALE_OUTBOUND_URL", "")
+		writeProblem(w, http.StatusForbidden, "outbound_route_requires_relay", "AI routes are available only through GREGALE_OUTBOUND_URL or an access token", "")
 		return
 	}
 	routeID, providerPath, ok := parseRoutePath(r.URL.EscapedPath())
@@ -149,7 +161,7 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	route, err := h.Routes.Route(r.Context(), routeID)
-	if errors.Is(err, ErrRouteNotFound) || (err == nil && route.AccountID != principal.accountID()) || (err == nil && len(route.Targets) == 0) {
+	if errors.Is(err, ErrRouteNotFound) || (err == nil && route.AccountID != callerAccount) || (err == nil && len(route.Targets) == 0) {
 		writeProblem(w, http.StatusNotFound, "outbound_route_not_found", "AI route not found", "")
 		return
 	}

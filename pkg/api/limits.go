@@ -996,6 +996,43 @@ const (
 	// first, and the deadline of the check's call.
 	OutboundAIModerationTextMaxBytes       = 32 << 10
 	OutboundAIModerationCallTimeoutSeconds = 10
+	// Batches (ADR-1360): the share of the list price a batch costs; the
+	// largest OpenAI input file read at creation, Anthropic batch body and
+	// JSONL line the gateway parses; how often open batches are polled and
+	// how long one may stay open before it settles at its reservation; how
+	// long an unconfirmed batch keeps its reservation; and how long settled
+	// batches stay.
+	OutboundAIBatchPricePercent               = 50
+	OutboundAIBatchInputMaxBytes        int64 = 256 << 20
+	OutboundAIBatchBodyMaxBytes         int64 = 32 << 20
+	OutboundAIBatchLineMaxBytes               = 4 << 20
+	OutboundAIBatchPollIntervalSeconds        = 60
+	OutboundAIBatchAbandonHours               = 72
+	OutboundAIBatchPendingExpiryMinutes       = 60
+	OutboundAIBatchRetentionDays              = 7
+	// Access tokens (ADR-1360): tokens per app, the longest and default
+	// lifetime, the integrations one token may name, how long outboundd
+	// caches a token check, and how long expired or revoked tokens stay.
+	OutboundAIAccessTokensPerApp         = 20
+	OutboundAIAccessTokenTTLMaxHours     = 2_160
+	OutboundAIAccessTokenTTLDefaultHours = 168
+	OutboundAIAccessTokenIntegrationsMax = 32
+	OutboundAIAccessTokenCacheSeconds    = 30
+	OutboundAIAccessTokenRetentionDays   = 30
+	// Evaluations (ADR-1360): the largest and default sample, the default
+	// loss-rate threshold, evaluations per route and UTC day, how long they
+	// stay, the deadline of one candidate or judge call, how long one may
+	// run before it fails as interrupted, how many samples run at once, and
+	// the share of judge errors above which an evaluation fails.
+	OutboundAIEvaluationSampleMax               = 50
+	OutboundAIEvaluationSampleDefault           = 20
+	OutboundAIEvaluationMaxLossRateDefault      = 20
+	OutboundAIEvaluationsPerDay                 = 20
+	OutboundAIEvaluationRetentionDays           = 30
+	OutboundAIEvaluationCallTimeoutSeconds      = 120
+	OutboundAIEvaluationInterruptedAfterMinutes = 90
+	OutboundAIEvaluationParallelCalls           = 4
+	OutboundAIEvaluationJudgeErrorMaxPercent    = 50
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

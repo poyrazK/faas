@@ -63,7 +63,10 @@ type memoryState struct {
 	contentCaptures int
 	// settledLeases keys today's settlements (ADR-1120).
 	settledLeases map[string]struct{}
-	initialized   bool
+	// batches keep created batches' reservations until they settle
+	// (ADR-1360).
+	batches     map[string]*memoryBatch
+	initialized bool
 }
 
 // memoryAIRequestLogMax bounds the in-process request log.
@@ -483,6 +486,16 @@ func (s *memoryState) inflightReservations(bindingApp, endUser string) memoryInf
 		if endUser != "" && lease.endUser == endUser {
 			out.userTokens += lease.reservedTokens
 			out.userCost += lease.reservedCost
+		}
+	}
+	for _, batch := range s.batches {
+		if batch.settled {
+			continue
+		}
+		out.tokens += batch.batch.ReservedTokens
+		out.cost += batch.batch.ReservedCostMillicents
+		if bindingApp != "" && batch.batch.BindingAppID == bindingApp {
+			out.bindingTokens += batch.batch.ReservedTokens
 		}
 	}
 	return out

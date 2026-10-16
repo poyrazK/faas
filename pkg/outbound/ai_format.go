@@ -57,6 +57,9 @@ type aiEndpoint struct {
 	openAIOutputField string
 	// media marks an image, transcription or speech endpoint (ADR-997).
 	media aiMediaKind
+	// batch marks a batch creation endpoint: it reserves the batch's
+	// estimate and settles when the batch ends (ADR-1360).
+	batch bool
 }
 
 // classifyAIEndpoint maps a provider path to its wire format.
@@ -69,7 +72,8 @@ func classifyAIEndpoint(provider, path string) aiEndpoint {
 		}
 		return endpoint
 	case api.OutboundAIProviderAnthropic:
-		return aiEndpoint{format: aiFormatAnthropic, generation: strings.HasSuffix(path, "/messages")}
+		return aiEndpoint{format: aiFormatAnthropic, generation: strings.HasSuffix(path, "/messages"),
+			batch: strings.HasSuffix(path, "/messages/batches")}
 	case api.OutboundAIProviderGemini:
 		model, verb := modelAndVerb(path)
 		endpoint := aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
@@ -104,6 +108,8 @@ func openAIEndpoint(path string) aiEndpoint {
 		endpoint.media = aiMediaTranscription
 	case strings.HasSuffix(path, "/audio/speech"):
 		endpoint.media = aiMediaSpeech
+	case strings.HasSuffix(path, "/batches"):
+		endpoint.batch = true
 	}
 	return endpoint
 }

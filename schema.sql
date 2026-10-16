@@ -32194,6 +32194,9 @@ CREATE TABLE public.outbound_ai_batches (
     binding_app_id uuid,
     provider text NOT NULL,
     provider_batch_id text,
+    request_path text NOT NULL,
+    request_query text DEFAULT ''::text NOT NULL,
+    model text NOT NULL,
     requests integer NOT NULL,
     reserved_tokens bigint NOT NULL,
     reserved_cost_millicents bigint NOT NULL,
@@ -32206,7 +32209,7 @@ CREATE TABLE public.outbound_ai_batches (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     settled_at timestamp with time zone,
     CONSTRAINT outbound_ai_batches_state_chk CHECK ((((state = 'pending'::text) AND (provider_batch_id IS NULL) AND (settled_at IS NULL)) OR ((state = 'open'::text) AND (provider_batch_id IS NOT NULL) AND (settled_at IS NULL)) OR ((state = 'settled'::text) AND (settled_at IS NOT NULL) AND (outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text])) AND (settled_tokens >= 0) AND (settled_cost_millicents >= 0)))),
-    CONSTRAINT outbound_ai_batches_values_chk CHECK (((provider = ANY (ARRAY['openai'::text, 'azure_openai'::text, 'anthropic'::text])) AND ((caller = 'runs'::text) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)) AND ((provider_batch_id IS NULL) OR (((length(provider_batch_id) >= 1) AND (length(provider_batch_id) <= 128)) AND (provider_batch_id ~ '^[A-Za-z0-9_-]+$'::text))) AND (requests >= 0) AND (reserved_tokens >= 0) AND (reserved_cost_millicents >= 0) AND (checks >= 0)))
+    CONSTRAINT outbound_ai_batches_values_chk CHECK (((provider = ANY (ARRAY['openai'::text, 'azure_openai'::text, 'anthropic'::text])) AND ((caller = 'runs'::text) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)) AND ((provider_batch_id IS NULL) OR (((length(provider_batch_id) >= 1) AND (length(provider_batch_id) <= 128)) AND (provider_batch_id ~ '^[A-Za-z0-9_-]+$'::text))) AND ((length(request_path) >= 1) AND (length(request_path) <= 2048)) AND (length(request_query) <= 2048) AND ((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text) AND (requests >= 0) AND (reserved_tokens >= 0) AND (reserved_cost_millicents >= 0) AND (checks >= 0)))
 );
 
 
@@ -51706,7 +51709,7 @@ CREATE UNIQUE INDEX outbound_ai_access_tokens_hash_idx ON public.outbound_ai_acc
 -- Name: outbound_ai_access_tokens_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX outbound_ai_access_tokens_name_idx ON public.outbound_ai_access_tokens USING btree (app_id, name);
+CREATE UNIQUE INDEX outbound_ai_access_tokens_name_idx ON public.outbound_ai_access_tokens USING btree (app_id, name) WHERE (revoked_at IS NULL);
 
 
 --

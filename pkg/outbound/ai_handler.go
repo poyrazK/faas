@@ -85,7 +85,8 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 // plan picks the call's wire format and the model to report when the
 // response names none (ADR-991).
 func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest, plan *aiCallPlan) *aiUsageObserver {
-	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil {
+	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil ||
+		(plan != nil && plan.endpoint.batch) {
 		return nil
 	}
 	var observer *aiUsageObserver
@@ -98,8 +99,8 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 	}
 	observer.applyHeaders(resp.Header)
 	_, replaying := replayPrincipalFromContext(r.Context())
-	_, moderating := moderationPrincipalFromContext(r.Context())
-	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !moderating {
+	_, internal := internalPrincipalFromContext(r.Context())
+	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !internal {
 		observer.capture = newAIContentCapture(ai, resp.Header.Get("Content-Type"))
 		if plan != nil {
 			observer.capture.content.RequestPath = plan.path
@@ -198,10 +199,13 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	caller := appID
 	replay, replaying := replayPrincipalFromContext(ctx)
-	_, moderating := moderationPrincipalFromContext(ctx)
+	internal, isInternal := internalPrincipalFromContext(ctx)
 	switch {
-	case moderating:
-		caller = AIUsageCallerModeration
+	case isInternal:
+		caller = internal.caller
+		if internal.outcome != nil {
+			*internal.outcome = replayOutcome{settled: true, outcome: outcome, usage: usage, cost: cost}
+		}
 	case replaying:
 		caller = AIUsageCallerReplay
 		if replay.outcome != nil {
