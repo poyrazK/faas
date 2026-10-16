@@ -297,7 +297,7 @@ export class ProjectsService {
     deploymentAttemptId: string,
     formData: ProjectApplyRequest,
     /**
-     * Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
+     * Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
      */
     projectAddServices?: 'required',
     /**
@@ -2848,8 +2848,17 @@ export class ProjectsService {
     promotion,
     requestBody,
   }: {
+    /**
+     * Project slug owning the abort request.
+     */
     slug: string,
+    /**
+     * Destination environment of the promotion being aborted.
+     */
     environment: string,
+    /**
+     * Durable promotion identifier to abort.
+     */
     promotion: string,
     requestBody: ProjectPromotionControlRequest,
   }): CancelablePromise<ProjectPromotionControl> {
@@ -2878,8 +2887,8 @@ export class ProjectsService {
   }
   /**
    * Retry guarded restoration of a blocked environment promotion.
-   * A durable generation-fenced operator decision. Before cutover, abort preserves destination intent and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline health and worker startup proof before atomic restoration. Recovery never rebuilds or extends retention. Migration incidents use recover-migration. Identical request replay returns that decision's durable receipt even after a newer decision.
-   * @returns ProjectPromotionControl Terminal operator decision acknowledgement.
+   * Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline health and worker startup proof are required before atomic restoration. The retained baseline is reused without rebuilding or extending retention; migration incidents require recover-migration. An identical request replays its original durable receipt even after a newer decision.
+   * @returns ProjectPromotionControl Terminal acknowledgement of the restoration recovery decision.
    * @throws ApiError
    */
   public static recoverProjectEnvironmentPromotion({
@@ -2888,8 +2897,17 @@ export class ProjectsService {
     promotion,
     requestBody,
   }: {
+    /**
+     * Project slug owning the restoration recovery request.
+     */
     slug: string,
+    /**
+     * Destination environment receiving the restored baseline.
+     */
     environment: string,
+    /**
+     * Durable promotion identifier whose blocked restoration is being retried.
+     */
     promotion: string,
     requestBody: ProjectPromotionControlRequest,
   }): CancelablePromise<ProjectPromotionControl> {
@@ -2907,7 +2925,7 @@ export class ProjectsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `Stale generation, reused request identity, unsupported phase, or changed destination intent; inspect promotion status.`,
+        409: `Recovery rejected because the inspected generation, request identity, phase or destination intent no longer permits restoration.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -2928,8 +2946,17 @@ export class ProjectsService {
     promotion,
     requestBody,
   }: {
+    /**
+     * Project slug owning the migration recovery request.
+     */
     slug: string,
+    /**
+     * Destination environment whose migration was inspected.
+     */
     environment: string,
+    /**
+     * Durable promotion identifier with the interrupted migration task.
+     */
     promotion: string,
     requestBody: ProjectPromotionMigrationRecoveryRequest,
   }): CancelablePromise<ProjectPromotionMigrationRecovery> {

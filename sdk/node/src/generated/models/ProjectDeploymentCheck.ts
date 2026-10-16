@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Public deployment readiness finding with its status, observed limits and suggested remedy.
+ */
 export type ProjectDeploymentCheck = {
   code: string;
   status: 'passed' | 'blocked' | 'unknown';

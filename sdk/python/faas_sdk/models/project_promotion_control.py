@@ -26,7 +26,10 @@ T = TypeVar("T", bound="ProjectPromotionControl")
 
 @_attrs_define
 class ProjectPromotionControl:
+    """Durable promotion abort or restoration decision, including its operator, deadline and resolution."""
+
     request: ProjectPromotionControlRequest
+    """Stable operator request identity and expected promotion checkpoint generation."""
     action: ProjectPromotionControlAction
     status: ProjectPromotionControlStatus
     operator_account_id: str

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectDeploymentCheck } from './ProjectDeploymentCheck.js';
+/**
+ * Metadata-only project deployment readiness report tied to the inspected environment and state hash.
+ */
 export type ProjectDeploymentReadiness = {
   schema_version: 1;
   project_slug: string;

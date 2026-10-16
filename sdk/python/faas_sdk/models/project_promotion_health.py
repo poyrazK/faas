@@ -52,11 +52,13 @@ class ProjectPromotionHealth:
     """Durable capacity wait receipt. Queue time does not consume the execution health window. An absent started_at
     means execution has never started."""
     control: ProjectPromotionControl | Unset = UNSET
+    """Durable promotion abort or restoration decision, including its operator, deadline and resolution."""
     worker: ProjectReleaseWorker | Unset = UNSET
     """One graph-owned production push worker, its immutable binding intent and runtime admission evidence."""
     worker_health: ProjectWorkerHealth | Unset = UNSET
     """Opt-in real production queue delivery verification; absence of traffic never proves health."""
     recovery: ProjectPromotionMigrationRecovery | Unset = UNSET
+    """Durable acknowledgement and deadline for an operator's promotion migration recovery decision."""
     migration: ProjectReleaseCommand | Unset = UNSET
     """Planned backward-compatible migration identity and durable task outcome. Task logs remain on the app-task
     resource."""

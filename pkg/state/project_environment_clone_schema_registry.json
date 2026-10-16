@@ -9744,6 +9744,15 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_promotion_controls",
+    "kind": "operational",
+    "columns": [
+      "payload",
+      "promotion_id",
+      "request_id"
+    ]
+  },
+  {
     "table": "project_environment_promotion_health",
     "kind": "operational",
     "columns": [
@@ -9752,7 +9761,9 @@
       "phase",
       "payload",
       "lease_token",
-      "lease_until"
+      "lease_until",
+      "last_claimed_at",
+      "next_check_at"
     ]
   },
   {
@@ -10019,6 +10030,18 @@
       "task_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_release_additions",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempt_id",
+      "dormant",
+      "fingerprint",
+      "project_id"
+    ]
   },
   {
     "table": "project_release_canaries",

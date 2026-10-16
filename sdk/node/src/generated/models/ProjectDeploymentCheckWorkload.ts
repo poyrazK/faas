@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { PlanWorkload } from './PlanWorkload.js';
+/**
+ * Planned workload and provided key names used by metadata-only deployment readiness checks.
+ */
 export type ProjectDeploymentCheckWorkload = {
   workload: PlanWorkload;
   command_shell?: boolean;

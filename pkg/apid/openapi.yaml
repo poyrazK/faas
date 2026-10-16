@@ -29251,7 +29251,7 @@ paths:
         - name: Project-Add-Services
           in: header
           required: false
-          description: Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
+          description: Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
           schema: { type: string, enum: [required] }
         - name: Project-Stabilization
           in: header
@@ -31045,9 +31045,9 @@ paths:
 
   /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort:
     parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } }
-      - { name: environment, in: path, required: true, schema: { type: string } }
-      - { name: promotion, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: slug, in: path, required: true, description: Project slug owning the abort request., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Destination environment of the promotion being aborted., schema: { type: string } }
+      - { name: promotion, in: path, required: true, description: Durable promotion identifier to abort., schema: { type: string, format: uuid } }
     post:
       tags: [projects]
       operationId: abortProjectEnvironmentPromotion
@@ -31077,14 +31077,14 @@ paths:
 
   /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover:
     parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } }
-      - { name: environment, in: path, required: true, schema: { type: string } }
-      - { name: promotion, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: slug, in: path, required: true, description: Project slug owning the restoration recovery request., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Destination environment receiving the restored baseline., schema: { type: string } }
+      - { name: promotion, in: path, required: true, description: Durable promotion identifier whose blocked restoration is being retried., schema: { type: string, format: uuid } }
     post:
       tags: [projects]
       operationId: recoverProjectEnvironmentPromotion
       summary: Retry guarded restoration of a blocked environment promotion.
-      description: A durable generation-fenced operator decision. Before cutover, abort preserves destination intent and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline health and worker startup proof before atomic restoration. Recovery never rebuilds or extends retention. Migration incidents use recover-migration. Identical request replay returns that decision's durable receipt even after a newer decision.
+      description: Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline health and worker startup proof are required before atomic restoration. The retained baseline is reused without rebuilding or extending retention; migration incidents require recover-migration. An identical request replays its original durable receipt even after a newer decision.
       requestBody:
         required: true
         content:
@@ -31092,26 +31092,26 @@ paths:
             schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
       responses:
         '200':
-          description: Terminal operator decision acknowledgement.
+          description: Terminal acknowledgement of the restoration recovery decision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
         '202':
-          description: Restoration requested; fresh baseline checks are pending.
+          description: Recovery accepted; baseline health and worker startup checks are pending.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: 'Stale generation, reused request identity, unsupported phase, or changed destination intent; inspect promotion status.' }
+        '409': { description: 'Recovery rejected because the inspected generation, request identity, phase or destination intent no longer permits restoration.' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration:
     parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } }
-      - { name: environment, in: path, required: true, schema: { type: string } }
-      - { name: promotion, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: slug, in: path, required: true, description: Project slug owning the migration recovery request., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Destination environment whose migration was inspected., schema: { type: string } }
+      - { name: promotion, in: path, required: true, description: Durable promotion identifier with the interrupted migration task., schema: { type: string, format: uuid } }
     post:
       tags: [projects]
       operationId: recoverProjectEnvironmentPromotionMigration
@@ -81202,6 +81202,7 @@ components:
           enum: [source_sha256, image_digest, commit_sha, deployment_id]
 
     ProjectPromotionMigrationRecoveryRequest:
+      description: Operator inspection evidence and captured task identity for resuming or resolving a promotion migration incident.
       type: object
       additionalProperties: false
       required: [request_id, expected_task_id, expected_generation, action, database_state_checked, schema_compatible, evidence_hash]
@@ -81224,6 +81225,7 @@ components:
         evidence_hash: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA256 reference to private inspection evidence. Contents are not uploaded. }
 
     ProjectPromotionMigrationRecovery:
+      description: Durable acknowledgement and deadline for an operator's promotion migration recovery decision.
       type: object
       required: [request, status, operator_account_id, requested_at, deadline]
       properties:
@@ -81274,6 +81276,7 @@ components:
           items: { type: string }
 
     ProjectDeploymentCheckWorkload:
+      description: Planned workload and provided key names used by metadata-only deployment readiness checks.
       type: object
       additionalProperties: false
       required: [workload]
@@ -81291,6 +81294,7 @@ components:
           items: { type: string }
 
     ProjectDeploymentCheck:
+      description: Public deployment readiness finding with its status, observed limits and suggested remedy.
       type: object
       required: [code, status, message]
       properties:
@@ -81303,6 +81307,7 @@ components:
         limit: { type: integer }
 
     ProjectDeploymentReadiness:
+      description: Metadata-only project deployment readiness report tied to the inspected environment and state hash.
       type: object
       required: [schema_version, project_slug, environment, status, checked_at, runtime_checked, checks]
       properties:
@@ -81339,6 +81344,7 @@ components:
           items: { $ref: '#/components/schemas/ProjectReleaseProbe' }
 
     ProjectPromotionControlRequest:
+      description: Stable operator request identity and expected promotion checkpoint generation.
       type: object
       additionalProperties: false
       required: [request_id, expected_generation]
@@ -81347,6 +81353,7 @@ components:
         expected_generation: { type: integer, format: int64, minimum: 1 }
 
     ProjectPromotionControl:
+      description: Durable promotion abort or restoration decision, including its operator, deadline and resolution.
       type: object
       required: [request, action, status, operator_account_id, requested_at, deadline]
       properties:
@@ -81406,6 +81413,7 @@ components:
           items: { $ref: '#/components/schemas/ProjectReleaseProbeEvidence' }
 
     ProjectPromotionWorkerHealth:
+      description: Captured queue worker policy paired with observed delivery health for one promotion member.
       type: object
       required: [worker, health]
       properties:
@@ -81413,6 +81421,7 @@ components:
         health: { $ref: '#/components/schemas/ProjectWorkerHealth' }
 
     ProjectEnvironmentPromotionSecretPreviewRequest:
+      description: Environment promotion preview inputs referencing staged immutable secrets without plaintext values.
       type: object
       additionalProperties: false
       required: [from_environment, sync_config, verify, secrets]

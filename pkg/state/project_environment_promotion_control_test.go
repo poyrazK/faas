@@ -259,8 +259,8 @@ func testPromotionControlWorker(t *testing.T, factory func(*testing.T) Store) {
 			_, _, err := ResolveInvocationVersion(ctx, f.store, before)
 			requirePromotionSnapshot(t, err)
 			SeedProjectWorkerJobSamplesForTest(t, f.store, worker.ID, f.account.ID, f.view.Worker.BindingID, f.previous[1].ID, time.Now().Add(-time.Second), false)
+			promotionWorkerRound(t, f)
 			h := promotionWorkerRound(t, f)
-			h = promotionWorkerRound(t, f)
 			if h.Phase != "cutover" {
 				t.Fatal("worker not qualified", h)
 			}

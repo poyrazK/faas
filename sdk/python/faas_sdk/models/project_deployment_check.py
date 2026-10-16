@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ProjectDeploymentCheck")
 
 @_attrs_define
 class ProjectDeploymentCheck:
+    """Public deployment readiness finding with its status, observed limits and suggested remedy."""
+
     code: str
     status: ProjectDeploymentCheckStatus
     message: str

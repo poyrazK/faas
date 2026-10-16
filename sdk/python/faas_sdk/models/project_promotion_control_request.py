@@ -10,6 +10,8 @@ T = TypeVar("T", bound="ProjectPromotionControlRequest")
 
 @_attrs_define
 class ProjectPromotionControlRequest:
+    """Stable operator request identity and expected promotion checkpoint generation."""
+
     request_id: str
     expected_generation: int
 

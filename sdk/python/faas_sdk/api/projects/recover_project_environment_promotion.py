@@ -103,17 +103,17 @@ def sync_detailed(
 ) -> Response[Any | Problem | ProjectPromotionControl]:
     """Retry guarded restoration of a blocked environment promotion.
 
-     A durable generation-fenced operator decision. Before cutover, abort preserves destination intent
-    and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline
-    health and worker startup proof before atomic restoration. Recovery never rebuilds or extends
-    retention. Migration incidents use recover-migration. Identical request replay returns that
-    decision's durable receipt even after a newer decision.
+     Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline
+    health and worker startup proof are required before atomic restoration. The retained baseline is
+    reused without rebuilding or extending retention; migration incidents require recover-migration. An
+    identical request replays its original durable receipt even after a newer decision.
 
     Args:
         slug (str):
         environment (str):
         promotion (UUID):
-        body (ProjectPromotionControlRequest):
+        body (ProjectPromotionControlRequest): Stable operator request identity and expected
+            promotion checkpoint generation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,17 +147,17 @@ def sync(
 ) -> Any | Problem | ProjectPromotionControl | None:
     """Retry guarded restoration of a blocked environment promotion.
 
-     A durable generation-fenced operator decision. Before cutover, abort preserves destination intent
-    and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline
-    health and worker startup proof before atomic restoration. Recovery never rebuilds or extends
-    retention. Migration incidents use recover-migration. Identical request replay returns that
-    decision's durable receipt even after a newer decision.
+     Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline
+    health and worker startup proof are required before atomic restoration. The retained baseline is
+    reused without rebuilding or extending retention; migration incidents require recover-migration. An
+    identical request replays its original durable receipt even after a newer decision.
 
     Args:
         slug (str):
         environment (str):
         promotion (UUID):
-        body (ProjectPromotionControlRequest):
+        body (ProjectPromotionControlRequest): Stable operator request identity and expected
+            promotion checkpoint generation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,17 +186,17 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | ProjectPromotionControl]:
     """Retry guarded restoration of a blocked environment promotion.
 
-     A durable generation-fenced operator decision. Before cutover, abort preserves destination intent
-    and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline
-    health and worker startup proof before atomic restoration. Recovery never rebuilds or extends
-    retention. Migration incidents use recover-migration. Identical request replay returns that
-    decision's durable receipt even after a newer decision.
+     Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline
+    health and worker startup proof are required before atomic restoration. The retained baseline is
+    reused without rebuilding or extending retention; migration incidents require recover-migration. An
+    identical request replays its original durable receipt even after a newer decision.
 
     Args:
         slug (str):
         environment (str):
         promotion (UUID):
-        body (ProjectPromotionControlRequest):
+        body (ProjectPromotionControlRequest): Stable operator request identity and expected
+            promotion checkpoint generation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -228,17 +228,17 @@ async def asyncio(
 ) -> Any | Problem | ProjectPromotionControl | None:
     """Retry guarded restoration of a blocked environment promotion.
 
-     A durable generation-fenced operator decision. Before cutover, abort preserves destination intent
-    and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline
-    health and worker startup proof before atomic restoration. Recovery never rebuilds or extends
-    retention. Migration incidents use recover-migration. Identical request replay returns that
-    decision's durable receipt even after a newer decision.
+     Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline
+    health and worker startup proof are required before atomic restoration. The retained baseline is
+    reused without rebuilding or extending retention; migration incidents require recover-migration. An
+    identical request replays its original durable receipt even after a newer decision.
 
     Args:
         slug (str):
         environment (str):
         promotion (UUID):
-        body (ProjectPromotionControlRequest):
+        body (ProjectPromotionControlRequest): Stable operator request identity and expected
+            promotion checkpoint generation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

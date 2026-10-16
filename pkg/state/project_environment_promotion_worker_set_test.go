@@ -101,8 +101,8 @@ func testPromotionWorkerSet(t *testing.T, factory func(*testing.T) Store) {
 						omittedBaseline = len(f.apps) - 1
 					}
 					seedPromotionWorkerSet(t, f, omitted, omittedBaseline)
+					promotionWorkerRound(t, f)
 					h := promotionWorkerRound(t, f)
-					h = promotionWorkerRound(t, f)
 					if scenario == "last_startup_missing" || scenario == "last_baseline_missing" {
 						if h.Phase != "preflight" || h.Verdict != "unknown" {
 							t.Fatal("one missing worker startup or baseline allowed cutover", h)

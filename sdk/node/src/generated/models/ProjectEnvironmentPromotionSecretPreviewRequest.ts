@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Environment promotion preview inputs referencing staged immutable secrets without plaintext values.
+ */
 export type ProjectEnvironmentPromotionSecretPreviewRequest = {
   from_environment: string;
   sync_config: boolean;

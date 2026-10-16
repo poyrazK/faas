@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Operator inspection evidence and captured task identity for resuming or resolving a promotion migration incident.
+ */
 export type ProjectPromotionMigrationRecoveryRequest = {
   request_id: string;
   expected_task_id: string;

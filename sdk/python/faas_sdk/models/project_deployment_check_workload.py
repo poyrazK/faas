@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProjectDeploymentCheckWorkload")
 
 @_attrs_define
 class ProjectDeploymentCheckWorkload:
+    """Planned workload and provided key names used by metadata-only deployment readiness checks."""
+
     workload: PlanWorkload
     """One discovered unit of work. Mirrors reposcan.Workload."""
     command_shell: bool | Unset = UNSET

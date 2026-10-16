@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProjectPromotionWorkerHealth")
 
 @_attrs_define
 class ProjectPromotionWorkerHealth:
+    """Captured queue worker policy paired with observed delivery health for one promotion member."""
+
     worker: ProjectReleaseWorker
     """One graph-owned production push worker, its immutable binding intent and runtime admission evidence."""
     health: ProjectWorkerHealth

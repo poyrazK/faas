@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProjectEnvironmentPromotionSecretPreviewRequest")
 
 @_attrs_define
 class ProjectEnvironmentPromotionSecretPreviewRequest:
+    """Environment promotion preview inputs referencing staged immutable secrets without plaintext values."""
+
     from_environment: str
     sync_config: bool
     verify: bool

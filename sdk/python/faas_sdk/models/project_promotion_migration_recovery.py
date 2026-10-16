@@ -23,7 +23,11 @@ T = TypeVar("T", bound="ProjectPromotionMigrationRecovery")
 
 @_attrs_define
 class ProjectPromotionMigrationRecovery:
+    """Durable acknowledgement and deadline for an operator's promotion migration recovery decision."""
+
     request: ProjectPromotionMigrationRecoveryRequest
+    """Operator inspection evidence and captured task identity for resuming or resolving a promotion migration
+    incident."""
     status: ProjectPromotionMigrationRecoveryStatus
     operator_account_id: UUID
     requested_at: datetime.datetime

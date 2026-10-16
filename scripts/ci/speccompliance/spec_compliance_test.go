@@ -949,6 +949,17 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 		if routeExclude[r] {
 			continue
 		}
+		const promotionControl = "POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}"
+		if r == promotionControl {
+			actions, err := scanPromotionControlActions(filepath.Join(root, "pkg", "apid", "promotion", "control.go"))
+			if err != nil {
+				t.Fatalf("scan promotion control actions: %v", err)
+			}
+			for _, action := range actions {
+				kept = append(kept, strings.TrimSuffix(r, "{action}")+action)
+			}
+			continue
+		}
 		kept = append(kept, r)
 	}
 	sort.Strings(kept)
@@ -1179,6 +1190,17 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "project_release_configuration.go"),
 		filepath.Join(root, "pkg", "api", "project_release_command.go"),
 		filepath.Join(root, "pkg", "api", "project_release_worker.go"),
+		filepath.Join(root, "pkg", "api", "project_release_additions.go"),
+		filepath.Join(root, "pkg", "api", "project_release_control.go"),
+		filepath.Join(root, "pkg", "api", "project_release_secrets.go"),
+		filepath.Join(root, "pkg", "api", "project_release_stabilization.go"),
+		filepath.Join(root, "pkg", "api", "project_migration_recovery.go"),
+		filepath.Join(root, "pkg", "api", "project_promotion_admission.go"),
+		filepath.Join(root, "pkg", "api", "project_promotion_control.go"),
+		filepath.Join(root, "pkg", "api", "project_promotion_health.go"),
+		filepath.Join(root, "pkg", "api", "project_promotion_migration_recovery.go"),
+		filepath.Join(root, "pkg", "api", "project_promotion_secrets.go"),
+		filepath.Join(root, "pkg", "api", "deployment_readiness.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "object_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_lock.go"),
@@ -1383,6 +1405,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
+	// This public SDK schema names an inline Go map. Verify its actual wire
+	// shape before including it in both directions of schema parity.
+	checkReleaseSecretVersionMap(t, root, spec)
+	dtos["ProjectReleaseSecretVersionMap"] = map[string]bool{}
 	// adr: 566 — financial domain structs are embedded directly in the API.
 	// Check their actual JSON fields rather than excluding their schemas.
 	financialDTOs, err := scanDTOs([]string{

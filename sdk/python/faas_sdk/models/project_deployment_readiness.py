@@ -26,6 +26,8 @@ T = TypeVar("T", bound="ProjectDeploymentReadiness")
 
 @_attrs_define
 class ProjectDeploymentReadiness:
+    """Metadata-only project deployment readiness report tied to the inspected environment and state hash."""
+
     schema_version: ProjectDeploymentReadinessSchemaVersion
     project_slug: str
     environment: str

@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ProjectPromotionMigrationRecoveryRequest")
 
 @_attrs_define
 class ProjectPromotionMigrationRecoveryRequest:
+    """Operator inspection evidence and captured task identity for resuming or resolving a promotion migration incident."""
+
     request_id: str
     expected_task_id: UUID
     expected_generation: int

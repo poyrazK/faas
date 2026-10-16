@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectPromotionControlRequest } from './ProjectPromotionControlRequest.js';
+/**
+ * Durable promotion abort or restoration decision, including its operator, deadline and resolution.
+ */
 export type ProjectPromotionControl = {
   request: ProjectPromotionControlRequest;
   action: 'abort' | 'recover';

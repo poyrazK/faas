@@ -103,6 +103,12 @@ func pinReleaseSecretsDB(ctx context.Context, db sqlc.DBTX, deployment string, r
 func candidateReleaseSecretsDB(ctx context.Context, db sqlc.DBTX, d Deployment) ([]releaseSecretVersion, bool, error) {
 	if d.releaseConfigAttempt == "" {
 		owner, err := sqlc.New().ReleaseConfigurationCandidateOwner(ctx, db, d.AppID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// createDeployment already locked an active parent app. The owner
+			// query additionally requires project membership; standalone apps
+			// have no project release secret snapshot to inherit.
+			return nil, false, nil
+		}
 		if err != nil {
 			return nil, false, mapErr(err)
 		}
