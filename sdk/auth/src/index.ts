@@ -227,6 +227,17 @@ export function createAuthClient(options: AuthClientOptions) {
     async signInWithMagicLink(input: { email: string; redirectTo?: string; createUser?: boolean } & Captcha): Promise<void> {
       await call('POST', withRedirect('/auth/v1/otp', input.redirectTo), { body: { email: input.email, create_user: input.createUser ?? false, ...captcha(input) } })
     },
+    /**
+     * Texts a one-time code to phone, with its country code (+447700900123).
+     * createUser (default false) lets a new number sign up.
+     */
+    async signInWithPhone(input: { phone: string; createUser?: boolean } & Captcha): Promise<void> {
+      await call('POST', '/auth/v1/otp', { body: { phone: input.phone, channel: 'sms', create_user: input.createUser ?? false, ...captcha(input) } })
+    },
+    /** Completes a phone sign-in with the texted code. */
+    async verifyPhone(input: { phone: string; code: string }): Promise<Session> {
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/verify', { body: { type: 'sms', phone: input.phone, token: input.code } })), 'SIGNED_IN')
+    },
     /** Signs in with a passkey; the browser asks the user to choose one. */
     async signInWithPasskey(input: Captcha = {}): Promise<Session> {
       const { challenge_id, options } = await call<{ challenge_id: string; options: CredentialOptionsJSON }>('POST', '/auth/v1/passkeys/authentication/options', { body: captcha(input) })

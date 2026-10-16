@@ -1558,7 +1558,7 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
-			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}},
+			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for scripts; crons rm does not prompt", Bool: true}}},
 			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale crons run --app my-api --interactive", "gregale crons run <cron-id>"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a task, review and confirm one manual run, then follow its request", Bool: true},
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
@@ -4165,6 +4165,10 @@ var cliCommands = []cliCommand{
 				{Name: "captcha-site-key", Value: "KEY", Short: "the CAPTCHA provider's site key (public)"},
 				{Name: "captcha-secret-stdin", Short: "read the CAPTCHA provider's secret key from stdin (prompted on a terminal)"},
 				{Name: "activity-retention", Value: "DAYS", Short: "days to keep sign-in activity, or forever"},
+				{Name: "sms", Value: "PROVIDER", Short: "phone sign-in by text message through your own SMS account, or off", ClosedSet: []string{"twilio", "twilio_verify", "messagebird", "textlocal", "vonage", "off"}},
+				{Name: "sms-account", Value: "ID", Short: "Twilio account SID or Vonage API key"},
+				{Name: "sms-sender", Value: "SENDER", Short: "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"},
+				{Name: "sms-secret-stdin", Short: "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{

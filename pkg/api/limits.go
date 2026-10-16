@@ -10571,6 +10571,10 @@ const (
 	AuthEventLeaseSeconds      = 120
 	AuthEventMaxBackoffSeconds = 3600
 	AuthEventRetentionSeconds  = 3 * 24 * 3600
+	// AuthSMSCodeSeconds is how long a texted phone sign-in code stays valid
+	// unless the owner sets GOTRUE_SMS_OTP_EXP; GoTrue's own 60 seconds can
+	// expire before a delayed text arrives.
+	AuthSMSCodeSeconds = 300
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app

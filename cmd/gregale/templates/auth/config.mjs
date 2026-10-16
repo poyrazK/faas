@@ -1,14 +1,20 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300 })
 
 import { createPrivateKey } from 'node:crypto'
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
 
-// Customers configure sign-in providers, MFA, password rules and CAPTCHA by
-// setting these GoTrue variables as app secrets. Everything else is owned by
-// Gregale; any other GOTRUE_ variable fails startup instead of being ignored.
-const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_', 'GOTRUE_PASSKEY_']
+// Customers configure sign-in providers, MFA, password rules, CAPTCHA and
+// SMS by setting these GoTrue variables as app secrets. Everything else is
+// owned by Gregale; any other GOTRUE_ variable fails startup instead of being
+// ignored.
+const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_', 'GOTRUE_PASSKEY_', 'GOTRUE_SMS_']
+
+// SMS services GoTrue v2.197.0 sends phone sign-in codes through, with the
+// customer's own account. Mirrored by cmd/gregale
+// (TestAuthTemplateSettingsContract).
+export const smsProviders = Object.freeze(['twilio', 'twilio_verify', 'messagebird', 'textlocal', 'vonage'])
 
 // OAuth providers `gregale auth providers` configures; GoTrue v2.197.0 names.
 // Mirrored by cmd/gregale (TestAuthTemplateSettingsContract).
@@ -215,6 +221,7 @@ export function runtimeConfig(env) {
   }
   const email = emailConfig(env)
   const branding = brandingConfig(env, site)
+  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name))
   const captcha = captchaConfig(env)
   const retention = env.AUTH_AUDIT_RETENTION_DAYS ?? ''
   if (retention !== '' && (!/^[1-9][0-9]{0,3}$/.test(retention) || Number(retention) > limits.auditRetentionMaxDays)) throw new Error(`AUTH_AUDIT_RETENTION_DAYS must be 1 to ${limits.auditRetentionMaxDays}`)
@@ -247,7 +254,21 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },
     branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
     captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,
+    phone: { enabled: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true', provider: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true' ? g.GOTRUE_SMS_PROVIDER : null },
     keys,
+  }
+}
+
+// smsEnv checks phone sign-in's provider. Unless the owner set them, codes
+// last five minutes instead of GoTrue's 60 seconds, which a delayed text
+// can outlast, and the message names the app. GoTrue parses the message as a
+// Go template, so braces are dropped from the name.
+export function smsEnv(passthrough, appName) {
+  if (passthrough.GOTRUE_EXTERNAL_PHONE_ENABLED !== 'true') return {}
+  if (!smsProviders.includes(passthrough.GOTRUE_SMS_PROVIDER)) throw new Error(`GOTRUE_SMS_PROVIDER must be one of ${smsProviders.join(', ')} when phone sign-in is on`)
+  return {
+    ...(passthrough.GOTRUE_SMS_OTP_EXP ? {} : { GOTRUE_SMS_OTP_EXP: String(limits.smsCodeSeconds) }),
+    ...(passthrough.GOTRUE_SMS_TEMPLATE ? {} : { GOTRUE_SMS_TEMPLATE: `Your ${appName.replace(/[{}]/g, '')} code is {{ .Code }}` }),
   }
 }
 
