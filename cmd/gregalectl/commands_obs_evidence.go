@@ -72,5 +72,17 @@ func writeObsEvidenceHuman(w io.Writer, response api.ObsIncidentEvidenceResponse
 	} else if item.Type == "platform_alert" {
 		_, _ = fmt.Fprintln(w, "triage_history=unknown")
 	}
+	if response.Suppression != nil {
+		_, _ = fmt.Fprintf(w, "suppression=%s silenced=%s inhibited=%s reason=%s (current Alertmanager observation; delivery unknown)\n", response.Suppression.State, suppressionBool(response.Suppression.Silenced), suppressionBool(response.Suppression.Inhibited), response.Suppression.Reason)
+	} else if item.Type == "platform_alert" {
+		_, _ = fmt.Fprintln(w, "suppression=unknown")
+	}
 	_, _ = fmt.Fprintf(w, "action_path=%s audit_path=%s runbook_url=%s\n", item.ActionPath, item.AuditPath, item.RunbookURL)
+}
+
+func suppressionBool(value *bool) string {
+	if value == nil {
+		return "unknown"
+	}
+	return strconv.FormatBool(*value)
 }

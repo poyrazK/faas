@@ -309,6 +309,16 @@ func resolvePrometheusURL(getenv func(string) string, boxRole role.Role) string 
 	return ""
 }
 
+func resolveAlertmanagerURL(getenv func(string) string, boxRole role.Role) string {
+	if value := getenv("FAAS_ALERTMANAGER_URL"); value != "" {
+		return value
+	}
+	if boxRole == role.RoleControlPlane {
+		return "http://127.0.0.1:9094"
+	}
+	return ""
+}
+
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test
 // seam (deps.getenv). Empty string disables the listener (the
 // deliberately-distinct envOr path: envOr() collapses empty→unset→
@@ -1756,6 +1766,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
+	srv.WithAlertmanagerObservability(resolveAlertmanagerURL(deps.getenv, cfg.Role))
 	// ADR-847: synthetic route probes stay off unless the public origin the
 	// probes enter through is configured.
 	if origin := strings.TrimSpace(deps.getenv("FAAS_ROUTE_PROBE_URL")); origin != "" {

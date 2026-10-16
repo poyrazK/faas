@@ -69,6 +69,9 @@ func validObsBundleEvidence(requested string, evidence api.ObsIncidentEvidenceRe
 	if !validObsBundleTriageHistory(evidence, limit) {
 		return false
 	}
+	if !validObsBundleSuppression(evidence) {
+		return false
+	}
 	if requested == evidence.Incident.ID {
 		return true
 	}

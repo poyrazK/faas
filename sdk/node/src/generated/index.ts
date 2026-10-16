@@ -1142,6 +1142,7 @@ export type { ObsAlertResponseGroup } from './models/ObsAlertResponseGroup.js';
 export type { ObsAlertResponseMetric } from './models/ObsAlertResponseMetric.js';
 export type { ObsAlertResponseTimes } from './models/ObsAlertResponseTimes.js';
 export type { ObsAlertRetentionHealth } from './models/ObsAlertRetentionHealth.js';
+export type { ObsAlertSuppression } from './models/ObsAlertSuppression.js';
 export type { ObsAlertTriage } from './models/ObsAlertTriage.js';
 export type { ObsAlertTriageHistory } from './models/ObsAlertTriageHistory.js';
 export type { ObsAlertTriageHistoryCoverage } from './models/ObsAlertTriageHistoryCoverage.js';
@@ -1155,6 +1156,10 @@ export type { ObsAlertWorkloadSummary } from './models/ObsAlertWorkloadSummary.j
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { ObsHealthSignal } from './models/ObsHealthSignal.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
+export type { ObsNotificationAPIStatus } from './models/ObsNotificationAPIStatus.js';
+export type { ObsNotificationHealth } from './models/ObsNotificationHealth.js';
+export type { ObsNotificationIntegration } from './models/ObsNotificationIntegration.js';
+export type { ObsNotificationSignal } from './models/ObsNotificationSignal.js';
 export type { OCIHealthcheckTiming } from './models/OCIHealthcheckTiming.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';

@@ -25,6 +25,7 @@ import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
 import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js';
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
+import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
 import type { PublicStatusEvent } from '../models/PublicStatusEvent.js';
@@ -1054,6 +1055,44 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `getOperatorIntent 403: code: admin_required — caller is not in the FAAS_ADMIN_EMAILS allowlist.`,
         404: `code: operator_intent_not_found — no operator intent with the supplied id.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect alert notification pipeline evidence.
+   * Requires operator read scope, MFA and the operator allowlist. Accepts no
+   * query parameters. Reads bounded Alertmanager alert status and Prometheus
+   * observations under one shared three-second deadline. Signals distinguish
+   * fresh zero values from missing, invalid, stale or failed evidence.
+   * Integration counters cover all receivers, including watchdog traffic;
+   * counter presence does not imply that an integration is configured.
+   * increases over ten minutes are extrapolated and can be fractional.
+   * Healthy signal state describes evidence quality. Overall degraded means
+   * an observed failure, dropped notification, unhealthy target or reload,
+   * zero queue capacity or current queue pressure above 80 percent. Partial
+   * means some evidence is unavailable. This read never confirms delivery
+   * of a specific episode, human receipt, or external watchdog receipt.
+   * Receiver configuration, addresses, webhook credentials and silence
+   * comments are never read or returned. A disabled or invalidly configured
+   * local Alertmanager reader is explicit. Source failures produce a partial
+   * HTTP 200 observation with null unavailable values.
+   *
+   * @returns ObsNotificationHealth Independent notification signals and integration counters with evidence quality.
+   * @throws ApiError
+   */
+  public static getObsNotificationHealth(): CancelablePromise<ObsNotificationHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/notification-health',
+      errors: {
+        400: `Notification health does not accept query parameters.`,
+        401: `code: unauthorized`,
+        403: `Notification pipeline observation denied by operator scope or MFA or allowlist.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

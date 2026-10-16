@@ -46,6 +46,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
+var ResolveAlertmanagerURL = resolveAlertmanagerURL
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm

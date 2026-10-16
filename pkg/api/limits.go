@@ -8900,6 +8900,14 @@ const (
 	ObsHealthFreshnessMaxAge     = 2 * time.Minute
 	ObsHealthClockSkewTolerance  = 30 * time.Second
 
+	// Read-only notification observations never follow remote configuration,
+	// fetch credentials, or accept a destination from the request.
+	ObsNotificationBudget           = 3 * time.Second
+	ObsNotificationWindow           = 10 * time.Minute
+	ObsAlertmanagerResponseMaxBytes = 1 << 20
+	ObsAlertmanagerAlertsMax        = 4096
+	ObsNotificationIntegrationsMax  = 32
+
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.

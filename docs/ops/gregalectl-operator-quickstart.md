@@ -666,6 +666,25 @@ follow-up ("operator-vs-customer split") is filed separately.
   [`docs/ops/secrets-rotation.md`](secrets-rotation.md).
 ## Incident evidence
 
+Inspect the platform notification pipeline with
+`gregalectl obs notification-health --json`. It reports ten-minute integration
+attempts/failures, notification drops, current queue pressure, target and config
+reload health, and source freshness. Missing/stale values are null, not zero.
+Integration counters include all receivers and watchdog traffic; they cannot
+confirm delivery of a particular alert, human receipt or external watchdog
+receipt. Healthy signal state describes evidence quality; overall degraded
+reports an observed failure or pressure condition, and partial means evidence
+is incomplete. The API accepts no query parameters.
+
+Platform-alert evidence also includes current Alertmanager suppression when an
+exact current episode and label identity can be verified. Changed labels,
+unavailable sources, stale observations and ambiguous matches stay explicit;
+resolved episodes carry historical/not-applicable suppression. Operator triage
+snoozes remain separate from Alertmanager silences. This read creates no silences
+and changes no routes. The read-only local source uses `FAAS_ALERTMANAGER_URL`
+(control-plane default `http://127.0.0.1:9094`; unconfigured on other roles).
+Only literal loopback HTTP(S) is accepted; `disabled` explicitly disables it.
+
 Copy an ID from `gregalectl obs incidents --json`, then inspect its current
 state and exact-resource history without direct database access:
 

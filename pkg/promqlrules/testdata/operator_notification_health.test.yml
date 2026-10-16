@@ -1,0 +1,63 @@
+# Operator read queries must not silently omit a newly scraped counter series.
+# notification_health_test.go pins these expressions to the production queries.
+evaluation_interval: 30s
+
+tests:
+  - name: quiet initialized integration counters are known zero
+    interval: 30s
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager",integration="slack"}'
+        values: '0+0x10'
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="slack",reason="other"}'
+        values: '0+0x10'
+      - series: 'prometheus_notifications_dropped_total{job="prometheus"}'
+        values: '0+0x10'
+    promql_expr_test:
+      - expr: sum by (integration) (increase(alertmanager_notifications_total{job="alertmanager"}[600s])) and on (integration) (count by (integration) (increase(alertmanager_notifications_total{job="alertmanager"}[600s])) == count by (integration) (alertmanager_notifications_total{job="alertmanager"}))
+        eval_time: 5m
+        exp_samples:
+          - labels: '{integration="slack"}'
+            value: 0
+      - expr: sum by (integration) (increase(alertmanager_notifications_failed_total{job="alertmanager"}[600s])) and on (integration) (count by (integration) (increase(alertmanager_notifications_failed_total{job="alertmanager"}[600s])) == count by (integration) (alertmanager_notifications_failed_total{job="alertmanager"}))
+        eval_time: 5m
+        exp_samples:
+          - labels: '{integration="slack"}'
+            value: 0
+      - expr: sum(increase(prometheus_notifications_dropped_total{job="prometheus"}[600s])) and (count(increase(prometheus_notifications_dropped_total{job="prometheus"}[600s])) == count(prometheus_notifications_dropped_total{job="prometheus"}))
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+
+  - name: new single-sample reason or target makes the aggregate unknown
+    interval: 30s
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="slack",reason="other"}'
+        values: '0+0x10'
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="slack",reason="timeout"}'
+        values: '_ _ _ _ _ _ _ _ _ _ 1'
+      - series: 'prometheus_notifications_dropped_total{job="prometheus",instance="one"}'
+        values: '0+0x10'
+      - series: 'prometheus_notifications_dropped_total{job="prometheus",instance="two"}'
+        values: '_ _ _ _ _ _ _ _ _ _ 1'
+    promql_expr_test:
+      - expr: sum by (integration) (increase(alertmanager_notifications_failed_total{job="alertmanager"}[600s])) and on (integration) (count by (integration) (increase(alertmanager_notifications_failed_total{job="alertmanager"}[600s])) == count by (integration) (alertmanager_notifications_failed_total{job="alertmanager"}))
+        eval_time: 5m
+        exp_samples: []
+      - expr: sum(increase(prometheus_notifications_dropped_total{job="prometheus"}[600s])) and (count(increase(prometheus_notifications_dropped_total{job="prometheus"}[600s])) == count(prometheus_notifications_dropped_total{job="prometheus"}))
+        eval_time: 5m
+        exp_samples: []
+
+  - name: receiver names and failure reasons aggregate without escaping
+    interval: 30s
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="slack",reason="timeout",receiver_name="page"}'
+        values: '0 0 0 0 0 0 0 0 1 1 1'
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",integration="slack",reason="other",receiver_name="warn"}'
+        values: '0+0x10'
+    promql_expr_test:
+      - expr: sum by (integration) (increase(alertmanager_notifications_failed_total{job="alertmanager"}[600s])) and on (integration) (count by (integration) (increase(alertmanager_notifications_failed_total{job="alertmanager"}[600s])) == count by (integration) (alertmanager_notifications_failed_total{job="alertmanager"}))
+        eval_time: 5m
+        exp_samples:
+          - labels: '{integration="slack"}'
+            value: 1

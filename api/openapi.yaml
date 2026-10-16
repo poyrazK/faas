@@ -44995,6 +44995,39 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/notification-health:
+    get:
+      tags: [admin]
+      operationId: getObsNotificationHealth
+      summary: Inspect alert notification pipeline evidence.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts no
+        query parameters. Reads bounded Alertmanager alert status and Prometheus
+        observations under one shared three-second deadline. Signals distinguish
+        fresh zero values from missing, invalid, stale or failed evidence.
+        Integration counters cover all receivers, including watchdog traffic;
+        counter presence does not imply that an integration is configured.
+        increases over ten minutes are extrapolated and can be fractional.
+        Healthy signal state describes evidence quality. Overall degraded means
+        an observed failure, dropped notification, unhealthy target or reload,
+        zero queue capacity or current queue pressure above 80 percent. Partial
+        means some evidence is unavailable. This read never confirms delivery
+        of a specific episode, human receipt, or external watchdog receipt.
+        Receiver configuration, addresses, webhook credentials and silence
+        comments are never read or returned. A disabled or invalidly configured
+        local Alertmanager reader is explicit. Source failures produce a partial
+        HTTP 200 observation with null unavailable values.
+      responses:
+        '200':
+          description: Independent notification signals and integration counters with evidence quality.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsNotificationHealth' }
+        '400': { description: Notification health does not accept query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Notification pipeline observation denied by operator scope or MFA or allowlist. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/incidents/platform_alert/response-times:
     get:
       tags: [admin]
@@ -64183,6 +64216,79 @@ components:
             schedd dispatch" on one column.
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
+
+    ObsNotificationHealth:
+      type: object
+      description: Current pipeline evidence without per-episode delivery or human receipt claims.
+      required: [generated_at, state, window_seconds, alertmanager_api, signals, integrations, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        state: { type: string, enum: [healthy, partial, degraded] }
+        window_seconds: { type: integer, const: 600 }
+        alertmanager_api: { $ref: '#/components/schemas/ObsNotificationAPIStatus' }
+        signals:
+          type: object
+          description: Fixed signals for target availability, config reload, queue length and capacity, dropped alerts, notification attempts and failures.
+          additionalProperties: { $ref: '#/components/schemas/ObsNotificationSignal' }
+        integrations:
+          type: array
+          maxItems: 32
+          description: Observed integration types ordered by name; missing counters remain unknown.
+          items: { $ref: '#/components/schemas/ObsNotificationIntegration' }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsNotificationAPIStatus:
+      type: object
+      description: Reachability and bounded validity of the local alert-status API; does not establish notification receiver readiness.
+      required: [state]
+      properties:
+        state: { type: string, enum: [healthy, disabled, unavailable] }
+        reason: { type: string }
+        observed_at: { type: string, format: date-time }
+    ObsNotificationSignal:
+      type: object
+      description: A usable value requires healthy evidence; null distinguishes missing or stale evidence from a fresh zero. Observed time comes from the oldest underlying last-observed sample across matching series.
+      required: [state, value, window_seconds, max_age_seconds]
+      properties:
+        state: { type: string, enum: [healthy, no_samples, stale, unavailable] }
+        reason: { type: string }
+        value: { type: [number, 'null'], minimum: 0 }
+        observed_at: { type: string, format: date-time }
+        window_seconds: { type: integer, enum: [0, 600] }
+        max_age_seconds: { type: integer, const: 120 }
+    ObsNotificationIntegration:
+      type: object
+      description: Attempts and failures for a reviewed integration type across all receivers. Counter presence does not establish configuration; receiver names and addresses are omitted.
+      required: [integration, attempts, failures]
+      properties:
+        integration:
+          type: string
+          enum: [email, pushover, slack, webhook, pagerduty, opsgenie, victorops, wechat, telegram, discord, webex, sns, msteams, msteamsv2, rocketchat, jira]
+        attempts: { $ref: '#/components/schemas/ObsNotificationSignal' }
+        failures: { $ref: '#/components/schemas/ObsNotificationSignal' }
+    ObsAlertSuppression:
+      type: object
+      description: |
+        Optional suppression field of private platform-alert incident evidence.
+        Current suppression requires exact verification of the immutable episode
+        against fresh Prometheus rules plus an unambiguous exact-label match in
+        Alertmanager. Changed or external labels remain unmatched. StartsAt must
+        fall within the current activation at millisecond wire precision and now;
+        updatedAt must be fresh and
+        endsAt in the future. Resolved episodes are historical and not applicable.
+        Silenced and inhibited booleans are null unless current state is verified.
+        Suppression is independent of operator triage snooze and delivery receipt.
+      required: [state, checked_at, silenced, inhibited]
+      properties:
+        state:
+          type: string
+          enum: [active, suppressed, unprocessed, unmatched, stale, unavailable, disabled, not_applicable, unknown]
+        reason: { type: string }
+        checked_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        silenced: { type: [boolean, 'null'] }
+        inhibited: { type: [boolean, 'null'] }
 
     ObsHealthSignal:
       type: object

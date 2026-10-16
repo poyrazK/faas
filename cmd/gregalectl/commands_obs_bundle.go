@@ -37,6 +37,7 @@ type obsBundleSection[T any] struct {
 }
 
 type obsBundleCoverage struct {
+	SuppressionState            string   `json:"suppression_state"`
 	TriageHistoryState          string   `json:"triage_history_state"`
 	TriageHistoryTruncated      bool     `json:"triage_history_truncated"`
 	TriageHistoryMissingEntries *int64   `json:"triage_history_missing_entries"`
@@ -177,7 +178,12 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 		coverage.ExpiredEpisodes = &n
 	}
 	coverage.TriageHistoryState = "not_applicable"
+	coverage.SuppressionState = "not_applicable"
 	if evidence.Incident.Type == "platform_alert" {
+		coverage.SuppressionState = "unknown"
+		if evidence.Suppression != nil {
+			coverage.SuppressionState = evidence.Suppression.State
+		}
 		coverage.TriageHistoryState = "unknown"
 		if history := evidence.TriageHistory; history != nil {
 			coverage.TriageHistoryState = history.Coverage.State
@@ -191,6 +197,7 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 		"credentials", "local_configuration", "request_bodies_and_headers", "raw_logs", "raw_event_payloads", "actor_identities", "commands_and_environment", "raw_span_attributes", "raw_sql",
 	}}
 	bundle.Limitations = []string{
+		"suppression_is_current_only_and_does_not_prove_delivery",
 		"sections_are_separate_reads_not_one_atomic_snapshot",
 		"relationships_are_current_potential_exposure_not_historical_impact_or_causation",
 		"one_resource_page_only_timeline_covers_incident_scope_and_returned_resources",

@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/auth"
@@ -279,7 +280,8 @@ type server struct {
 	// reuses the same tested transport; the client is nil-safe (the
 	// handler falls back to a degraded zero-valued payload when
 	// Prometheus isn't configured). See pkg/promql/client.go.
-	promqlClient *promql.Client
+	promqlClient       *promql.Client
+	alertmanagerClient *operatorobs.AlertmanagerClient
 	// statusPagePath is the on-disk path of the static HTML served
 	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
 	statusPagePath string
@@ -579,6 +581,13 @@ func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
 	s.statusPagePath = htmlPath
+	return s
+}
+
+// WithAlertmanagerObservability configures only the bounded read-only API.
+// Invalid destinations degrade observations; they never trigger remote reads.
+func (s *server) WithAlertmanagerObservability(baseURL string) *server {
+	s.alertmanagerClient = operatorobs.NewAlertmanagerClient(baseURL, nil)
 	return s
 }
 
@@ -3427,6 +3436,7 @@ func (s *server) handler() http.Handler {
 	// because the snapshot exposes alert-state metadata.
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsHealthHandler))))
+	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNotificationHealth))))
 	// Unified incident inbox. This is a read-only correlation projection over
 	// the existing deployment, job-run, compute-node, and alert surfaces;
 	// it keeps operator triage out of the deployment request path.

@@ -36,5 +36,12 @@ func (s *server) obsIncidentEvidence(w http.ResponseWriter, r *http.Request, cal
 		}
 		return
 	}
+	if kind == "platform_alert" {
+		suppression := operatorobs.AlertSuppression(r.Context(), s.promqlClient, s.alertmanagerClient, response.Incident, time.Now().UTC())
+		response.Suppression = &suppression
+		if suppression.State != "active" && suppression.State != "suppressed" && suppression.State != "not_applicable" {
+			response.UnavailableSources = append(response.UnavailableSources, "alertmanager_suppression")
+		}
+	}
 	writeJSON(w, http.StatusOK, response)
 }
