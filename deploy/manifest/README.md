@@ -89,9 +89,10 @@ peers. The control plane gets schedd's `[database_scheduler]` (written to
 `/etc/faas/schedd-database.toml`) and pgproxyd's access to the verifier
 table. With `app_route`, compute nodes get the route to every pgproxyd.
 pgproxyd's control-plane DSN is derived from the Vault variable
-`faas_pgproxyd_postgres_password`. Still per deployment: pgproxyd's
-`*.<host_suffix>` certificate, that password, and each node's PKI bundle
-(see `deploy/ansible/database_node.yml`). Control-plane Prometheus scrapes
+`faas_pgproxyd_postgres_password`. Each node's first PKI bundle is issued
+from the control-plane issuer when the node has none, and renewed daily.
+Still per deployment: pgproxyd's `*.<host_suffix>` certificate and that
+password (see `deploy/ansible/database_node.yml`). Control-plane Prometheus scrapes
 every database node (runbook `docs/runbooks/FaasDatabaseNodes.md`).
 
 A node's `lifecycle` drives schedd. Set it, re-render, and converge the

@@ -487,8 +487,24 @@ plane>:5432/faas`, with the password taken from the Vault variable
 `faas_pgproxyd_postgres_password`, which `database_node.yml` also uses
 to create the role, so the two cannot drift.
 
-Still manual: pgproxyd's public `*.<suffix>` certificate (files), the
-`faas_pgproxyd_postgres_password` Vault value, and each node's PKI bundle.
+Still manual: pgproxyd's public `*.<suffix>` certificate (files) and the
+`faas_pgproxyd_postgres_password` Vault value.
+
+**First PKI bundle.** A database node used to need an operator-issued
+bundle (`database_node_pki_source`). The `database_node_pki` role now
+issues one when the node has none, the way `pki_renew.yml` renews.
+- The control-plane issuer runs `gregalectl pki issue-bundle --box-role
+  database --cn <name> --transport-san <overlay ip>`, and the Ansible
+  controller relays the archive. The CA key never leaves the issuer.
+- The node validates the bundle against its identity (`pki status`) and
+  copies it in. `install-bundle` pins renewals to an existing active CA,
+  and a first install has none, which is how compute join installs too.
+- Staging is removed on every host either way.
+- A node with a bundle keeps it, and the daily renewal owns it from then
+  on. An operator-issued `database_node_pki_source` still wins.
+- A local run against two localhost hosts installed a bundle that
+  validates, with only `ca.crt` from the CA on the node. A second run
+  changed nothing.
 
 **Internal mTLS renewal.** The daily `pki_renew.yml` (workflow
 `pki-renew.yml`) used to cover only the control plane and compute nodes. A

@@ -27,10 +27,13 @@ database_node_release_git_sha: ""
 # cosign binary on the controller, installed to verify the release.
 database_node_cosign_source: ""
 
-# Trust bundle from the PKI issuer, staged into /etc/faas/tls:
+# Trust bundle from the PKI issuer, staged into /etc/faas/tls. Leave it
+# empty to let the database_node_pki role issue the node's first bundle
+# from the control-plane issuer (the daily pki_renew.yml renews it). To
+# issue one yourself:
 #   gregalectl pki issue-bundle --issuer-root ... --output-dir DIR \
 #     --box-role database --cn <id> --transport-san <overlay-ip>
 # <id> must equal the node's id in schedd's [database_scheduler]: schedd
-# binds database-node vmmd certificates to <id>.faas. Empty keeps the bundle
-# already installed.
+# binds database-node vmmd certificates to <id>.faas. Empty keeps an
+# installed bundle and issues one only when there is none.
 database_node_pki_source: ""

@@ -76,6 +76,9 @@
     - role: grub
     - role: host_hardening
     - role: database_node
+    # The node's first mTLS bundle from the control-plane issuer, unless
+    # one is installed or database_node_pki_source names one.
+    - role: database_node_pki
     - role: overlay
     - role: firecracker
     - role: dbbackupd_service
