@@ -125,3 +125,7 @@ from a checkpoint, nor can callbacks mutate the watch's internal progress snapsh
 For complete upcoming counts and separate expired waiting-reason partitions, use
 [deadline-window monitoring](event-subscription-deadline-window.md). It adds optional
 sustained count alerts and matching relative-window/reason triage filters.
+
+Deadline-window count alerts can also select independent upcoming/expired
+waiting-reason thresholds. See [reason-specific configuration and recovery
+semantics](event-subscription-deadline-window.md#alerts-for-selected-waiting-reasons).

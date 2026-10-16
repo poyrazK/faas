@@ -1334,3 +1334,8 @@ horizon and partitions upcoming/expired cohorts by observed waiting reason. Set
 `RateRisk.DeadlineWindow` to `EventDeliveryDeadlineWindowOptions{Within: 5*time.Minute,
 Upcoming: 50, Expired: 1}` for sustained count alerts. The selected endpoint replaces
 the standalone summary read. See [window counts and alert semantics](../../docs/event-subscription-deadline-window.md).
+
+Set `DeadlineWindow.UpcomingReasons` and/or `.ExpiredReasons` to known-reason count
+maps for independent sustained incidents, such as `subscription_paused: 10`. These
+reuse the existing aggregate read and retain total-alert compatibility. See
+[reason-specific deadline alerts](../../docs/event-subscription-deadline-window.md#alerts-for-selected-waiting-reasons).

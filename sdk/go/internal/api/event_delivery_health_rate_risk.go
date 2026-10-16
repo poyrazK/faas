@@ -58,7 +58,7 @@ func rateDeadlineWindow(metric string) (time.Duration, bool) {
 }
 func deliveryRateRiskMetric(metric string) bool {
 	_, deadline := rateDeadlineWindow(metric)
-	_, _, countWindow := deadlineCountWindow(metric)
+	_, _, _, countWindow := deadlineCountWindow(metric)
 	return countWindow || deadline || metric == "pending_summary.throttled_growth_recipients" || metric == "rate_preview.deadline_risk_recipients"
 }
 func rateRiskPolicy(o EventDeliveryRateRiskOptions) (time.Duration, time.Duration) {
@@ -357,13 +357,10 @@ func updateDeliveryRateRiskCondition(out *EventDeliveryHealthWatchResult, c *del
 		observed = evidence.Summary.ObservedAt
 	}
 	if valid {
-		if within, expired, isWindow := deadlineCountWindow(c.Metric); isWindow {
+		if within, expired, reason, isWindow := deadlineCountWindow(c.Metric); isWindow {
 			valid = evidence.WindowEvidenceAvailable && evidence.DeadlineWindow != nil && evidence.DeadlineWindow.WithinMillis == within.Milliseconds()
 			if valid {
-				value = float64(evidence.DeadlineWindow.UpcomingRecipients)
-				if expired {
-					value = float64(evidence.Summary.AlreadyExpiredCount)
-				}
+				value, valid = deadlineWindowCountValue(*evidence.DeadlineWindow, expired, reason)
 			}
 		} else if within, isDeadline := rateDeadlineWindow(c.Metric); isDeadline {
 			if evidence.Summary.EarliestDeadlineAt != nil && !evidence.Summary.EarliestDeadlineAt.After(observed.Add(within)) {

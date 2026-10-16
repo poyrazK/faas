@@ -248,10 +248,7 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
 	if o.RateRisk != nil {
 		snapshot := *o.RateRisk
-		if snapshot.DeadlineWindow != nil {
-			window := *snapshot.DeadlineWindow
-			snapshot.DeadlineWindow = &window
-		}
+		snapshot.DeadlineWindow = cloneDeadlineWindowOptions(snapshot.DeadlineWindow)
 		o.RateRisk = &snapshot
 	}
 	if o.SLO != nil {

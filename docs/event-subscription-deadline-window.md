@@ -71,7 +71,8 @@ options := faas.EventDeliveryHealthWatchOptions{
 }
 ```
 
-Set either count to zero to disable that condition; at least one must be enabled.
+Set either total count to zero to disable that condition. At least one total or
+reason-specific count must be enabled (see the reason options below).
 Counts accept 1..9007199254740991. A positive whole-millisecond horizon is required
 for both configurations. Existing `Sustain` and `RecoverySustain` defaults/bounds
 apply independently. Both warning and recovery require at least two fresh,
@@ -125,3 +126,64 @@ align time definitions but do not freeze membership or guarantee the same count:
 triage runs later, and routing state, reasons and retention can change. Preserve
 all filters and page size across cursor pages. Existing unfiltered cursors keep
 their original scope; adding a filter requires a new traversal.
+
+## Alerts for selected waiting reasons
+
+Go watches can select independent thresholds for observed reasons inside either
+cohort, without enabling total-count alerts:
+
+```go
+DeadlineWindow: &faas.EventDeliveryDeadlineWindowOptions{
+    Within: 5 * time.Minute,
+    UpcomingReasons: map[string]int64{
+        "subscription_paused": 10,
+        "capacity_consumer": 25,
+    },
+    ExpiredReasons: map[string]int64{
+        "subscription_paused": 1,
+    },
+},
+```
+
+`UpcomingReasons` and `ExpiredReasons` accept the known backlog waiting-reason
+keys. Values 1..9007199254740991 enable a condition; an omitted key or zero disables
+it. Negative/oversized values and unknown reason names are rejected, including
+unknown names with a zero value. At least one total or reason-specific count must
+be enabled. The horizon and existing warning/recovery duration bounds still apply.
+Option maps are cloned before validation and polling. Callers must not mutate
+options concurrently with the initial call.
+
+Each selected cohort/reason has its own incident, warning proof and recovery proof.
+The shared `Sustain` and `RecoverySustain` durations configure those independent
+timers. Positive reason conditions are ordered by cohort and then reason name,
+so map insertion order cannot change checkpoint resume. Total conditions retain
+their existing identities and order. Omitted and zero-valued reason entries do not
+create conditions and need not be preserved as checkpoint configuration.
+
+For example, the paused/upcoming condition above has metric identity
+`deadline_window.upcoming_recipients.300000.reason.subscription_paused`. The
+checkpoint validates the cohort, canonical horizon, known reason, count threshold
+and sustained-recovery policy. Resume requires the same enabled selection and
+values; older clients reject the new identities. A reason suffix is not permitted
+to be empty or contain an unknown label.
+
+All selected conditions reuse the existing deadline-window response. There is no
+additional request per reason and no new endpoint or migration. Confirmation still
+requires full, correctly scoped, fresh, advancing evidence and exact partitions
+containing every known reason, including explicit zero keys. Missing/unknown keys
+or incomplete evidence cause unknown/confirmation_lost, never a fabricated zero
+or successful recovery. Progress snapshots retain the existing deep-copy behavior.
+The durable alert outbox and reserved closing slots apply independently to each
+incident. With the current 14 known labels, at most 28 reason conditions plus two
+optional total conditions can be selected in a deadline window; the existing
+notification queue bound is unchanged.
+
+A reason-specific alert resolves when its own count stays below threshold. Work
+can change waiting reason while remaining pending, move from upcoming to expired,
+or leave retained coverage without completing business processing. A resolution
+therefore does not mean deliveries succeeded or the overall backlog recovered.
+Monitor both cohorts and relevant reasons, or add total thresholds, when those
+transitions must stay visible. Total and reason alerts can fire together for the
+same underlying work and remain separate incidents. The observed reason identifies
+its partition, not a unique root cause. Use the triage `waiting_reason` filter to
+investigate current identities.
