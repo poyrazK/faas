@@ -4169,6 +4169,7 @@ var cliCommands = []cliCommand{
 				{Name: "sms-account", Value: "ID", Short: "Twilio account SID or Vonage API key"},
 				{Name: "sms-sender", Value: "SENDER", Short: "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"},
 				{Name: "sms-secret-stdin", Short: "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"},
+				{Name: "sso", Value: "on|off", Short: "organization single sign-on (SAML); manage identity providers with gregale auth sso", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -4204,6 +4205,26 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Value: "N", Short: "entries to show (1-100)"},
 				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 			}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --search login --admin-key-stdin"}},
+			{Name: "sso", Short: "Register SAML identity providers for organization single sign-on", Subcommands: []cliSub{
+				{Name: "list", Short: "List identity providers and the organizations their users join", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "add", Short: "Register an identity provider for email domains, optionally joining its users to an organization", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "metadata-url", Value: "URL", Short: "the identity provider's HTTPS SAML metadata URL"},
+					{Name: "metadata-file", Value: "FILE", Short: "a file holding the identity provider's SAML metadata XML"},
+					{Name: "domains", Value: "DOMAINS", Req: true, Short: "comma-separated email domains whose users sign in through this provider"},
+					{Name: "org", Value: "ORG", Short: "organization (ID or slug) its users join"},
+					{Name: "role", Value: "ROLE", Short: "role its users join the organization with (not owner)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth sso add shop-auth --metadata-url https://acme.okta.com/app/abc/sso/saml/metadata --domains acme.com --org acme --admin-key-stdin"}},
+				{Name: "update", Short: "Change a provider's metadata, domains or organization", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{
+					{Name: "metadata-url", Value: "URL", Short: "the identity provider's HTTPS SAML metadata URL"},
+					{Name: "metadata-file", Value: "FILE", Short: "a file holding the identity provider's SAML metadata XML"},
+					{Name: "domains", Value: "DOMAINS", Short: "comma-separated email domains; replaces the list"},
+					{Name: "org", Value: "ORG", Short: "organization (ID or slug) its users join, or none"},
+					{Name: "role", Value: "ROLE", Short: "role its users join the organization with (not owner)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+				{Name: "remove", Short: "Remove an identity provider; its users keep their memberships", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}},
 		},
 	},
 	{
