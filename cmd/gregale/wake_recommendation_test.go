@@ -41,10 +41,10 @@ func TestRenderTriggerClassSummary(t *testing.T) {
 }
 
 func TestEstimateCrawlerWakeCostEUR(t *testing.T) {
-	if got := estimateCrawlerWakeCostEUR(0, api.AppResponse{RAMMB: 512, IdleTimeoutS: 60}); got != 0 {
+	if got := estimateCrawlerWakeCost(0, api.AppResponse{RAMMB: 512, IdleTimeoutS: 60}); got != 0 {
 		t.Fatalf("zero wakes cost = %v, want 0", got)
 	}
-	if got := estimateCrawlerWakeCostEUR(1, api.AppResponse{RAMMB: 512, IdleTimeoutS: 60}); got <= 0 {
+	if got := estimateCrawlerWakeCost(1, api.AppResponse{RAMMB: 512, IdleTimeoutS: 60}); got <= 0 {
 		t.Fatalf("one wake cost = %v, want positive", got)
 	}
 }

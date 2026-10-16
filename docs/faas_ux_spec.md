@@ -15,7 +15,7 @@
 When a design decision is ambiguous, resolve it in this order:
 
 1. **Time-to-first-deploy is the north-star metric.** A new developer with a Node or Python repo should reach a live URL in **under 5 minutes** from `gregale login`. Every screen, prompt, and default is judged against that clock.
-2. **Never surprise the bill.** Usage, quotas, and the €0.01/GB-h meter are always visible before they cost money. No dark-pattern upsells; the free tier is honestly free (implementation spec §4.7).
+2. **Never surprise the bill.** Usage, quotas, and the $0.01/GB-h meter are always visible before they cost money. No dark-pattern upsells; the free tier is honestly free (implementation spec §4.7).
 3. **Explain the magic, especially the slow parts.** Scale-to-zero means the first request after idle is slower (§6). If we don't explain cold wakes, users file "your platform is slow" — the truth is a feature. Transparency is the product.
 4. **Errors are a UX surface, not a failure.** Every error tells the user what happened, why, and the single next action. No stack traces, no opaque codes (§7).
 5. **The CLI is honest about state.** Long operations stream real progress (build logs, snapshot step), never a fake spinner. If something is queued, say the queue position.
@@ -284,7 +284,7 @@ Events that email the user: email verification; deploy failed (with log link) �
 
 ## 10. Billing & plan-change UX
 
-- **Plans are shown as the model prices them:** Free €0, Hobby €9, Pro €29, Scale €99, with each plan's deployed/concurrent/RAM/GB-h limits stated plainly (from `pkg/api/limits.go`, the single source). No hidden asterisks. The same plan table publishes the canonical guest CPU/RAM shape used by the optional `gregale deploy --vcpu` assertion:
+- **Plans are shown as the model prices them:** Free $0, Hobby $10, Pro $30, Scale $99 (USD, ADR-1350), with each plan's deployed/concurrent/RAM/GB-h limits stated plainly (from `pkg/api/limits.go`, the single source). No hidden asterisks. The same plan table publishes the canonical guest CPU/RAM shape used by the optional `gregale deploy --vcpu` assertion:
 
   | Plan | Canonical RAM | Guest vCPU |
   |---|---:|---:|
@@ -294,7 +294,7 @@ Events that email the user: email verification; deploy failed (with log link) �
   | Scale | 2048 MB | 4 |
 
   Omitting `vcpu` preserves the plan default and existing custom RAM/profile behavior. Supplying it with a different `ram_mb` pair returns `invalid_cpu_ram_pair` before the app is created.
-- **Usage before cost:** `gregale usage` and the dashboard bar always show current GB-h vs. the included quota and any accrued overage at €0.01/GB-h, updated hourly (matches metering push cadence, implementation spec §4.7).
+- **Usage before cost:** `gregale usage` and the dashboard bar always show current GB-h vs. the included quota and any accrued overage at $0.01/GB-h, updated hourly (matches metering push cadence, implementation spec §4.7).
 - **Upgrade is instant and obvious** (the configured billing provider handles
   the money); **downgrade** runs quota checks first and, if the user is over the
   target plan's limits, returns an actionable task list ("delete 3 apps or

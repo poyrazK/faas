@@ -4607,7 +4607,7 @@ type DeploymentChange struct {
 
 // Invoice is one persisted invoice from a billing provider, surfaced
 // via GET /v1/invoices. Money is integer cents in the provider's
-// currency (the financial model distills to EUR at the API edge).
+// currency (the financial model distills to the billing currency at the API edge).
 // PDFAvailable is the only PDF surface we expose — the hosted PDF URL
 // is provider-scoped and customer-fetched via the Stripe/Paddle
 // portal, not via this API. HostedURL is intentionally not on the
@@ -4870,7 +4870,7 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model (€0.01/GB-h). Cents are integer.
+// overage rate in the financial model ($0.01/GB-h). Cents are integer.
 //
 // Issue #279 / PR-B: UsedCPUHours is informational and NOT billed.
 // The billing math is on UsedGBHours (plan RAM + 8 MB per running
@@ -6793,7 +6793,7 @@ type WakeTimelineApp struct {
 //     a second round-trip.
 //   - OverageGBHours: max(0, gb_hours - plan_included). 0 when
 //     gb_hours ≤ plan_included. The dashboard renders this as the
-//     red overage chip; the Stripe pusher bills it at €0.01/GB-h.
+//     red overage chip; the Stripe pusher bills it at $0.01/GB-h.
 //   - Source: "usage_minutes" today (after the 30d retention cap).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.

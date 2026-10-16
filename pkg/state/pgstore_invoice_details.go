@@ -108,7 +108,7 @@ func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
 		inv.PeriodEnd = inv.PeriodStart
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	if inv.Status == "" {
 		inv.Status = "open"

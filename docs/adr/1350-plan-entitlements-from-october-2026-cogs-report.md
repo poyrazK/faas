@@ -1,10 +1,10 @@
-# ADR-1350: Plan entitlements from the October 2026 COGS report
+# ADR-1350: USD pricing and plan entitlements from the October 2026 COGS report
 
 Status: accepted.
 
-Amends spec §4.7 (included quotas), the CLAUDE.md hard limits (financial
-model §1), ADR-1320 (object-storage plan values) and the managed PostgreSQL
-plan entitlements.
+Amends spec §4.7 (prices, included quotas and the overage meter), the
+CLAUDE.md hard limits (financial model §1), ADR-1320 (object-storage plan
+values) and the managed PostgreSQL plan entitlements.
 
 ## Context
 
@@ -17,14 +17,28 @@ compute, dominate COGS.
 
 The report keeps the prices (€0 / €9 / €29 / €99) and changes what each plan
 includes: more RAM per app, more included GB-RAM-hours, included object
-storage, and per-plan PostgreSQL databases, storage and compute.
+storage, and per-plan PostgreSQL databases, storage and compute. Its two
+largest COGS lines, Neon and R2, bill in US dollars, and the marketing ladder
+already reads 10 / 30 / 99 / Custom.
 
 ## Decision
 
+0. **Currency and prices.** Gregale bills in US dollars only: plan fees, the
+   overage meter, credits, refunds, invoices, budgets, the spend cap and the
+   object-storage rate card. Plans cost $0 / $10 / $30 / $99 per month and
+   overage stays $0.01 per GB-RAM-hour. One constant (`api.BillingCurrency`,
+   defined in `pkg/financial`) replaces the hard-coded EUR checks in the
+   provider catalog validation, invoice import and the financial ledger. Polar
+   products must be recreated with USD prices. Customers' own rate cards (API
+   monetization), the AI gateway price catalog and providers' operator cost
+   reports keep their own currencies. Metric, alert-metric and preset
+   identifiers keep their `eur` names (`meterd_account_spend_eur`,
+   `account_spend_eur`, `spend_eur_20`) because dashboards and saved alert
+   rules depend on them; their values are in the billing currency. Invoices and
+   budgets written in EUR before the switch stay valid; new ones are USD.
+
 1. **Compute.** RAM per app is 256 / 512 / 1,024 / 2,048 MB and included
    GB-RAM-hours are 20 / 200 / 1,000 / 3,000 for Free / Hobby / Pro / Scale.
-   Prices and the €0.01/GB-h overage are unchanged, so the Polar products are
-   unchanged. That also settles €9/€29/€99 over the €10/€30 marketing ladder.
    Plan RAM is each new app's default and the per-app cap. Existing apps keep
    their stored `ram_mb`, so their snapshots and per-second billing do not
    change until the customer changes the app. The canonical RAM/vCPU shapes
@@ -38,7 +52,7 @@ storage, and per-plan PostgreSQL databases, storage and compute.
    and the v2 report that carries them is shadow-only (ADR-237, steps 2–3).
    Request and egress allowances stay zero until then. When billing is
    enabled, the operator rate card should follow the report: storage at
-   €0.03 per GiB-month and egress at zero.
+   $0.03 per GiB-month and egress at zero.
 
 3. **Managed PostgreSQL.** Plans allow 1 / 1 / 3 / 10 databases, up to the
    development / development / burstable / production class. Storage is
@@ -48,11 +62,17 @@ storage, and per-plan PostgreSQL databases, storage and compute.
    hours, held as a compute-unit-seconds ceiling. Free gains one development
    database. The restore window stays 7 days on every plan. These are
    ceilings: managed PostgreSQL has no invoicing yet, so the report's
-   €0.20/CU-h and €0.60/GB-month overage is not billed. A local dev
+   $0.20/CU-h and $0.60/GB-month overage is not billed. A local dev
    database defaults to the smaller of 1 GiB and the plan's pool.
 
 ## Consequences
 
+- Revenue and the larger USD costs (Neon, R2) now share a currency; the FX
+  exposure moves to the EUR-billed servers. The report's margins treat $ as €,
+  so $10 / $30 / $99 sits at or slightly above its €9 / €29 / €99 basis.
+- The Polar sandbox and production catalogs need USD products before
+  apid or meterd will start with Polar; the catalog check enforces the
+  billing currency.
 - Doubling the default RAM halves how many new apps fit on a node. The report
   says the 500-customer capacity needs CPU admission by the cgroup CPU cap
   rather than two guest vCPUs per small app; without it, about 8 active nodes

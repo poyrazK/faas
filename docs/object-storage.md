@@ -799,7 +799,7 @@ without changing the safety policy:
 
 ```json
 "pricing": {
-  "currency": "EUR",
+  "currency": "USD",
   "storage_millicents_per_gib_month": 15000,
   "requests_millicents_per_million": 500,
   "egress_millicents_per_gib": 90000
@@ -823,7 +823,7 @@ detailed storage, request, egress, and upstream-cost values remain in metadata
 and the local ledger. A durable provider receipt records pre-activation, shadow, or
 live handling; accounts that are not on a paid plan receive a permanent
 zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
-retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at EUR
+retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at USD
 `0.001` cents per unit, and follow the billing provider switch runbook for the
 required environment variables and catalog checks. Polar bills the month-close
 event in the provider cycle in which it is received; its metadata preserves the

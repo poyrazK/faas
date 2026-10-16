@@ -3583,7 +3583,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1350: 10 GiB included; usage above it is priced at month close.
 		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
-		PriceMillicents: 900_000, // €9.00
+		PriceMillicents: 1_000_000, // $10.00 (ADR-1350)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound:          5,
@@ -3877,7 +3877,7 @@ var planLimits = map[Plan]Limits{
 		// Warm-snapshot (issue #470 / ADR-055): Hobby is gated off
 		// for the same cost-shape reason as Free — doubling the
 		// parked per-app snapshot footprint doesn't fit the
-		// €9/month Hobby price point. Pro/Scale customers pay
+		// $10/month Hobby price point. Pro/Scale customers pay
 		// enough that the +130 MB per warm-tier app is comfortably
 		// inside the 452 GB parked budget.
 		WarmSnapshotEnabled:            false,
@@ -4005,7 +4005,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1350: 50 GiB included; usage above it is priced at month close.
 		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
-		PriceMillicents: 2_900_000, // €29.00
+		PriceMillicents: 3_000_000, // $30.00 (ADR-1350)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
@@ -4389,7 +4389,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1350: 200 GiB included; usage above it is priced at month close.
 		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
-		PriceMillicents: 9_900_000, // €99.00
+		PriceMillicents: 9_900_000, // $99.00 (ADR-1350)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
 		// body cites this number directly). 80 concurrent requests
@@ -4903,7 +4903,7 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
+	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1350)
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect

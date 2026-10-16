@@ -1627,7 +1627,7 @@ export class AppsService {
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
    * `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
-   * integer-rounded float the Stripe pusher bills at €0.01/GB-h.
+   * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
    * `usage_daily` / `mixed` land with the trail-period reader

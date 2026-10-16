@@ -31,7 +31,7 @@ func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
-	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in euros. Usage beyond the included GB-RAM-hours is billed at €0.01 per GB-RAM-hour on paid plans.\n\n")
+	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in US dollars. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
 	b.WriteString("| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
@@ -85,16 +85,16 @@ func titlePlan(plan api.Plan) string {
 
 func formatPrice(millicents int64) string {
 	if millicents == 0 {
-		return "€0"
+		return api.BillingCurrencySymbol + "0"
 	}
-	// The current catalog uses whole-euro prices. Keep the cents path for a
+	// The current catalog uses whole-dollar prices. Keep the cents path for a
 	// future plan so generation remains correct without a code change.
 	whole := millicents / 100_000
 	minor := (millicents % 100_000) / 1_000
 	if minor == 0 {
-		return fmt.Sprintf("€%d", whole)
+		return fmt.Sprintf("%s%d", api.BillingCurrencySymbol, whole)
 	}
-	return fmt.Sprintf("€%d.%02d", whole, minor)
+	return fmt.Sprintf("%s%d.%02d", api.BillingCurrencySymbol, whole, minor)
 }
 
 func formatDuration(seconds int) string {
