@@ -138,7 +138,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
-| `--state-file <PATH>` | private encrypted remote state file |  |
+| `--state-file <PATH>` | private encrypted state for review plans, consumers, and HTTP grants |  |
 | `--admin-socket <PATH>` | optional owner-protected Unix socket for listing and revoking HTTP grants |  |
 | `--metrics-listen <ADDR>` | optional literal loopback IP:port for private management MCP Prometheus metrics |  |
 | `--state-key-file <PATH>` | independent private 32-byte state encryption key file |  |

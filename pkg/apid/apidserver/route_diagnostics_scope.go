@@ -22,7 +22,7 @@ func (s *server) routeDiagnosticEnvironment(w http.ResponseWriter, r *http.Reque
 		return app, routeDiagnosticSelection{}, api.ErrValidation("malformed route diagnostic query")
 	}
 	for key, values := range q {
-		if len(values) != 1 || values[0] == "" || strings.TrimSpace(values[0]) != values[0] || (key != "since" && key != "until" && key != "scope" && key != "environment" && !(advice && key == "cache_max_age")) {
+		if len(values) != 1 || values[0] == "" || strings.TrimSpace(values[0]) != values[0] || (key != "since" && key != "until" && key != "scope" && key != "environment" && (!advice || key != "cache_max_age")) {
 			return app, routeDiagnosticSelection{}, api.ErrValidation("invalid or repeated route diagnostic parameter")
 		}
 	}

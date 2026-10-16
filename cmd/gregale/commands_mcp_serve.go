@@ -46,7 +46,7 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.StringVar(&opts.resourceURL, "resource-url", "", "public HTTPS URL ending in /mcp for remote OAuth")
 	fs.Func("oauth-redirect-uri", "allowed OAuth callback URI; repeat; omit loopback HTTP port for ephemeral client ports", func(value string) error { opts.redirects = append(opts.redirects, value); return nil })
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
-	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted state file for restart-safe review plans and remote connections")
+	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted state file for restart-safe review plans, consumers, and remote connections")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
 	if err := fs.Parse(args); err != nil {
 		return opts, err

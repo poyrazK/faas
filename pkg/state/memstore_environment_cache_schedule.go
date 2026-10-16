@@ -106,7 +106,7 @@ func (m *MemStore) ClaimEnvironmentCacheSchedule(_ context.Context) (Environment
 	now := time.Now().UTC()
 	var id string
 	for k, v := range m.environmentCacheSchedules {
-		if v.Value.ExecuteAt.After(now) || v.Value.Status != "scheduled" && !(v.Value.Status == "executing" && !v.Lease.After(now)) {
+		if v.Value.ExecuteAt.After(now) || v.Value.Status != "scheduled" && (v.Value.Status != "executing" || v.Lease.After(now)) {
 			continue
 		}
 		if id == "" || v.Value.ExecuteAt.Before(m.environmentCacheSchedules[id].Value.ExecuteAt) || v.Value.ExecuteAt.Equal(m.environmentCacheSchedules[id].Value.ExecuteAt) && k < id {

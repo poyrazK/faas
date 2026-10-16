@@ -56,7 +56,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "listen", Short: "HTTP listen address behind TLS proxy (default 127.0.0.1:8787)", Value: "ADDR"},
 			{Name: "resource-url", Short: "public HTTPS URL ending in /mcp (required for HTTP)", Value: "URL"},
 			{Name: "oauth-onboarding", Short: "remote onboarding (default browser)", Value: "MODE", ClosedSet: []string{"browser", "api-key"}},
-			{Name: "state-file", Short: "private encrypted remote state file", Value: "PATH"},
+			{Name: "state-file", Short: "private encrypted state for review plans, consumers, and HTTP grants", Value: "PATH"},
 			{Name: "admin-socket", Short: "optional owner-protected Unix socket for listing and revoking HTTP grants", Value: "PATH"},
 			{Name: "metrics-listen", Short: "optional literal loopback IP:port for private management MCP Prometheus metrics", Value: "ADDR"},
 			{Name: "state-key-file", Short: "independent private 32-byte state encryption key file", Value: "PATH"},

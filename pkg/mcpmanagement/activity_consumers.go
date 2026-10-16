@@ -229,7 +229,7 @@ func (m *management) ackActivityConsumer(ctx context.Context, args activityConsu
 	if before.Generation != args.ExpectedGeneration {
 		return nil, consumerGenerationConflict()
 	}
-	if before.Revision != args.ExpectedRevision && !(before.Revision == args.ExpectedRevision+1 && before.Cursor == args.Cursor) {
+	if before.Revision != args.ExpectedRevision && (before.Revision != args.ExpectedRevision+1 || before.Cursor != args.Cursor) {
 		return nil, invalid("checkpoint_conflict", "consumer revision changed; read it again before acknowledging")
 	}
 	if err = m.validateConsumerCursor(ctx, base, b, args.Cursor); err != nil {

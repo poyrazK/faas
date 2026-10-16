@@ -154,7 +154,7 @@ func (s *PgStore) cacheSchedule(ctx context.Context, account, app, scope, id str
 	key := sqlc.ReadEnvironmentCacheScheduleParams{ScheduleID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(app), EnvironmentID: mustPgUUID(target.EnvironmentID)}
 	changed := int64(0)
 	if cancel {
-		changed, err = q.CancelEnvironmentCacheSchedule(ctx, tx, sqlc.CancelEnvironmentCacheScheduleParams{ScheduleID: key.ScheduleID, AccountID: key.AccountID, AppID: key.AppID, EnvironmentID: key.EnvironmentID})
+		changed, err = q.CancelEnvironmentCacheSchedule(ctx, tx, sqlc.CancelEnvironmentCacheScheduleParams(key))
 		if err != nil {
 			return out, err
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -342,7 +343,7 @@ func TestActivityConsumerNativeAccessLossAndCancellation(t *testing.T) {
 	bound := activityConsumerBinding{Endpoint: backend.URL, Account: f.account.ID, App: f.app.ID, Project: f.project.ID, Environment: f.env.ID, Scope: "staging", Consumer: "cancelled"}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err = manager.consumerRecord(cancelled, activityConsumerArgs{}, bound, &activityConsumerAckArgs{Cursor: activityCursor(t, f, 0)}); err != context.Canceled {
+	if _, err = manager.consumerRecord(cancelled, activityConsumerArgs{}, bound, &activityConsumerAckArgs{Cursor: activityCursor(t, f, 0)}); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled ack committed", err)
 	}
 	var records map[string]activityConsumerRecord

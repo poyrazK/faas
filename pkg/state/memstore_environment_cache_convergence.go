@@ -110,7 +110,7 @@ func (m *MemStore) ListEnvironmentCacheGatewayPolicies(_ context.Context, node, 
 		}
 		row := GatewayEnvironmentCachePolicy{AccountID: a.AccountID, AppID: p.AppID, EnvironmentID: p.EnvironmentID, Scope: p.Scope, Revision: p.Revision}
 		observed := m.environmentCacheGatewayObservations[nodeID+"/"+p.AppID+"/"+p.EnvironmentID]
-		if row.Key() > after && !(observed.Session == session && observed.Revision == p.Revision) {
+		if row.Key() > after && (observed.Session != session || observed.Revision != p.Revision) {
 			out = append(out, row)
 		}
 	}

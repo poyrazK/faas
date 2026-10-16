@@ -1,6 +1,7 @@
 package mcpmanagement
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -12,8 +13,13 @@ import (
 
 func seedSchedule(t *testing.T, f *environmentCacheFixture, at time.Time) api.EnvironmentCacheSchedule {
 	t.Helper()
+	return seedScheduleContext(t.Context(), t, f, at)
+}
+
+func seedScheduleContext(ctx context.Context, t *testing.T, f *environmentCacheFixture, at time.Time) api.EnvironmentCacheSchedule {
+	t.Helper()
 	id := uuid.NewString()
-	out, e := f.store.CreateEnvironmentCacheSchedule(t.Context(), f.account.ID, f.app.ID, "staging", api.CreateEnvironmentCacheScheduleRequest{AppID: f.app.ID, ProjectID: f.project.ID, EnvironmentID: f.env.ID, ScheduleID: id, ExecuteAt: at, Purge: &api.CreateEnvironmentCachePurgeRequest{AppID: f.app.ID, ProjectID: f.project.ID, EnvironmentID: f.env.ID, RequestID: id, Path: "/item"}})
+	out, e := f.store.CreateEnvironmentCacheSchedule(ctx, f.account.ID, f.app.ID, "staging", api.CreateEnvironmentCacheScheduleRequest{AppID: f.app.ID, ProjectID: f.project.ID, EnvironmentID: f.env.ID, ScheduleID: id, ExecuteAt: at, Purge: &api.CreateEnvironmentCachePurgeRequest{AppID: f.app.ID, ProjectID: f.project.ID, EnvironmentID: f.env.ID, RequestID: id, Path: "/item"}})
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -195,11 +195,13 @@ func TestEnvironmentCacheHistoryMigrationBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 	up := strings.Split(string(raw), "-- +goose Down")[0]
-	if _, err = pool.Exec(ctx, up); err != nil {
-		t.Fatal(err)
-	}
-	page, err := s.ListEnvironmentCachePolicyHistory(ctx, account.ID, app.ID, "staging", 0, 20)
-	if err != nil || len(page.Entries) != 3 || page.Entries[0].Revision != 2 || !page.Entries[0].Inherited || page.Entries[1].Revision != 1 || page.Entries[1].Inherited || page.Entries[2].Revision != 0 {
-		t.Fatalf("backfill=%+v %v", page, err)
+	for attempt := range 2 {
+		if _, err = pool.Exec(ctx, up); err != nil {
+			t.Fatalf("backfill attempt %d: %v", attempt, err)
+		}
+		page, err := s.ListEnvironmentCachePolicyHistory(ctx, account.ID, app.ID, "staging", 0, 20)
+		if err != nil || len(page.Entries) != 3 || page.Entries[0].Revision != 2 || !page.Entries[0].Inherited || page.Entries[1].Revision != 1 || page.Entries[1].Inherited || page.Entries[2].Revision != 0 {
+			t.Fatalf("backfill attempt %d=%+v %v", attempt, page, err)
+		}
 	}
 }

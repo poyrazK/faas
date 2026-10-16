@@ -122,7 +122,7 @@ func TestActivityConsumerWatchPollArrival(t *testing.T) {
 	var reads atomic.Int64
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if armed.Load() && strings.HasSuffix(r.URL.Path, "/activity") && reads.Add(1) == 2 {
-			seedSchedule(t, f, time.Now().Add(time.Hour))
+			seedScheduleContext(r.Context(), t, f, time.Now().Add(time.Hour))
 		}
 		base.Config.Handler.ServeHTTP(w, r)
 	}))

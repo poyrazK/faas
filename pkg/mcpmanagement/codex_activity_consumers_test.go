@@ -42,7 +42,7 @@ func TestCodexActivityConsumerAcceptance(t *testing.T) {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/activity") && appendPoll.Load() > 0 && appendPoll.Add(-1) == 0 {
-			seedSchedule(t, f, time.Now().Add(3*time.Hour))
+			seedScheduleContext(r.Context(), t, f, time.Now().Add(3*time.Hour))
 		}
 		base.Config.Handler.ServeHTTP(w, r)
 	}))
@@ -82,7 +82,7 @@ func TestCodexActivityConsumerAcceptance(t *testing.T) {
 		case "/append-on-poll":
 			appendPoll.Store(2)
 		case "/append", "/expire":
-			seedSchedule(t, f, time.Now().Add(2*time.Hour))
+			seedScheduleContext(r.Context(), t, f, time.Now().Add(2*time.Hour))
 			if r.URL.Path == "/expire" {
 				err = f.store.PruneEnvironmentCacheScheduleActivity(r.Context(), time.Now().Add(time.Minute))
 			}
