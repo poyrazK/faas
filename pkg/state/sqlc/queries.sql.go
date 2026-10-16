@@ -10950,6 +10950,51 @@ func (q *Queries) CustomerOperationAccountPlan(ctx context.Context, db DBTX, acc
 	return plan, err
 }
 
+const customerOperationActiveTelemetry = `-- name: CustomerOperationActiveTelemetry :many
+SELECT state, coalesce(record #>> '{waiting,kind}', '')::text AS wait_kind, count(*)::bigint AS operations,
+       min((record ->> 'updated_at')::timestamptz)::timestamptz AS oldest_update,
+       (count(*) FILTER (WHERE state IN ('accepted', 'running', 'waiting') AND deadline_at < $1::timestamptz))::bigint AS overdue
+FROM customer_operations
+WHERE state IN ('accepted', 'running', 'waiting', 'requires_reconciliation')
+GROUP BY state, wait_kind
+`
+
+type CustomerOperationActiveTelemetryRow struct {
+	State        string
+	WaitKind     string
+	Operations   int64
+	OldestUpdate pgtype.Timestamptz
+	Overdue      int64
+}
+
+// ADR-1285: fleet-wide pending Operations by state and wait kind, read
+// through the partial index of pending Operations.
+func (q *Queries) CustomerOperationActiveTelemetry(ctx context.Context, db DBTX, overdueBefore pgtype.Timestamptz) ([]CustomerOperationActiveTelemetryRow, error) {
+	rows, err := db.Query(ctx, customerOperationActiveTelemetry, overdueBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationActiveTelemetryRow{}
+	for rows.Next() {
+		var i CustomerOperationActiveTelemetryRow
+		if err := rows.Scan(
+			&i.State,
+			&i.WaitKind,
+			&i.Operations,
+			&i.OldestUpdate,
+			&i.Overdue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const customerOperationBlobByKey = `-- name: CustomerOperationBlobByKey :one
 SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until, workflow_run_id, workflow_step, job_run_id FROM customer_operation_result_blobs WHERE storage_key = $1::text
 `
@@ -11249,6 +11294,56 @@ func (q *Queries) CustomerOperationJobSnapshotRetained(ctx context.Context, db D
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const customerOperationOutcomeTelemetry = `-- name: CustomerOperationOutcomeTelemetry :many
+SELECT event_type, coalesce(data ->> 'failure_code', '')::text AS failure_code, count(*)::bigint AS operations
+FROM customer_operation_events
+WHERE event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND created_at >= $1::timestamptz
+GROUP BY event_type, failure_code
+`
+
+type CustomerOperationOutcomeTelemetryRow struct {
+	EventType   string
+	FailureCode string
+	Operations  int64
+}
+
+// ADR-1285: Operation outcomes since a point, by failure code.
+func (q *Queries) CustomerOperationOutcomeTelemetry(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]CustomerOperationOutcomeTelemetryRow, error) {
+	rows, err := db.Query(ctx, customerOperationOutcomeTelemetry, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationOutcomeTelemetryRow{}
+	for rows.Next() {
+		var i CustomerOperationOutcomeTelemetryRow
+		if err := rows.Scan(&i.EventType, &i.FailureCode, &i.Operations); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationOutcomeUnknownAccounts = `-- name: CustomerOperationOutcomeUnknownAccounts :one
+SELECT count(DISTINCT o.account_id)::bigint
+FROM customer_operation_events e
+JOIN customer_operations o ON o.id = e.operation_id
+WHERE e.event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND e.event_type = 'reconciliation_required'
+  AND e.data ->> 'failure_code' = 'execution_outcome_unknown' AND e.created_at >= $1::timestamptz
+`
+
+// ADR-1285: accounts whose attempts ended with an unknown outcome since a point.
+func (q *Queries) CustomerOperationOutcomeUnknownAccounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, customerOperationOutcomeUnknownAccounts, since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const customerOperationRecoveryTenantStatus = `-- name: CustomerOperationRecoveryTenantStatus :one

@@ -176,7 +176,18 @@ func webhookIdempotencyKey(endpointID, eventID string) string {
 // ReceiveBoundWebhook admits a verified event for an endpoint bound to a
 // customer operation. It returns false when the endpoint has no binding.
 // Every refusal is non-2xx, so the provider retains and retries the event.
+// Each handled event is counted by binding mode and result (ADR-1285).
 func (s *Service) ReceiveBoundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, eventID, eventType string, body []byte) bool {
+	recorder := &webhookOutcomeWriter{ResponseWriter: w}
+	mode := api.OperationWebhookModeStart
+	handled := s.receiveBoundWebhook(recorder, r, endpoint, eventID, eventType, body, &mode)
+	if handled {
+		s.Metrics.webhookEvent(mode, recorder.result())
+	}
+	return handled
+}
+
+func (s *Service) receiveBoundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, eventID, eventType string, body []byte, mode *string) bool {
 	store, ok := s.Host.Store().(state.OperationWebhookStore)
 	if !ok {
 		return false
@@ -209,6 +220,7 @@ func (s *Service) ReceiveBoundWebhook(w http.ResponseWriter, r *http.Request, en
 		return true
 	}
 	if binding.Mode == api.OperationWebhookModeSignal {
+		*mode = binding.Mode
 		s.signalBoundWebhook(w, r, binding, endpoint, eventID, eventType, body)
 		return true
 	}

@@ -54,7 +54,7 @@ class OperationResponse:
     """Why a waiting operation holds no execution. until is the timer's wake time or the approval deadline."""
     limits: OperationLimits | Unset = UNSET
     """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan;
-    workflow definitions take only a deadline, and job definitions take none."""
+    workflow definitions take a deadline and an execution budget (ADR-1199), and job definitions take none."""
     deadline_at: datetime.datetime | Unset = UNSET
     """Absolute deadline fixed at acceptance; waits, retries and recovery count against it."""
     usage: OperationUsage | Unset = UNSET

@@ -48012,6 +48012,13 @@ CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_
 
 
 --
+-- Name: customer_operation_events_outcome_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_events_outcome_idx ON public.customer_operation_events USING btree (created_at) WHERE (event_type = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'reconciliation_required'::text]));
+
+
+--
 -- Name: customer_operation_executions_current_idx; Type: INDEX; Schema: public; Owner: -
 --
 

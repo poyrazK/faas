@@ -16326,6 +16326,31 @@ SELECT workflows FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
 -- name: GetCustomerOperationForWorkflow :one
 SELECT record FROM customer_operations WHERE workflow_run_id=sqlc.arg(run_id)::uuid;
 
+-- name: CustomerOperationActiveTelemetry :many
+-- ADR-1285: fleet-wide pending Operations by state and wait kind, read
+-- through the partial index of pending Operations.
+SELECT state, coalesce(record #>> '{waiting,kind}', '')::text AS wait_kind, count(*)::bigint AS operations,
+       min((record ->> 'updated_at')::timestamptz)::timestamptz AS oldest_update,
+       (count(*) FILTER (WHERE state IN ('accepted', 'running', 'waiting') AND deadline_at < sqlc.arg(overdue_before)::timestamptz))::bigint AS overdue
+FROM customer_operations
+WHERE state IN ('accepted', 'running', 'waiting', 'requires_reconciliation')
+GROUP BY state, wait_kind;
+
+-- name: CustomerOperationOutcomeTelemetry :many
+-- ADR-1285: Operation outcomes since a point, by failure code.
+SELECT event_type, coalesce(data ->> 'failure_code', '')::text AS failure_code, count(*)::bigint AS operations
+FROM customer_operation_events
+WHERE event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND created_at >= sqlc.arg(since)::timestamptz
+GROUP BY event_type, failure_code;
+
+-- name: CustomerOperationOutcomeUnknownAccounts :one
+-- ADR-1285: accounts whose attempts ended with an unknown outcome since a point.
+SELECT count(DISTINCT o.account_id)::bigint
+FROM customer_operation_events e
+JOIN customer_operations o ON o.id = e.operation_id
+WHERE e.event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND e.event_type = 'reconciliation_required'
+  AND e.data ->> 'failure_code' = 'execution_outcome_unknown' AND e.created_at >= sqlc.arg(since)::timestamptz;
+
 -- name: ListFinishedWorkflowRunAttempts :many
 -- ADR-1199: the finished step attempts an Operation's execution budget counts.
 SELECT step_name, attempt, started_at, finished_at FROM workflow_step_attempts

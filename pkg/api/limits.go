@@ -743,6 +743,8 @@ const (
 	OperationHistoryCursorMaxBytes                           = 512
 	OperationTimelineLogDatesMax                             = 7   // archive days per attempt log window (ADR-1195)
 	OperationDeadlineSweepBatch                              = 100 // workflow Operations settled per deadline sweep (ADR-1196)
+	OperationTelemetryWindowSeconds                          = 900 // outcome window of the Operations gauges (ADR-1285)
+	OperationDeadlineOverdueSeconds                          = 180 // three sweeps past a deadline counts as overdue (ADR-1285)
 	OperationRetentionPageMax                                = 500
 	OperationDefinitionBodyMaxBytes                          = 160000
 	OperationReportBodyMaxBytes                              = 16384
