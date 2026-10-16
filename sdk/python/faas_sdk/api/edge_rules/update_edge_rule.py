@@ -105,6 +105,12 @@ def sync_detailed(
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
     whole (no partial-update shape).
+    PATCH accepts an optional Idempotency-Key with the standard 24-hour
+    replay lifetime. Retry the same method, path, body, If-Match and key
+    after a lost response. A stored success is replayed before checking
+    the now-advanced version; it describes the original write, not current
+    policy or gateway convergence. If a supplied version cannot be checked,
+    the mutation fails closed.
 
     Args:
         id (str):
@@ -146,6 +152,12 @@ def sync(
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
     whole (no partial-update shape).
+    PATCH accepts an optional Idempotency-Key with the standard 24-hour
+    replay lifetime. Retry the same method, path, body, If-Match and key
+    after a lost response. A stored success is replayed before checking
+    the now-advanced version; it describes the original write, not current
+    policy or gateway convergence. If a supplied version cannot be checked,
+    the mutation fails closed.
 
     Args:
         id (str):
@@ -182,6 +194,12 @@ async def asyncio_detailed(
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
     whole (no partial-update shape).
+    PATCH accepts an optional Idempotency-Key with the standard 24-hour
+    replay lifetime. Retry the same method, path, body, If-Match and key
+    after a lost response. A stored success is replayed before checking
+    the now-advanced version; it describes the original write, not current
+    policy or gateway convergence. If a supplied version cannot be checked,
+    the mutation fails closed.
 
     Args:
         id (str):
@@ -221,6 +239,12 @@ async def asyncio(
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
     whole (no partial-update shape).
+    PATCH accepts an optional Idempotency-Key with the standard 24-hour
+    replay lifetime. Retry the same method, path, body, If-Match and key
+    after a lost response. A stored success is replayed before checking
+    the now-advanced version; it describes the original write, not current
+    policy or gateway convergence. If a supplied version cannot be checked,
+    the mutation fails closed.
 
     Args:
         id (str):

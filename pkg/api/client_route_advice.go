@@ -11,12 +11,18 @@ type RouteAdviceOptions struct {
 	Since              string
 	Until              string
 	CacheMaxAgeSeconds int
+	Scope              string
 }
 
 // GetRouteAdvice reads route advisor suggestions for an app.
 func (c *Client) GetRouteAdvice(ctx context.Context, slug string, opts RouteAdviceOptions) (RouteAdviceResponse, error) {
 	var out RouteAdviceResponse
 	q := url.Values{}
+	if opts.Scope == DefaultEnvScope {
+		q.Set("scope", DefaultEnvScope)
+	} else if opts.Scope != "" {
+		q.Set("environment", opts.Scope)
+	}
 	if opts.Since != "" {
 		q.Set("since", opts.Since)
 	}

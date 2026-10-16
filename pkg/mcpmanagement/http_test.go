@@ -80,6 +80,17 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(api.EnvironmentRouteBudgets{AppID: account + "-app", Scope: "default", BudgetSource: "app_policy", Config: api.RouteMonitorConfig{AppID: account + "-app", Routes: []api.RouteMonitorRoute{}}})
+		case "/v1/apps/alpha/routes/awake", "/v1/apps/alpha/routes/advice":
+			if req.URL.Query().Get("scope") != "default" || req.URL.Query().Has("environment") {
+				w.WriteHeader(400)
+				return
+			}
+			identity := api.RouteDiagnosticsIdentity{AppID: account + "-app", Scope: "default", Coverage: "retained_deployment_history", Partial: true}
+			if strings.HasSuffix(req.URL.Path, "awake") {
+				_ = json.NewEncoder(w).Encode(api.RouteAwakeResponse{RouteDiagnosticsIdentity: identity, Slug: "alpha", Routes: []api.RouteAwakeRoute{}})
+			} else {
+				_ = json.NewEncoder(w).Encode(api.RouteAdviceResponse{RouteDiagnosticsIdentity: identity, Slug: "alpha", CacheabilityCoverage: "deployment_isolated_observations_only", PolicyContext: &api.RouteAdvicePolicyContext{Status: "observed", Revision: strings.Repeat("a", 64), ObservedAt: "2026-10-15T00:00:00Z", Rules: []api.RouteAdvicePolicyRule{}, Gaps: []string{}}, Suggestions: []api.RouteAdviceSuggestion{}})
+			}
 		case "/v1/apps/alpha/routes":
 			if req.URL.Query().Get("scope") != "default" {
 				w.WriteHeader(400)
@@ -339,11 +350,11 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			if err != nil || len(aliceCatalog.Tools) != 37 {
+			if err != nil || len(aliceCatalog.Tools) != 73 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) != 29 {
+			if err != nil || len(bobCatalog.Tools) != 56 {
 				t.Fatalf("bob tools=%+v error=%v", bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)

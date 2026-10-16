@@ -59,3 +59,12 @@ facts at the write boundary use the existing `bindings_check_changed` problem
 and `promotion_observations_changed` finding; recheck before retrying. Strict
 promotion must use the dedicated `promote-with-application-ack` route; a 404
 from an older server requires a server upgrade and no fallback traffic write.
+
+### `cursor_expired` (410)
+
+The cache schedule activity checkpoint precedes the retained 30-day event window.
+Use `activity_recovery.restart_cursor` before listing current schedules, then
+resume activity after it and reconcile overlap by schedule UUID. The response
+also provides the scoped `oldest_cursor` for the currently retained suffix.
+Removed history is unavailable. If recovery itself expires, repeat the process;
+never treat it as an empty successful page. See [MCP recovery](mcp.md#activity-retention-and-recovery).

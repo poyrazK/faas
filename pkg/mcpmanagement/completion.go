@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Completion is a bounded read, never an authorization decision or write plan.
@@ -17,13 +18,13 @@ func (m *management) completeArgument(ctx context.Context, req *mcp.CompleteRequ
 		return nil, m.contextError(err)
 	}
 	p := req.Params
-	if !fields[p.Argument.Name] || !completionPrefix(p.Argument.Value) {
+	if !fields[p.Argument.Name] || !completionPrefix(p.Argument.Value) || p.Argument.Name == "consumer" && len(p.Argument.Value) > api.MCPActivityConsumerNameMaxBytes {
 		return nil, m.contextError(invalid("invalid_argument", "invalid completion argument or prefix"))
 	}
 	args := map[string]string{}
 	if p.Context != nil {
 		for key, value := range p.Context.Arguments {
-			if !fields[key] || len(value) > 200 || (value != "" && validateSegment(value, key) != nil) {
+			if !fields[key] || len(value) > 200 || (value != "" && validateSegment(value, key) != nil) || !consumerCompletionContext(key, value) {
 				return nil, m.contextError(invalid("invalid_argument", "invalid completion context"))
 			}
 			if key != p.Argument.Name {
@@ -31,7 +32,7 @@ func (m *management) completeArgument(ctx context.Context, req *mcp.CompleteRequ
 			}
 		}
 	}
-	if p.Ref.Type == "ref/resource" && strings.HasPrefix(p.Ref.URI, "gregale://projects/") && p.Argument.Name == "app" && (args["project"] == "" || args["environment"] == "") {
+	if completionNeedsNamedApp(p.Ref) && p.Argument.Name == "app" && (args["project"] == "" || args["environment"] == "") {
 		return &mcp.CompleteResult{Completion: mcp.CompletionResultDetails{Values: []string{}}}, nil
 	}
 	values, more, err := m.completionCandidates(ctx, p.Argument.Name, args)
@@ -87,7 +88,9 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 	fields := map[string]bool{}
 	if ref != nil && ref.Type == "ref/prompt" {
 		switch ref.Name {
-		case "gregale_deployment_review":
+		case "gregale_deployment_review", "gregale_awake_diagnosis":
+		case activityConsumerReviewPrompt:
+			fields["consumer"] = true
 		case "gregale_rollout_diagnosis", "gregale_rollback_review":
 			fields["deployment_id"] = true
 		default:
@@ -97,6 +100,9 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 		return fields, nil
 	}
 	if ref != nil && ref.Type == "ref/resource" {
+		if ref.URI == activityConsumerResourceTemplate {
+			return map[string]bool{"app": true, "project": true, "environment": true, "consumer": true}, nil
+		}
 		for _, view := range []string{"release", "health", "budgets"} {
 			if ref.URI == "gregale://default/apps/{app}/"+view {
 				return map[string]bool{"app": true}, nil
@@ -120,6 +126,8 @@ func (m *management) completionCandidates(ctx context.Context, field string, arg
 		return m.completeApps(ctx, args)
 	case "deployment_id":
 		return m.completeDeployments(ctx, args)
+	case "consumer":
+		return m.completeActivityConsumers(ctx, args)
 	}
 	return nil, false, invalid("invalid_argument", "unsupported completion argument")
 }

@@ -22,6 +22,16 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
+	app, selection, problem := s.routeDiagnosticEnvironment(w, r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	s.serveRouteAwake(w, r, acct, app, selection)
+}
+
+func (s *server) serveRouteAwake(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, selection routeDiagnosticSelection) {
+	limits := api.MustLimitsFor(acct.Plan)
 	if r.URL.Query().Get("since") == "" {
 		q := r.URL.Query()
 		q.Set("since", api.RouteAwakeDefaultSince.String())
@@ -37,7 +47,7 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("route awake report"))
 		return
 	}
-	awake, routes, err := routeawake.Load(r.Context(), store, acct.ID, app.ID, window.From, window.Until)
+	awake, routes, err := routeawake.LoadScoped(r.Context(), store, acct.ID, app.ID, window.From, window.Until, selection.Scope, selection.Environment.ID)
 	if err != nil {
 		s.log.Warn("route awake read failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("route awake report"))
@@ -50,5 +60,10 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 	})
 	out.Slug, out.WindowClamped = app.Slug, window.WindowClamped
 	out.From, out.Until = window.From.Format(time.RFC3339Nano), window.Until.Format(time.RFC3339Nano)
+	out.RouteDiagnosticsIdentity = selection.identity(app)
+	if problem := s.scopedTelemetryIdentity(r.Context(), acct, app, selection.Environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -47,8 +47,15 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 
 | Tool | Behavior |
 |---|---|
-| `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
+| `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility, schedule activity/recovery prerequisites and durable-state checks. Unknown capabilities require native review/admission. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_recover_environment_cache_activity_consumer` | Recover a bounded baseline page for one consumer, binding continuations to its revision/generation and returning explicit ACK arguments only on completion. |
+| `gregale_get_environment_cache_activity_consumer_health` | Bounded consumer readiness/lag details with summary counts for all saved consumers in the selected scope; no processing cursors or ACK drafts. |
+| `gregale_watch_environment_cache_activity_consumer` | Resume a bounded event watch from saved consumer progress, returning an event page and explicit acknowledgment arguments with revision/generation guards. |
+| `gregale_get_environment_cache_activity_consumer` | Read a named consumer's saved cursor, revision and expiry status from the encrypted bridge journal; current environment read consent required. |
+| `gregale_ack_environment_cache_activity_consumer` | Explicit bridge-local checkpoint acknowledgment with revision guard; available with read consent and durable state, without enabling platform writes. |
+| `gregale_list_environment_cache_activity_consumers` | Bounded, name-sorted consumer metadata for one app/environment, with scoped continuations. |
+| `gregale_retire_environment_cache_activity_consumer` | Explicitly delete one checkpoint with exact revision/generation checks, freeing capacity and fencing stale acknowledgments. |
 | `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
 | `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
@@ -58,6 +65,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_list_app_deployments` | App deployment history with `next_before` pagination. |
 | `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
+| `gregale_get_route_awake` | Scoped route wake attribution, running-time estimates and unattributed time from retained deployment history. |
+| `gregale_get_route_advice` | Scoped route advice and deployment-isolated learned cacheability evidence; read-only. |
 | `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
@@ -95,6 +104,80 @@ App pagination is a fresh sorted snapshot on each call, so apps added or removed
 between pages can shift offsets. Deployment pagination uses the API's cursor.
 Metrics retain their `source` field; degraded telemetry is not proof of zero
 traffic or healthy service.
+
+### Management MCP awake diagnosis
+
+Use `gregale_awake_diagnosis` with `app` and optional `project`/`environment`
+for a read-only investigation using health, routes and route budgets. The prompt
+requires no deployment ID and never applies rules or settings.
+
+`gregale_get_route_awake` and `gregale_get_route_advice` accept `app`, optional
+`since` (positive duration such as `7d`, or RFC3339) and `until` (RFC3339).
+Advice also accepts `cache_max_age_seconds` within the native cache lifetime
+bounds, omitted for the native default. Native plan gating, retention clamping,
+window validation and telemetry availability still apply. API errors remain
+errors; missing telemetry must not be interpreted as zero wakes or safe caching.
+
+The bridge always sends an explicit environment selector, including
+`scope=default` for default reads. Successful reports carry exact app/scope and
+named project/environment identities, `coverage: retained_deployment_history`
+and `partial: true`; the tool envelope also carries `estimates_only: true`.
+App/environment consent and immutable identities are checked before and after
+collection. Missing scoped coverage, another environment or an older aggregate
+response fails closed; no unscoped retry is made.
+
+Usage joins retained instances to deployments. Request evidence joins retained
+deployments, and named deployments must be pinned to a workload spec belonging
+to the exact environment ID. History missing that mapping, unknown deployment
+rows, deleted instances and telemetry gaps are excluded, not evidence of zero
+activity. Unattributed running time **within the selected history** remains in
+the report. These partial estimates do not reconcile an environment's bill.
+
+Scoped advice accepts only `deployment_v1:` learned body observations, whose
+comparison cache is keyed by exact deployment as well as URL. Older app-wide
+comparisons remain unknown. Cacheability coverage is
+`deployment_isolated_observations_only`; no response bodies or hashes leave the
+gateway. Scoped advice omits app-wide wake/priority evidence and mutation rule
+bodies, and includes a bounded `policy_context` plus a `policy` assessment on each
+suggestion.
+Native CLI/API callers that omit both selectors retain aggregate reports.
+
+Policy observations merge the gateway's host-matched and `@app` rules, keeping
+only the selected app/account and active cache, async and throttle kinds.
+Independent named cache policy replaces inherited cache rules when present;
+async and throttle continue to inherit. Headers/CORS remain outside this
+assessment. Default-host rules are never substituted for a named environment
+host. Rule actions, header
+condition values and structured conditions are not returned.
+
+`policy_context.status` is `observed`, `unavailable` or `changed`. Observed
+snapshots carry a scoped revision fingerprint based on rule identity/update
+metadata, not private action values or an account-wide counter. It is a review
+observation, **not a write guard**. A second read detects changed snapshots;
+storage failures, missing readers, missing revisions and more than 100 relevant
+rules produce explicit gaps. Disabled drafts, other hostnames, other gateway gates and actual
+gateway convergence are not evaluated. Telemetry may span several hostnames;
+policy assessments apply only to the reported platform/environment host. Snapshots are optimistic observations,
+not a transaction spanning telemetry and policy.
+
+Suggestions distinguish `duplicate`, `conflict`, `no_matching_rule`,
+`review_required` and `unavailable`, with at most 10 matching rule IDs.
+Configured payload equality yields a duplicate; differing settings are flagged
+for review as a conflict, without assuming runtime defaults are equivalent.
+Header/structured conditions, log mode, route templates, equal-priority matches
+and cross-kind overlaps require review. Matching reuses gateway path semantics,
+including protective matching for throttles and cache method intersections.
+Neither a matching policy nor its absence proves that a change is safe.
+Older native APIs without policy evidence remain readable with explicit
+`unavailable` coverage; the bridge strips rule bodies and never invents policy
+absence. The awake diagnosis prompt requires reviewing these gaps and revisions.
+
+Reports preserve polling patterns, unattributed time, what-if assumptions,
+retention clamping and learned content evidence. Savings are estimates at minute
+resolution, not billing guarantees; observed response repetition does not prove
+that a route is safe to cache. Application descriptions and suggestions remain
+untrusted data. The tools read control-plane telemetry and do not probe or wake
+an application.
 
 ## Enable reviewed release actions
 
@@ -299,8 +382,9 @@ optional project/environment selection. It reports each read compatibility and c
 check independently; unknown results do not grant write permission. It creates no
 plans or source reviews. Store status describes an open encrypted journal, not a
 restart qualification or a guarantee that future writes will succeed.
-The tool catalog has 29 read/planning tools, or
-37 with writes.
+The tool catalog has 56 tools with platform writes disabled: 54 read/planning
+tools and two explicit bridge-local consumer mutations (acknowledgment and
+retirement). Enabling platform writes adds 17 tools, for 73 total.
 
 To prepare a new staging release, call `gregale_plan_deploy` with `app`, `image`,
 `reason`, `project`, and `environment: "staging"`. Review the immutable registry
@@ -2573,6 +2657,7 @@ catalog. These features are read-only even on a write-enabled connection.
 | `gregale://default/apps/{app}/budgets` | Scoped operational summary, including inherited or overridden route-budget findings and bounded recovery metadata. |
 | `gregale://projects/{project}/environments/{environment}/inventory` | Consented workload/release inventory in one registered environment. |
 | `gregale://projects/{project}/environments/{environment}/apps/{app}/{view}` | Named versions of `release`, `health`, and `budgets`. |
+| `gregale://projects/{project}/environments/{environment}/apps/{app}/activity-consumers/{consumer}` | Named consumer readiness, saved revision/generation, update time and lag observations; no cursors or ACK arguments. |
 
 Resource templates advertise generic selectors, not unconsented app names.
 Reads validate consent and immutable identities before and after collection,
@@ -2584,25 +2669,63 @@ Resource contents and API descriptions
 remain untrusted application data, not instructions.
 
 `gregale_deployment_review`, `gregale_rollout_diagnosis`, and
-`gregale_rollback_review` return scoped review recipes with exact resource URIs
+`gregale_rollback_review` return scoped release review recipes with exact resource URIs
 and existing guarded tool guidance. All require `app`; named selectors also
-require `project` and `environment`. Diagnosis/rollback require an exact
+require `project` and `environment`. Rollout diagnosis/rollback require an exact
 `deployment_id` belonging to that app and scope. Unknown arguments are rejected.
 Retrieving a prompt reads identity context but creates no release plan, applies
 no change and grants no additional permission. Protected promotions still need
 native human browser approval. A source rebuild is not an identical artifact
-restore; worker residency is not queue completion.
+restore; worker residency is not queue completion. `gregale_awake_diagnosis`
+uses the same scoped selectors for route wake and cacheability investigation.
+
+`gregale_activity_consumer_review` requires `app`, `project`, named `environment`
+and `consumer`. It reads current consumer state through the existing guarded
+inspection path, including encrypted-journal availability, fresh feed access and
+revision/generation checks. Its response contains the selector, immutable target
+IDs, status, revision/generation and lag observations, followed by a review recipe:
+
+- `uninitialized`: complete and process a baseline before choosing initial
+  acknowledged progress.
+- `ready`: resume using the consumer-aware watch and process the returned page
+  before submitting its acknowledgment arguments.
+- `cursor_expired`: rebuild and process the full baseline, then explicitly
+  acknowledge with `baseline_rebuilt: true`; removed outcomes cannot be replayed.
+
+The recipe also explains refreshing after revision/generation conflicts,
+restarting an overtaken baseline, and replay/idempotency after reconnect. It
+returns no saved or recovery cursor, event page, or acknowledgment draft. The
+snapshot is point-in-time; refresh state before acting. Retrieving this prompt
+is a read-only review: it does not acknowledge, retire, process events, create a
+consumer, choose a baseline or grant new permission. Consumer retirement remains
+a separate explicit operation. Snapshot fields and API content are untrusted
+data. Prompt inspection does not add samples to the get-tool lag metrics.
+Design: [ADR-1366](adr/1366-mcp-consumer-review-and-completion.md).
 
 The pinned Codex app-server API supports resource reads; prompt retrieval is
 verified through the standard MCP SDK in-memory and over OAuth HTTP for both
 supported protocol versions. Client UI exposure of prompts may vary.
 
+The named consumer resource requires encrypted durable state and current read
+consent for the complete app/project/environment selector. It shares consumer
+inspection with the get tool: uninitialized consumers have no chosen baseline,
+ready consumers expose retained backlog, and expired consumers separate retained
+backlog from the removed history gap. Reads include the consumer name, immutable
+IDs/scope, status, revision/generation, optional saved update time and lag fields.
+They omit saved/recovery cursors, recovery metadata, hints, event pages and ACK
+drafts. Use the consumer watch or recovery tool to obtain a current processing
+page and explicit acknowledgment arguments. Reading or subscribing never creates
+a consumer, advances progress, processes events or retires state. Resource reads
+and polls do not add samples to get-tool consumer lag metrics.
+Design: [ADR-1368](adr/1368-mcp-consumer-resources-and-notifications.md).
+
 ### Subscribe to scoped resource changes
 
 MCP 2026-07-28 clients can explicitly request `subscriptions/listen` with
-`notifications.resourceSubscriptions` containing canonical app `release`, `health`
-or `budgets` URIs from the table above. The server acknowledges the accepted set
-and reports `_meta.gregale_subscription_expires_at`. On a meaningful change, it
+`notifications.resourceSubscriptions` containing canonical app `release`, `health`,
+`budgets` or named `activity-consumers/{consumer}` URIs from the table above. The
+server acknowledges the accepted set and reports
+`_meta.gregale_subscription_expires_at`. On a meaningful change, it
 sends `notifications/resources/updated` with the URI and subscription metadata;
 clients then reread that resource. Notifications contain no resource payloads.
 
@@ -2614,6 +2737,20 @@ Unchanged observations, observation clocks and moving-window timestamps stay qui
 health freshness expiry remains a meaningful change. Multiple publishers coalesce
 per recipient. These sampled updates can miss intermediate transitions and provide
 no durable event cursor.
+
+Consumer notifications track readiness, saved revision, connection generation,
+retained backlog, expired-history gap and retention configuration. Observation
+time, increasing ACK age and its clock-skew flag do not cause invalidations.
+An uninitialized consumer has no chosen cursor, so new feed events alone do not
+invent backlog or invalidate it. An explicit ACK changes saved progress;
+retirement rotates the connection generation and invalidates its subscribed
+consumer resources, including names that become uninitialized. Other connection
+namespaces remain isolated. A concurrent ACK/retirement detected during a poll
+or recipient check discards that observation and retries on the next poll;
+initial subscription and direct-read conflicts remain errors. Each send rechecks
+the recipient's native consent, durable grant, immutable target and saved guards.
+These notifications are hints to reread current state, not events, leases,
+processing evidence or automatic acknowledgments.
 
 Unsubscribe, cancel or disconnect to stop the listen. A recreated app/environment,
 consent failure, API failure or revoked grant closes the affected stream and stops
@@ -2630,9 +2767,11 @@ with modern SDK clients over session and stateless HTTP transports.
 ### Complete prompt and resource arguments
 
 Clients that support MCP `completion/complete` can request prefix suggestions for
-Gregale's three review prompts and seven resource templates. Suggestions cover
+Gregale's five review prompts and eight resource templates. Suggestions cover
 `app`, `project` and `environment`; diagnosis and rollback prompts also complete
-`deployment_id`. Resource references use the exact URI **template** returned by
+`deployment_id`. `gregale_activity_consumer_review` and the named consumer resource
+also complete `consumer` for a fully selected app/project/named environment.
+Resource references use the exact URI **template** returned by
 `resources/templates/list`, including `{app}` placeholders, rather than a resolved URI.
 
 Send previously selected values in `context.arguments`. Named-resource app suggestions
@@ -2647,14 +2786,40 @@ to the selected scope. `hasMore` indicates additional values or unexamined histo
 `total` is omitted when the result is incomplete. Use deployment-history tools to
 search older pages. Empty suggestions can mean the selector is incomplete or the
 prefix has no matches. Unknown references and malformed arguments are rejected.
+Consumer completion reads the bounded connection journal (at most 100 records),
+filters all endpoint/account/immutable target/scope bindings, and then applies
+the literal prefix. It does not stop at the first consumer-list page. Only names
+are suggested, including expired consumers. Names matching credential-redaction
+rules are omitted rather than replaced with unusable labels. Completion does not
+validate each saved cursor or imply readiness. Incomplete consumer selectors return no names;
+app completion for the consumer prompt and resource also requires project and
+named environment, so it never falls back to default scope. Names are isolated by local profile or OAuth
+grant, and fresh native read access plus durable consent are required. Failed
+reads return errors rather than cached names. Completion does not create records,
+advance progress, or start a watch.
+
 Client interfaces may not expose completion even when ordinary MCP reads work.
 
 ### Concurrent requests and overload
 
-Each stdio management connection or remote OAuth grant allows eight concurrent
-short requests and two concurrent `gregale_watch_rollout` calls. All HTTP requests
-and SDK sessions for the same grant share these limits. Separate grants have
-independent capacity. These bridge limits do not change Gregale plan quotas.
+Each stdio management connection or remote OAuth grant has three independent
+admission pools:
+
+| Pool | Concurrent calls |
+|---|---|
+| Ordinary tools, resource reads, prompts and completion | 8 |
+| `gregale_watch_rollout` | 2 |
+| Activity watches: raw cursor and named consumer, combined | 2 |
+
+`gregale_watch_environment_cache_schedule_activity` and
+`gregale_watch_environment_cache_activity_consumer` share the activity pool.
+Waiting activity watches cannot consume ordinary-request or rollout-watch slots,
+so acknowledgments and consumer inspection can continue when activity observation
+capacity is full. A full ordinary-request pool does not block activity watches.
+All HTTP requests and SDK sessions for the same grant share these limits;
+separate grants have independent capacity. These bridge limits do not change
+Gregale plan quotas. Bounds live in `pkg/api/limits.go`. Design:
+[ADR-1365](adr/1365-isolated-mcp-activity-watch-admission.md).
 
 Short requests include ordinary tools, resource reads, prompt retrieval and
 argument completion. Subscription baseline reads, polls and notification-recipient
@@ -2694,10 +2859,18 @@ Startup diagnostics go to stderr, preserving stdio protocol output.
 |---|---|
 | `gregale_management_mcp_requests_total` | Completed requests/snapshots by fixed `operation`, registered `tool` (or `none`/`unknown`), and `outcome`. |
 | `gregale_management_mcp_request_duration_seconds` | Handler-duration histogram by operation/tool, including validation and customer API reads. |
-| `gregale_management_mcp_active` | Aggregate reservations by `kind`: `short_requests`, `rollout_watches`, `listen_streams`, `resource_slots`. |
+| `gregale_management_mcp_active` | Aggregate reservations by `kind`: `short_requests`, `rollout_watches`, `activity_watches`, `listen_streams`, `resource_slots`. |
+| `gregale_management_mcp_admission_rejections_total` | Full-pool admission rejections by fixed `kind`: `short_requests`, `rollout_watches`, `activity_watches`. Includes skipped subscription reads using short capacity. |
 | `gregale_management_mcp_resource_updates_total` | Invalidation notifications successfully sent to individual recipients. |
+| `gregale_management_mcp_consumer_reads_total` | Successful consumer get observations by fixed `status`: `uninitialized`, `ready`, `cursor_expired`. |
+| `gregale_management_mcp_consumer_lag_events` | Histogram of event counts sampled on initialized consumer gets, by fixed `kind`: `retained`, `expired`. |
+| `gregale_management_mcp_consumer_ack_age_seconds` | Histogram of time since the last progress-changing acknowledgment, sampled on initialized gets with a usable timestamp. |
 
-Outcomes are `success`, `error`, `busy`, `cancelled` and `timeout`. Tool results
+Outcomes are `success`, `error`, `busy`, `cancelled`, `timeout`,
+`checkpoint_conflict`, `consumer_generation_conflict`, `consumer_capacity`,
+`durable_state_required`, `durable_state_unavailable`, `cursor_expired` and
+`recovery_restart_required`. Invalid journal records count as
+`durable_state_unavailable`; arbitrary upstream error codes remain `error`. Tool results
 with `isError` count as failures even when their RPC completed successfully.
 Operations cover tools, resources, prompts, completions, listen RPCs and
 `subscription/read` snapshots. Snapshots include baselines, polls and recipient
@@ -2710,9 +2883,24 @@ credentials, arbitrary error codes or resource contents. No global Go/process
 collectors are registered. Gauges include setup/cleanup reservations; sent
 notifications do not prove client processing or rereads.
 
-For overload, inspect the rate of requests with `outcome="busy"` alongside active
-short requests and watches. For slow operations, compare histogram latency by
+For overload, inspect `rate(gregale_management_mcp_admission_rejections_total[5m])`
+by `kind` alongside the matching active gauge. The activity-watch gauge includes
+the full handler lifetime, including setup and validation, not just sleeping
+polls. The rejection counter is initialized to zero for each pool, aggregates all
+grants and resets on restart; it has no tool or identity labels. Existing request
+metrics with `outcome="busy"` identify the registered tool that was rejected. For slow operations, compare histogram latency by
 operation/tool; watch and listen lifetimes are expected to exceed ordinary reads.
+Consumer histograms are read-time samples: repeated gets count again, quiet
+consumers are absent, and they do not measure total journal backlog or every
+consumer's current health. Uninitialized consumers contribute only a status
+observation. A successful get with expired progress counts as request `success`
+and consumer status `cursor_expired`; a rejected expired ACK counts as request
+outcome `cursor_expired`. No background scan is performed.
+Get observations are sampled only after final consumer validation and bounded,
+sanitized output serialization succeed. Final authorization, revision/generation,
+grant/storage and serialization failures add no consumer lag samples. These are
+locally accepted response observations, not transport-delivery receipts.
+
 Scrape this listener locally. Embedders can share `mcpmanagement.NewTelemetry()`
 through server options and mount its `Handler()` on their own private listener.
 
@@ -3706,3 +3894,1058 @@ HTTP 200 can still contain a JSON-RPC or tool error. These metrics do not parse
 response bodies. Retained CLI diagnostics classify HTTP status and do not expose
 method hints or all post-header stream failures; correlate operator metrics/logs
 with retained request evidence when investigating those cases.
+
+
+### Reviewed cache-policy updates
+
+`gregale_plan_cache_rule` reviews replacement cache settings for an existing
+`@app` rule. Supply `app`, `rule_id`, `reason` and a complete `cache` object.
+The review contains the current selectors and settings, normalized proposed
+settings, a native rule-set version and a 15-minute expiry. Planning never
+writes. `gregale_apply_cache_rule` accepts only the returned `plan_id` and is
+available with `--allow-writes`.
+
+These rules are **shared app policy**, including inheritance by named
+environments. This initial implementation requires local unrestricted
+environment access. Remote default-only and named environment grants are
+rejected, including grants with default writes enabled. Do not pass `project`
+or `environment`. Native independent named-environment cache ownership is
+required before this tool can offer isolated named writes.
+
+Only enabled, unconditional, non-expiring, enforce-mode cache rules with
+`match_host: "@app"` are supported. Rule creation, selector changes, conditional
+rules and other kinds remain outside this operation. Native cache validation
+and defaults apply; the review shows the values that will be sent. Historical
+snapshots may contain other actions or private conditions; only the selected
+safe rule's cache settings and selectors appear in MCP output or saved plans.
+
+Apply rechecks account, app identity and write consent, then sends the exact
+reviewed settings with native `If-Match` and a stable idempotency key. A stale
+uncommitted plan receives 412. Retry the same plan after an ambiguous reply;
+when a native replay receipt exists it returns the original response before
+checking the advanced version.
+
+For restart recovery, add `--state-file ./mcp-state/state` and
+`--state-key-file ./mcp-state/key` to the stdio command. The directory must be
+private (0700); the independent key file must contain 32 random raw bytes or
+64 hex characters and be private (0600). Keep the key across restarts and use
+one journal per running stdio process. Local startup authenticates the account
+once and binds its journal to account,
+API endpoint and profile. It retains expiring plans, attempts and successful
+receipts. Stdio connections without these options must retain their running
+connection. Reconnect to the same account, endpoint and profile, then retry
+the original plan ID before it expires.
+
+Receipts describe the desired policy written by that operation, not current
+policy after later edits, gateway convergence, cache eviction or measured
+savings. If a crash or storage failure prevents saving a native receipt after
+commit, the old version guard prevents a repeated mutation; the retry can
+return 412 instead of recovering success. Inspect native history before
+planning again. Existing entries are not explicitly invalidated by this tool.
+
+### Environment-owned cache policies
+
+`gregale_get_environment_cache_policy`, `gregale_plan_environment_cache_policy`
+and write-gated `gregale_apply_environment_cache_policy` manage cache rules on
+one immutable named environment host. These tools work with remote grants that
+consent to that exact project, environment and app; apply additionally requires
+environment write consent. They do not grant shared app-policy authority.
+
+Pass `app`, `project` and `environment`. Planning also requires `reason` and a
+complete `rules` array, for example:
+
+```json
+{
+  "app": "catalogue",
+  "project": "shop",
+  "environment": "staging",
+  "reason": "Reduce staging catalogue wakes",
+  "rules": [
+    {"path": "/catalog/*", "priority": 10,
+     "cache": {"max_age_seconds": 120, "stale_if_error_seconds": 0}}
+  ]
+}
+```
+
+A missing override reports `inherited: true`, `revision: 0`, and no inherited
+rule bodies. Saving a list replaces **all cache rules** for that environment
+host. `rules: []` explicitly disables caching there. Other environments,
+default hosts, shared app rules and other rule kinds are unchanged. Rules are
+unconditional, enforced and non-expiring; the platform assigns host and rule
+identity. Up to 20 rules with distinct priorities are allowed. Existing native
+cache validation and defaults apply and appear in the reviewed proposal.
+
+Apply accepts only the returned `plan_id`. Reviews expire after 15 minutes;
+stale revisions and replaced registry identities fail closed. Keep the same
+plan on an ambiguous response. Native intent and a request-hashed receipt
+commit atomically, so a retry recovers the original result without creating
+another policy revision. The receipt may describe an earlier successful write
+if someone has edited policy since then. Grant identities and current write
+consent are rechecked before any saved MCP receipt is returned.
+
+Gateway policy refresh uses the existing 30-second cache TTL. Revision-specific
+cache-rule IDs prevent previous response entries from being reused after the
+new policy loads. A save does not confirm fleet convergence or measured savings.
+Authentication, cookie, method and origin cacheability checks still apply.
+Scoped route advice includes the environment overlay's safe metadata with
+`source: environment_policy`; it continues to omit mutation recipes.
+
+Apply the new database migration before deploying policy readers and deploy
+compatible gateways before enabling these writes. Default scope,
+manifest/GitOps ownership is not provided. Cloned or recreated environments start
+with app inheritance until explicitly configured. Remote bridge state options
+retain these plans across restarts; local stdio can use its encrypted journal.
+
+### Verify environment cache-policy propagation
+
+After apply, call `gregale_watch_environment_cache_policy` with `app`, `project`,
+`environment`, and the exact positive `revision` from the receipt. This is a
+read-only tool and works with environment read consent; writes need not be
+enabled. `wait_seconds` accepts 1–45 (default 20), bounded by the connection's
+tool timeout.
+
+```json
+{"app":"catalogue","project":"shop","environment":"staging",
+ "revision":2,"wait_seconds":20}
+```
+
+The result includes exact immutable identities, the desired revision,
+`checked_at`, and aggregate `serving_gateways`, `acknowledged_gateways`,
+`pending_gateways` and `stale_gateways` counts. It exposes no gateway names,
+addresses or unrelated policy bodies.
+
+- `converged`: every registered serving compute gateway acknowledged this
+  exact revision in its current process session, with node and observer
+  heartbeats fresh within 90 seconds.
+- `degraded`: no registered serving gateways, missing/stale sessions or
+  heartbeats, or changed registry endpoints. This does not mean propagation
+  succeeded.
+- `timed_out`: eligible gateways were still pending when the bounded watch
+  ended. `watch_timed_out` is true; poll the same revision again.
+
+Pending is the intermediate native status while fresh sessions have not yet
+acknowledged the revision. The native GET endpoint is
+`/v1/apps/{slug}/cache-policy/convergence?environment=staging`; it returns pending,
+converged or degraded without waiting. Inherited revision zero has no independent
+policy to acknowledge and reports degraded. If desired revision changes during
+a watch, the MCP tool fails with `policy_superseded`; inspect current policy
+before selecting another revision. Registry replacement or withdrawn consent
+also fails closed. Cancellation and unavailable APIs remain errors.
+
+Gateway reconciliation runs every five seconds in pages of up to 100
+unacknowledged revisions. It explicitly reloads idle hosts and does not depend
+on notifications. Acknowledgement follows successful direct compilation and
+cache installation, including empty overrides. Failed readers, last-known
+fallbacks, policy races and discarded cache generations do not acknowledge.
+New process sessions invalidate old acknowledgements; unchanged policies keep
+their acknowledgement while the session is live. Endpoint changes require a
+new gateway session. Configure `FAAS_NODE_NAME` to match the registered compute
+node; unnamed gateways cannot produce verified fleet evidence.
+
+Apply the convergence migration before deploying observer-enabled gateways.
+A save receipt still confirms desired intent; the watch provides a later
+sample of registered-gateway evidence, not continuous serving behavior,
+unregistered-process coverage or measured cache savings. Existing 30-second
+policy-cache refresh continues independently of this observation loop.
+
+
+### Restore app cache inheritance
+
+Use `gregale_plan_environment_cache_inheritance` to review removing the cache
+rules or cache-disabled override for one named environment. It accepts `app`,
+`project`, `environment` and `reason`; it writes nothing. Apply the returned
+`plan_id` with write-gated `gregale_apply_environment_cache_inheritance`.
+Both tools enforce the same exact environment identities and consent as the
+cache-policy tools. Applying requires environment write consent. The two apply
+tools reject each other's plan IDs.
+
+```json
+{"app":"catalogue","project":"shop","environment":"staging",
+ "reason":"Restore the app cache rules in staging"}
+```
+
+Restoration saves `inherited: true`, an empty `rules` list, and a new positive
+revision. It retains a small revision record instead of deleting it, so old
+reviews cannot become valid again. App-owned cache rules remain unchanged and
+are evaluated live on subsequent gateway reloads; their bodies are not returned
+or frozen by this review. An inherited environment may therefore have no cache
+rules if the app has none. `inherited: false` and `rules: []` continues to mean
+cache disabled, which is a different operation. A later override uses the next
+revision rather than starting again at one.
+
+Native clients use the existing guarded PUT
+`/v1/apps/{slug}/cache-policy?environment=staging` with `inherited: true` and
+`rules: []`, plus immutable IDs, `expected_revision` and `request_id`. Ambiguous
+replies are retried with the same body and ID. Native intent and the restoration
+receipt commit together; replay returns the original receipt even after a
+later edit. Remote persisted plans and local encrypted journals retain this
+operation across restarts. Receipts record desired intent at that time.
+
+Watch the returned positive revision with
+`gregale_watch_environment_cache_policy`. Gateways reconcile restored revisions
+without depending on notifications and reload them again after process restart.
+Restoration partitions inherited cache-rule response identities so responses
+cached before the override cannot be reused. This evidence confirms the
+inheritance-mode revision was loaded, not a frozen version of app-owned rules
+or a continuous serving guarantee.
+
+Apply the inheritance migration, then update apid and all gateways before
+enabling the new MCP tools or native inherited writes. Older gateways treat
+the stored row as an empty override, and older APIs do not support the new
+request flag. A rollback of the migration fails while inherited revision rows
+remain, rather than silently turning them into cache-disabled overrides.
+
+
+### Copy cache policy between named environments
+
+`gregale_plan_environment_cache_copy` reviews a one-time copy of an explicit
+cache override between two different named environments of the **same app and
+project**. It accepts `app`, `project`, `source_environment`, destination
+`environment`, and `reason`. Both environments require read consent to inspect
+the before/after review. Source write consent is not required. Apply the
+returned `plan_id` using write-gated `gregale_apply_environment_cache_copy`;
+this additionally requires destination write consent. Source read consent and
+both immutable identities are rechecked even for a completed saved receipt.
+
+```json
+{"app":"catalogue","project":"shop","source_environment":"staging",
+ "environment":"production","reason":"Promote the reviewed staging cache rules"}
+```
+
+The review contains `environment_cache_policy.copy_source` (the exact explicit
+source snapshot), `before` (destination policy), and `proposed` (destination
+replacement with the source pin). Reviews expire after 15 minutes. Apply guards
+both source and destination revisions atomically in the native write
+transaction. Changing either policy requires a new review before a new copy
+can succeed. The original source policy is never mutated. Opposite-direction
+copies cannot deadlock on environment lock ordering: writes lock the same app
+first, then resolve their environment identities.
+
+An explicit empty source (`inherited: false`, `rules: []`) deliberately disables
+destination caching. An inherited source, at revision zero or a restored
+positive revision, is rejected; use the inheritance plan/apply tools to restore
+live app inheritance. Copies are independent overrides, not ongoing policy
+synchronization. Other apps, shared app rules and other rule kinds are unchanged.
+New destination rule IDs partition its response cache from the source.
+
+A lost reply is retried with the same plan. The native write and request-hashed
+receipt commit together. Receipt recovery returns the original result after
+subsequent source or destination edits without overwriting them. Deleted or
+recreated source/destination identities cannot recover the old operation. The
+source pin participates in the request hash. Remote durable plans and local
+encrypted journals retain both snapshots and the exact request across restarts.
+The copy, override and inheritance apply tools reject each other's plans.
+
+Native clients use the existing guarded PUT with an optional `copy_from` object:
+
+```json
+{"scope":"staging","environment_id":"SOURCE_ENVIRONMENT_UUID","revision":3}
+```
+
+The complete destination request still carries immutable destination IDs,
+`expected_revision`, `request_id`, and normalized `rules` matching that exact
+explicit source. `inherited` must be omitted or false. Native scope and UUID
+checks apply even on receipt replay; source revision/content and destination
+revision checks apply before a new mutation.
+
+Use the returned destination revision with
+`gregale_watch_environment_cache_policy` to verify propagation. A successful
+copy receipt alone confirms desired policy. Existing gateway reconciliation,
+restart handling and stale-session checks apply to the copied revision.
+Upgrade apid before enabling the new tools or native `copy_from` writes. This
+feature adds no migration beyond the existing environment cache-policy schema.
+
+
+### Inspect cache history and roll back a reviewed revision
+
+Use `gregale_list_environment_cache_history` with `app`, `project` and named
+`environment`. Optional `limit` is 1–50 (default 20). Pages are newest first;
+pass `next_before_revision` as `before_revision` to read older entries. Zero
+or omitted `before_revision` starts at newest. Each page includes exact
+immutable identities, `current_revision`, and retained policy `entries`.
+Use `gregale_get_environment_cache_revision` with the same scope and an exact
+`revision` to read one snapshot. Both tools require environment read consent.
+They expose historical rules only inside that consented scope and write nothing.
+
+`gregale_plan_environment_cache_rollback` accepts the same scope, the historical
+`revision`, and a reviewable `reason`. The review shows `before`, `restore_from`,
+and the exact `proposed` replacement under `environment_cache_policy`. Apply
+its `plan_id` with write-gated `gregale_apply_environment_cache_rollback`, which
+requires current environment write consent. Reviews expire after 15 minutes.
+
+```json
+{"app":"catalogue","project":"shop","environment":"staging",
+ "revision":2,"reason":"Restore the previous reviewed cache behavior"}
+```
+
+Rollback writes a **new** revision using the historical mode and normalized
+rules. It never decrements the revision counter. The native transaction guards
+the reviewed current revision and compares the requested mode/rules against
+the selected historical snapshot. Concurrent edits fail closed. Other apply
+tools cannot consume rollback plans. Existing copy provenance is not reapplied:
+rolling back a previously copied policy restores its saved destination outcome,
+without reading or copying the original source again.
+
+History records explicit rules, cache-disabled overrides (`inherited: false`,
+empty rules), and restored inheritance (`inherited: true`, empty rules).
+Revision zero is a synthetic initial inherited mode with no timestamp or old
+app-rule bodies. Rolling back to zero or another inherited revision follows
+**live** app cache rules on reload; it does not restore historical app-owned
+rules. Positive revisions unavailable in retained history return not found,
+not a guessed snapshot. A later policy may differ while a receipt is recovered.
+
+Intent, history and the request-hashed native receipt commit atomically. A lost
+reply is retried with the same plan, including after an encrypted journal or
+remote bridge restart. Retry recovers the original successful result without
+another history entry or overwriting later policy. Exact identities and current
+write consent are checked even before returning a completed saved receipt.
+Deleting and recreating an environment cannot recover its old history or plans.
+
+Native reads are GET `/v1/apps/{slug}/cache-policy/history?environment=staging`
+and `/v1/apps/{slug}/cache-policy/history/{revision}?environment=staging`.
+Native rollback uses the existing guarded PUT with `restore_revision`, matching
+`inherited`/`rules`, immutable IDs, `expected_revision`, and stable `request_id`.
+`restore_revision` and `copy_from` are mutually exclusive. Watch the returned
+**new** revision using `gregale_watch_environment_cache_policy`; an apply receipt
+alone is desired intent rather than propagation proof.
+
+Apply the history migration and update every apid writer before relying on
+complete new history or enabling these tools. The migration backfills the
+current policy and revisions available in existing receipts; it cannot recreate
+missing receipts. All subsequent writes through updated apid retain history
+until the owning app or environment is deleted. History pagination bounds reads,
+not lifetime revision storage. Existing gateway observers need no new protocol.
+
+
+### Review and verify an environment cache purge
+
+`gregale_plan_environment_cache_purge` takes `app`, `project`, named
+`environment`, explicit `path`, and `reason`. Use an exact decoded URL path
+such as `/catalog/item` or an explicit empty string to target the entire
+immutable environment host. Globs, queries, fragments, percent escapes,
+controls and dot segments are rejected. A path purge covers all method,
+query, cache-rule, deployment-cohort and vary variants at that path.
+
+```json
+{"app":"catalogue","project":"shop","environment":"staging",
+ "path":"/catalog/item","reason":"Invalidate the updated catalogue item"}
+```
+
+Planning requires exact environment read consent and writes nothing. It shows
+current policy for context and a proposed immutable target/request UUID under
+`environment_cache_purge`. It does not claim an entry count or inspect private
+cached responses. Apply the returned `plan_id` with write-gated
+`gregale_apply_environment_cache_purge`, requiring current environment write
+consent. Reviews expire after 15 minutes. Other apply tools reject purge plans.
+Purge does not modify cache policy or create a policy/history revision.
+
+A stable command row is both the durable replay request and retry receipt.
+Its globally commit-ordered `generation` is independent of policy revision.
+Retry the same plan after a lost reply, including after encrypted journal or
+remote bridge restart. The same request UUID/body recovers the original receipt;
+changing its target conflicts. Exact identities and write consent are rechecked
+before returning even a completed saved receipt. Deleted/recreated environment
+slugs cannot recover old requests.
+
+Read `gregale_get_environment_cache_purge` with `app`, `project`, `environment`
+and the returned `request_id`. Environment read consent suffices.
+
+- `completed`: all registered serving compute gateways replayed at least this
+  generation in their current process sessions, with node/session heartbeats
+  fresh within 90 seconds.
+- `pending`: fresh registered sessions have not all published that checkpoint.
+- `degraded`: the roster is empty, or sessions, endpoints or heartbeats are
+  missing/stale. No vacuous success is reported.
+
+Counts and `checked_at` form a sampled snapshot; node names/addresses are not
+returned. A restart or roster change can return a completed request to pending
+or degraded until the new process catches up. This is not continuous serving
+attestation or a guarantee about unregistered old gateways.
+
+Gateway replay runs alongside environment-policy convergence every five
+seconds, with up to 100 commands per pass. New processes replay from zero and
+bypass environment caching until caught up; they never trust a prior process's
+checkpoint. Notifications are not required. Per-app/environment whole-host and
+exact-path generations partition L1 and Redis keys. Late in-flight responses
+write old keys and cannot repopulate the current namespace. Redis objects age
+out by normal TTL rather than being physically deleted, so no Redis admin
+operation is needed for this logical purge. Requests already in flight may
+finish; origin/application data freshness is outside cache invalidation proof.
+Other immutable environments and default/custom hosts are not targeted.
+
+Native POST `/v1/apps/{slug}/cache/purges?environment=staging` accepts immutable
+IDs, `request_id` and explicit `path` (including `""`). Native GET
+`/v1/apps/{slug}/cache/purges/{request}?environment=staging` returns status.
+Apply the purge migration, then upgrade apid and **all** serving gateways before
+enabling these tools. Older gateways do not honor generation keys or publish
+these checkpoints. Configure matching `FAAS_NODE_NAME` fleet registration;
+unnamed gateways retain bypassed environment caching rather than producing
+unverified completion. Commands/receipts live until owner deletion, and replay
+work/startup bypass grows with retained command history.
+
+### One-time environment cache schedules
+
+`gregale_plan_environment_cache_schedule` reviews one exact policy replacement
+(`rules`, or `inherited: true` with `rules: []`) or purge (`purge_path`, with
+explicit `""` for the whole immutable environment host), plus an RFC3339
+`execute_at` within 30 days. The review shows immutable IDs, current policy,
+complete proposed action and UTC time. Policy guards pin the current revision;
+copy/rollback sources are unsupported in schedules. Apply within 15 minutes via
+`gregale_apply_environment_cache_schedule` with current named-environment write
+consent. Retry the same review after an ambiguous response. At most 100 pending
+or executing schedules are admitted per app/environment; terminal receipts remain.
+
+Acceptance delegates the action durably to apid. Disconnecting MCP, revoking the
+creating token or changing local consent does not cancel that delegation. Use
+`gregale_cancel_environment_cache_schedule` with exact schedule UUID and current
+write consent to withdraw it before worker claim. Cancellation races atomically
+with claiming and is idempotent once cancelled; executing and terminal schedules
+reject cancellation. Suspended account owners can still cancel pending actions.
+
+`gregale_get_environment_cache_schedule` requires exact environment read consent
+and distinguishes scheduled, executing, executed, failed and cancelled. Executed
+means the desired policy/purge has a durable receipt, not that gateways converged.
+MCP status includes separate current gateway evidence; superseded policy receipts
+report `policy_superseded`. Zero/stale fleets retain degraded evidence. Workers
+revalidate live owner/account eligibility and immutable target, and reject stale
+policy revisions. The original action UUID makes retries after lost replies or
+worker restarts safe. Transient errors retain a 60-second lease before retry;
+known rejections become terminal failures with a stable code. Execution occurs
+at or after the timestamp, including delayed recovery after outages. No recurring
+schedules, precise deadline guarantee or cancellation of in-progress actions.
+
+Roll out migration `20261015190000001`, then updated apid (including its normal
+background workers). Policy convergence and purge completion also require the
+previously documented gateway observer/purge migrations and upgraded gateways.
+Design: [ADR-1354](adr/1354-environment-cache-schedules.md).
+
+### Discover and reschedule cache actions
+
+`gregale_list_environment_cache_schedules` discovers schedules for one read-consented
+named environment. It supports an optional status and execution-time range (`from`
+inclusive, `until` exclusive), default 20/max 50 rows, and opaque `after` cursors.
+Results are ordered by execution timestamp and UUID. Cursors bind immutable target
+and filters; changing either requires restarting pagination. Pages are live, so
+new replacements or status changes may require restarting from page one. Discovery
+returns action receipts, not newly sampled gateway evidence; use exact schedule
+status to inspect convergence.
+
+`gregale_plan_environment_cache_reschedule` reviews a pending schedule's unchanged
+action and original policy revision guard, original timestamp, and new timestamp
+within 30 days. `gregale_apply_environment_cache_reschedule` requires current
+named-environment write consent. Atomic replacement cancels the pending original
+and inserts one linked successor, preserving its active quota slot. Worker claim,
+cancellation, competing replacement and stale policy guards reject the review.
+Identical retries recover the original successor after lost replies, including
+terminal successors and later replacements. Existing encrypted plan journals retain
+review attempts and receipts across MCP restarts; cached receipts still recheck
+current consent. UUID collisions roll back without cancelling the original.
+
+The original's `replaced_by_schedule_id` and successor's `replaces_schedule_id`
+preserve the chain. Execution time and action bodies are never edited in place.
+To withdraw the new delegation, cancel the **successor UUID**; cancelling an already
+cancelled original is idempotent and leaves the successor scheduled. Acceptance,
+action execution and gateway convergence remain distinct.
+
+Roll out migration `20261015200000001` before updated apid. Prior schedule/gateway
+requirements remain applicable. Design: [ADR-1355](adr/1355-cache-schedule-discovery-and-replacement.md).
+
+### Durable cache schedule activity
+
+`gregale_get_environment_cache_schedule_activity` reads compact accepted,
+rescheduled, cancelled, executed and failed events for one currently read-consented
+named environment. Page size defaults to 20 and caps at 50. Save the returned
+`cursor`, including on an empty page, and pass it as `after` after reconnecting.
+`has_more` indicates a committed backlog in that read snapshot; it is not a promise
+that another event cannot arrive immediately afterward. Cursors bind the account
+and immutable app/project/environment IDs. Foreign, malformed and ahead-of-stream
+cursors fail rather than silently skipping future activity.
+
+Schedule changes and their events commit atomically. Sequence allocation uses a
+transactional counter retained through commit, avoiding missing late commits.
+Idempotent create/cancel/reschedule retries and stale completion leases add no
+extra events. A reschedule publishes its cancelled original linked to the
+successor, followed by the successor's acceptance linked to the original. Claim
+and lease retries are not published as outcomes. Failure entries carry stable
+codes; execution entries carry only the resulting policy revision or purge
+generation. Rule bodies, decoded purge paths, raw errors and gateway identities
+are excluded. Execution remains distinct from gateway convergence; use exact
+schedule status for fresh fleet evidence.
+
+Events have a 30-day retention window plus bounded maintenance lag, and are also
+removed on account/app/project/environment physical deletion. There is no
+historical reconstruction of pruned events. Recording begins in the
+updated apid writers, with no invented backfill for earlier changes. Install
+migration `20261015210000001`, upgrade **all apid writers/workers**, and establish
+an initial schedule-list baseline before relying on activity catch-up. Mixed old
+writers cannot publish events; do not enable consumers until rollout completes.
+Go, Node and Python clients expose the same bounded read endpoint.
+Design: [ADR-1356](adr/1356-durable-cache-schedule-activity.md).
+
+### Bounded schedule activity watches
+
+`gregale_watch_environment_cache_schedule_activity` accepts the same `app`,
+`project`, `environment`, `after` and `limit` arguments as the durable feed reader,
+plus `wait_seconds` (default 20, maximum 45). It returns the first nonempty page
+with `watch_status: "events"`, or an empty page with `watch_status: "timed_out"`
+and `watch_timed_out: true`. Save the returned cursor after consuming events;
+`has_more` means another page is already available.
+
+An empty timeout preserves the supplied cursor exactly. With no supplied cursor,
+it returns a scoped initial checkpoint. Reconnect or retry cancelled requests
+with the last consumed cursor. Cancellation and earlier request or authorization
+lease deadlines return errors rather than a successful timeout. The effective
+wait is bounded by all these deadlines. Each internal observation (approximately
+once per second) rechecks consent and immutable target identity. Revoked access,
+invalid cursors and invalid responses fail the call. No subscription or background
+job survives the request. Events arriving after the last observation remain
+available for the next call. This uses the existing durable feed and its rollout
+requirements; it adds no migration. Execution receipts do not assert gateway
+convergence.
+
+### Activity retention and recovery
+
+Migration `20261015220000001` adds a durable pruned-prefix floor. Upgrade all apid
+readers/writers before enabling consumers: old readers cannot report expired
+checkpoints correctly. Apid cleanup runs at startup and once a minute, locking
+at most 20 available environments and removing at most 1000 expired events per
+environment in each pass. A recent event stops prefix cleanup even if later
+records have older timestamps. Locked writers are skipped. Failed cleanup rolls
+back both deletion and floor advancement. Retention is eventual, not an exact
+maximum row count; maintenance backlog or contention can extend the window.
+Schedule intent and execution receipts follow their existing lifetimes.
+
+Both MCP activity tools return `cursor_expired` (native HTTP 410) rather than
+silently jumping over removed events. The error's `activity_recovery` contains
+immutable target IDs, `oldest_cursor`, `restart_cursor` and `retention_seconds`.
+The oldest cursor points immediately before the retained suffix; the restart
+cursor points at the observed feed head. They are scoped continuations, not
+permissions or reservations that pin retained data. An omitted cursor starts at
+sequence zero and also expires once any prefix was removed.
+
+To recover current state safely:
+
+1. Save the error's **restart cursor first** and verify its target.
+2. List all pages of current schedules for that environment. Treat discovery as
+   a live baseline, not an atomic snapshot or a reconstruction of lost history.
+3. Resume activity reads or watches after the saved restart cursor. Reconcile
+   baseline/event overlap by schedule UUID. Use replay events to identify schedules
+   to refresh through exact status; do not overwrite a newer baseline status with
+   an older intermediate event. Do not repeat actions merely because an event is
+   replayed.
+4. Persist each page's next cursor only after consuming that page. If the recovery
+   cursor expires while discovery is in progress, restart recovery using the new
+   metadata; never silently accept a gap.
+
+Changes during baseline discovery remain after the saved checkpoint and are
+therefore replayed. Removed historical outcomes remain unavailable. Current MCP
+read consent and immutable target identities are checked before recovery metadata
+is returned. Execution and gateway convergence remain separate.
+Design: [ADR-1358](adr/1358-cache-schedule-activity-retention.md).
+
+### Guided schedule activity recovery
+
+`gregale_recover_environment_cache_schedule_activity` rebuilds a current schedule
+baseline in bounded pages. Supply `app`, `project`, `environment` and optionally
+`limit` (default 20, maximum 50). Omit `recovery_token` to start a new recovery.
+The tool captures the current feed head before discovering schedules, without
+scanning the retained backlog. Each call returns one page of `entries` and:
+
+- `complete: false` with a `recovery_token` to pass unchanged to the next call.
+- `complete: true` with `activity_cursor` to pass as `after` to activity reads or
+  watches after storing the complete baseline. No continuation token is returned.
+
+Tokens are bounded to 8192 bytes, versioned, and bound to the API endpoint,
+account and immutable app/project/environment identities. They contain pagination
+metadata, no credentials, action bodies or authorization grants. They are not
+signed attestations; do not decode, modify or combine their constituent cursors.
+Current consent, target identity, schedule ordering and checkpoint validity are
+checked on every call. Reconnects and MCP server restarts can resume using the
+same token with the same endpoint/account and current consent. Page size may
+change between calls; reduce it if the response exceeds the MCP output bound.
+There is no background job or server-side recovery session. On cancellation or
+transient failure retry with the same input token; no progress is committed by
+the server. When the first call fails, start again without a token.
+
+The activity checkpoint is fixed throughout discovery. New schedules can sort
+before an already returned baseline page; their activity remains after the saved
+checkpoint, so catch-up still finds them. The tool checks retention before and
+after each page without advancing that checkpoint. If cleanup overtakes recovery,
+it returns `recovery_restart_required` with HTTP status metadata 410 and validated
+`activity_recovery` metadata. No page or replacement continuation is returned.
+Discard the partial baseline and call again **without** `recovery_token` to begin
+a fresh recovery. Permission loss and invalid responses remain errors rather
+than successful partial pages.
+
+Completion means live pagination finished, not that discovery was an atomic
+snapshot. Baseline and replay can overlap; refresh exact schedule status for
+replayed identities rather than overwriting newer state with an older event.
+Pruned history cannot be reconstructed, and baseline completion does not mean
+scheduled actions executed or gateways converged.
+
+The native helper is
+`GET /v1/apps/{slug}/cache/schedules/activity/checkpoint?environment=NAME`, exposed
+by Go, Node and Python clients. Roll out updated apid readers before the MCP
+helper, and ensure all writers already publish durable activity. No new migration is added; the durable feed and retention migrations
+remain prerequisites. Design: [ADR-1359](adr/1359-guided-cache-schedule-activity-recovery.md).
+
+### Schedule activity compatibility preflight
+
+Before recovery, call `gregale_preflight` with the same `app`, `project` and
+named `environment`. Its checks include `schedule_listing`, `schedule_activity`,
+`schedule_checkpoint`, `schedule_retention` and `schedule_recovery`. Preflight
+reads explicit support from `GET /v1/capabilities` and validates one bounded
+schedule page, a scoped checkpoint, and one activity page after that checkpoint.
+It does not scan the backlog or change saved cursors. Default-scope calls report
+`select_named_environment` for these checks.
+
+- `passed`: advertised support and the necessary scoped reads were validated.
+- `unsupported`: this backend explicitly reports a missing prerequisite.
+- `unknown`: capabilities were omitted, an endpoint or target was unavailable,
+  a response was incompatible, or another prerequisite could not be verified.
+- `blocked`: a required read was denied. Check current credentials and read
+  consent; upgrading the backend does not grant permission.
+
+The additive `environment_cache_schedules` capability object advertises `listing`,
+`activity`, `checkpoint`, and `retention_seconds` (2592000 for the current contract).
+`gregale_context` and `gregale://context` expose the same capability object.
+It describes the serving API/backend, not plan entitlements or selected-target
+authorization. Old APIs can omit it; omission does not prove feature absence.
+`schedule_activity_guidance` explains the required reader, migration and writer
+upgrade order. It contains no upstream error bodies or private diagnostics.
+
+Guided recovery verifies advertised support on every page, including after
+reconnect. Missing/incompatible signals return `backend_upgrade_required`; a
+missing capability endpoint returns `backend_capabilities_unavailable`.
+Permission and transient failures remain errors. Recovery never emulates a
+checkpoint by scanning the feed or substitutes a newer checkpoint after an
+endpoint failure. A failed call returns no successful recovery page or cursor.
+
+Roll out updated apid readers before these MCP helpers. Apply the existing
+schedule/feed/retention migrations and upgrade all schedule writers before
+relying on feed completeness. Capabilities and preflight are sequential evidence
+about responding replicas; they do not establish migration health, maintenance
+health, fleet-wide compatibility or native execution qualification. Every tool
+still validates authorization and response identity. Tool discovery remains
+static and makes no API requests. Design:
+[ADR-1360](adr/1360-schedule-workflow-compatibility-preflight.md).
+
+### Durable named activity consumers
+
+`gregale_get_environment_cache_activity_consumer` reads acknowledged progress for
+an `app`, `project`, named `environment`, and `consumer`. Names start with a
+lowercase letter and contain only lowercase letters, digits, underscores or
+hyphens, up to 64 bytes. A new consumer returns `status: "uninitialized"`,
+`revision: 0` and no cursor. Reading does not create a record or choose a head.
+
+Finish and process the current baseline with
+`gregale_recover_environment_cache_schedule_activity`, or process activity from
+the beginning if still retained. Then explicitly save its cursor:
+
+```json
+{
+  "app": "alpha",
+  "project": "shop",
+  "environment": "staging",
+  "consumer": "maintenance-agent",
+  "cursor": "<completed baseline activity_cursor or processed page cursor>",
+  "expected_revision": 0,
+  "expected_generation": "<generation from the latest consumer get/list>"
+}
+```
+
+Send these arguments to `gregale_ack_environment_cache_activity_consumer`. It
+returns `status: "ready"`, the saved cursor, update time and a new `revision`.
+Use that cursor as `after` in activity reads or watches, process the returned
+page, then acknowledge its cursor with the last saved revision. Neither reads
+nor watches advance the checkpoint. Store baseline contents and downstream work
+in your own application; this journal saves progress metadata only.
+Pass `generation` from the latest get/list response as `expected_generation` on
+each acknowledgment. It starts as an empty string for existing journals and
+changes whenever any consumer in the same connection is retired.
+
+Concurrent different acknowledgments using the same revision have one winner;
+others return `checkpoint_conflict`. Read the consumer again before deciding
+what to process or acknowledge. Backward updates return `checkpoint_regression`.
+Retry the exact cursor and expected revision after a lost response: the last
+successful acknowledgment can be returned without incrementing its revision.
+Acknowledging the unchanged current cursor is also a no-op. Crashes before an
+acknowledgment can replay events; acknowledgments declare processing and do not
+prove external effects occurred or provide exactly-once processing.
+
+A saved cursor below retention returns `status: "cursor_expired"` from get,
+with its unchanged revision/cursor and validated `activity_recovery` metadata.
+Complete and process a fresh baseline, then acknowledge its activity cursor with
+that revision and `baseline_rebuilt: true`. Without this explicit confirmation,
+acknowledgment over an expired checkpoint fails. An already expired replacement
+also fails. The tools never jump to the head automatically or restore pruned
+historical outcomes. Validation is point-in-time; retention can continue moving.
+
+Both tools require the existing encrypted `--state-file` and independent
+`--state-key-file`. Without configured durable state they return
+`durable_state_required`; unhealthy storage returns `durable_state_unavailable`.
+`gregale_preflight` reports `activity_consumer_state` separately from backend
+workflow compatibility. Restore storage before retrying an uncertain commit;
+retain the original encryption key. Committed progress survives reconnect and
+bridge restart using the same namespace and key.
+
+Consumers are isolated by local profile or remote OAuth grant, API endpoint,
+account, immutable app/project/environment and consumer name. Fresh read consent,
+target identity and bounded feed access are checked on every call. Revocation
+removes the remote grant's consumer namespace and prevents in-flight saves from
+recreating it. A newly consented connection has its own namespace. Each connection
+can retain at most 100 consumers across all targets. Consumers also share the
+journal's byte budget; `consumer_capacity` leaves existing checkpoints readable
+and does not disable the journal. Managers using one StateStore coordinate
+revisions; separate state files are independent, and
+the existing single-writer file lease remains required.
+
+Acknowledgment is a bridge-local metadata mutation available with read consent,
+including when platform writes are disabled. It advertises `readOnlyHint: false`,
+`destructiveHint: false`, and `idempotentHint: true`; it gets mutation drain grace
+and sends no native mutation requests. No plan or platform write approval is
+created. Design: [ADR-1361](adr/1361-durable-mcp-activity-consumers.md).
+
+### Final validation of consumer reads
+
+Consumer get, watch, baseline recovery, list and health responses are checked after
+the shared tool wrapper's final native authorization reads and before output
+serialization. This catches consumer or grant changes during those additional
+reads, after the individual handler has already collected its result. Private
+guard context is never returned and the existing response/token formats remain
+unchanged.
+
+Get, watch and recovery recheck the exact consumer revision and connection
+generation, including uninitialized/expired states, empty watch timeouts, partial
+recovery pages and completed ACK drafts. List and health validate the complete
+selected scoped record set, so an out-of-page change during the request also
+withholds its page and continuation. A detected scoped change returns
+`checkpoint_conflict`; any retirement in the connection returns
+`consumer_generation_conflict`. Grant/storage failure, permission/identity loss,
+cancellation and drain remain errors. Failed final validation exposes no stale
+progress, pages, tokens, lag observations, recovery guidance or ACK drafts.
+
+List pagination remains live between requests: an ACK between completed list
+calls does not invalidate its generation-bound continuation. Health continuations
+retain their stronger scoped-record fingerprint. Exact no-op ACK retries and
+changes in another scope do not cause false conflicts; single-consumer reads also
+permit another consumer's ACK. No journal locks span native reads and final guards
+add no native requests, writes, subscriptions or persistent state.
+
+Only successful exact consumer gets sample lag metrics, after final validation
+and output serialization. Watches, recovery, list, health, prompts and resource
+reads remain quiet. These read guards do not retroactively reject committed ACK
+or retirement receipts on later progress changes. Observations and ACK drafts
+remain point-in-time data rather than processing or retention leases; ACK still
+validates current consent, generation/revision and cursor retention separately.
+Design: [ADR-1370](adr/1370-final-consumer-read-validation.md).
+
+### Recover a baseline for a named consumer
+
+Call `gregale_recover_environment_cache_activity_consumer` with `app`, `project`,
+named `environment`, `consumer`, and optional `limit` (default 20, maximum 50).
+Omit `recovery_token` to start a new baseline. Use it to initialize a new consumer,
+rebuild expired progress, or deliberately rebuild a current consumer's baseline.
+The tool requires encrypted durable state and current read consent; it performs
+no native or journal writes.
+
+Each response contains the consumer name, captured `revision` and `generation`,
+and one bounded schedule page:
+
+- `complete: false`: process and retain the page, then pass its opaque
+  `recovery_token` unchanged to the next call. There are no acknowledgment
+  arguments or `activity_cursor` yet.
+- `complete: true`: finish processing the entire accumulated baseline, then
+  explicitly submit the returned `acknowledgment` object to
+  `gregale_ack_environment_cache_activity_consumer`. Its cursor is the feed
+  checkpoint captured before the first baseline page, and its guards are the
+  original consumer revision/generation. No recovery token is returned.
+
+For an existing consumer, the draft includes `baseline_rebuilt: true` even if its
+old checkpoint was initially ready: retention may expire that old checkpoint
+while the newer recovery checkpoint remains valid. For a new consumer the draft
+uses revision zero and does not claim prior progress. Merely completing recovery
+never saves either draft or cursor.
+
+Continuations are strictly decoded, bounded to the existing 8192-byte recovery
+limit, and scoped to the connection namespace, consumer, endpoint, account and
+immutable app/project/environment. Consumer tokens and raw schedule-recovery
+tokens are different formats; do not interchange them. They are untrusted
+pagination metadata, not authorization or proof that pages were processed.
+Filtering or editing them cannot grant access; the ACK tool still checks current
+consent, identity, revision/generation, cursor validity and forward progress.
+
+The tool checks consumer state before and after native recovery, including failed
+reads. If another acknowledgment changes its revision, it returns
+`checkpoint_conflict`. Any retirement in the connection invalidates the captured
+generation and returns `consumer_generation_conflict`. Both failures withhold the
+page, continuation and ACK draft. Discard partial results and restart without
+`recovery_token` after inspecting current consumer state.
+
+If retention overtakes the captured recovery checkpoint, the response is
+`recovery_restart_required` with validated scoped recovery guidance, without a
+page, replacement token or ACK draft. Restart the whole baseline without the old
+token. Permission loss, revocation, storage failure and cancellation remain
+errors. Reconnect or restart with the same journal/key and namespace to continue
+an otherwise valid token; no server-side recovery session is stored.
+
+The baseline remains a live paginated view, not a frozen snapshot. After the
+explicit final ACK, watch by consumer name and reconcile activity overlapping
+baseline rows by schedule identity. Earlier-sorting concurrent changes are
+replayed from the original checkpoint. Consumer guards are point-in-time checks,
+not leases; a delivered ACK draft can still become stale or expire. Keep
+processing idempotent and never infer downstream completion from an ACK receipt.
+Recovery uses ordinary short-request admission, not activity-watch capacity.
+Design: [ADR-1367](adr/1367-consumer-aware-baseline-recovery.md).
+
+### Watch activity using saved consumer progress
+
+Call `gregale_watch_environment_cache_activity_consumer` with `app`, `project`,
+`environment`, `consumer`, and optional `limit` and `wait_seconds`. It resumes
+from that consumer's durable checkpoint; no caller-supplied `after` is needed.
+Limits match activity watches: 20 events by default, maximum 50, with a default
+20-second observation wait and maximum 45 seconds. The serving command's request
+deadline can end the call earlier; use `--timeout 1m` for a 45-second watch.
+Polling uses the existing one-second interval and the separate activity-watch pool
+(two watches per connection/grant, shared with raw activity watches).
+There is no background subscription or journal write.
+
+The response's top-level `cursor`, `revision` and `generation` describe saved
+progress. They stay unchanged while watching. Interpret `watch_status` as:
+
+- `events`: `page` contains one bounded activity page, including its own `cursor`
+  and `has_more`. Process all events, then pass the returned `acknowledgment`
+  object as arguments to `gregale_ack_environment_cache_activity_consumer`.
+  This object contains the candidate cursor and exact revision/generation.
+- `timed_out`: `watch_timed_out: true` and an empty `page` whose cursor preserves
+  saved progress. No acknowledgment arguments are returned.
+- `recovery_required`: status is `uninitialized` or `cursor_expired`. No page or
+  acknowledgment arguments are returned. Complete and process baseline recovery,
+  then explicitly acknowledge its cursor with the returned revision/generation;
+  expired consumers also require `baseline_rebuilt: true`. Watching never chooses
+  an initial baseline or silently skips expired history.
+
+For example:
+
+```json
+{
+  "app": "alpha",
+  "project": "shop",
+  "environment": "staging",
+  "consumer": "maintenance-agent",
+  "limit": 20,
+  "wait_seconds": 20
+}
+```
+
+The watch pins saved revision and connection generation across each poll and
+before returning, including empty timeouts and recovery guidance. A detected
+concurrent acknowledgment returns `checkpoint_conflict`; retirement returns
+`consumer_generation_conflict`. Refresh current consumer state and start another
+watch after deciding how to proceed. These errors withhold the old page and
+acknowledgment draft. Current native read consent, immutable target identity and
+durable grant/storage checks still apply; failures and parent cancellation are
+errors rather than successful empty timeouts. Only the watch's own observation
+deadline can yield `timed_out`, after at least one successful empty observation.
+
+Reconnect or restart the bridge with the same journal/key and watch by consumer
+name again. Unacknowledged pages replay; reading a page does not reserve it.
+Concurrent workers can observe the same events and acknowledgment conflicts do
+not undo external side effects. Use downstream idempotency when needed. A draft
+acknowledgment may become stale or expire after delivery; the ACK tool revalidates
+it. Lag metrics remain sampled by exact consumer gets; watches do not add lag
+samples. Design:
+[ADR-1364](adr/1364-mcp-consumer-aware-activity-watch.md).
+
+### Consumer lag diagnostics
+
+Consumer get responses include `lag` for the returned revision and generation:
+
+- `observed_at` and `retention_seconds` describe when the feed bounds were
+  observed and the configured history window (30 days).
+- `retained_pending_events` counts retained events after the saved cursor.
+- `expired_unacknowledged_events` counts the removed prefix after the saved
+  cursor, separately from retained pending events. These outcomes cannot be
+  replayed; rebuild the complete baseline when status is `cursor_expired`.
+- `seconds_since_ack` measures time since the last progress-changing
+  acknowledgment. Exact retries and unchanged-cursor acknowledgments preserve
+  that timestamp. Clock skew that puts it in the future omits the age and sets
+  `ack_time_in_future: true`.
+
+Uninitialized consumers omit both event counts and acknowledgment age because
+no baseline has been chosen. Zero counts are emitted for initialized consumers
+that have caught up. An expired consumer can have zero retained events while
+still having a nonzero lost history gap. For example, saved sequence 5, retention
+floor 8 and head 12 produce 4 retained pending and 3 expired events.
+
+Counts use a validated checkpoint captured after reading the saved record. A
+later validated expiry response supplies newer bounds if retention moves during
+validation. If another acknowledgment changes the revision during inspection,
+get returns `checkpoint_conflict`; refresh it. Retirement returns
+`consumer_generation_conflict`. Permission, identity or storage failures return
+errors without lag observations. Diagnostics are point-in-time observations,
+not a frozen feed or a retention lease. ACK age is not event age and cannot
+predict when history will expire or prove downstream work succeeded. ACK/list
+responses do not include lag; request an exact consumer get to observe it.
+
+No native endpoint, migration, event scan, journal format change or background
+poller is added. Design:
+[ADR-1363](adr/1363-mcp-consumer-lag-observability.md).
+
+### Review consumer health across an environment
+
+Call `gregale_get_environment_cache_activity_consumer_health` with `app`,
+`project`, named `environment`, and optional `limit` (default 20, maximum 50).
+The report covers only saved consumers in the current connection and exact
+endpoint/account/immutable app/project/environment/scope binding. Unsaved names
+are not invented as uninitialized consumers. It requires encrypted durable state,
+advertised native schedule recovery support and current scoped read access.
+
+`entries` is one name-sorted page. Each entry contains the consumer name, saved
+revision/update time, `ready` or `cursor_expired` status, and the same lag fields
+as individual inspection: retained pending events, expired-history gap, ACK age
+or its future-time flag, observation time and retention. The report includes the
+immutable target IDs/scope, current connection `generation`, `observed_at` and
+`retention_seconds`. Saved or recovery activity cursors, recovery metadata, event
+pages and ACK drafts are omitted.
+
+`summary` covers **all matching saved consumers**, including those outside the
+current page:
+
+- `total`: number of matching saved consumers.
+- `ready` and `cursor_expired`: mutually exclusive readiness counts.
+- `with_retained_backlog`: consumers with retained pending events, including
+  expired consumers that also have retained events.
+- `needs_attention`: consumers with retained pending events or an expired-history
+  gap, counted once each. ACK age alone does not classify a consumer as stalled.
+
+All entries and summary counts in one call use the same validated feed bounds,
+captured after the bounded saved-record snapshot. Native checkpoint/feed reads
+are shared across consumers rather than repeated for each name. If retention
+overtakes the head probe, validated scoped expiry metadata supplies newer bounds
+without exposing a recovery cursor. Invalid bounds or a saved cursor ahead of
+the observed head fail the entire report, including entries outside the page.
+
+Pass `next_cursor` unchanged as `after` to continue. Health continuations use a
+distinct strict format, bounded by the existing 2048-byte consumer-list cursor
+limit. They bind the connection/target, connection generation and a fingerprint
+of all matching saved records. A scoped create or progress-changing ACK returns
+`checkpoint_conflict`; any retirement in the connection returns
+`consumer_generation_conflict`. Restart pagination without `after`. An exact
+no-op ACK retry or another scope's ACK does not invalidate the record set. These
+tokens are untrusted pagination metadata, not authorization or processing proof.
+
+Feed events and retention may change between pages without changing saved
+records. Every call obtains fresh feed bounds and repeats its own full-scope
+summary; do not add those summaries together or treat the pages as a frozen feed
+snapshot. Reconnect/restart can reuse a valid token with the same journal/key and
+namespace. No health snapshot or pagination session is persisted.
+
+The tool rechecks durable grant/storage health, generation and every matching
+saved record after native reads and again after the shared tool wrapper's final
+authorization reads. Concurrent changes withhold the whole report and its
+continuation, including changes to consumers outside the returned page. Native
+permission/identity loss, revoked consent, unavailable storage, cancellation and
+drain remain errors without partial summaries. No journal lock spans native I/O.
+
+This is an ordinary short read. It creates no consumer, saves no progress,
+starts no polling, samples no get-tool lag metrics and performs no native writes.
+Use individual watch/recovery tools to obtain current processing pages, then
+explicitly acknowledge only after processing. Removed history remains unavailable
+and point-in-time health observations are not retention leases or proof of
+downstream completion. Design:
+[ADR-1369](adr/1369-scoped-mcp-consumer-health-overview.md).
+
+### Consumer discovery and retirement
+
+Call `gregale_list_environment_cache_activity_consumers` with `app`, `project`,
+named `environment`, and optional `limit` (default 20, maximum 50). It returns
+`entries` containing consumer names, revisions and update times, the current
+connection `generation`, and optional `next_cursor`. Pass that cursor unchanged
+as `after` to continue. Results expose only this account/endpoint/connection and
+immutable app/project/environment; activity cursors are excluded. Get an exact
+consumer to validate its cursor and current expiry status. Live name-sorted pages
+can miss names created before the continuation; they are not a frozen snapshot.
+
+To reclaim capacity, call `gregale_retire_environment_cache_activity_consumer`
+with the exact `consumer`, `expected_revision`, and `expected_generation` from
+get/list, plus the same app/project/environment. Retirement deletes that saved
+checkpoint and returns `status: "retired"`, `retired_revision`, and a newly rotated
+`generation`. It can retire expired checkpoints without reconstructing pruned
+history. Current target read consent and feed access are still required.
+
+Retirement rotates the generation for the **whole connection**, including other
+targets. Old acknowledgments, even initial revision-zero requests, fail with
+`consumer_generation_conflict`. Get fresh consumer state before acknowledging
+again; restart old list continuations without `after`. `checkpoint_conflict`
+means the saved revision changed. Deliberate recreation requires a new initial
+acknowledgment using revision zero and the fresh generation; it does not resume
+retired progress automatically. An exact retry of the last retirement returns
+its original receipt while the consumer remains absent. If the name has been
+recreated or another retirement replaced that receipt, inspect current state
+instead of retrying with old inputs. An old retirement cannot delete a recreated
+consumer with the same revision and cursor.
+
+Checkpoint removal and generation rotation commit together in the encrypted
+journal. Only one generation and last-retirement receipt remain per connection,
+so repeated retirement/recreation does not grow tombstones without bound.
+Retirement frees the checkpoint's capacity; it does not cancel schedules or undo
+external work. It advertises `readOnlyHint: false`, `destructiveHint: true` and
+`idempotentHint: true`, requires explicit invocation and read consent, and uses
+mutation drain grace without enabling platform writes. Remote grant revocation
+also removes its generation state; OAuth updates preserve local profile records.
+
+Existing journals remain readable with an empty generation until first
+retirement. First retirement atomically upgrades encrypted journal authentication
+to v2; upgraded bridges read both versions and preserve v2 afterward. Older
+generation-unaware bridges fail to open v2 journals, preventing unsafe downgrade
+writes. Keep an upgraded bridge for journals where retirement has been used.
+No native migration is added. Design:
+[ADR-1362](adr/1362-mcp-consumer-discovery-and-retirement.md).
+
+`TestCodexActivityConsumerAcceptance` drives the pinned real Codex client through
+the complete lifecycle using loopback fixtures and an actual encrypted journal
+reopened after a drained bridge restart. It checks discovery/pagination,
+acknowledgment/retry, retirement, stale requests, reconnect, recreation, lag
+diagnostics, consumer watch arrival/replay/timeout/recovery, consumer baseline
+recovery/restart/conflicts, resource reads, scoped health pagination/summary and
+saved-record conflicts, expiry retirement and denied access. Bridge metadata mutations are intentional; native
+mutation requests are rejected and counted. No model turn or live account is
+used. CI runs it with the pinned Codex binary and writes the sanitized
+`management-mcp-consumers.json` artifact; set `GREGALE_MCP_CONSUMER_REPORT` to retain
+the same report locally. Without `GREGALE_MCP_CODEX_BINARY`, this test skips
+explicitly and provides no real-client evidence.
+
+### Real-client schedule workflow acceptance
+
+`TestCodexScheduleActivityAcceptance` drives the pinned real Codex client through
+Streamable HTTP against an isolated, authenticated MCP fixture. It composes
+baseline recovery, concurrent earlier-sorting creation and rescheduling, bounded
+activity catch-up, arrival during a wait, timeout checkpoint preservation,
+process disconnect/reconnect with offline activity, expired-cursor recovery,
+retention overtaking a partial baseline, and upstream read-access revocation
+during a watch. Revocation must also prevent restarting recovery.
+
+The Python driver, `scripts/ops/management-mcp-schedule-acceptance.py`, accepts only
+the loopback fixture supplied by the Go test. Fixture controls mutate an isolated
+MemStore and simulate retention aging without waiting 30 days. They never enter
+production handlers. Native mutation requests are rejected and counted. No model
+turn or deployment operation is requested. This exercises a real MCP client and
+protocol composition; Postgres correctness and native cluster qualification have
+separate checks. Remote OAuth login and grant revocation retain their separate
+`TestCodexRemoteOAuthAcceptance` coverage.
+
+Run from the repository root after installing the pinned client:
+
+```sh
+GREGALE_MCP_CODEX_BINARY="$PWD/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
+GREGALE_MCP_SCHEDULE_REPORT=/tmp/management-mcp-schedules.json \
+  go test -race -p=1 ./pkg/mcpmanagement -run '^TestCodexScheduleActivityAcceptance$' -count=1 -v
+```
+
+CI runs this acceptance and uploads the sanitized JSON report alongside existing
+MCP client evidence. Reports include scenario outcomes and zero model/MCP write
+counts, without credentials, cursors, action bodies or application data. Without
+`GREGALE_MCP_CODEX_BINARY`, the Go test skips explicitly; a skipped local run is
+not real-client acceptance evidence. No tool surface or production behavior is
+changed by this test.

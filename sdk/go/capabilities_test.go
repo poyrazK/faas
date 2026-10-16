@@ -65,3 +65,30 @@ func TestGetCapabilitiesConditionalParking(t *testing.T) {
 		}
 	}
 }
+
+func TestGetCapabilitiesScheduleWorkflowSupport(t *testing.T) {
+	for _, field := range []string{"", `,"environment_cache_schedules":{"listing":true,"activity":true,"checkpoint":false,"retention_seconds":2592000}`} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `{"registry_version":1,"plan":"pro","capabilities":[]%s}`, field)
+		}))
+		client, err := NewClient(server.URL, "fixture-token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.GetCapabilities(SDKTestContext(t))
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if field == "" {
+			if response.EnvironmentCacheSchedules != nil {
+				t.Fatal("legacy response claimed support")
+			}
+		} else {
+			want := EnvironmentCacheScheduleCapabilities{Listing: true, Activity: true, Checkpoint: false, RetentionSeconds: 2592000}
+			if response.EnvironmentCacheSchedules == nil || *response.EnvironmentCacheSchedules != want {
+				t.Fatalf("lost capabilities: %+v", response)
+			}
+		}
+	}
+}

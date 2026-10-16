@@ -112,6 +112,11 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		Query:          sortQuery(r.URL.RawQuery),
 		VaryHash:       computeVaryHash(r, rule.VaryOn),
 	}
+	var ready bool
+	key, ready = h.captureResponseCacheKey(r, app, key)
+	if !ready {
+		return false, nil
+	}
 	outcome, entry := h.responseCache.Get(key)
 	switch outcome {
 	case "fresh":

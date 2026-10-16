@@ -9,12 +9,18 @@ import (
 type RouteAwakeOptions struct {
 	Since string
 	Until string
+	Scope string
 }
 
 // GetRouteAwake reads which routes kept an app awake (ADR-1187).
 func (c *Client) GetRouteAwake(ctx context.Context, slug string, opts RouteAwakeOptions) (RouteAwakeResponse, error) {
 	var out RouteAwakeResponse
 	q := url.Values{}
+	if opts.Scope == DefaultEnvScope {
+		q.Set("scope", DefaultEnvScope)
+	} else if opts.Scope != "" {
+		q.Set("environment", opts.Scope)
+	}
 	if opts.Since != "" {
 		q.Set("since", opts.Since)
 	}

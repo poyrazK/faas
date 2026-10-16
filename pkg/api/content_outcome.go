@@ -2,6 +2,7 @@ package api
 
 import (
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,8 @@ const (
 	ContentOutcomeUncacheable = "uncacheable"
 	// ContentOutcomeFirst: the first response seen for this URL.
 	ContentOutcomeFirst = "first"
+
+	ContentOutcomeDeploymentPrefix = "deployment_v1:"
 
 	contentOutcomeSame    = "same_"
 	contentOutcomeChanged = "changed_"
@@ -38,7 +41,8 @@ func ContentOutcomeFor(same bool, gap time.Duration) string {
 	return prefix + contentOutcomeLong
 }
 
-// ContentOutcomes is the closed set of non-empty outcomes, in a stable order.
+// ContentOutcomes is the legacy base vocabulary, in a stable order.
+// Deployment-isolated observations use ContentOutcomeDeploymentPrefix plus a base outcome.
 func ContentOutcomes() []string {
 	out := []string{ContentOutcomeUncacheable, ContentOutcomeFirst}
 	for _, prefix := range []string{contentOutcomeSame, contentOutcomeChanged} {
@@ -50,10 +54,14 @@ func ContentOutcomes() []string {
 	return out
 }
 
-// ValidContentOutcome reports whether s is empty or a known outcome.
+// ValidContentOutcome accepts empty, legacy or deployment-isolated known outcomes.
 func ValidContentOutcome(s string) bool {
 	if s == "" {
 		return true
+	}
+	s = strings.TrimPrefix(s, ContentOutcomeDeploymentPrefix)
+	if s == "" {
+		return false
 	}
 	for _, outcome := range ContentOutcomes() {
 		if s == outcome {

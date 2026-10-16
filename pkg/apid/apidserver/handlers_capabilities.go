@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cacheschedule"
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -25,6 +26,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	_, capabilities.ConditionalParking = s.store.(state.ConditionalAppParkTransitionStore)
+	capabilities.EnvironmentCacheSchedules = cacheschedule.Capabilities(s.store)
 	// Entitlement is only one half of availability. A capability must also be
 	// backed by a runtime that is enabled and configured on this control plane;
 	// otherwise clients would advertise a feature whose first request returns

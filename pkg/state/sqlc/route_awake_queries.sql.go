@@ -19,19 +19,34 @@ SELECT um.minute::timestamptz AS minute,
 FROM usage_minutes um
 WHERE um.account_id = $1
   AND um.app_id = $2
+      AND ($3::text = '' OR EXISTS (
+          SELECT 1 FROM instances i JOIN deployments d ON d.id=i.deployment_id JOIN apps a ON a.id=d.app_id
+          WHERE i.id=um.instance_id AND d.app_id=um.app_id AND a.account_id=um.account_id AND i.app_id=um.app_id
+          AND d.scope=$3::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=$4::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
   AND um.meter_kind = 'app'
-  AND um.minute >= $3
-  AND um.minute < $4
+  AND um.minute >= $5
+  AND um.minute < $6
 GROUP BY um.minute
 HAVING SUM(um.mb_seconds) > 0
 ORDER BY um.minute
 `
 
 type RouteAwakeMinutesParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	SinceAt   pgtype.Timestamptz
-	UntilAt   pgtype.Timestamptz
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	SelectedScope         string
+	SelectedEnvironmentID string
+	SinceAt               pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
 }
 
 type RouteAwakeMinutesRow struct {
@@ -49,6 +64,8 @@ func (q *Queries) RouteAwakeMinutes(ctx context.Context, db DBTX, arg RouteAwake
 	rows, err := db.Query(ctx, routeAwakeMinutes,
 		arg.AccountID,
 		arg.AppID,
+		arg.SelectedScope,
+		arg.SelectedEnvironmentID,
 		arg.SinceAt,
 		arg.UntilAt,
 	)
@@ -78,8 +95,21 @@ WITH filtered AS MATERIALIZED (
     FROM request_telemetry rt
     WHERE rt.app_id = $1
       AND rt.account_id = $2
-      AND rt.received_at >= $3
-      AND rt.received_at < $4
+      AND ($3::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=$3::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=$4::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
+      AND rt.received_at >= $5
+      AND rt.received_at < $6
       AND (rt.status BETWEEN 200 AND 299 OR rt.cold_boot)
       AND (rt.deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid
            OR COALESCE(rt.instance_id, '') <> ''
@@ -89,7 +119,7 @@ WITH filtered AS MATERIALIZED (
     SELECT route, method FROM filtered
     GROUP BY route, method
     ORDER BY SUM(requests) DESC, route ASC, method ASC
-    LIMIT $5::int
+    LIMIT $7::int
 )
 SELECT f.minute::timestamptz AS minute,
        COALESCE(t.route, '')::text AS route,
@@ -104,11 +134,13 @@ ORDER BY f.minute, COALESCE(t.route, ''), COALESCE(t.method, '')
 `
 
 type RouteAwakeRouteMinutesParams struct {
-	AppID      pgtype.UUID
-	AccountID  pgtype.UUID
-	SinceAt    pgtype.Timestamptz
-	UntilAt    pgtype.Timestamptz
-	RouteLimit int32
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	SelectedScope         string
+	SelectedEnvironmentID string
+	SinceAt               pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
+	RouteLimit            int32
 }
 
 type RouteAwakeRouteMinutesRow struct {
@@ -129,6 +161,8 @@ func (q *Queries) RouteAwakeRouteMinutes(ctx context.Context, db DBTX, arg Route
 	rows, err := db.Query(ctx, routeAwakeRouteMinutes,
 		arg.AppID,
 		arg.AccountID,
+		arg.SelectedScope,
+		arg.SelectedEnvironmentID,
 		arg.SinceAt,
 		arg.UntilAt,
 		arg.RouteLimit,

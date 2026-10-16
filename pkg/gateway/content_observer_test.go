@@ -88,7 +88,7 @@ func serveThroughTee(o *contentObserver, path string, status int, header map[str
 	tee.WriteHeader(status)
 	_, _ = tee.Write([]byte(body))
 	ctx := withContentTee(r.Context(), tee)
-	return contentOutcome(ctx, Target{DeploymentID: "dep-1"}, now)
+	return strings.TrimPrefix(contentOutcome(ctx, Target{DeploymentID: "dep-1"}, now), api.ContentOutcomeDeploymentPrefix)
 }
 
 func TestContentTeeClassifiesResponses(t *testing.T) {
@@ -139,7 +139,7 @@ func TestContentOutcomeNeedsAnAppResponse(t *testing.T) {
 		t.Fatalf("no tee: %q", got)
 	}
 	// finish is idempotent: a second observe of the same request repeats it.
-	if a, b := contentOutcome(ctx, Target{InstanceID: "i"}, time.Now()), contentOutcome(ctx, Target{InstanceID: "i"}, time.Now()); a != b || a != api.ContentOutcomeFirst {
+	if a, b := contentOutcome(ctx, Target{InstanceID: "i", DeploymentID: "d"}, time.Now()), contentOutcome(ctx, Target{InstanceID: "i", DeploymentID: "d"}, time.Now()); a != b || a != api.ContentOutcomeDeploymentPrefix+api.ContentOutcomeFirst {
 		t.Fatalf("outcomes %q / %q", a, b)
 	}
 	if got := o.observe(tee.key, 0, time.Now()); got == api.ContentOutcomeFirst {
@@ -200,8 +200,24 @@ func TestServeHTTPRecordsContentOutcomes(t *testing.T) {
 	for _, row := range h.requestTelemetry.DrainBatch(16) {
 		outcomes = append(outcomes, row.ContentOutcome)
 	}
-	want := []string{api.ContentOutcomeFirst, "same_60", "changed_60", ""}
+	want := []string{"deployment_v1:first", "deployment_v1:same_60", "deployment_v1:changed_60", ""}
 	if strings.Join(outcomes, ",") != strings.Join(want, ",") {
 		t.Fatalf("outcomes = %q, want %q", outcomes, want)
+	}
+}
+
+func TestContentOutcomeIsolatesDeployments(t *testing.T) {
+	o := newContentObserver(10)
+	now := time.Now()
+	serve := func(deployment, body string) string {
+		r := httptest.NewRequest("GET", "/same-url", nil)
+		tee := newContentTee(httptest.NewRecorder(), o, "shared-app", r)
+		_, _ = tee.Write([]byte(body))
+		return contentOutcome(withContentTee(r.Context(), tee), Target{DeploymentID: deployment}, now)
+	}
+	for _, tc := range []struct{ dep, body, want string }{{"stage", "stage-secret", "deployment_v1:first"}, {"prod", "production-secret", "deployment_v1:first"}, {"stage", "stage-secret", "deployment_v1:same_60"}, {"prod", "production-new", "deployment_v1:changed_60"}, {"", "unknown", ""}} {
+		if got := serve(tc.dep, tc.body); got != tc.want {
+			t.Fatalf("deployment %q outcome=%q want=%q", tc.dep, got, tc.want)
+		}
 	}
 }

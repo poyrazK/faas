@@ -30,10 +30,10 @@ func assertBusyTool(t *testing.T, result *mcp.CallToolResult, err error) {
 func awaitAdmissionEmpty(t *testing.T, a *requestAdmission) {
 	t.Helper()
 	deadline := time.After(time.Second)
-	for len(a.short) != 0 || len(a.watches) != 0 {
+	for len(a.short) != 0 || len(a.watches) != 0 || len(a.activity) != 0 {
 		select {
 		case <-deadline:
-			t.Fatalf("capacity leaked: short=%d watch=%d", len(a.short), len(a.watches))
+			t.Fatalf("capacity leaked: short=%d rollout=%d activity=%d", len(a.short), len(a.watches), len(a.activity))
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
@@ -161,7 +161,7 @@ func TestAdmissionWatchCapacityAndIndependentConnections(t *testing.T) {
 	}
 	releases := []func(){}
 	for range maxShortRequests {
-		release, err := h.manager.admission.acquire(h.ctx, false)
+		release, err := h.manager.admission.acquire(h.ctx, admissionShort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +202,7 @@ func TestAdmissionErrorAndDeadlineRelease(t *testing.T) {
 	awaitAdmissionEmpty(t, h.manager.admission)
 	ctx, cancel := context.WithCancel(h.ctx)
 	cancel()
-	if _, err := h.manager.admission.acquire(ctx, false); err == nil {
+	if _, err := h.manager.admission.acquire(ctx, admissionShort); err == nil {
 		t.Fatal("canceled request admitted")
 	}
 	awaitAdmissionEmpty(t, h.manager.admission)
@@ -224,7 +224,7 @@ func TestAdmissionSubscriptionSkipsBusyPollAndRecovers(t *testing.T) {
 	// Wait for any completed baseline poll before filling all short slots.
 	deadline := time.Now().Add(time.Second)
 	for len(releases) < maxShortRequests {
-		release, err := h.manager.admission.acquire(h.ctx, false)
+		release, err := h.manager.admission.acquire(h.ctx, admissionShort)
 		if err == nil {
 			releases = append(releases, release)
 			continue

@@ -28,7 +28,7 @@ type resourceListenGroup struct {
 }
 type resourceSubscription struct {
 	sendMu                          sync.Mutex
-	args                            appArgs
+	args                            contextResourceArgs
 	view                            string
 	appID, projectID, environmentID string
 	digest                          [32]byte
@@ -113,8 +113,8 @@ func (m *management) listenResources(ctx context.Context, next mcp.MethodHandler
 		if err != nil {
 			return nil, m.contextError(err)
 		}
-		if args.App == "" || (view != "release" && view != "health" && view != "budgets") || seen[uri] {
-			return nil, m.contextError(invalid("invalid_subscription", "subscribe to distinct app release, health or budgets resources"))
+		if args.App == "" || (view != "release" && view != "health" && view != "budgets" && view != activityConsumerResourceView) || seen[uri] {
+			return nil, m.contextError(invalid("invalid_subscription", "subscribe to distinct scoped release, health, budgets or named consumer resources"))
 		}
 		seen[uri] = true
 	}
@@ -203,11 +203,11 @@ func (m *management) unsubscribeResource(ctx context.Context, req *mcp.Unsubscri
 	return nil
 }
 
-func (m *management) subscriptionSnapshot(ctx context.Context, args appArgs, view string, pin *resourceSubscription) (subscription *resourceSubscription, digest [32]byte, err error) {
+func (m *management) subscriptionSnapshot(ctx context.Context, args contextResourceArgs, view string, pin *resourceSubscription) (subscription *resourceSubscription, digest [32]byte, err error) {
 	start := time.Now()
 	defer func() { m.opts.Telemetry.observe("subscription/read", "none", telemetryOutcome(ctx, nil, err), start) }()
 	var zero [32]byte
-	release, err := m.admission.acquire(ctx, false)
+	release, err := m.admission.acquire(ctx, admissionShort)
 	if err != nil {
 		return nil, zero, err
 	}
@@ -228,7 +228,7 @@ func (m *management) subscriptionSnapshot(ctx context.Context, args appArgs, vie
 	if pin != nil && (pin.appID != app.ID || pin.projectID != env.ProjectID || pin.environmentID != env.ID) {
 		return nil, zero, invalid("identity_changed", "resource identity changed; inspect before subscribing again")
 	}
-	value, err := m.contextResourceValue(ctx, args, view)
+	value, err := m.selectedContextResourceValue(ctx, args, view)
 	if err != nil {
 		return nil, zero, err
 	}
@@ -242,11 +242,14 @@ func (m *management) subscriptionSnapshot(ctx context.Context, args appArgs, vie
 	if err := m.authorizeArgs(ctx, args); err != nil {
 		return nil, zero, err
 	}
+	if err := m.checkConsumerResource(ctx, args, value); err != nil {
+		return nil, zero, err
+	}
 	safe, err := m.safeOutput(value)
 	if err != nil {
 		return nil, zero, err
 	}
-	digest, err = resourceSemanticDigest(safe.(json.RawMessage), time.Now())
+	digest, err = contextResourceDigest(safe.(json.RawMessage), view)
 	return &resourceSubscription{args: args, view: view, appID: app.ID, projectID: env.ProjectID, environmentID: env.ID}, digest, err
 }
 
@@ -274,7 +277,7 @@ func (m *management) pollResourceGroup(ctx context.Context, group *resourceListe
 			readCtx, cancel := context.WithTimeout(ctx, min(m.opts.Timeout, 5*time.Second))
 			_, digest, err := m.subscriptionSnapshot(readCtx, pin.args, pin.view, pin)
 			cancel()
-			if requestBusy(err) {
+			if retryResourceSnapshot(err) {
 				continue
 			}
 			if err != nil {
@@ -327,7 +330,7 @@ func (m *management) sendResourceUpdate(next mcp.MethodHandler, method string, r
 	readCtx, cancel := context.WithTimeout(group.ctx, min(m.opts.Timeout, 5*time.Second))
 	defer cancel()
 	_, digest, err := m.subscriptionSnapshot(readCtx, pin.args, pin.view, pin)
-	if requestBusy(err) {
+	if retryResourceSnapshot(err) {
 		return nil, nil
 	}
 	if err != nil {

@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.capability_status import CapabilityStatus
+    from ..models.environment_cache_schedule_capabilities import EnvironmentCacheScheduleCapabilities
 
 
 T = TypeVar("T", bound="CapabilitiesResponse")
@@ -24,6 +25,10 @@ class CapabilitiesResponse:
     """Version of the embedded product capability catalog."""
     plan: CapabilitiesResponsePlan
     capabilities: list[CapabilityStatus]
+    environment_cache_schedules: EnvironmentCacheScheduleCapabilities | Unset = UNSET
+    """Serving API and state backend support for named-environment schedule reads. These signals do not establish
+    target authorization, migration health, worker readiness or compatibility of other replicas. Upgrade all
+    schedule writers before relying on activity completeness."""
     conditional_parking: bool | Unset = False
     """The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit
     this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use
@@ -40,6 +45,10 @@ class CapabilitiesResponse:
             capabilities_item = capabilities_item_data.to_dict()
             capabilities.append(capabilities_item)
 
+        environment_cache_schedules: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.environment_cache_schedules, Unset):
+            environment_cache_schedules = self.environment_cache_schedules.to_dict()
+
         conditional_parking = self.conditional_parking
 
         field_dict: dict[str, Any] = {}
@@ -51,6 +60,8 @@ class CapabilitiesResponse:
                 "capabilities": capabilities,
             }
         )
+        if environment_cache_schedules is not UNSET:
+            field_dict["environment_cache_schedules"] = environment_cache_schedules
         if conditional_parking is not UNSET:
             field_dict["conditional_parking"] = conditional_parking
 
@@ -59,6 +70,7 @@ class CapabilitiesResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.capability_status import CapabilityStatus
+        from ..models.environment_cache_schedule_capabilities import EnvironmentCacheScheduleCapabilities
 
         d = dict(src_dict)
         registry_version = d.pop("registry_version")
@@ -72,12 +84,20 @@ class CapabilitiesResponse:
 
             capabilities.append(capabilities_item)
 
+        _environment_cache_schedules = d.pop("environment_cache_schedules", UNSET)
+        environment_cache_schedules: EnvironmentCacheScheduleCapabilities | Unset
+        if isinstance(_environment_cache_schedules, Unset):
+            environment_cache_schedules = UNSET
+        else:
+            environment_cache_schedules = EnvironmentCacheScheduleCapabilities.from_dict(_environment_cache_schedules)
+
         conditional_parking = d.pop("conditional_parking", UNSET)
 
         capabilities_response = cls(
             registry_version=registry_version,
             plan=plan,
             capabilities=capabilities,
+            environment_cache_schedules=environment_cache_schedules,
             conditional_parking=conditional_parking,
         )
 

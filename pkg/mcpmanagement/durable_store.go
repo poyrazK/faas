@@ -18,6 +18,10 @@ import (
 )
 
 const stateFormat = "gregale-mcp-state-v1"
+
+// Retirement requires generation-aware writers. Older bridges authenticate
+// only v1 AAD and therefore fail closed when opening a retired-consumer journal.
+const retirementStateFormat = "gregale-mcp-state-v2"
 const maxStateBytes = 32 << 20
 
 // StateStore is an encrypted, atomic, single-writer bridge journal. Its key
@@ -27,6 +31,7 @@ type StateStore struct {
 	path    string
 	lock    *flock.Flock
 	aead    cipher.AEAD
+	format  string
 	records map[string]json.RawMessage
 	failure error
 	closed  bool
@@ -77,7 +82,7 @@ func OpenStateStore(path, keyPath string) (*StateStore, error) {
 		_ = lock.Close()
 		return nil, errors.New("MCP state is already in use or cannot be locked")
 	}
-	store := &StateStore{path: path, lock: lock, aead: aead, records: map[string]json.RawMessage{}}
+	store := &StateStore{path: path, lock: lock, aead: aead, format: stateFormat, records: map[string]json.RawMessage{}}
 	if err := store.load(); err != nil {
 		_ = lock.Unlock()
 		return nil, err
@@ -119,6 +124,12 @@ func (s *StateStore) load() error {
 	}
 	plain, err := s.aead.Open(nil, data[:n], data[n:], []byte(stateFormat))
 	if err != nil {
+		plain, err = s.aead.Open(nil, data[:n], data[n:], []byte(retirementStateFormat))
+		if err == nil {
+			s.format = retirementStateFormat
+		}
+	}
+	if err != nil {
 		return errors.New("MCP state authentication failed; use the original key and unmodified state")
 	}
 	if err := json.Unmarshal(plain, &s.records); err != nil || s.records == nil {
@@ -148,6 +159,11 @@ func (s *StateStore) update(namespace string, value any) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.updateLocked(namespace, value)
+}
+
+// Caller holds s.mu. Single-namespace updates share the encrypted flush path.
+func (s *StateStore) updateLocked(namespace string, value any) error {
 	if s.failure != nil || s.closed {
 		return errors.New("MCP state unavailable; restart after restoring storage")
 	}
@@ -162,8 +178,11 @@ func (s *StateStore) update(namespace string, value any) error {
 	}
 	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" {
 		for key := range s.records {
-			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") {
-				grantID := strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/")
+			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") || strings.HasPrefix(key, "activity-consumers/") || strings.HasPrefix(key, "activity-consumer-generations/") {
+				_, grantID, _ := strings.Cut(key, "/")
+				if strings.HasPrefix(grantID, "local-") {
+					continue
+				}
 				if _, active := snapshot.Grants[grantID]; !active {
 					delete(s.records, key)
 				}
@@ -186,7 +205,11 @@ func (s *StateStore) flush() error {
 	if _, err := rand.Read(nonce); err != nil {
 		return err
 	}
-	data := s.aead.Seal(nonce, nonce, plain, []byte(stateFormat))
+	format := s.format
+	if format == "" {
+		format = stateFormat
+	}
+	data := s.aead.Seal(nonce, nonce, plain, []byte(format))
 	if len(data) > maxStateBytes {
 		return errors.New("MCP state capacity reached")
 	}

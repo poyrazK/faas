@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/onebox-faas/faas/pkg/mcpmanagement"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -45,7 +46,7 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.StringVar(&opts.resourceURL, "resource-url", "", "public HTTPS URL ending in /mcp for remote OAuth")
 	fs.Func("oauth-redirect-uri", "allowed OAuth callback URI; repeat; omit loopback HTTP port for ephemeral client ports", func(value string) error { opts.redirects = append(opts.redirects, value); return nil })
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
-	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted remote state file for restart-safe connections")
+	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted state file for restart-safe review plans and remote connections")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
@@ -59,7 +60,7 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	if (opts.stateFile == "") != (opts.stateKeyFile == "") {
 		return opts, errors.New("--state-file and --state-key-file must be supplied together")
 	}
-	if opts.transport == "stdio" && (opts.adminSocket != "" || opts.onboarding != "browser" || opts.stateFile != "" || opts.resourceURL != "" || len(opts.redirects) > 0 || opts.listen != "127.0.0.1:8787") {
+	if opts.transport == "stdio" && (opts.adminSocket != "" || opts.onboarding != "browser" || opts.resourceURL != "" || len(opts.redirects) > 0 || opts.listen != "127.0.0.1:8787") {
 		return opts, errors.New("remote OAuth and listen options require --transport streamable-http")
 	}
 	if opts.adminSocket != "" {
@@ -111,10 +112,26 @@ func serveMCPStdio(ctx context.Context, opts mcpServeOptions) error {
 		return err
 	}
 	connection := effectiveConnectionContext()
-	s, err := mcpmanagement.NewServer(c, mcpmanagement.Options{
+	serverOptions := mcpmanagement.Options{
 		Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, Profile: connection.Profile, APIBase: connection.APIBase,
 		Version: wire.Version, Token: c.Token(), Timeout: opts.timeout, AllowWrites: opts.allowWrites,
-	})
+	}
+	var s *mcp.Server
+	if opts.stateFile != "" {
+		store, openErr := mcpmanagement.OpenStateStore(opts.stateFile, opts.stateKeyFile)
+		if openErr != nil {
+			return openErr
+		}
+		defer func() {
+			opts.lifecycle.BeginDrain()
+			if opts.lifecycle.Drained() {
+				_ = store.Close()
+			}
+		}()
+		s, err = mcpmanagement.NewLocalServerWithState(ctx, c, serverOptions, store)
+	} else {
+		s, err = mcpmanagement.NewServer(c, serverOptions)
+	}
 	if err != nil {
 		return err
 	}

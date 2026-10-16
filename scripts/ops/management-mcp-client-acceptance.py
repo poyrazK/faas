@@ -41,6 +41,8 @@ class FixtureAPI(BaseHTTPRequestHandler):
             "/v1/apps/alpha/health": {"app_id": "fixture-alpha", "scope": "default", "latest_deployment_id": "release-base", "serving_deployment_ids": ["release-base"]},
             "/v1/apps/alpha/release-review": fixture_release_review(),
             "/v1/apps/alpha/route-budgets?scope=default": {"app_id":"fixture-alpha","scope":"default","budget_source":"app_policy","revision":0,"app_revision":0,"config":{"app_id":"fixture-alpha","enabled":False,"revision":0,"routes":[]}},
+            "/v1/apps/alpha/routes/awake?scope=default": {"app_id":"fixture-alpha","scope":"default","coverage":"retained_deployment_history","partial":True,"slug":"alpha","awake_seconds":600,"routes":[]},
+            "/v1/apps/alpha/routes/advice?scope=default": {"app_id":"fixture-alpha","scope":"default","coverage":"retained_deployment_history","partial":True,"cacheability_coverage":"deployment_isolated_observations_only","policy_context":{"status":"observed","revision":"a"*64,"observed_at":"2026-10-15T00:00:00Z","rules":[],"gaps":[]},"slug":"alpha","routes_analyzed":0,"suggestions":[]},
             "/v1/apps/alpha/routes?scope=default": {"slug":"alpha","app_id":"fixture-alpha","scope":"default","coverage":"deployment_attributed_history","routes":[],"source":"unavailable"},
             "/v1/apps/alpha/operational-summary?scope=default": {"version":1,"app_id":"fixture-alpha","scope":"default","monitoring":{"available":False,"status":"unknown"},"recovery":{"coverage":"explicit_scope_only","rollbacks":[],"restarts":[]}},
         }
@@ -122,6 +124,22 @@ def scoped_telemetry_calls(rpc, thread_id):
         result = rpc.request("mcpServer/tool/call", {"threadId": thread_id, "server": "gregale", "tool": tool, "arguments": {"app": "alpha"}})
         if result.get("isError"):
             raise RuntimeError("Codex scoped telemetry acceptance failed")
+
+
+def route_diagnostics_calls(rpc, thread_id):
+    for tool in ["gregale_get_route_awake", "gregale_get_route_advice"]:
+        result = rpc.request("mcpServer/tool/call", {"threadId": thread_id, "server": "gregale", "tool": tool, "arguments": {"app": "alpha"}})
+        value = result.get("structuredContent")
+        if not isinstance(value, dict):
+            value = json.loads(next(item["text"] for item in result["content"] if item["type"] == "text"))
+        report = value.get("report", {})
+        if result.get("isError") or value.get("coverage") != "retained_deployment_history" or value.get("estimates_only") is not True or report.get("scope") != "default" or report.get("partial") is not True:
+            raise RuntimeError("Codex route diagnostics lost environment attribution")
+        if tool == "gregale_get_route_advice":
+            policy = report.get("policy_context", {})
+            if policy.get("status") != "observed" or len(policy.get("revision", "")) != 64:
+                raise RuntimeError("Codex route advice lost policy coverage")
+
 
 
 class CodexRPC:
@@ -303,6 +321,7 @@ def remote_fixture_acceptance(args):
                 raise RuntimeError("Codex remote source tool is missing")
             source_planning_call(rpc, thread_id)
             scoped_telemetry_calls(rpc, thread_id)
+            route_diagnostics_calls(rpc, thread_id)
             rollout_watch_call(rpc, thread_id)
             context_resource_call(rpc, thread_id)
             preflight_call(rpc, thread_id)
@@ -341,7 +360,7 @@ def remote_fixture_acceptance(args):
                 raise RuntimeError("Codex retained remote tools after grant revocation")
         finally:
             rpc.close()
-        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "model_requests": 0, "deployment_writes": 0}))
+        print(json.dumps({"client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "route_diagnostics": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "model_requests": 0, "deployment_writes": 0}))
 
 
 def main():
@@ -407,7 +426,7 @@ def main():
                     raise RuntimeError("Codex could not discover Gregale MCP tools")
                 inventory = server["tools"]
                 names = set(inventory) if isinstance(inventory, dict) else {tool["name"] for tool in inventory}
-                required = {"gregale_get_route_budgets", "gregale_plan_route_budgets", "gregale_preflight", "gregale_watch_rollout", "gregale_context", "gregale_list_apps", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_workload_rollout", "gregale_plan_service_abort", "gregale_get_rollout", "gregale_plan_rollback", "gregale_wait_deployment", "gregale_list_environments", "gregale_get_environment", "gregale_plan_environment_promotion", "gregale_plan_environment_rollback"}
+                required = {"gregale_get_route_awake", "gregale_get_route_advice", "gregale_get_route_budgets", "gregale_plan_route_budgets", "gregale_preflight", "gregale_watch_rollout", "gregale_context", "gregale_list_apps", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_workload_rollout", "gregale_plan_service_abort", "gregale_get_rollout", "gregale_plan_rollback", "gregale_wait_deployment", "gregale_list_environments", "gregale_get_environment", "gregale_plan_environment_promotion", "gregale_plan_environment_rollback"}
                 if not required <= names:
                     raise RuntimeError("Gregale MCP tool inventory is incomplete")
                 write_tools = {"gregale_apply_deploy", "gregale_promote_deployment", "gregale_apply_rollback", "gregale_apply_environment_promotion", "gregale_apply_environment_rollback", "gregale_apply_workload_rollout", "gregale_apply_service_abort"}
@@ -420,6 +439,7 @@ def main():
                 if args.fixture:
                     source_planning_call(rpc, thread_id)
                     scoped_telemetry_calls(rpc, thread_id)
+                    route_diagnostics_calls(rpc, thread_id)
                     rollout_watch_call(rpc, thread_id)
                     context_resource_call(rpc, thread_id)
                     preflight_call(rpc, thread_id)
@@ -429,6 +449,7 @@ def main():
                 if args.fixture:
                     report["source_planning"] = "passed"
                     report["scoped_telemetry"] = "passed"
+                    report["route_diagnostics"] = "passed"
                     report["rollout_watch"] = "passed"
                     report["resources"] = "passed"
                 print(json.dumps(report))

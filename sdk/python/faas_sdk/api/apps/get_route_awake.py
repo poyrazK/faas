@@ -7,6 +7,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_route_awake_scope import GetRouteAwakeScope
 from ...models.problem import Problem
 from ...models.route_awake_response import RouteAwakeResponse
 from ...types import UNSET, Response, Unset
@@ -15,11 +16,21 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    scope: GetRouteAwakeScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    json_scope: str | Unset = UNSET
+    if not isinstance(scope, Unset):
+        json_scope = scope
+
+    params["scope"] = json_scope
+
+    params["environment"] = environment
 
     params["since"] = since
 
@@ -74,6 +85,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -105,6 +121,8 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAwakeScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
 ) -> Response[Problem | RouteAwakeResponse]:
@@ -128,9 +146,19 @@ def sync_detailed(
     unattributed. Minute resolution makes every figure an estimate. Uses
     the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are not evaluated. Neither selector preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAwakeScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
 
@@ -144,6 +172,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        scope=scope,
+        environment=environment,
         since=since,
         until=until,
     )
@@ -159,6 +189,8 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAwakeScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
 ) -> Problem | RouteAwakeResponse | None:
@@ -182,9 +214,19 @@ def sync(
     unattributed. Minute resolution makes every figure an estimate. Uses
     the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are not evaluated. Neither selector preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAwakeScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
 
@@ -199,6 +241,8 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        scope=scope,
+        environment=environment,
         since=since,
         until=until,
     ).parsed
@@ -208,6 +252,8 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAwakeScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
 ) -> Response[Problem | RouteAwakeResponse]:
@@ -231,9 +277,19 @@ async def asyncio_detailed(
     unattributed. Minute resolution makes every figure an estimate. Uses
     the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are not evaluated. Neither selector preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAwakeScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
 
@@ -247,6 +303,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        scope=scope,
+        environment=environment,
         since=since,
         until=until,
     )
@@ -260,6 +318,8 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAwakeScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
 ) -> Problem | RouteAwakeResponse | None:
@@ -283,9 +343,19 @@ async def asyncio(
     unattributed. Minute resolution makes every figure an estimate. Uses
     the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are not evaluated. Neither selector preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAwakeScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
 
@@ -301,6 +371,8 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            scope=scope,
+            environment=environment,
             since=since,
             until=until,
         )

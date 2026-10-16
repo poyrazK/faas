@@ -19914,6 +19914,594 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/cache/schedules/activity/checkpoint:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App owning the feed checkpoint captured for baseline recovery.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Named environment whose retained bounds and committed head are captured.
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCacheScheduleActivityCheckpoint
+      summary: Capture an environment cache schedule activity checkpoint before baseline discovery.
+      description: |
+        Requires app read access and MFA. Reads the retained-prefix floor and
+        committed head in one scoped snapshot without scanning or consuming
+        events. Returns nonempty oldest_cursor and restart_cursor even for an
+        empty feed or a fully pruned ledger. Save restart_cursor BEFORE listing
+        current schedules, then consume activity after it to cover concurrent
+        changes. The checkpoint does not reserve retained data, freeze discovery,
+        restore removed history or establish gateway convergence. Recheck cursor
+        retention while recovering; an expired recovery must restart its baseline.
+      responses:
+        '200':
+          description: Immutable target identity, retained-prefix checkpoint and observed head.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheActivityRecovery' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache/schedules/activity:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App whose scoped durable schedule transitions are being read.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Named environment authorizing this immutable schedule activity stream.
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCacheScheduleActivity
+      summary: Catch up on durable environment cache schedule transitions.
+      description: |
+        Requires app read access and MFA. Records accepted, rescheduled, cancelled,
+        executed and failed transitions in the same transaction as the schedule
+        change. A per-app/environment transactional counter serializes sequence
+        allocation through commit, so cursors cannot skip a late transaction.
+        Rescheduling emits the cancelled original with its successor ID followed
+        by acceptance of the successor linked to its predecessor. Identical retries
+        and stale worker completions emit no additional events. Claim/lease retries
+        are not outcomes and emit no events. Execution includes only the policy
+        revision or purge generation receipt; gateway convergence is separate.
+        Cursors bind account and immutable app/project/environment IDs. Rejects
+        malformed, foreign and ahead-of-stream checkpoints. Entries are ascending
+        and contiguous; cursor always identifies the last returned sequence, or
+        the supplied checkpoint for an empty page. Persist it even at the tail
+        and supply it again after reconnecting. Has_more means another committed
+        event was visible in the same snapshot. Events retain compact metadata,
+        timestamps and stable failure codes, without rule bodies or paths. They
+        are retained for 30 days plus bounded cleanup lag. An expired checkpoint
+        returns 410 cursor_expired with scoped activity_recovery metadata. Save
+        restart_cursor before listing a current schedule baseline, then consume
+        events after it and reconcile overlapping schedule identities. Removed
+        historical outcomes cannot be reconstructed. Recording begins with upgraded apid writers;
+        no historical events are fabricated. Use schedule listing for the initial
+        baseline and enable catch-up only after all apid writers are upgraded.
+      parameters:
+      - in: query
+        name: after
+        schema: { type: string, maxLength: 2048 }
+        description: Saved activity cursor from the same account and immutable environment.
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        description: Maximum compact schedule events to return in this activity page.
+      responses:
+        '200':
+          description: A bounded ordered activity page with a durable tail-safe checkpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheScheduleActivity' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410':
+          description: The checkpoint precedes the retained event prefix; use activity_recovery to rebuild current state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache/schedules:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App owning this one-time cache schedule target.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Named environment granting access to the scheduled cache action.
+    get:
+      tags: [edge_rules]
+      operationId: listEnvironmentCacheSchedules
+      summary: Discover named environment cache schedules with bounded cursor pages.
+      description: |
+        Requires app read access and MFA. Returns schedules for the immutable
+        environment in ascending execute_at, schedule_id order, including linked
+        replacements. Optional status, inclusive from and exclusive until filters
+        are bound into the opaque continuation cursor along with immutable target
+        IDs. Default page size 20, maximum 50. Pages are live, not a frozen snapshot;
+        status changes and new replacements may require restarting from page one.
+        Schedule execution receipts are distinct from gateway convergence evidence.
+      parameters:
+      - in: query
+        name: status
+        schema: { type: string, enum: [scheduled, executing, executed, failed, cancelled] }
+        description: Restrict this discovery page to the selected execution state.
+      - in: query
+        name: from
+        schema: { type: string, format: date-time }
+        description: Include schedules with execution timestamps at or after this bound.
+      - in: query
+        name: until
+        schema: { type: string, format: date-time }
+        description: Include schedules with execution timestamps strictly before this bound.
+      - in: query
+        name: after
+        schema: { type: string, maxLength: 2048 }
+        description: Opaque next_cursor from the same immutable environment and filter selection.
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        description: Maximum schedule records in this live discovery page.
+      responses:
+        '200':
+          description: A bounded scoped schedule page and optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheScheduleList' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [edge_rules]
+      operationId: createEnvironmentCacheSchedule
+      summary: Accept one future environment cache action.
+      description: |
+        Requires app write access and MFA. Delegates exactly one policy replacement,
+        inheritance restore or purge to apid at or after execute_at, within 30 days
+        of acceptance. At most 100 scheduled/executing actions per app/environment.
+        Schedule UUID doubles as the action request UUID; immutable IDs and complete
+        action are required. Policy pins expected_revision both at acceptance and
+        execution; copy_from and restore_revision are unsupported. Purge requires
+        explicit path, including empty string for the whole environment host.
+        Identical retries recover the same schedule even after execution time or
+        terminal completion. Schedule acceptance is not action execution or gateway
+        convergence. Durable delegation survives client disconnect and token expiry;
+        cancel explicitly before worker claim. Delayed actions execute after outage
+        recovery; execution time is a lower bound, not a real-time deadline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEnvironmentCacheScheduleRequest' }
+      responses:
+        '200':
+          description: Durable one-time cache schedule or original retry receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheSchedule' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache/schedules/{schedule}:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App associated with the exact schedule being inspected.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Registered named environment owning the selected schedule.
+    - in: path
+      name: schedule
+      required: true
+      schema: { type: string, format: uuid }
+      description: Exact immutable schedule UUID returned at acceptance.
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCacheSchedule
+      summary: Read one environment cache schedule and execution receipt.
+      description: |
+        Requires app read access and MFA. Returns scheduled, executing, executed,
+        failed or cancelled. Executed includes the exact policy revision or purge
+        generation receipt; it does not establish gateway convergence. Use policy
+        convergence or purge status for current-session registered gateway evidence.
+        Immutable environment identity is rechecked; no cross-environment access.
+      responses:
+        '200':
+          description: Exact scoped schedule with its current execution state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheSchedule' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: cancelEnvironmentCacheSchedule
+      summary: Cancel a cache schedule before worker claim.
+      description: |
+        Requires app write access and MFA. Atomically cancels a scheduled action;
+        repeated cancellation returns the cancelled record. Executing and terminal
+        actions reject cancellation with conflict. Cancellation does not reverse an
+        already applied policy or purge. Cancellation remains available for owners
+        of suspended accounts so pending delegation can be withdrawn.
+      responses:
+        '200':
+          description: Confirmed cancelled cache schedule including on repeated cancellation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheSchedule' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache/schedules/{schedule}/reschedule:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App owning the pending schedule selected for atomic replacement.
+    - in: path
+      name: schedule
+      required: true
+      schema: { type: string, format: uuid }
+      description: Original pending schedule UUID whose action is preserved.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Exact registered environment authorizing the schedule replacement.
+    post:
+      tags: [edge_rules]
+      operationId: rescheduleEnvironmentCache
+      summary: Atomically replace a pending cache schedule at a new execution time.
+      description: |
+        Requires app write access, account eligibility and MFA. Pins the original
+        immutable target and execute_at via expected_execute_at. Cancels only a
+        scheduled original and inserts a linked successor in one transaction,
+        serialized against worker claim and cancellation. New time must differ and
+        be future within 30 days. Preserves the complete action and original policy
+        revision guard; a changed desired policy rejects replacement rather than
+        rebasing it. Replacement consumes the original active quota slot. The new
+        UUID also becomes the action idempotency key. Identical retries recover the
+        successor even after terminal state, policy edits or further replacement;
+        conflicting UUID or changed body rejects without cancelling the original.
+        Worker-claimed and terminal originals cannot be newly rescheduled. The
+        cancelled original links replaced_by_schedule_id; the successor links
+        replaces_schedule_id. Cancel the successor to withdraw the new delegation;
+        cancelling the original does not cancel its successor. Acceptance does not
+        execute a cache action or establish gateway convergence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RescheduleEnvironmentCacheRequest' }
+      responses:
+        '200':
+          description: Confirmed linked successor or its recovered original replacement receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheSchedule' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache/purges:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App whose immutable environment-host cache is being invalidated.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Registered named environment targeted by this durable purge request.
+    post:
+      tags: [edge_rules]
+      operationId: createEnvironmentCachePurge
+      summary: Request an exact-path or whole-environment logical cache purge.
+      description: |
+        Requires app write access and MFA. Immutable app/project/environment IDs
+        and request_id are required. Path must be explicitly supplied: empty
+        string targets the entire immutable environment host, otherwise an exact
+        decoded URL path without query, fragment, percent escapes, wildcards,
+        controls or dot segments. All query, method, rule and vary variants at
+        that path are invalidated; other environment hosts and policy are unchanged.
+        A commit-ordered durable generation and retry receipt are the same row.
+        Retry the identical request_id and body after a lost reply; changed target
+        reuse returns conflict. New gateways bypass environment caching until
+        replayed; prior-generation L1/L2 entries and late cache writes become
+        unreachable. Redis objects expire by TTL rather than physical deletion.
+        The receipt confirms desired intent. Read purge status for current-session
+        gateway acknowledgement; completion is sampled registered-fleet evidence,
+        not an in-flight response drain or application-data freshness guarantee.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEnvironmentCachePurgeRequest' }
+      responses:
+        '200':
+          description: Stable committed purge request, including on idempotent replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCachePurgeReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache/purges/{request}:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App owning the requested environment purge receipt.
+    - in: path
+      name: request
+      required: true
+      schema: { type: string, format: uuid }
+      description: Exact durable purge request UUID supplied at creation.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Registered environment owning this exact cache purge request.
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCachePurge
+      summary: Read a scoped cache purge receipt and gateway completion evidence.
+      description: |
+        Requires app read access and MFA. Returns completed only when every
+        registered active serving compute gateway has replayed this generation
+        in its current process session with fresh node and session heartbeats
+        within 90 seconds. Fresh sessions without the checkpoint are pending;
+        missing/stale sessions, changed endpoints and empty fleets are degraded.
+        Reads identity, receipt and aggregate counts from one snapshot and
+        rechecks the environment registry. Recreated environments cannot read
+        old receipts. No gateway names, addresses or unrelated cache data are
+        returned. Read-only; a later restart or roster change may change status.
+      responses:
+        '200':
+          description: Exact purge receipt and sampled registered-gateway status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCachePurgeStatus' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache-policy/history:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App whose cache policy history is being paged.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Named environment whose retained cache revisions are listed.
+    get:
+      tags: [edge_rules]
+      operationId: listEnvironmentCachePolicyHistory
+      summary: Read a bounded page of environment cache policy revisions.
+      description: |
+        Requires app read access and MFA. Returns retained snapshots in descending
+        revision order for the exact immutable environment. before_revision is an
+        exclusive cursor; zero starts at newest. Includes synthetic initial
+        inherited revision zero, which does not contain historical app rule bodies.
+        Current revision and entries share one read-only snapshot. New writes
+        record history atomically with intent and receipts; receipts/current rows
+        available at migration are backfilled. Missing older revisions are not
+        fabricated. Deleting an app or environment removes its history.
+      parameters:
+      - in: query
+        name: before_revision
+        schema: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0 }
+        description: Exclusive revision cursor, or zero to start at newest.
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        description: Maximum snapshots returned in this page.
+      responses:
+        '200':
+          description: Newest-first revision page and optional next exclusive cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCachePolicyHistory' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache-policy/history/{revision}:
+    parameters:
+    - in: path
+      name: slug
+      required: true
+      schema: { type: string }
+      description: App owning the requested historical cache snapshot.
+    - in: path
+      name: revision
+      required: true
+      schema: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+      description: Exact retained revision; zero selects initial live inheritance.
+    - in: query
+      name: environment
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Named environment owning this exact cache revision.
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCachePolicyRevision
+      summary: Read one retained environment cache policy revision.
+      description: Requires app read access and MFA. Returns 404 for unavailable positive revisions. Revision zero is synthetic initial live inheritance, not historical app rule bodies. Identity and history are read from one snapshot; environment replacement cannot recover old snapshots.
+      responses:
+        '200':
+          description: Exact historical cache policy snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCachePolicy' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cache-policy/convergence:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: true
+        description: Registered named environment slug.
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCacheConvergence
+      summary: Read current-session gateway evidence for an environment cache policy.
+      description: |
+        Counts registered active compute gateways with a nonempty serving URL.
+        Converged requires every gateway's current session to have loaded the
+        exact desired revision, with session and node heartbeats fresh within
+        90 seconds. Empty or stale rosters are degraded, never successful.
+        Process restart or endpoint replacement invalidates previous-session
+        observations. Counts describe sampled evidence, not continuous serving
+        behavior or cache savings. Inherited revision zero is degraded because
+        no independent environment cache revision exists to acknowledge.
+      responses:
+        '200':
+          description: Scoped desired revision and sampled fleet observations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCacheConvergence' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/cache-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: true
+        description: Registered named environment slug. Default scope is unsupported.
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [edge_rules]
+      operationId: getEnvironmentCachePolicy
+      summary: Read a named environment's independent cache policy.
+      description: An absent override reports inherited=true and no inherited rule bodies. Existing app-owned cache rules continue to apply until an explicit replacement is saved.
+      responses:
+        '200':
+          description: Desired cache policy for the exact immutable environment identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCachePolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [edge_rules]
+      operationId: setEnvironmentCachePolicy
+      summary: Replace environment cache rules or restore app inheritance.
+      description: |
+        Replaces only cache rules for the selected immutable environment host.
+        An explicit empty list disables caching there. No other environment,
+        default host, rule kind or app-owned rule is mutated. Native account,
+        app and registry checks and the expected revision guard are atomic
+        with a durable request_id receipt. Retry the identical request_id and
+        body after an ambiguous response; conflicting key reuse returns 409.
+        A deleted and recreated environment never inherits an old receipt.
+        Gateways reload desired rules on their normal 30-second policy TTL.
+        Revision-scoped rule IDs partition response-cache entries after reload.
+        The receipt describes desired policy, not gateway convergence. Set
+        inherited=true with rules=[] to restore live app inheritance at a new
+        positive revision. The inherited rules are evaluated on gateway reload;
+        the review does not freeze their contents. Omitted/false inherited with
+        rules=[] still disables caching. Restoring inheritance partitions old
+        response entries and is observable by the convergence endpoint.
+        Optional copy_from pins an explicit override on a different named
+        environment of the same app/project. Its immutable identity, revision
+        and normalized rules are checked in the destination write transaction.
+        Inherited sources are rejected; an explicit empty source disables cache
+        at the destination. Source policy is unchanged; this is a one-time copy.
+        Source identity is checked on retries, while an existing receipt can
+        recover after source or destination revision changes.
+        Optional restore_revision restores a retained policy snapshot as a new
+        revision. The inherited mode and rules must match that snapshot in the
+        same guarded write transaction; zero selects initial live inheritance.
+        It cannot be combined with copy_from. Intent, history and the retry
+        receipt commit atomically. A rollback never decrements the current
+        revision or overwrites a concurrent edit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetEnvironmentCachePolicyRequest' }
+      responses:
+        '200':
+          description: Saved desired policy, or the original transactional receipt on retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentCachePolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/route-budgets:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -20047,7 +20635,29 @@ paths:
         the cache estimate cannot see credential headers or query strings.
         Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
         plan gate.
+        An explicit scope=default or environment selector returns partial,
+        retained deployment-attributed history with immutable app/environment
+        identities. Unattributable evidence is excluded, not counted as zero.
+        Legacy body comparisons are excluded from scoped learned cacheability;
+        only deployment-isolated observations qualify. Scoped advice omits
+        app-wide setting suggestions and rule bodies; existing environment
+        policies are observed through bounded, credential-free policy_context metadata.
+        Suggestions flag duplicate, conflicting or conditional configurations.
+        A second read detects changes during collection; unavailable evidence
+        never establishes policy absence. Revision fingerprints are observations,
+        not apply guards or proof of gateway convergence. Omitting both selectors preserves the legacy
+        aggregate report. Duplicate or mixed selectors are rejected.
       parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [default] }
+          description: "Advice report default environment; mutually exclusive with environment. Omit both selectors for the legacy app-wide report."
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: "Advice report registered environment in this app's project. Only retained deployment-attributed history for this environment identity is included. Mutually exclusive with scope."
         - name: since
           in: query
           required: false
@@ -20075,6 +20685,7 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -20104,7 +20715,25 @@ paths:
         unattributed. Minute resolution makes every figure an estimate. Uses
         the normal read scopes, completed MFA and the DebugTelemetryEnabled
         plan gate.
+        An explicit scope=default or environment selector returns partial,
+        retained deployment-attributed history with immutable app/environment
+        identities. Unattributable evidence is excluded, not counted as zero.
+        Legacy body comparisons are excluded from scoped learned cacheability;
+        only deployment-isolated observations qualify. Scoped advice omits
+        app-wide setting suggestions and rule bodies; existing environment
+        policies are not evaluated. Neither selector preserves the legacy
+        aggregate report. Duplicate or mixed selectors are rejected.
       parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [default] }
+          description: "Awake report default environment; mutually exclusive with environment. Omit both selectors for the legacy app-wide report."
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: "Awake report registered environment in this app's project. Only retained deployment-attributed history for this environment identity is included. Mutually exclusive with scope."
         - name: since
           in: query
           required: false
@@ -20127,6 +20756,7 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -32007,6 +32637,12 @@ paths:
         kind mid-life would break the action union. To change kind,
         delete and recreate. `action` replaces the jsonb column
         whole (no partial-update shape).
+        PATCH accepts an optional Idempotency-Key with the standard 24-hour
+        replay lifetime. Retry the same method, path, body, If-Match and key
+        after a lost response. A stored success is replayed before checking
+        the now-advanced version; it describes the original write, not current
+        policy or gateway convergence. If a supplied version cannot be checked,
+        the mutation fails closed.
       requestBody:
         required: true
         content:
@@ -59601,6 +60237,249 @@ components:
         recommendations:
           type: array
           items: { $ref: '#/components/schemas/AppOperationalRecommendation' }
+    EnvironmentCacheConvergence:
+      description: Session-bound gateway acknowledgements for one exact environment cache policy revision.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, revision, status, checked_at, serving_gateways, acknowledged_gateways, pending_gateways, stale_gateways]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        status: { type: string, enum: [pending, converged, degraded] }
+        checked_at: { type: string, format: date-time }
+        serving_gateways: { type: integer, format: int64, minimum: 0 }
+        acknowledged_gateways: { type: integer, format: int64, minimum: 0 }
+        pending_gateways: { type: integer, format: int64, minimum: 0 }
+        stale_gateways: { type: integer, format: int64, minimum: 0 }
+
+    EnvironmentCacheRule:
+      description: An unconditional cache rule owned by exactly one immutable named environment host.
+      type: object
+      additionalProperties: false
+      required: [path, priority, cache]
+      properties:
+        path: { type: string, minLength: 1, maxLength: 2048, description: "Concrete cache path glob; OpenAPI templates and backslashes are rejected." }
+        priority: { type: integer, minimum: 0, maximum: 10000, description: "Must be distinct within this replacement." }
+        cache: { $ref: '#/components/schemas/EdgeRuleCacheAction' }
+    EnvironmentCachePolicy:
+      description: Desired cache mode and monotonic revision for one named environment; absence preserves app inheritance at revision zero.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, revision, inherited, rules]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        inherited: { type: boolean, description: "True at revision zero or a positive restored-inheritance revision; inherited app rule bodies are not returned." }
+        rules:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/EnvironmentCacheRule' }
+        updated_at: { type: string, format: date-time }
+    EnvironmentCacheScheduleEvent:
+      description: Immutable schedule transition metadata, with receipt identity only for confirmed execution and no gateway-convergence claim.
+      type: object
+      additionalProperties: false
+      required: [sequence, schedule_id, kind, status, action, execute_at, occurred_at]
+      properties:
+        sequence: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        schedule_id: { type: string, format: uuid }
+        kind: { type: string, enum: [accepted, rescheduled, cancelled, executed, failed] }
+        status: { type: string, enum: [scheduled, cancelled, executed, failed] }
+        action: { type: string, enum: [policy, inheritance, purge] }
+        execute_at: { type: string, format: date-time }
+        occurred_at: { type: string, format: date-time }
+        related_schedule_id: { type: string, format: uuid, description: Successor for rescheduled originals or predecessor for accepted successors; absent otherwise. }
+        error_code: { type: string, maxLength: 64 }
+        policy_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        purge_generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    EnvironmentCacheActivityRecovery:
+      description: Scoped feed checkpoint and recovery metadata for cursor_expired. Save restart_cursor before rebuilding a live schedule baseline, then consume events after it. Removed historical events are not recoverable; reconcile overlap by schedule identity.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, oldest_cursor, restart_cursor, retention_seconds]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        oldest_cursor: { type: string, minLength: 1, maxLength: 2048, description: 'Last pruned sequence. Events strictly after it are retained as of this response.' }
+        restart_cursor: { type: string, minLength: 1, maxLength: 2048, description: 'Observed head before baseline discovery; consume activity after this checkpoint to cover concurrent changes.' }
+        retention_seconds: { type: integer, minimum: 2592000, maximum: 2592000 }
+    EnvironmentCacheScheduleActivity:
+      description: Exact environment activity page with an account-bound checkpoint that can be reused after reaching the current tail.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, entries, cursor, has_more]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        entries:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EnvironmentCacheScheduleEvent' }
+        cursor: { type: string, minLength: 1, maxLength: 2048 }
+        has_more: { type: boolean }
+    RescheduleEnvironmentCacheRequest:
+      description: Pinned original execution timestamp, immutable target and exact new schedule identity/time; action is taken from the original record.
+      type: object
+      additionalProperties: false
+      required: [replacement_id, app_id, project_id, environment_id, expected_execute_at, execute_at]
+      properties:
+        replacement_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        expected_execute_at: { type: string, format: date-time }
+        execute_at: { type: string, format: date-time }
+    EnvironmentCacheScheduleList:
+      description: Scoped live schedule page ordered by execution timestamp and schedule UUID, with filter-bound continuation.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, entries]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        entries:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EnvironmentCacheSchedule' }
+        next_cursor: { type: string, maxLength: 2048 }
+    CreateEnvironmentCacheScheduleRequest:
+      description: One durable environment cache action; exactly one policy or purge is required, with request_id equal to schedule_id.
+      type: object
+      additionalProperties: false
+      required: [schedule_id, app_id, project_id, environment_id, execute_at]
+      properties:
+        schedule_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        execute_at: { type: string, format: date-time }
+        policy: { $ref: '#/components/schemas/SetEnvironmentCachePolicyRequest' }
+        purge: { $ref: '#/components/schemas/CreateEnvironmentCachePurgeRequest' }
+    EnvironmentCacheSchedule:
+      description: Accepted cache delegation with execution state and optional exact action receipt, distinct from gateway convergence.
+      type: object
+      additionalProperties: false
+      required: [schedule_id, app_id, project_id, environment_id, execute_at, scope, status, created_at]
+      properties:
+        schedule_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        execute_at: { type: string, format: date-time }
+        policy: { $ref: '#/components/schemas/SetEnvironmentCachePolicyRequest' }
+        purge: { $ref: '#/components/schemas/CreateEnvironmentCachePurgeRequest' }
+        scope: { type: string, minLength: 1 }
+        status: { type: string, enum: [scheduled, executing, executed, failed, cancelled] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        error_code: { type: string, maxLength: 64 }
+        policy_result: { $ref: '#/components/schemas/EnvironmentCachePolicy' }
+        purge_result: { $ref: '#/components/schemas/EnvironmentCachePurgeReceipt' }
+        replaces_schedule_id: { type: string, format: uuid, description: Original schedule cancelled atomically when this successor was accepted. }
+        replaced_by_schedule_id: { type: string, format: uuid, description: Successor UUID replacing this cancelled original; cancellation of this original does not withdraw that successor. }
+    CreateEnvironmentCachePurgeRequest:
+      description: Immutable named-environment purge target and stable retry identity; path must be explicit even for whole-environment purging.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, request_id, path]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid, description: "Keep this purge operation UUID and body on retries." }
+        path: { type: string, maxLength: 1024, description: "Exact decoded URL path; empty string selects the whole immutable environment host. Globs, query strings, controls, escapes and dot segments are invalid." }
+    EnvironmentCachePurgeReceipt:
+      description: Stable durable logical cache-purge intent for one immutable environment host.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, request_id, path, generation, requested_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        request_id: { type: string, format: uuid }
+        path: { type: string, maxLength: 1024 }
+        generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        requested_at: { type: string, format: date-time }
+    EnvironmentCachePurgeStatus:
+      description: Purge intent plus fresh current-process replay evidence for the registered compute ingress fleet.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, request_id, path, generation, requested_at, status, checked_at, serving_gateways, acknowledged_gateways, pending_gateways, stale_gateways]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        request_id: { type: string, format: uuid }
+        path: { type: string, maxLength: 1024 }
+        generation: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        requested_at: { type: string, format: date-time }
+        status: { type: string, enum: [completed, pending, degraded] }
+        checked_at: { type: string, format: date-time }
+        serving_gateways: { type: integer, format: int64, minimum: 0 }
+        acknowledged_gateways: { type: integer, format: int64, minimum: 0 }
+        pending_gateways: { type: integer, format: int64, minimum: 0 }
+        stale_gateways: { type: integer, format: int64, minimum: 0 }
+    EnvironmentCachePolicyHistory:
+      description: Bounded retained cache policy snapshots for one immutable named environment, ordered by descending revision.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, scope, current_revision, entries]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        scope: { type: string, minLength: 1 }
+        current_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        entries:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EnvironmentCachePolicy' }
+        next_before_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991, description: "Exclusive cursor for the next older page; omitted at the end." }
+    EnvironmentCachePolicySource:
+      description: An explicit cache override in another named environment of the same app and project, pinned for an atomic one-time copy.
+      type: object
+      additionalProperties: false
+      required: [scope, environment_id, revision]
+      properties:
+        scope: { type: string, minLength: 1, description: "Registered source environment slug; must differ from the destination." }
+        environment_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+    SetEnvironmentCachePolicyRequest:
+      description: Complete named-environment replacement with immutable identity, revision guard and transactional retry ID.
+      type: object
+      additionalProperties: false
+      required: [app_id, project_id, environment_id, request_id, expected_revision, rules]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid, description: "Stable native operation ID; keep this ID and body on retries." }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        inherited: { type: boolean, description: "Optional; true restores live app cache inheritance at a new revision and requires rules=[]. Omitted or false replaces the override." }
+        copy_from:
+          $ref: '#/components/schemas/EnvironmentCachePolicySource'
+        restore_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, description: "Optional historical revision to restore as a new revision. Rules and inherited mode must match retained history; zero restores live inheritance. Cannot combine with copy_from." }
+        rules:
+          type: array
+          maxItems: 20
+          description: "Complete replacement; [] disables environment caching unless inherited=true restores app rules. Omission or null is invalid."
+          items: { $ref: '#/components/schemas/EnvironmentCacheRule' }
+
     EnvironmentRouteBudgets:
       description: Effective advisory route budgets for one immutable app environment.
       type: object
@@ -59779,6 +60658,12 @@ components:
       description: "How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time."
       required: [slug, from, until, idle_timeout_seconds, window_seconds, awake_seconds, awake_share, mb_seconds, gb_hours, wakes, unattributed_seconds, other_routes_seconds, routes_limit, routes]
       properties:
+        app_id: { type: string, description: "Awake report: App identity for explicitly scoped reports." }
+        scope: { type: string, description: "Awake report: Selected default or named environment; absent on aggregate reports." }
+        project_id: { type: string, description: "Awake report: Immutable project identity for named reports." }
+        environment_id: { type: string, description: "Awake report: Immutable named environment identity." }
+        coverage: { type: string, enum: [retained_deployment_history], description: "Awake report: Only retained, identity-matched deployment history is included; absent for aggregate reports." }
+        partial: { type: boolean, description: "Awake report: True for scoped reports: unattributed history and telemetry gaps remain unknown." }
         slug: {"type": "string"}
         from: {"type": "string", "format": "date-time"}
         until: {"type": "string", "format": "date-time"}
@@ -59832,6 +60717,15 @@ components:
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
       required: [slug, from, until, cache_max_age_seconds, routes_analyzed, suggestions]
       properties:
+        policy_context:
+          $ref: '#/components/schemas/RouteAdvicePolicyContext'
+        app_id: { type: string, description: "Advice report: App identity for explicitly scoped reports." }
+        scope: { type: string, description: "Advice report: Selected default or named environment; absent on aggregate reports." }
+        project_id: { type: string, description: "Advice report: Immutable project identity for named reports." }
+        environment_id: { type: string, description: "Advice report: Immutable named environment identity." }
+        coverage: { type: string, enum: [retained_deployment_history], description: "Advice report: Only retained, identity-matched deployment history is included; absent for aggregate reports." }
+        partial: { type: boolean, description: "Advice report: True for scoped reports: unattributed history and telemetry gaps remain unknown." }
+        cacheability_coverage: { type: string, enum: [deployment_isolated_observations_only], description: "Scoped learned evidence excludes legacy comparisons that may cross environments." }
         slug: {"type": "string"}
         from: {"type": "string", "format": "date-time"}
         until: {"type": "string", "format": "date-time"}
@@ -59846,6 +60740,8 @@ components:
       description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is empty and setting carries the proposal."
       required: [id, kind, method, route, title, rationale, evidence, impact, rules]
       properties:
+        policy:
+          $ref: '#/components/schemas/RouteAdvicePolicyAssessment'
         id: {"type": "string", "description": "Stable for the same kind, method and route."}
         kind: {"type": "string", "enum": ["cache", "async", "throttle", "wake_ahead", "priority"]}
         method: {"type": "string"}
@@ -59870,6 +60766,54 @@ components:
           type: array
           maxItems: 20
           items: { $ref: '#/components/schemas/RoutePriorityRule' }
+    RouteAdvicePolicyContext:
+      type: object
+      description: "Bounded observation of selected-app desired cache, async and throttle rules matching the selected host, plus app-wide rules. Omits action and condition values; not proof of gateway convergence or authority to write."
+      required: [status, observed_at, rules, gaps]
+      properties:
+        status: { type: string, enum: [observed, unavailable, changed], description: "Policy snapshot availability; changed means re-reading found a different observation." }
+        revision: { type: string, pattern: '^[a-f0-9]{64}$', description: "Opaque fingerprint of scoped rule identities and update metadata; present only for observed snapshots, never an apply guard or account activity counter." }
+        observed_at: { type: string, format: date-time, description: "Time the desired-policy observation was collected." }
+        host: { type: string, description: "Exact selected platform or immutable named-environment hostname." }
+        rules:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/RouteAdvicePolicyRule' }
+        gaps:
+          type: array
+          description: "Stable coverage reasons. Runtime request attributes, disabled drafts, other gateway gates and actual convergence are not established by this read."
+          items: { type: string }
+    RouteAdvicePolicyRule:
+      type: object
+      description: "Credential-free selectors and revision metadata for one selected-app desired rule. Cache methods reflect the intersection of selector and cache action allowlist."
+      required: [id, kind, source, path, methods, priority, conditional, mode, updated_at]
+      properties:
+        id: { type: string, description: "Identifier of this consented app's policy rule." }
+        kind: { type: string, enum: [cache, async, throttle], description: "Route-advice policy kind being inspected." }
+        source: { type: string, enum: [host, app_wide, environment_policy], description: "Whether the rule comes from the selected hostname, app-wide selector or independent environment cache policy." }
+        path: { type: string, description: "Observed rule path selector, evaluated with gateway matching semantics." }
+        methods:
+          type: array
+          description: "Effective policy method selectors; empty means unrestricted for non-cache rules."
+          items: { type: string }
+        priority: { type: integer, description: "Desired rule priority. Equal-priority candidates remain uncertain." }
+        conditional: { type: boolean, description: "The rule requires headers or structured request conditions that telemetry does not supply." }
+        mode: { type: string, enum: [enforce, log], description: "Configured enforcement mode; log-only matches do not prove an active policy effect." }
+        updated_at: { type: string, format: date-time, description: "Rule update metadata used by the scoped observation fingerprint." }
+        expires_at: { type: string, format: date-time, description: "Policy expiry boundary when one is configured." }
+    RouteAdvicePolicyAssessment:
+      type: object
+      description: "Comparison of a diagnostic suggestion with observed selected-app policy. No status establishes mutation safety."
+      required: [status, reason, rule_ids]
+      properties:
+        status: { type: string, enum: [duplicate, conflict, no_matching_rule, review_required, unavailable], description: "Duplicate means the matching configured payload agrees; conflict means different configured settings. Conditional, overlapping or ambiguous rules require review. Missing evidence never means policy absence." }
+        reason: { type: string, description: "Stable explanation code for this suggestion's policy assessment." }
+        rule_ids:
+          type: array
+          maxItems: 10
+          description: "Bounded matching identifiers from this report's observed policy snapshot."
+          items: { type: string }
+        truncated: { type: boolean, description: "More matching policy identifiers exist than are returned." }
     RouteAdviceEvidence:
       type: object
       description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
@@ -64853,11 +65797,34 @@ components:
           type: string
           description: Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
 
+    EnvironmentCacheScheduleCapabilities:
+      description: Serving API and state backend support for named-environment schedule reads. These signals do not establish target authorization, migration health, worker readiness or compatibility of other replicas. Upgrade all schedule writers before relying on activity completeness.
+      type: object
+      required: [listing, activity, checkpoint, retention_seconds]
+      properties:
+        listing:
+          type: boolean
+          description: Supports bounded current schedule discovery.
+        activity:
+          type: boolean
+          description: Supports contiguous scoped schedule activity pages and cursor expiry.
+        checkpoint:
+          type: boolean
+          description: Supports capturing scoped feed bounds without scanning activity.
+        retention_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Advertised activity retention window in seconds; zero means retention support is unavailable. Guided MCP recovery requires the documented 30-day contract.
+
     CapabilitiesResponse:
       description: Account-scoped capability registry with resolved entitlement and existing runtime availability gates.
       type: object
       required: [registry_version, plan, capabilities]
       properties:
+        environment_cache_schedules:
+          description: Explicit serving-backend schedule workflow support. Omission on older APIs means unknown; clients must not infer recovery support or emulate checkpoints by scanning the feed.
+          $ref: '#/components/schemas/EnvironmentCacheScheduleCapabilities'
         conditional_parking:
           type: boolean
           default: false
@@ -89270,6 +90237,7 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
+        activity_recovery: { $ref: '#/components/schemas/EnvironmentCacheActivityRecovery' }
         current_sequence: { type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.' }
         condition_field: { type: string }
         condition_index: { type: integer, minimum: 0 }

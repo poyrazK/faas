@@ -86,6 +86,9 @@ type (
 	StatusUptimeBucket      = api.StatusUptimeBucket
 	StatusIncident          = api.StatusIncident
 
+	// Schedule workflow compatibility.
+	EnvironmentCacheScheduleCapabilities = api.EnvironmentCacheScheduleCapabilities
+
 	// API keys.
 	APIKeyResponse   = api.APIKeyResponse
 	CreateKeyRequest = api.CreateKeyRequest

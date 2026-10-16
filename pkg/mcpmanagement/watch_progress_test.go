@@ -137,9 +137,7 @@ func TestWatchProgressChangedStateAndTerminalFailure(t *testing.T) {
 			if json.Unmarshal([]byte(p.Message), &state) != nil || state.Failed != (want == 2) {
 				t.Fatal("terminal state missing")
 			}
-		// Progress notifications arrive asynchronously and can trail the
-		// tool result on a loaded runner (rc.264 release gate).
-		case <-time.After(5 * time.Second):
+		case <-ctx.Done():
 			t.Fatal("state transition missing")
 		}
 	}

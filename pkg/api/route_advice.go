@@ -21,30 +21,34 @@ type RouteAdviceSetting struct {
 // suggestions derived from retained request telemetry. Nothing is applied;
 // every proposed rule is created disabled when the customer applies it.
 type RouteAdviceResponse struct {
-	Slug               string                  `json:"slug"`
-	From               string                  `json:"from"`
-	Until              string                  `json:"until"`
-	WindowClamped      bool                    `json:"window_clamped,omitempty"`
-	CacheMaxAgeSeconds int                     `json:"cache_max_age_seconds"`
-	RoutesAnalyzed     int                     `json:"routes_analyzed"`
-	Suggestions        []RouteAdviceSuggestion `json:"suggestions"`
+	RouteDiagnosticsIdentity
+	PolicyContext        *RouteAdvicePolicyContext `json:"policy_context,omitempty"`
+	CacheabilityCoverage string                    `json:"cacheability_coverage,omitempty"`
+	Slug                 string                    `json:"slug"`
+	From                 string                    `json:"from"`
+	Until                string                    `json:"until"`
+	WindowClamped        bool                      `json:"window_clamped,omitempty"`
+	CacheMaxAgeSeconds   int                       `json:"cache_max_age_seconds"`
+	RoutesAnalyzed       int                       `json:"routes_analyzed"`
+	Suggestions          []RouteAdviceSuggestion   `json:"suggestions"`
 }
 
 // RouteAdviceSuggestion is one proposed edge rule for one observed route.
 // ID is stable for the same kind, method and route, so a CLI can apply a
 // suggestion it listed earlier.
 type RouteAdviceSuggestion struct {
-	ID        string                  `json:"id"`
-	Kind      string                  `json:"kind"`
-	Method    string                  `json:"method"`
-	Route     string                  `json:"route"`
-	Title     string                  `json:"title"`
-	Rationale string                  `json:"rationale"`
-	Evidence  RouteAdviceEvidence     `json:"evidence"`
-	Impact    RouteAdviceImpact       `json:"impact"`
-	Cautions  []string                `json:"cautions,omitempty"`
-	Rules     []CreateEdgeRuleRequest `json:"rules"`
-	Setting   *RouteAdviceSetting     `json:"setting,omitempty"`
+	Policy    *RouteAdvicePolicyAssessment `json:"policy,omitempty"`
+	ID        string                       `json:"id"`
+	Kind      string                       `json:"kind"`
+	Method    string                       `json:"method"`
+	Route     string                       `json:"route"`
+	Title     string                       `json:"title"`
+	Rationale string                       `json:"rationale"`
+	Evidence  RouteAdviceEvidence          `json:"evidence"`
+	Impact    RouteAdviceImpact            `json:"impact"`
+	Cautions  []string                     `json:"cautions,omitempty"`
+	Rules     []CreateEdgeRuleRequest      `json:"rules"`
+	Setting   *RouteAdviceSetting          `json:"setting,omitempty"`
 }
 
 // RouteAdviceEvidence is the observed traffic a suggestion rests on.

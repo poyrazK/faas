@@ -12,6 +12,8 @@ import (
 )
 
 func registerContextCatalog(s *mcp.Server, m *management) {
+	registerActivityConsumerPrompt(s, m)
+	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: activityConsumerResourceTemplate, Name: "gregale_activity_consumer", Description: "Read-only named consumer readiness, revision/generation and lag; no cursors or acknowledgment arguments.", MIMEType: "application/json"}, m.readContextResource)
 	for _, r := range []*mcp.Resource{
 		{URI: "gregale://context", Name: "gregale_connection", Description: "Consented connection metadata; no credentials.", MIMEType: "application/json"},
 		{URI: "gregale://default/inventory", Name: "gregale_default_inventory", Description: "Bounded default-scope app inventory; requires default read consent.", MIMEType: "application/json"},
@@ -23,17 +25,22 @@ func registerContextCatalog(s *mcp.Server, m *management) {
 		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "gregale://default/apps/{app}/" + view, Name: "gregale_default_" + view, MIMEType: "application/json"}, m.readContextResource)
 		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "gregale://projects/{project}/environments/{environment}/apps/{app}/" + view, Name: "gregale_environment_" + view, MIMEType: "application/json"}, m.readContextResource)
 	}
-	for _, name := range []string{"gregale_deployment_review", "gregale_rollout_diagnosis", "gregale_rollback_review"} {
+	for _, name := range []string{"gregale_deployment_review", "gregale_rollout_diagnosis", "gregale_rollback_review", "gregale_awake_diagnosis"} {
 		args := []*mcp.PromptArgument{{Name: "app", Required: true, Description: "Existing app slug"}, {Name: "project", Description: "Required with a named environment"}, {Name: "environment", Description: "Registered named environment; omit for default"}}
-		if name != "gregale_deployment_review" {
+		if name == "gregale_rollout_diagnosis" || name == "gregale_rollback_review" {
 			args = append(args, &mcp.PromptArgument{Name: "deployment_id", Required: true, Description: "Exact observed or retained deployment ID"})
 		}
 		s.AddPrompt(&mcp.Prompt{Name: name, Description: "Read-only scoped review recipe. Does not plan, apply or approve a change.", Arguments: args}, m.getReviewPrompt)
 	}
 }
 
-func parseContextURI(uri string) (appArgs, string, error) {
-	var args appArgs
+type contextResourceArgs struct {
+	appArgs
+	Consumer string `json:"consumer,omitempty"`
+}
+
+func parseContextURI(uri string) (contextResourceArgs, string, error) {
+	var args contextResourceArgs
 	u, err := url.Parse(uri)
 	if err != nil || len(uri) > 1024 || u.Scheme != "gregale" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || strings.Contains(uri, "%") {
 		return args, "", invalid("invalid_resource", "use a canonical Gregale resource URI without query or encoded segments")
@@ -59,6 +66,12 @@ func parseContextURI(uri string) (appArgs, string, error) {
 		if len(parts) == 6 && parts[3] == "apps" {
 			args.App, view = parts[4], parts[5]
 		}
+		if len(parts) == 7 && parts[3] == "apps" && parts[5] == "activity-consumers" {
+			args.App, args.Consumer = parts[4], parts[6]
+			if validateSegment(args.App, "app") == nil && len(args.Consumer) <= api.MCPActivityConsumerNameMaxBytes && activityConsumerName.MatchString(args.Consumer) {
+				return args, activityConsumerResourceView, nil
+			}
+		}
 	}
 	if validateSegment(args.App, "app") != nil || view != "release" && view != "health" && view != "budgets" {
 		return args, "", invalid("invalid_resource", "unknown Gregale context resource")
@@ -76,11 +89,14 @@ func (m *management) readContextResource(ctx context.Context, req *mcp.ReadResou
 	if err := m.authorizeArgs(ctx, args); err != nil {
 		return nil, m.contextError(err)
 	}
-	value, err := m.contextResourceValue(ctx, args, view)
+	value, err := m.selectedContextResourceValue(ctx, args, view)
 	if err != nil {
 		return nil, m.contextError(err)
 	}
 	if err := m.authorizeArgs(ctx, args); err != nil {
+		return nil, m.contextError(err)
+	}
+	if err := m.checkConsumerResource(ctx, args, value); err != nil {
 		return nil, m.contextError(err)
 	}
 	data, err := m.safeOutput(value)

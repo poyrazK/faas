@@ -31,6 +31,14 @@ func TestMCPServeSubprocess(t *testing.T) {
 }
 
 func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
+	testMCPServeStdioUsesSelectedProfile(t, false)
+}
+
+func TestMCPServeStdioWithStateUsesSelectedProfile(t *testing.T) {
+	testMCPServeStdioUsesSelectedProfile(t, true)
+}
+
+func testMCPServeStdioUsesSelectedProfile(t *testing.T, durable bool) {
 	setupConnectionProfiles(t)
 	// TestMain recognizes this basename and preserves the helper's HOME.
 	// Keep the fixture aligned with its XDG path and the native macOS path.
@@ -68,6 +76,16 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	defer cancel()
 	// The executable is this test binary, not an agent-supplied command.
 	cmd := exec.CommandContext(ctx, executable, "-test.run=^TestMCPServeSubprocess$", "--", "--non-interactive", "--profile", "staging", "--json", "mcp", "serve", "--transport", "stdio") //nolint:gosec // current test executable, fixed arguments
+	var startupRequests int32
+	if durable {
+		stateDir := t.TempDir()
+		keyPath := filepath.Join(stateDir, "key")
+		if err := os.WriteFile(keyPath, bytes.Repeat([]byte{7}, 32), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cmd.Args = append(cmd.Args, "--state-file", filepath.Join(stateDir, "state"), "--state-key-file", keyPath)
+		startupRequests = 1
+	}
 	cmd.Env = append(os.Environ(), "GREGALE_MCP_TEST_HELPER=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -78,7 +96,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 29 || requests.Load() != 0 {
+	if err != nil || len(tools.Tools) != 56 || requests.Load() != startupRequests {
 		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_context", Arguments: map[string]any{}})
@@ -92,7 +110,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	if err := session.Close(); err != nil {
 		t.Fatalf("stdio shutdown: %v", err)
 	}
-	if strings.Contains(stderr.String(), token) || requests.Load() != 2 {
+	if strings.Contains(stderr.String(), token) || requests.Load() != 2+startupRequests {
 		t.Fatalf("unexpected diagnostics or API request count: %d", requests.Load())
 	}
 }
@@ -143,7 +161,6 @@ func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 		{"--oauth-onboarding", "invalid"},
 		{"--state-file", "state"},
 		{"--state-key-file", "key"},
-		{"--state-file", "state", "--state-key-file", "key"},
 		{"--oauth-onboarding", "api-key"},
 	} {
 		if _, err := parseMCPServeOptions(args); err == nil {
@@ -153,5 +170,9 @@ func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 	opts, err := parseMCPServeOptions([]string{"--transport", "streamable-http", "--state-file", "state", "--state-key-file", "key"})
 	if err != nil || opts.onboarding != "browser" || opts.stateFile != "state" || opts.allowWrites {
 		t.Fatalf("remote state options=%+v err=%v", opts, err)
+	}
+	opts, err = parseMCPServeOptions([]string{"--state-file", "state", "--state-key-file", "key"})
+	if err != nil || opts.transport != "stdio" || opts.stateFile != "state" || opts.allowWrites {
+		t.Fatalf("local state options=%+v err=%v", opts, err)
 	}
 }

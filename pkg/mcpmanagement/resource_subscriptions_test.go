@@ -26,11 +26,14 @@ type subscriptionHarness struct {
 	acks          chan *mcp.SubscriptionsAcknowledgedParams
 }
 
-func connectSubscriptionHarness(t *testing.T, b *httptest.Server, opts Options, version string, httpTransport bool) *subscriptionHarness {
+func connectSubscriptionHarness(t *testing.T, b *httptest.Server, opts Options, version string, httpTransport bool, configure ...func(*mcp.Server, *management)) *subscriptionHarness {
 	t.Helper()
 	s, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, setup := range configure {
+		setup(s, m)
 	}
 	m.subscriptions.poll = 20 * time.Millisecond
 	m.subscriptions.ttl = 2 * time.Second

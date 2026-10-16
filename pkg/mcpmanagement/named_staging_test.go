@@ -81,6 +81,18 @@ func (f *namedStageFixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/v1/apps/alpha/routes/awake", "/v1/apps/alpha/routes/advice":
+		if r.URL.Query().Get("environment") != "staging" || r.URL.Query().Has("scope") {
+			w.WriteHeader(400)
+			return
+		}
+		identity := api.RouteDiagnosticsIdentity{AppID: "app-one", Scope: "staging", ProjectID: "project-one", EnvironmentID: f.envID, Coverage: "retained_deployment_history", Partial: true}
+		if strings.HasSuffix(r.URL.Path, "awake") {
+			encode(api.RouteAwakeResponse{RouteDiagnosticsIdentity: identity, Slug: "alpha", Routes: []api.RouteAwakeRoute{}})
+		} else {
+			encode(api.RouteAdviceResponse{RouteDiagnosticsIdentity: identity, Slug: "alpha", CacheabilityCoverage: "deployment_isolated_observations_only", PolicyContext: &api.RouteAdvicePolicyContext{Status: "observed", Revision: strings.Repeat("a", 64), ObservedAt: "2026-10-15T00:00:00Z", Rules: []api.RouteAdvicePolicyRule{}, Gaps: []string{}}, Suggestions: []api.RouteAdviceSuggestion{}})
+		}
+
 	case "/v1/account":
 		encode(api.AccountResponse{ID: "account-one"})
 	case "/v1/projects/shop":

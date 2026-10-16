@@ -44,3 +44,25 @@ def test_capabilities_preserve_optional_explanations(reason):
         assert status.unavailable_reason == reason
         assert status.unavailable_detail == "Customer guidance"
     assert status.to_dict() == capability
+
+
+@pytest.mark.parametrize("advertised", [False, True])
+def test_schedule_workflow_capabilities_are_explicit_and_optional(advertised):
+    support = {"listing": True, "activity": True, "checkpoint": False, "retention_seconds": 2592000}
+    body = {"registry_version": 1, "plan": "free", "capabilities": []}
+    if advertised:
+        body["environment_cache_schedules"] = support
+
+    client = AuthenticatedClient(
+        base_url="https://api.example",
+        token="fixture-token",
+        httpx_args={"transport": httpx.MockTransport(lambda request: httpx.Response(200, json=body))},
+    )
+    with client.get_httpx_client():
+        response = get_capabilities.sync(client=client)
+    assert response is not None
+    if advertised:
+        assert response.environment_cache_schedules.to_dict() == support
+        assert response.environment_cache_schedules.checkpoint is False
+    else:
+        assert response.environment_cache_schedules is UNSET

@@ -11306,3 +11306,64 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Route advice policy snapshots are diagnostic projections, not rule quotas.
+const (
+	RouteAdvicePolicyRuleLimit  = 100
+	RouteAdvicePolicyMatchLimit = 10
+)
+
+// Independent cache-policy replacement bounds for one named environment.
+const (
+	EnvironmentCacheRuleLimit    = 20
+	EnvironmentCachePathMaxBytes = 2048
+	EnvironmentCachePriorityMax  = 10000
+)
+
+// Environment cache history reads are bounded independently of retained revisions.
+const EnvironmentCacheHistoryDefaultLimit = 20
+const EnvironmentCacheHistoryMaxLimit = 50
+
+// Environment cache scheduling admission bounds; terminal records remain retry receipts.
+const EnvironmentCacheScheduleLimit = 100
+const EnvironmentCacheScheduleMaxDelay = 30 * 24 * time.Hour
+
+const EnvironmentCacheSchedulePageDefault = 20
+const EnvironmentCacheSchedulePageMax = 50
+const EnvironmentCacheScheduleCursorMaxBytes = 2048
+
+const EnvironmentCacheActivityPageDefault = 20
+const EnvironmentCacheActivityPageMax = 50
+const EnvironmentCacheActivityCursorMaxBytes = 2048
+
+// Environment cache activity watches remain bounded within one MCP request.
+const (
+	EnvironmentCacheActivityWatchDefaultSeconds = 20
+	EnvironmentCacheActivityWatchMaxSeconds     = 45
+)
+
+// Schedule event retention is eventual: bounded maintenance removes old prefixes.
+const (
+	EnvironmentCacheActivityRetentionSeconds = 30 * 24 * 60 * 60
+	EnvironmentCacheActivityRetentionTargets = 20
+	EnvironmentCacheActivityRetentionBatch   = 1000
+)
+
+// Recovery tokens combine one activity checkpoint and one schedule continuation.
+const EnvironmentCacheActivityRecoveryTokenMaxBytes = 8192
+
+// MCP journal metadata bounds, independent of platform intent/write quotas.
+const MCPActivityConsumerNameMaxBytes = 64
+const MCPActivityConsumersPerConnection = 100
+const MCPActivityConsumerListDefault = 20
+const MCPActivityConsumerListMax = 50
+const MCPActivityConsumerListCursorMaxBytes = 2048
+const MCPActivityConsumerGenerationMaxBytes = 64
+
+// MCP bridge concurrency per local connection or remote OAuth grant. Activity
+// observations cannot consume acknowledgment/read or rollout observation slots.
+const (
+	MCPShortRequestsPerConnection   = 8
+	MCPRolloutWatchesPerConnection  = 2
+	MCPActivityWatchesPerConnection = 2
+)

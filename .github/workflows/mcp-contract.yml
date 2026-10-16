@@ -14,6 +14,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'scripts/ops/management-mcp-client-acceptance.py'
+      - 'scripts/ops/management-mcp-schedule-acceptance.py'
+      - 'scripts/ops/management-mcp-consumer-acceptance.py'
       - 'scripts/ops/management-mcp-metrics-acceptance.py'
       - 'scripts/ops/management-mcp-drain-acceptance.py'
       - 'scripts/ops/management-mcp-admin-acceptance.py'
@@ -155,6 +157,16 @@ jobs:
           GREGALE_MCP_CODEX_BINARY="$GITHUB_WORKSPACE/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
           GREGALE_MCP_CLIENT_REPORT="$RUNNER_TEMP/management-mcp-remote.json" \
             go test -race -p=1 ./pkg/mcpmanagement -run TestCodexRemoteOAuthAcceptance -count=1 -v
+      - name: Real Codex schedule recovery, watch and reconnect
+        run: |
+          GREGALE_MCP_CODEX_BINARY="$GITHUB_WORKSPACE/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
+          GREGALE_MCP_SCHEDULE_REPORT="$RUNNER_TEMP/management-mcp-schedules.json" \
+            go test -race -p=1 ./pkg/mcpmanagement -run '^TestCodexScheduleActivityAcceptance$' -count=1 -v
+      - name: Real Codex consumer lifecycle, resources, recovery and restart
+        run: |
+          GREGALE_MCP_CODEX_BINARY="$GITHUB_WORKSPACE/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
+          GREGALE_MCP_CONSUMER_REPORT="$RUNNER_TEMP/management-mcp-consumers.json" \
+            go test -race -p=1 ./pkg/mcpmanagement -run '^TestCodexActivityConsumerAcceptance$' -count=1 -v
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && steps.management-build.outcome == 'success' }}
         with:
@@ -162,6 +174,8 @@ jobs:
           path: |
             ${{ runner.temp }}/management-mcp-client.json
             ${{ runner.temp }}/management-mcp-remote.json
+            ${{ runner.temp }}/management-mcp-schedules.json
+            ${{ runner.temp }}/management-mcp-consumers.json
             ${{ runner.temp }}/management-mcp-metrics.json
             ${{ runner.temp }}/management-mcp-drain.json
             ${{ runner.temp }}/management-mcp-admin.json

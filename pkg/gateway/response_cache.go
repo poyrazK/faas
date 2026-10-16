@@ -47,8 +47,10 @@ import (
 // The store itself trusts the caller; this matches the
 // public_auth_cache posture (no schema-level enforcement).
 type ResponseCache struct {
-	maxBytes int
-	now      func() time.Time
+	environmentPurgesReady bool
+	environmentPurges      map[string]map[string]int64
+	maxBytes               int
+	now                    func() time.Time
 	// shared is an optional cross-gateway L2. The in-process LRU remains the
 	// first lookup and the complete fallback when the shared store is absent or
 	// unavailable.
@@ -100,6 +102,8 @@ type SharedResponseCacheStore interface {
 // bounded by the rule cardinality so an unbounded per-path
 // attacker can't enumerate.
 type CacheKey struct {
+	EnvironmentID  string
+	PurgeToken     string
 	AppID          string
 	DeploymentID   string
 	RuleID         string
@@ -136,6 +140,13 @@ func (k CacheKey) String() string {
 	b = append(b, ':')
 	b = append(b, k.RuleID...)
 	b = append(b, ':')
+	if k.EnvironmentID != "" {
+		b = append(b, "@environment:"...)
+		b = append(b, k.EnvironmentID...)
+		b = append(b, ':')
+		b = append(b, k.PurgeToken...)
+		b = append(b, ':')
+	}
 	b = append(b, k.Method...)
 	b = append(b, ':')
 	b = append(b, k.NormalizedPath...)

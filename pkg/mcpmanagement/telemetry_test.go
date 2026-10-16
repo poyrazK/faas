@@ -74,7 +74,7 @@ func TestTelemetryBusyAndActiveCapacity(t *testing.T) {
 	h := connectSubscriptionHarness(t, b, Options{APIBase: b.URL, Telemetry: metrics}, "2026-07-28", false)
 	releases := []func(){}
 	for range maxShortRequests {
-		release, err := h.manager.admission.acquire(h.ctx, false)
+		release, err := h.manager.admission.acquire(h.ctx, admissionShort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,7 +86,7 @@ func TestTelemetryBusyAndActiveCapacity(t *testing.T) {
 	_, _ = h.client.Complete(h.ctx, completionParams("app", "", nil))
 	expectMetric(t, metrics, `gregale_management_mcp_requests_total{operation="tools/call",outcome="busy",tool="gregale_get_app"} 1`)
 	expectMetric(t, metrics, `gregale_management_mcp_requests_total{operation="completion/complete",outcome="busy",tool="none"} 1`)
-	releaseWatch, err := h.manager.admission.acquire(h.ctx, true)
+	releaseWatch, err := h.manager.admission.acquire(h.ctx, admissionRollout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,4 +227,41 @@ func TestTelemetryOAuthGrantsAndRestoreShareRegistry(t *testing.T) {
 			t.Fatal("grant identity escaped into aggregate registry")
 		}
 	}
+}
+
+func TestTelemetryConsumerFailureOutcomes(t *testing.T) {
+	ctx := context.Background()
+	metrics := NewTelemetry()
+	cases := []struct{ code, outcome string }{
+		{"checkpoint_conflict", "checkpoint_conflict"},
+		{"consumer_generation_conflict", "consumer_generation_conflict"},
+		{"consumer_capacity", "consumer_capacity"},
+		{"durable_state_required", "durable_state_required"},
+		{"durable_state_unavailable", "durable_state_unavailable"},
+		{"invalid_state", "durable_state_unavailable"},
+		{"cursor_expired", "cursor_expired"},
+		{"recovery_restart_required", "recovery_restart_required"},
+		{"private-account-consumer-error", "error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			local := invalid(tc.code, "private diagnostic")
+			// Exercise the tool-result path used by tools/call as well as direct
+			// local and API errors. Arbitrary caller-controlled codes stay bounded.
+			for _, out := range []string{
+				telemetryOutcome(ctx, &mcp.CallToolResult{IsError: true, StructuredContent: ToolError{Code: tc.code}}, nil),
+				telemetryOutcome(ctx, nil, local),
+				telemetryOutcome(ctx, nil, &api.APIError{Problem: *api.NewProblem(409, tc.code, "private title", "private detail")}),
+			} {
+				if out != tc.outcome {
+					t.Fatalf("outcome=%q want=%q", out, tc.outcome)
+				}
+			}
+			metrics.observe("tools/call", ackActivityConsumerTool, telemetryOutcome(ctx, nil, local), time.Now())
+		})
+	}
+	if strings.Contains(telemetryText(t, metrics), "private") {
+		t.Fatal("unbounded error escaped into labels")
+	}
+	expectMetric(t, metrics, `gregale_management_mcp_requests_total{operation="tools/call",outcome="durable_state_unavailable",tool="gregale_ack_environment_cache_activity_consumer"} 2`)
 }

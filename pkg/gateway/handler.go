@@ -6521,17 +6521,10 @@ haveApp:
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
+		capturedKey, captureReady := responseCacheKeyFromContext(r.Context())
 		defer func() {
-			if cw.shouldStore() && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
-				key := CacheKey{
-					AppID:          app.ID,
-					DeploymentID:   versionDeploymentID,
-					RuleID:         rule.ID,
-					Method:         r.Method,
-					NormalizedPath: r.URL.Path,
-					Query:          sortQuery(r.URL.RawQuery),
-					VaryHash:       computeVaryHash(r, rule.VaryOn),
-				}
+			if cw.shouldStore() && captureReady && (versionDeploymentID == "" || servedDeploymentID == versionDeploymentID) {
+				key := capturedKey
 				cw.servedDeploymentID = servedDeploymentID
 				cw.finishCacheCapture(h.responseCache, key, time.Now())
 			} else {

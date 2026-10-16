@@ -51,6 +51,13 @@ func (m *management) preflight(ctx context.Context, args appArgs) (any, error) {
 			checks["durable_state"] = preflightCheck{"blocked", "store_unavailable"}
 		}
 	}
+	checks["activity_consumer_state"] = preflightCheck{"blocked", "encrypted_journal_required"}
+	if m.opts.planStore != nil && m.opts.planNamespace != "" {
+		checks["activity_consumer_state"] = preflightCheck{"passed", "open_encrypted_consumer_journal"}
+		if !m.opts.planStore.available() {
+			checks["activity_consumer_state"] = preflightCheck{"blocked", "store_unavailable"}
+		}
+	}
 	var review api.AppReleaseReview
 	if args.Environment == "" {
 		review, err = m.client.GetAppReleaseReview(ctx, args.App)
@@ -71,10 +78,14 @@ func (m *management) preflight(ctx context.Context, args appArgs) (any, error) {
 	checks["scoped_operations"] = readPreflightCheck(err)
 	_, err = m.getRouteBudgets(ctx, args)
 	checks["environment_route_budgets"] = readPreflightCheck(err)
+	for key, check := range m.scheduleActivityPreflight(ctx, args) {
+		checks[key] = check
+	}
 	return map[string]any{
 		"app_id": app.ID, "scope": normalizedScope(args.Environment), "project_id": env.ProjectID, "environment_id": env.ID,
 		"checked_at": time.Now().UTC(), "basis": "sequential_read_probes", "checks": checks,
-		"limitations": "Passed reads establish response compatibility only. No plans, source reviews, approvals, probes, or writes were performed. Admission rechecks authorization, entitlements, protection and current state. Durable status does not verify future disk writes or restart recovery.",
+		"schedule_activity_guidance": "For unadvertised or unavailable support: " + scheduleUpgradeGuidance + " For denied reads, restore read permission and environment consent. Retry transient failures.",
+		"limitations":                "Passed reads establish response compatibility only. No plans, source reviews, approvals, probes, or writes were performed. Admission rechecks authorization, entitlements, protection and current state. Durable status does not verify future disk writes or restart recovery.",
 	}, nil
 }
 

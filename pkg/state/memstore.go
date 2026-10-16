@@ -638,25 +638,36 @@ type MemStore struct {
 	// insert in CreateEdgeRuleIfUnderQuota; no separate TOCTOU fence
 	// is needed. Soft-delete semantics (apps.status='deleted') are
 	// mirrored by the per-app lookup in the quota-check branch.
-	edgeRules                 map[string]EdgeRule
-	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
-	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
-	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
-	edgeRuleEventSeq          int64
-	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-960 hourly hit buckets
-	routePolicyReceipts       map[string]routePolicyStoredReceipt
-	savedRouteRequirements    map[string]api.SavedRouteRequirements
-	profileInvestigations     map[string]api.ProfileInvestigation
-	profileDeploymentPolicies map[string]api.ProfileDeploymentPolicy
-	profileDeploymentChecks   map[string]*memProfileDeploymentCheck
-	profileCanaryChecks       map[string]*memProfileCanaryCheck
-	automaticRouteChecks      map[string]memAutomaticRouteCheck
-	canaryRouteGates          map[string]api.CanaryRouteGate
-	environmentBudgetConfigs  map[string]scopedBudgetRow
-	environmentBudgetReceipts map[string]memoryBudgetReceipt
-	routeMonitorConfigs       map[string]api.RouteMonitorConfig
-	routeMonitorNextCheck     map[string]time.Time
-	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
+	edgeRules                           map[string]EdgeRule
+	edgeRuleSetVersions                 map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
+	edgeRuleLists                       map[string]EdgeRuleList         // list id -> list (ADR-963)
+	edgeRuleEvents                      []EdgeRuleEvent                 // sampled events (ADR-964)
+	edgeRuleEventSeq                    int64
+	edgeRuleHitCounts                   map[edgeRuleHitKey]int64 // ADR-960 hourly hit buckets
+	routePolicyReceipts                 map[string]routePolicyStoredReceipt
+	savedRouteRequirements              map[string]api.SavedRouteRequirements
+	profileInvestigations               map[string]api.ProfileInvestigation
+	profileDeploymentPolicies           map[string]api.ProfileDeploymentPolicy
+	profileDeploymentChecks             map[string]*memProfileDeploymentCheck
+	profileCanaryChecks                 map[string]*memProfileCanaryCheck
+	automaticRouteChecks                map[string]memAutomaticRouteCheck
+	canaryRouteGates                    map[string]api.CanaryRouteGate
+	environmentCacheGatewaySessions     map[string]memoryCacheGatewaySession
+	environmentCacheGatewayObservations map[string]memoryCacheGatewayObservation
+	environmentCachePurgeNext           int64
+	environmentCachePurges              map[string]api.EnvironmentCachePurgeReceipt
+	environmentCacheSchedules           map[string]memoryCacheSchedule
+	environmentCacheScheduleEventFloors map[string]int64
+	environmentCacheScheduleEvents      map[string][]api.EnvironmentCacheScheduleEvent
+	environmentCachePurgeWatermarks     map[string]memoryCachePurgeWatermark
+	environmentCacheHistory             map[string]map[int64]api.EnvironmentCachePolicy
+	environmentCachePolicies            map[string]api.EnvironmentCachePolicy
+	environmentCacheReceipts            map[string]memoryCacheReceipt
+	environmentBudgetConfigs            map[string]scopedBudgetRow
+	environmentBudgetReceipts           map[string]memoryBudgetReceipt
+	routeMonitorConfigs                 map[string]api.RouteMonitorConfig
+	routeMonitorNextCheck               map[string]time.Time
+	routeMonitorIncidents               map[string][]api.RouteMonitorIncident
 	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
 	routeProbeOnce           sync.Once
 	routeProbeData           *memRouteProbes

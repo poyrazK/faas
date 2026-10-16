@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.create_edge_rule_request import CreateEdgeRuleRequest
     from ..models.route_advice_evidence import RouteAdviceEvidence
     from ..models.route_advice_impact import RouteAdviceImpact
+    from ..models.route_advice_policy_assessment import RouteAdvicePolicyAssessment
     from ..models.route_advice_setting import RouteAdviceSetting
 
 
@@ -40,6 +41,9 @@ class RouteAdviceSuggestion:
     impact: RouteAdviceImpact
     """What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."""
     rules: list[CreateEdgeRuleRequest]
+    policy: RouteAdvicePolicyAssessment | Unset = UNSET
+    """Comparison of a diagnostic suggestion with observed selected-app policy. No status establishes mutation
+    safety."""
     cautions: list[str] | Unset = UNSET
     setting: RouteAdviceSetting | Unset = UNSET
     """The app setting a wake_ahead or priority suggestion proposes; apply it through PUT /v1/apps/{slug}/service-
@@ -68,6 +72,10 @@ class RouteAdviceSuggestion:
             rules_item = rules_item_data.to_dict()
             rules.append(rules_item)
 
+        policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.policy, Unset):
+            policy = self.policy.to_dict()
+
         cautions: list[str] | Unset = UNSET
         if not isinstance(self.cautions, Unset):
             cautions = self.cautions
@@ -91,6 +99,8 @@ class RouteAdviceSuggestion:
                 "rules": rules,
             }
         )
+        if policy is not UNSET:
+            field_dict["policy"] = policy
         if cautions is not UNSET:
             field_dict["cautions"] = cautions
         if setting is not UNSET:
@@ -103,6 +113,7 @@ class RouteAdviceSuggestion:
         from ..models.create_edge_rule_request import CreateEdgeRuleRequest
         from ..models.route_advice_evidence import RouteAdviceEvidence
         from ..models.route_advice_impact import RouteAdviceImpact
+        from ..models.route_advice_policy_assessment import RouteAdvicePolicyAssessment
         from ..models.route_advice_setting import RouteAdviceSetting
 
         d = dict(src_dict)
@@ -129,6 +140,13 @@ class RouteAdviceSuggestion:
 
             rules.append(rules_item)
 
+        _policy = d.pop("policy", UNSET)
+        policy: RouteAdvicePolicyAssessment | Unset
+        if isinstance(_policy, Unset):
+            policy = UNSET
+        else:
+            policy = RouteAdvicePolicyAssessment.from_dict(_policy)
+
         cautions = cast(list[str], d.pop("cautions", UNSET))
 
         _setting = d.pop("setting", UNSET)
@@ -148,6 +166,7 @@ class RouteAdviceSuggestion:
             evidence=evidence,
             impact=impact,
             rules=rules,
+            policy=policy,
             cautions=cautions,
             setting=setting,
         )

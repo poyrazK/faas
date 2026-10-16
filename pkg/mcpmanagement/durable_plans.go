@@ -10,15 +10,20 @@ import (
 )
 
 type storedPlan struct {
-	BudgetResult       *api.EnvironmentRouteBudgets
-	Plan               releasePlan
-	AppHash            [32]byte
-	LatestID           string
-	Attempted          bool
-	Result             *api.DeploymentResponse
-	Promoted           *api.DeploymentResponse
-	PromotionAttempted bool
-	Review             *api.AppReleaseReview
+	EnvironmentRescheduleResult *api.EnvironmentCacheSchedule
+	EnvironmentScheduleResult   *api.EnvironmentCacheSchedule
+	EnvironmentPurgeResult      *api.EnvironmentCachePurgeReceipt
+	EnvironmentCacheResult      *api.EnvironmentCachePolicy
+	CacheResult                 *cacheRuleReceipt
+	BudgetResult                *api.EnvironmentRouteBudgets
+	Plan                        releasePlan
+	AppHash                     [32]byte
+	LatestID                    string
+	Attempted                   bool
+	Result                      *api.DeploymentResponse
+	Promoted                    *api.DeploymentResponse
+	PromotionAttempted          bool
+	Review                      *api.AppReleaseReview
 }
 
 func (m *management) restorePlans() error {
@@ -37,8 +42,11 @@ func (m *management) restorePlans() error {
 		if time.Now().After(p.ExpiresAt) {
 			continue
 		}
-		if id != p.ID || len(id) != 64 || p.APIBase != m.opts.APIBase || !m.appIDAllowed(p.AppID) || (p.Scope != api.DefaultEnvScope && (!api.ValidProjectEnvironmentSlug(p.Scope) || p.EnvironmentID == "" || p.ProjectID == "" || p.Project == "")) {
+		if id != p.ID || len(id) != 64 || p.APIBase != m.opts.APIBase || !m.appIDAllowed(p.AppID) || (p.Scope != api.DefaultEnvScope && p.Scope != cacheRulePolicyScope && (!api.ValidProjectEnvironmentSlug(p.Scope) || p.EnvironmentID == "" || p.ProjectID == "" || p.Project == "")) {
 			return errors.New("stored release plan binding mismatch")
+		}
+		if p.Scope == cacheRulePolicyScope && p.Action != "cache_rule" {
+			return errors.New("stored shared policy scope requires a cache rule plan")
 		}
 		if p.Source != nil && ((p.Action != "deploy" && p.Action != "workload_rollout") || p.Image != "" || p.Source.AppID != p.AppID || !sourceCommit.MatchString(p.Source.CommitSHA) || !sourceRepository.MatchString(p.Source.Repo) || p.Source.RepositoryID <= 0 || p.Source.InstallationID <= 0 || record.Review == nil || !reflect.DeepEqual(p.Source.ReleaseReview, *record.Review)) {
 			return errors.New("stored source plan binding mismatch")
@@ -55,6 +63,55 @@ func (m *management) restorePlans() error {
 				return errors.New("stored route budget receipt binding mismatch")
 			}
 		}
+		if p.Action == "cache_rule" {
+			if p.CacheRule == nil || p.Scope != cacheRulePolicyScope || p.Project != "" || p.ProjectID != "" || p.EnvironmentID != "" || m.cacheRuleAccess("", "") != nil || p.CacheRule.PolicyScope != cacheRulePolicyScope || p.CacheRule.Version < 1 || p.CacheRule.Before.ID == "" || p.CacheRule.Before.Host != api.EdgeRuleAppHosts || p.CacheRule.Proposed.Validate() != nil {
+				return errors.New("stored cache rule plan binding mismatch")
+			}
+			if record.CacheResult != nil {
+				expected := p.CacheRule.Before
+				expected.Cache = p.CacheRule.Proposed
+				if record.CacheResult.AppID != p.AppID || record.CacheResult.PolicyScope != cacheRulePolicyScope || !reflect.DeepEqual(record.CacheResult.Rule, expected) {
+					return errors.New("stored cache rule receipt binding mismatch")
+				}
+			}
+		}
+		if p.Action == "environment_cache_policy" || p.Action == "environment_cache_inheritance" || p.Action == "environment_cache_copy" || p.Action == "environment_cache_rollback" {
+			if validateEnvironmentCachePlan(&p) != nil {
+				return errors.New("stored environment cache plan binding mismatch")
+			}
+			if record.EnvironmentCacheResult != nil && (validateEnvironmentCachePolicy(*record.EnvironmentCacheResult, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID) != nil || record.EnvironmentCacheResult.Inherited != p.EnvironmentCache.Proposed.Inherited || record.EnvironmentCacheResult.Revision != *p.EnvironmentCache.Proposed.ExpectedRevision+1 || !reflect.DeepEqual(record.EnvironmentCacheResult.Rules, p.EnvironmentCache.Proposed.Rules)) {
+				return errors.New("stored environment cache receipt binding mismatch")
+			}
+		}
+		if p.Action == "environment_cache_purge" {
+			if validateEnvironmentPurgePlan(&p) != nil {
+				return errors.New("stored purge review binding mismatch")
+			}
+			if out := record.EnvironmentPurgeResult; out != nil && (validatePurgeReceipt(*out, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID, p.EnvironmentPurge.Proposed.RequestID) != nil || out.Path != p.EnvironmentPurge.Proposed.Path) {
+				return errors.New("stored purge receipt binding mismatch")
+			}
+		}
+		if p.Action == "environment_cache_schedule" {
+			if validateEnvironmentSchedulePlan(&p) != nil {
+				return errors.New("stored schedule review binding mismatch")
+			}
+			if out := record.EnvironmentScheduleResult; out != nil && (validateScheduleResponse(*out, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID, p.EnvironmentSchedule.Proposed.ScheduleID) != nil || !reflect.DeepEqual(out.CreateEnvironmentCacheScheduleRequest, p.EnvironmentSchedule.Proposed)) {
+				return errors.New("stored schedule receipt binding mismatch")
+			}
+		}
+		if p.Action == "environment_cache_reschedule" {
+			if validateEnvironmentReschedulePlan(&p) != nil {
+				return errors.New("stored reschedule review binding mismatch")
+			}
+			if record.EnvironmentRescheduleResult != nil && validateRescheduleReceipt(&p, *record.EnvironmentRescheduleResult) != nil {
+				return errors.New("stored replacement receipt binding mismatch")
+			}
+		}
+		p.environmentRescheduleResult = record.EnvironmentRescheduleResult
+		p.environmentScheduleResult = record.EnvironmentScheduleResult
+		p.environmentPurgeResult = record.EnvironmentPurgeResult
+		p.environmentCacheResult = record.EnvironmentCacheResult
+		p.cacheResult = record.CacheResult
 		p.budgetResult = record.BudgetResult
 		p.appHash, p.latestID, p.attempted = record.AppHash, record.LatestID, record.Attempted
 		p.review = record.Review
@@ -75,7 +132,7 @@ func (m *management) persistPlans() error {
 		if time.Now().After(p.ExpiresAt) {
 			continue
 		}
-		records[id] = storedPlan{BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
+		records[id] = storedPlan{EnvironmentRescheduleResult: p.environmentRescheduleResult, EnvironmentScheduleResult: p.environmentScheduleResult, EnvironmentPurgeResult: p.environmentPurgeResult, EnvironmentCacheResult: p.environmentCacheResult, CacheResult: p.cacheResult, BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
 	}
 	return m.opts.planStore.update("plans/"+m.opts.planNamespace, records)
 }

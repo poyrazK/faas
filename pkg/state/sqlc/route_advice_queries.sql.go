@@ -19,8 +19,21 @@ WITH per_minute AS (
     JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
     WHERE rt.app_id = $1
       AND rt.account_id = $2
-      AND rt.received_at >= $3
-      AND rt.received_at < $4
+      AND ($3::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=$3::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=$4::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
+      AND rt.received_at >= $5
+      AND rt.received_at < $6
       AND starts_with(rt.route, rt.method || ' /')
     GROUP BY rt.route, rt.method, c.id, date_trunc('minute', rt.received_at)
 ), per_consumer AS (
@@ -40,10 +53,12 @@ ORDER BY route ASC, method ASC, consumer_rank ASC
 `
 
 type RouteAdviceConsumersParams struct {
-	AppID     pgtype.UUID
-	AccountID pgtype.UUID
-	SinceAt   pgtype.Timestamptz
-	UntilAt   pgtype.Timestamptz
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	SelectedScope         string
+	SelectedEnvironmentID string
+	SinceAt               pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
 }
 
 type RouteAdviceConsumersRow struct {
@@ -62,6 +77,8 @@ func (q *Queries) RouteAdviceConsumers(ctx context.Context, db DBTX, arg RouteAd
 	rows, err := db.Query(ctx, routeAdviceConsumers,
 		arg.AppID,
 		arg.AccountID,
+		arg.SelectedScope,
+		arg.SelectedEnvironmentID,
 		arg.SinceAt,
 		arg.UntilAt,
 	)
@@ -95,13 +112,27 @@ const routeAdviceRouteStats = `-- name: RouteAdviceRouteStats :many
 
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.status, rt.latency_ms, rt.cold_boot, rt.guest_outcome,
-           rt.content_outcome, rt.count::bigint AS requests, rt.received_at,
+           CASE WHEN $1::text='' OR starts_with(rt.content_outcome, 'deployment_v1:')
+                THEN replace(rt.content_outcome, 'deployment_v1:', '') ELSE '' END AS content_outcome, rt.count::bigint AS requests, rt.received_at,
            (rt.consumer_id IS NULL AND rt.platform_tenant_id IS NULL) AS anonymous
     FROM request_telemetry rt
-    WHERE rt.app_id = $1
-      AND rt.account_id = $2
-      AND rt.received_at >= $3
-      AND rt.received_at < $4
+    WHERE rt.app_id = $2
+      AND rt.account_id = $3
+      AND ($1::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=$1::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=$4::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
+      AND rt.received_at >= $5
+      AND rt.received_at < $6
       AND starts_with(rt.route, rt.method || ' /')
 ), totals AS (
     SELECT route, method,
@@ -124,11 +155,11 @@ WITH filtered AS MATERIALIZED (
 ), top_routes AS (
     SELECT route, method, requests, anonymous_requests, anonymous_success, server_errors, timeouts, cold_boots, p95_latency_ms, content_first, content_uncacheable, content_same_60, content_same_300, content_same_3600, content_changed_60, content_changed_300, content_changed_3600 FROM totals
     ORDER BY requests DESC, route ASC, method ASC
-    LIMIT $5::int
+    LIMIT $7::int
 ), cacheable AS (
     SELECT f.route, f.method, f.requests, f.cold_boot,
            ROW_NUMBER() OVER (
-               PARTITION BY f.route, f.method, floor(extract(epoch FROM f.received_at) / $6::int)
+               PARTITION BY f.route, f.method, floor(extract(epoch FROM f.received_at) / $8::int)
                ORDER BY f.received_at, f.cold_boot
            ) AS position
     FROM filtered f JOIN top_routes USING (route, method)
@@ -151,12 +182,14 @@ ORDER BY t.requests DESC, t.route ASC, t.method ASC
 `
 
 type RouteAdviceRouteStatsParams struct {
-	AppID              pgtype.UUID
-	AccountID          pgtype.UUID
-	SinceAt            pgtype.Timestamptz
-	UntilAt            pgtype.Timestamptz
-	RouteLimit         int32
-	CacheMaxAgeSeconds int32
+	SelectedScope         string
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	SelectedEnvironmentID string
+	SinceAt               pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
+	RouteLimit            int32
+	CacheMaxAgeSeconds    int32
 }
 
 type RouteAdviceRouteStatsRow struct {
@@ -192,8 +225,10 @@ type RouteAdviceRouteStatsRow struct {
 // bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s).
 func (q *Queries) RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error) {
 	rows, err := db.Query(ctx, routeAdviceRouteStats,
+		arg.SelectedScope,
 		arg.AppID,
 		arg.AccountID,
+		arg.SelectedEnvironmentID,
 		arg.SinceAt,
 		arg.UntilAt,
 		arg.RouteLimit,
@@ -244,24 +279,39 @@ FROM (
     FROM request_telemetry rt
     WHERE rt.app_id = $2
       AND rt.account_id = $3
-      AND rt.consumer_id = $4
-      AND rt.route = $5::text
-      AND rt.method = $6::text
-      AND rt.received_at >= $7
-      AND rt.received_at < $8
+      AND ($4::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=$4::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=$5::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
+      AND rt.consumer_id = $6
+      AND rt.route = $7::text
+      AND rt.method = $8::text
+      AND rt.received_at >= $9
+      AND rt.received_at < $10
     GROUP BY date_trunc('minute', rt.received_at)
 ) per_minute
 `
 
 type RouteAdviceThrottleExcessParams struct {
-	AllowancePerMinute int64
-	AppID              pgtype.UUID
-	AccountID          pgtype.UUID
-	ConsumerID         pgtype.UUID
-	Route              string
-	Method             string
-	SinceAt            pgtype.Timestamptz
-	UntilAt            pgtype.Timestamptz
+	AllowancePerMinute    int64
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	SelectedScope         string
+	SelectedEnvironmentID string
+	ConsumerID            pgtype.UUID
+	Route                 string
+	Method                string
+	SinceAt               pgtype.Timestamptz
+	UntilAt               pgtype.Timestamptz
 }
 
 // Requests one consumer sent above a per-minute allowance on one route.
@@ -270,6 +320,8 @@ func (q *Queries) RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg Ro
 		arg.AllowancePerMinute,
 		arg.AppID,
 		arg.AccountID,
+		arg.SelectedScope,
+		arg.SelectedEnvironmentID,
 		arg.ConsumerID,
 		arg.Route,
 		arg.Method,

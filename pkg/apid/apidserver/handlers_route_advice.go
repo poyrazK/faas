@@ -12,9 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/routeadvisor"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // routeAdviceReader is the PgStore surface the route advisor reads.
@@ -37,6 +39,16 @@ func (s *server) getRouteAdvice(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
+	app, selection, problem := s.routeDiagnosticEnvironment(w, r, acct, app, true)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	s.serveRouteAdvice(w, r, acct, app, selection)
+}
+
+func (s *server) serveRouteAdvice(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, selection routeDiagnosticSelection) {
+	limits := api.MustLimitsFor(acct.Plan)
 	maxAge, err := routeAdviceCacheMaxAge(r.URL.Query().Get("cache_max_age"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
@@ -57,14 +69,30 @@ func (s *server) getRouteAdvice(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("route advice"))
 		return
 	}
-	in, err := s.routeAdviceInputs(r.Context(), reader, acct, app, window, maxAge)
+	in, err := s.routeAdviceInputs(r.Context(), reader, acct, app, window, maxAge, selection)
 	if err != nil {
 		s.log.Warn("route advice read failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("route advice"))
 		return
 	}
-	suggestions := append(routeadvisor.Advise(in), s.routeAdviceSettings(r.Context(), acct, app, in.Routes)...)
+	suggestions := routeadvisor.Advise(in)
+	var policyContext *api.RouteAdvicePolicyContext
+	if selection.Scope == "" {
+		suggestions = append(suggestions, s.routeAdviceSettings(r.Context(), acct, app, in.Routes)...)
+	} else {
+		policyContext = s.assessScopedRouteAdvice(r.Context(), app, selection, in.Hosts, suggestions)
+	}
+
+	if problem := s.scopedTelemetryIdentity(r.Context(), acct, app, selection.Environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	coverage := ""
+	if selection.Scope != "" {
+		coverage = "deployment_isolated_observations_only"
+	}
 	writeJSON(w, http.StatusOK, api.RouteAdviceResponse{
+		RouteDiagnosticsIdentity: selection.identity(app), CacheabilityCoverage: coverage, PolicyContext: policyContext,
 		Slug: app.Slug, From: window.From.Format(time.RFC3339Nano), Until: window.Until.Format(time.RFC3339Nano),
 		WindowClamped: window.WindowClamped, CacheMaxAgeSeconds: maxAge,
 		RoutesAnalyzed: len(in.Routes), Suggestions: suggestions,
@@ -108,7 +136,7 @@ func routeAdviceCacheMaxAge(raw string) (int, error) {
 	return n, nil
 }
 
-func (s *server) routeAdviceInputs(ctx context.Context, reader routeAdviceReader, acct state.Account, app state.App, window requestAnalyticsWindow, maxAge int) (routeadvisor.Inputs, error) {
+func (s *server) routeAdviceInputs(ctx context.Context, reader routeAdviceReader, acct state.Account, app state.App, window requestAnalyticsWindow, maxAge int, selection routeDiagnosticSelection) (routeadvisor.Inputs, error) {
 	limits := api.MustLimitsFor(acct.Plan)
 	in := routeadvisor.Inputs{
 		CacheMaxAgeSeconds: maxAge,
@@ -119,24 +147,34 @@ func (s *server) routeAdviceInputs(ctx context.Context, reader routeAdviceReader
 	appID, accountID := stringToPgUUID(app.ID), stringToPgUUID(acct.ID)
 	since, until := pgtype.Timestamptz{Time: window.From, Valid: true}, pgtype.Timestamptz{Time: window.Until, Valid: true}
 	stats, err := reader.RouteAdviceRouteStats(ctx, sqlc.RouteAdviceRouteStatsParams{
-		AppID: appID, AccountID: accountID, SinceAt: since, UntilAt: until,
+		SelectedScope: selection.Scope, SelectedEnvironmentID: selection.Environment.ID, AppID: appID, AccountID: accountID, SinceAt: since, UntilAt: until,
 		RouteLimit: api.RouteAdviceMaxRoutes, CacheMaxAgeSeconds: int32(maxAge),
 	})
 	if err != nil {
 		return in, fmt.Errorf("route advice stats: %w", err)
 	}
 	in.Routes = routeAdviceRoutes(stats)
-	consumers, err := reader.RouteAdviceConsumers(ctx, sqlc.RouteAdviceConsumersParams{AppID: appID, AccountID: accountID, SinceAt: since, UntilAt: until})
+	consumers, err := reader.RouteAdviceConsumers(ctx, sqlc.RouteAdviceConsumersParams{SelectedScope: selection.Scope, SelectedEnvironmentID: selection.Environment.ID, AppID: appID, AccountID: accountID, SinceAt: since, UntilAt: until})
 	if err != nil {
 		return in, fmt.Errorf("route advice consumers: %w", err)
 	}
 	in.Consumers = routeAdviceConsumers(consumers)
-	if in.Existing, in.Hosts, err = s.routeAdviceRulesAndHosts(ctx, app); err != nil {
+	if selection.Scope != "" {
+		// Scoped recipes are diagnostic only. Do not borrow app-owned domains,
+		// edge policies, learned app-wide wake models or global queue evidence.
+		host := appHostForDomain(app.Slug, s.domain)
+		if selection.Environment.ID != "" {
+			host = gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, selection.Environment.ID, app.ID)
+		}
+		if host != "" {
+			in.Hosts = []string{host}
+		}
+	} else if in.Existing, in.Hosts, err = s.routeAdviceRulesAndHosts(ctx, app); err != nil {
 		return in, err
 	}
 	for key, limit := range routeadvisor.ThrottleCandidates(in) {
 		excess, err := reader.RouteAdviceThrottleExcess(ctx, sqlc.RouteAdviceThrottleExcessParams{
-			AllowancePerMinute: limit.AllowancePerMinute, AppID: appID, AccountID: accountID,
+			AllowancePerMinute: limit.AllowancePerMinute, SelectedScope: selection.Scope, SelectedEnvironmentID: selection.Environment.ID, AppID: appID, AccountID: accountID,
 			ConsumerID: stringToPgUUID(limit.ConsumerID), Route: key.Method + " " + key.Path, Method: key.Method,
 			SinceAt: since, UntilAt: until,
 		})

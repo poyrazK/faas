@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.binding_check_report import BindingCheckReport
+    from ..models.environment_cache_activity_recovery import EnvironmentCacheActivityRecovery
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
     from ..models.secret_finding import SecretFinding
@@ -50,6 +51,10 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    activity_recovery: EnvironmentCacheActivityRecovery | Unset = UNSET
+    """Scoped feed checkpoint and recovery metadata for cursor_expired. Save restart_cursor before rebuilding a
+    live schedule baseline, then consume events after it. Removed historical events are not recoverable; reconcile
+    overlap by schedule identity."""
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
     condition_field: str | Unset = UNSET
@@ -164,6 +169,10 @@ class Problem:
 
         code = self.code
 
+        activity_recovery: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.activity_recovery, Unset):
+            activity_recovery = self.activity_recovery.to_dict()
+
         current_sequence = self.current_sequence
 
         condition_field = self.condition_field
@@ -268,6 +277,8 @@ class Problem:
                 "code": code,
             }
         )
+        if activity_recovery is not UNSET:
+            field_dict["activity_recovery"] = activity_recovery
         if current_sequence is not UNSET:
             field_dict["current_sequence"] = current_sequence
         if condition_field is not UNSET:
@@ -336,6 +347,7 @@ class Problem:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.binding_check_report import BindingCheckReport
+        from ..models.environment_cache_activity_recovery import EnvironmentCacheActivityRecovery
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
         from ..models.secret_finding import SecretFinding
@@ -346,6 +358,13 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        _activity_recovery = d.pop("activity_recovery", UNSET)
+        activity_recovery: EnvironmentCacheActivityRecovery | Unset
+        if isinstance(_activity_recovery, Unset):
+            activity_recovery = UNSET
+        else:
+            activity_recovery = EnvironmentCacheActivityRecovery.from_dict(_activity_recovery)
 
         current_sequence = d.pop("current_sequence", UNSET)
 
@@ -467,6 +486,7 @@ class Problem:
             title=title,
             status=status,
             code=code,
+            activity_recovery=activity_recovery,
             current_sequence=current_sequence,
             condition_field=condition_field,
             condition_index=condition_index,

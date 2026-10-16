@@ -74,17 +74,18 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
-	ConditionField   string              `json:"condition_field,omitempty"`
-	ConditionIndex   *int                `json:"condition_index,omitempty"`
-	FieldExists      *bool               `json:"field_exists,omitempty"`
-	EntityKey        string              `json:"entity_key,omitempty"`
-	ExpectedVersion  *int64              `json:"expected_version,omitempty"`
-	CurrentVersion   *int64              `json:"current_version,omitempty"`
-	EntityExists     *bool               `json:"entity_exists,omitempty"`
-	MessageIndex     *int                `json:"message_index,omitempty"`
-	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
-	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
-	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
+	ActivityRecovery *EnvironmentCacheActivityRecovery `json:"activity_recovery,omitempty"`
+	ConditionField   string                            `json:"condition_field,omitempty"`
+	ConditionIndex   *int                              `json:"condition_index,omitempty"`
+	FieldExists      *bool                             `json:"field_exists,omitempty"`
+	EntityKey        string                            `json:"entity_key,omitempty"`
+	ExpectedVersion  *int64                            `json:"expected_version,omitempty"`
+	CurrentVersion   *int64                            `json:"current_version,omitempty"`
+	EntityExists     *bool                             `json:"entity_exists,omitempty"`
+	MessageIndex     *int                              `json:"message_index,omitempty"`
+	ExpectedSequence *int64                            `json:"expected_sequence,omitempty"`
+	CurrentSequence  *int64                            `json:"current_sequence,omitempty"`
+	BindingsCheck    *BindingCheckReport               `json:"bindings_check,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -657,6 +658,7 @@ const (
 	CodeRealtimeConditionConflict      = "realtime_condition_conflict"
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
+	CodeActivityCursorExpired          = "cursor_expired"
 	CodeConflict                       = "conflict"
 
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
@@ -1943,6 +1945,8 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
+	case CodeActivityCursorExpired:
+		return http.StatusGone
 	case CodeProfileGateBlocked, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:

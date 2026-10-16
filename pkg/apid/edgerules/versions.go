@@ -50,7 +50,8 @@ func (s *Service) edgeRuleIfMatchFailed(ctx context.Context, w http.ResponseWrit
 	}
 	store, ok := s.edgeRuleVersions()
 	if !ok {
-		return false
+		api.WriteProblem(w, api.ErrCapacity("edge-rule versioning is unavailable; the precondition cannot be enforced"))
+		return true
 	}
 	current, err := store.LatestEdgeRuleSetVersion(ctx, appID)
 	if err != nil {

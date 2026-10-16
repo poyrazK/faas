@@ -423,10 +423,6 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	return entry, nil
 }
 
-// environmentEdgeRules replaces just headers/CORS when a named environment
-// owns that policy. A missing row preserves application-wide fallback. The
-// existing edge-rule convergence protocol invalidates this host's cache on
-// writes; clone creates a new host with no prior cache entry.
 // activeEdgeRules drops rules already past their expires_at (the store read
 // filters them too; this guards gateway/database clock skew) and returns the
 // earliest future expiry, which bounds how long the compiled set is cached.
@@ -445,6 +441,8 @@ func activeEdgeRules(rules []state.EdgeRule, now time.Time) ([]state.EdgeRule, t
 	return out, notAfter
 }
 
+// environmentEdgeRules overlays headers/CORS and independent cache policy.
+// Missing policies preserve inheritance; cache overrides reload on policy TTL.
 func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host string, global []state.EdgeRule) ([]state.EdgeRule, error) {
 	environmentID, appID, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host)
 	if !matched {
@@ -483,7 +481,7 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 	}
 	policy, err := lookup.GetProjectEnvironmentEdgePolicy(ctx, environment.AccountID, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
-		return scoped, nil
+		return g.environmentCacheRules(ctx, host, app, environment, scoped)
 	}
 	if err != nil {
 		return nil, err
@@ -506,7 +504,7 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 			CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
 		})
 	}
-	return out, nil
+	return g.environmentCacheRules(ctx, host, app, environment, out)
 }
 
 // MatchRoute returns the highest-priority `kind=route` rule whose

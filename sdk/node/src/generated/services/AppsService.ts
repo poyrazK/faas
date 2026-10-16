@@ -5110,12 +5110,26 @@ export class AppsService {
    * the cache estimate cannot see credential headers or query strings.
    * Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
    * plan gate.
+   * An explicit scope=default or environment selector returns partial,
+   * retained deployment-attributed history with immutable app/environment
+   * identities. Unattributable evidence is excluded, not counted as zero.
+   * Legacy body comparisons are excluded from scoped learned cacheability;
+   * only deployment-isolated observations qualify. Scoped advice omits
+   * app-wide setting suggestions and rule bodies; existing environment
+   * policies are observed through bounded, credential-free policy_context metadata.
+   * Suggestions flag duplicate, conflicting or conditional configurations.
+   * A second read detects changes during collection; unavailable evidence
+   * never establishes policy absence. Revision fingerprints are observations,
+   * not apply guards or proof of gateway convergence. Omitting both selectors preserves the legacy
+   * aggregate report. Duplicate or mixed selectors are rejected.
    *
    * @returns RouteAdviceResponse Route advisor suggestions for the window.
    * @throws ApiError
    */
   public static getRouteAdvice({
     slug,
+    scope,
+    environment,
     since = '168h',
     until,
     cacheMaxAge = 60,
@@ -5124,6 +5138,14 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Advice report default environment; mutually exclusive with environment. Omit both selectors for the legacy app-wide report.
+     */
+    scope?: 'default',
+    /**
+     * Advice report registered environment in this app's project. Only retained deployment-attributed history for this environment identity is included. Mutually exclusive with scope.
+     */
+    environment?: string,
     /**
      * Positive lookback duration (for example 7d) or RFC3339 start timestamp; clamped to current plan retention.
      */
@@ -5144,6 +5166,8 @@ export class AppsService {
         'slug': slug,
       },
       query: {
+        'scope': scope,
+        'environment': environment,
         'since': since,
         'until': until,
         'cache_max_age': cacheMaxAge,
@@ -5154,6 +5178,7 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -5186,12 +5211,22 @@ export class AppsService {
    * unattributed. Minute resolution makes every figure an estimate. Uses
    * the normal read scopes, completed MFA and the DebugTelemetryEnabled
    * plan gate.
+   * An explicit scope=default or environment selector returns partial,
+   * retained deployment-attributed history with immutable app/environment
+   * identities. Unattributable evidence is excluded, not counted as zero.
+   * Legacy body comparisons are excluded from scoped learned cacheability;
+   * only deployment-isolated observations qualify. Scoped advice omits
+   * app-wide setting suggestions and rule bodies; existing environment
+   * policies are not evaluated. Neither selector preserves the legacy
+   * aggregate report. Duplicate or mixed selectors are rejected.
    *
    * @returns RouteAwakeResponse Awake time and the routes that caused it.
    * @throws ApiError
    */
   public static getRouteAwake({
     slug,
+    scope,
+    environment,
     since = '168h',
     until,
   }: {
@@ -5199,6 +5234,14 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Awake report default environment; mutually exclusive with environment. Omit both selectors for the legacy app-wide report.
+     */
+    scope?: 'default',
+    /**
+     * Awake report registered environment in this app's project. Only retained deployment-attributed history for this environment identity is included. Mutually exclusive with scope.
+     */
+    environment?: string,
     /**
      * Start of the awake report window: a positive lookback duration (for example 7d) or an RFC3339 timestamp, clamped to current plan retention.
      */
@@ -5215,6 +5258,8 @@ export class AppsService {
         'slug': slug,
       },
       query: {
+        'scope': scope,
+        'environment': environment,
         'since': since,
         'until': until,
       },
@@ -5224,6 +5269,7 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

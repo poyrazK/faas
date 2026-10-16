@@ -129,12 +129,12 @@ func TestManagementMCPJourney(t *testing.T) {
 			defer backend.Close()
 			cs, ctx := connectTestServer(t, backend, 0, version)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 29 {
+			if err != nil || len(catalog.Tools) != 56 {
 				t.Fatalf("catalog=%+v error=%v", catalog, err)
 			}
 			for _, tool := range catalog.Tools {
-				if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.InputSchema == nil {
-					t.Errorf("tool lacks read-only annotation or schema: %s", tool.Name)
+				if tool.Annotations == nil || tool.Annotations.ReadOnlyHint != (tool.Name != ackActivityConsumerTool && tool.Name != retireActivityConsumerTool) || tool.InputSchema == nil {
+					t.Errorf("tool has incorrect effect annotation or schema: %s", tool.Name)
 				}
 			}
 			if requests.Load() != 0 {

@@ -7,6 +7,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.get_route_advice_scope import GetRouteAdviceScope
 from ...models.problem import Problem
 from ...models.route_advice_response import RouteAdviceResponse
 from ...types import UNSET, Response, Unset
@@ -15,12 +16,22 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     slug: str,
     *,
+    scope: GetRouteAdviceScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
     cache_max_age: int | Unset = 60,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    json_scope: str | Unset = UNSET
+    if not isinstance(scope, Unset):
+        json_scope = scope
+
+    params["scope"] = json_scope
+
+    params["environment"] = environment
 
     params["since"] = since
 
@@ -77,6 +88,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -108,6 +124,8 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAdviceScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
     cache_max_age: int | Unset = 60,
@@ -132,9 +150,23 @@ def sync_detailed(
     the cache estimate cannot see credential headers or query strings.
     Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are observed through bounded, credential-free policy_context metadata.
+    Suggestions flag duplicate, conflicting or conditional configurations.
+    A second read detects changes during collection; unavailable evidence
+    never establishes policy absence. Revision fingerprints are observations,
+    not apply guards or proof of gateway convergence. Omitting both selectors preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAdviceScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
         cache_max_age (int | Unset):  Default: 60.
@@ -149,6 +181,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        scope=scope,
+        environment=environment,
         since=since,
         until=until,
         cache_max_age=cache_max_age,
@@ -165,6 +199,8 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAdviceScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
     cache_max_age: int | Unset = 60,
@@ -189,9 +225,23 @@ def sync(
     the cache estimate cannot see credential headers or query strings.
     Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are observed through bounded, credential-free policy_context metadata.
+    Suggestions flag duplicate, conflicting or conditional configurations.
+    A second read detects changes during collection; unavailable evidence
+    never establishes policy absence. Revision fingerprints are observations,
+    not apply guards or proof of gateway convergence. Omitting both selectors preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAdviceScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
         cache_max_age (int | Unset):  Default: 60.
@@ -207,6 +257,8 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        scope=scope,
+        environment=environment,
         since=since,
         until=until,
         cache_max_age=cache_max_age,
@@ -217,6 +269,8 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAdviceScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
     cache_max_age: int | Unset = 60,
@@ -241,9 +295,23 @@ async def asyncio_detailed(
     the cache estimate cannot see credential headers or query strings.
     Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are observed through bounded, credential-free policy_context metadata.
+    Suggestions flag duplicate, conflicting or conditional configurations.
+    A second read detects changes during collection; unavailable evidence
+    never establishes policy absence. Revision fingerprints are observations,
+    not apply guards or proof of gateway convergence. Omitting both selectors preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAdviceScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
         cache_max_age (int | Unset):  Default: 60.
@@ -258,6 +326,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        scope=scope,
+        environment=environment,
         since=since,
         until=until,
         cache_max_age=cache_max_age,
@@ -272,6 +342,8 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    scope: GetRouteAdviceScope | Unset = UNSET,
+    environment: str | Unset = UNSET,
     since: str | Unset = "168h",
     until: datetime.datetime | Unset = UNSET,
     cache_max_age: int | Unset = 60,
@@ -296,9 +368,23 @@ async def asyncio(
     the cache estimate cannot see credential headers or query strings.
     Uses the normal read scopes, completed MFA and the DebugTelemetryEnabled
     plan gate.
+    An explicit scope=default or environment selector returns partial,
+    retained deployment-attributed history with immutable app/environment
+    identities. Unattributable evidence is excluded, not counted as zero.
+    Legacy body comparisons are excluded from scoped learned cacheability;
+    only deployment-isolated observations qualify. Scoped advice omits
+    app-wide setting suggestions and rule bodies; existing environment
+    policies are observed through bounded, credential-free policy_context metadata.
+    Suggestions flag duplicate, conflicting or conditional configurations.
+    A second read detects changes during collection; unavailable evidence
+    never establishes policy absence. Revision fingerprints are observations,
+    not apply guards or proof of gateway convergence. Omitting both selectors preserves the legacy
+    aggregate report. Duplicate or mixed selectors are rejected.
 
     Args:
         slug (str):
+        scope (GetRouteAdviceScope | Unset):
+        environment (str | Unset):
         since (str | Unset):  Default: '168h'.
         until (datetime.datetime | Unset):
         cache_max_age (int | Unset):  Default: 60.
@@ -315,6 +401,8 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            scope=scope,
+            environment=environment,
             since=since,
             until=until,
             cache_max_age=cache_max_age,

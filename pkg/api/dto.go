@@ -3854,6 +3854,8 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped response from
 // GET /v1/capabilities. Enabled is fail-closed for unknown plans.
 type CapabilitiesResponse struct {
+	// Omission means the backend has not advertised this workflow contract.
+	EnvironmentCacheSchedules *EnvironmentCacheScheduleCapabilities `json:"environment_cache_schedules,omitempty"`
 	// ConditionalParking reports support on the serving control plane; omission means unsupported.
 	ConditionalParking bool               `json:"conditional_parking"`
 	RegistryVersion    int                `json:"registry_version"`

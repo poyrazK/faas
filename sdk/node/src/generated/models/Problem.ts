@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { BindingCheckReport } from './BindingCheckReport.js';
+import type { EnvironmentCacheActivityRecovery } from './EnvironmentCacheActivityRecovery.js';
 import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { SecretFinding } from './SecretFinding.js';
@@ -28,6 +29,7 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  activity_recovery?: EnvironmentCacheActivityRecovery;
   /**
    * Observed channel head on realtime_sequence_conflict.
    */

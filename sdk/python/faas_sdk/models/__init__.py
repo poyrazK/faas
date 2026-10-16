@@ -673,6 +673,8 @@ from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_mode import CreateEdgeRuleRequestMode
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
+from .create_environment_cache_purge_request import CreateEnvironmentCachePurgeRequest
+from .create_environment_cache_schedule_request import CreateEnvironmentCacheScheduleRequest
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
 from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
@@ -1128,6 +1130,25 @@ from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
 from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
+from .environment_cache_activity_recovery import EnvironmentCacheActivityRecovery
+from .environment_cache_convergence import EnvironmentCacheConvergence
+from .environment_cache_convergence_status import EnvironmentCacheConvergenceStatus
+from .environment_cache_policy import EnvironmentCachePolicy
+from .environment_cache_policy_history import EnvironmentCachePolicyHistory
+from .environment_cache_policy_source import EnvironmentCachePolicySource
+from .environment_cache_purge_receipt import EnvironmentCachePurgeReceipt
+from .environment_cache_purge_status import EnvironmentCachePurgeStatus
+from .environment_cache_purge_status_status import EnvironmentCachePurgeStatusStatus
+from .environment_cache_rule import EnvironmentCacheRule
+from .environment_cache_schedule import EnvironmentCacheSchedule
+from .environment_cache_schedule_activity import EnvironmentCacheScheduleActivity
+from .environment_cache_schedule_capabilities import EnvironmentCacheScheduleCapabilities
+from .environment_cache_schedule_event import EnvironmentCacheScheduleEvent
+from .environment_cache_schedule_event_action import EnvironmentCacheScheduleEventAction
+from .environment_cache_schedule_event_kind import EnvironmentCacheScheduleEventKind
+from .environment_cache_schedule_event_status import EnvironmentCacheScheduleEventStatus
+from .environment_cache_schedule_list import EnvironmentCacheScheduleList
+from .environment_cache_schedule_status import EnvironmentCacheScheduleStatus
 from .environment_definition import EnvironmentDefinition
 from .environment_definition_api_version import EnvironmentDefinitionApiVersion
 from .environment_definition_configuration import EnvironmentDefinitionConfiguration
@@ -1657,6 +1678,8 @@ from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
+from .get_route_advice_scope import GetRouteAdviceScope
+from .get_route_awake_scope import GetRouteAwakeScope
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -1878,6 +1901,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_environment_cache_schedules_status import ListEnvironmentCacheSchedulesStatus
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
 from .list_event_execution_lineage_retry_job_controls_credential_type import (
@@ -3820,6 +3844,7 @@ from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseri
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
 from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
+from .reschedule_environment_cache_request import RescheduleEnvironmentCacheRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
@@ -3876,13 +3901,24 @@ from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_advice_evidence import RouteAdviceEvidence
 from .route_advice_evidence_safe_max_age_seconds import RouteAdviceEvidenceSafeMaxAgeSeconds
 from .route_advice_impact import RouteAdviceImpact
+from .route_advice_policy_assessment import RouteAdvicePolicyAssessment
+from .route_advice_policy_assessment_status import RouteAdvicePolicyAssessmentStatus
+from .route_advice_policy_context import RouteAdvicePolicyContext
+from .route_advice_policy_context_status import RouteAdvicePolicyContextStatus
+from .route_advice_policy_rule import RouteAdvicePolicyRule
+from .route_advice_policy_rule_kind import RouteAdvicePolicyRuleKind
+from .route_advice_policy_rule_mode import RouteAdvicePolicyRuleMode
+from .route_advice_policy_rule_source import RouteAdvicePolicyRuleSource
 from .route_advice_response import RouteAdviceResponse
+from .route_advice_response_cacheability_coverage import RouteAdviceResponseCacheabilityCoverage
+from .route_advice_response_coverage import RouteAdviceResponseCoverage
 from .route_advice_setting import RouteAdviceSetting
 from .route_advice_suggestion import RouteAdviceSuggestion
 from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
 from .route_assignment import RouteAssignment
 from .route_awake_response import RouteAwakeResponse
+from .route_awake_response_coverage import RouteAwakeResponseCoverage
 from .route_awake_route import RouteAwakeRoute
 from .route_awake_route_pattern import RouteAwakeRoutePattern
 from .route_awake_suggestion import RouteAwakeSuggestion
@@ -4232,6 +4268,7 @@ from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
+from .set_environment_cache_policy_request import SetEnvironmentCachePolicyRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_grace_window_request import SetGraceWindowRequest
@@ -5444,6 +5481,8 @@ __all__ = (
     "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestMode",
     "CreateEdgeRuleRequestValidateMode",
+    "CreateEnvironmentCachePurgeRequest",
+    "CreateEnvironmentCacheScheduleRequest",
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
     "CreateEnvironmentGitSourceRequestMode",
@@ -5881,6 +5920,25 @@ __all__ = (
     "EnvDiffResponse",
     "EnvDiffRow",
     "EnvDiffRowCells",
+    "EnvironmentCacheActivityRecovery",
+    "EnvironmentCacheConvergence",
+    "EnvironmentCacheConvergenceStatus",
+    "EnvironmentCachePolicy",
+    "EnvironmentCachePolicyHistory",
+    "EnvironmentCachePolicySource",
+    "EnvironmentCachePurgeReceipt",
+    "EnvironmentCachePurgeStatus",
+    "EnvironmentCachePurgeStatusStatus",
+    "EnvironmentCacheRule",
+    "EnvironmentCacheSchedule",
+    "EnvironmentCacheScheduleActivity",
+    "EnvironmentCacheScheduleCapabilities",
+    "EnvironmentCacheScheduleEvent",
+    "EnvironmentCacheScheduleEventAction",
+    "EnvironmentCacheScheduleEventKind",
+    "EnvironmentCacheScheduleEventStatus",
+    "EnvironmentCacheScheduleList",
+    "EnvironmentCacheScheduleStatus",
     "EnvironmentDefinition",
     "EnvironmentDefinitionApiVersion",
     "EnvironmentDefinitionConfiguration",
@@ -6384,6 +6442,8 @@ __all__ = (
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
+    "GetRouteAdviceScope",
+    "GetRouteAwakeScope",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -6595,6 +6655,7 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEnvironmentCacheSchedulesStatus",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
     "ListEventExecutionLineageRetryJobControlsCredentialType",
@@ -8327,6 +8388,7 @@ __all__ = (
     "RequestAuditListResponse",
     "RequestAuditRecord",
     "RequestEventExecutionLineageCaseBackfillRequest",
+    "RescheduleEnvironmentCacheRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
@@ -8377,13 +8439,24 @@ __all__ = (
     "RouteAdviceEvidence",
     "RouteAdviceEvidenceSafeMaxAgeSeconds",
     "RouteAdviceImpact",
+    "RouteAdvicePolicyAssessment",
+    "RouteAdvicePolicyAssessmentStatus",
+    "RouteAdvicePolicyContext",
+    "RouteAdvicePolicyContextStatus",
+    "RouteAdvicePolicyRule",
+    "RouteAdvicePolicyRuleKind",
+    "RouteAdvicePolicyRuleMode",
+    "RouteAdvicePolicyRuleSource",
     "RouteAdviceResponse",
+    "RouteAdviceResponseCacheabilityCoverage",
+    "RouteAdviceResponseCoverage",
     "RouteAdviceSetting",
     "RouteAdviceSuggestion",
     "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
     "RouteAssignment",
     "RouteAwakeResponse",
+    "RouteAwakeResponseCoverage",
     "RouteAwakeRoute",
     "RouteAwakeRoutePattern",
     "RouteAwakeSuggestion",
@@ -8729,6 +8802,7 @@ __all__ = (
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
     "SetDeploymentAliasRequest",
+    "SetEnvironmentCachePolicyRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
     "SetGraceWindowRequest",

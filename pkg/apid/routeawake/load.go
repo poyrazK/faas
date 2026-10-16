@@ -22,6 +22,11 @@ type Store interface {
 // Load reads an app's billed running minutes and the per-route minutes of
 // its busiest routes for [from, until).
 func Load(ctx context.Context, store Store, accountID, appID string, from, until time.Time) ([]Minute, []RouteMinute, error) {
+	return LoadScoped(ctx, store, accountID, appID, from, until, "", "")
+}
+
+// LoadScoped includes only retained instance/deployment history for scope.
+func LoadScoped(ctx context.Context, store Store, accountID, appID string, from, until time.Time, scope, environmentID string) ([]Minute, []RouteMinute, error) {
 	account, err := pgUUID(accountID)
 	if err != nil {
 		return nil, nil, err
@@ -31,12 +36,12 @@ func Load(ctx context.Context, store Store, accountID, appID string, from, until
 		return nil, nil, err
 	}
 	since, end := pgtype.Timestamptz{Time: from, Valid: true}, pgtype.Timestamptz{Time: until, Valid: true}
-	usage, err := store.RouteAwakeMinutes(ctx, sqlc.RouteAwakeMinutesParams{AccountID: account, AppID: app, SinceAt: since, UntilAt: end})
+	usage, err := store.RouteAwakeMinutes(ctx, sqlc.RouteAwakeMinutesParams{SelectedScope: scope, SelectedEnvironmentID: environmentID, AccountID: account, AppID: app, SinceAt: since, UntilAt: end})
 	if err != nil {
 		return nil, nil, fmt.Errorf("route awake minutes: %w", err)
 	}
 	rows, err := store.RouteAwakeRouteMinutes(ctx, sqlc.RouteAwakeRouteMinutesParams{
-		AccountID: account, AppID: app, SinceAt: since, UntilAt: end, RouteLimit: api.RouteAwakeMaxRoutes,
+		SelectedScope: scope, SelectedEnvironmentID: environmentID, AccountID: account, AppID: app, SinceAt: since, UntilAt: end, RouteLimit: api.RouteAwakeMaxRoutes,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("route awake route minutes: %w", err)

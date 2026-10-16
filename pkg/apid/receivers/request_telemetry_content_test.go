@@ -15,6 +15,8 @@ import (
 
 func TestRequestTelemetryReceiverStoresKnownContentOutcomes(t *testing.T) {
 	for sent, want := range map[string]string{
+		"deployment_v1:same_300":      "deployment_v1:same_300",
+		"deployment_v1:bad":           "",
 		"same_300":                    "same_300",
 		"":                            "",
 		"same_42":                     "", // an outcome this apid does not know drops to empty

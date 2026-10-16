@@ -34,6 +34,7 @@ type cacheRuleContextKey struct{}
 // the matched rule + the cache key components that were
 // resolved at the top of ServeHTTP.
 type cacheRuleSnapshot struct {
+	Key          *CacheKey
 	Rule         *EdgeRuleCacheResolved
 	AppID        string
 	DeploymentID string
@@ -52,9 +53,11 @@ func withCacheRuleContextForDeployment(ctx context.Context, rule *EdgeRuleCacheR
 	if rule == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, cacheRuleContextKey{}, &cacheRuleSnapshot{
-		Rule: rule, AppID: appID, DeploymentID: deploymentID, Method: method, Path: path, Query: query, VaryHash: varyHash,
-	})
+	snap := &cacheRuleSnapshot{Rule: rule, AppID: appID, DeploymentID: deploymentID, Method: method, Path: path, Query: query, VaryHash: varyHash}
+	if key, ok := responseCacheKeyFromContext(ctx); ok {
+		snap.Key = &key
+	}
+	return context.WithValue(ctx, cacheRuleContextKey{}, snap)
 }
 
 // cacheRuleFromContext returns the snapshot or nil if no rule
@@ -107,15 +110,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	if r.Method != "GET" && r.Method != "HEAD" {
 		return false, ""
 	}
-	key := CacheKey{
-		AppID:          snap.AppID,
-		DeploymentID:   snap.DeploymentID,
-		RuleID:         snap.Rule.ID,
-		Method:         snap.Method,
-		NormalizedPath: snap.Path,
-		Query:          snap.Query,
-		VaryHash:       snap.VaryHash,
-	}
+	key := snap.cacheKey()
 	outcome, entry := h.responseCache.Get(key)
 	if outcome != "stale_if_error_eligible" {
 		return false, ""
@@ -156,15 +151,7 @@ func (h *Handler) startStaleWhileWakingRefresh(r *http.Request, app App, rule *E
 	if snap == nil {
 		return
 	}
-	key := CacheKey{
-		AppID:          snap.AppID,
-		DeploymentID:   snap.DeploymentID,
-		RuleID:         snap.Rule.ID,
-		Method:         snap.Method,
-		NormalizedPath: snap.Path,
-		Query:          snap.Query,
-		VaryHash:       snap.VaryHash,
-	}
+	key := snap.cacheKey()
 	h.startCacheRefresh(r, app, rule, key)
 }
 
@@ -320,15 +307,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	if r.Method != "GET" && r.Method != "HEAD" {
 		return false, ""
 	}
-	key := CacheKey{
-		AppID:          snap.AppID,
-		DeploymentID:   snap.DeploymentID,
-		RuleID:         snap.Rule.ID,
-		Method:         snap.Method,
-		NormalizedPath: snap.Path,
-		Query:          snap.Query,
-		VaryHash:       snap.VaryHash,
-	}
+	key := snap.cacheKey()
 	outcome, entry := h.responseCache.Get(key)
 	if outcome != "stale_if_error_eligible" {
 		return false, ""
@@ -370,4 +349,11 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	h.metricsIncCacheOutcome(app.ID, "stale_if_error_served")
 	h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 	return true, "stale_if_error_served"
+}
+
+func (snap *cacheRuleSnapshot) cacheKey() CacheKey {
+	if snap.Key != nil {
+		return *snap.Key
+	}
+	return CacheKey{AppID: snap.AppID, DeploymentID: snap.DeploymentID, RuleID: snap.Rule.ID, Method: snap.Method, NormalizedPath: snap.Path, Query: snap.Query, VaryHash: snap.VaryHash}
 }

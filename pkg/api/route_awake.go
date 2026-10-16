@@ -18,6 +18,7 @@ const (
 // Awake time is the billed running time (plan RAM + 8 MB per running second);
 // routes are attributed from retained request telemetry at minute resolution.
 type RouteAwakeResponse struct {
+	RouteDiagnosticsIdentity
 	Slug          string `json:"slug"`
 	From          string `json:"from"`
 	Until         string `json:"until"`

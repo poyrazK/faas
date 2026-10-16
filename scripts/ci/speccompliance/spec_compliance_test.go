@@ -352,8 +352,11 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
-	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
+	"EnvironmentCacheActivityCursor":      true, // Opaque continuation metadata, not a public JSON schema.
+	"EnvironmentCacheScheduleListOptions": true, // Typed query selectors, not a JSON request body.
+	"EnvironmentCacheScheduleCursor":      true, // Internal opaque continuation metadata, not a public wire schema.
+	"DurableEntityInspectRequest":         true, // Inspection selectors are query parameters declared on the route, not a JSON body.
+	"EventRetentionQuery":                 true, // client-only retention query options; route parameters are the wire contract
 	// Capacity command history uses URL query parameters, not a JSON request body.
 	"EventSubscriptionCapacityCommandsQuery": true,
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
@@ -1369,6 +1372,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_health_history.go"),
 		filepath.Join(root, "pkg", "api", "route_health_notifications.go"),
 		filepath.Join(root, "pkg", "api", "route_advice.go"),
+		filepath.Join(root, "pkg", "api", "route_advice_policy.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_policy.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_history.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_purge.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_schedule.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_schedule_activity.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_schedule_capabilities.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_schedule_management.go"),
+		filepath.Join(root, "pkg", "api", "environment_cache_convergence.go"),
 		filepath.Join(root, "pkg", "api", "service_wake_ahead.go"),
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),

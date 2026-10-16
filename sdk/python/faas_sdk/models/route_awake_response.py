@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.route_awake_response_coverage import RouteAwakeResponseCoverage, check_route_awake_response_coverage
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -44,6 +45,18 @@ class RouteAwakeResponse:
     """Awake time attributed to routes outside the busiest routes_limit."""
     routes_limit: int
     routes: list[RouteAwakeRoute]
+    app_id: str | Unset = UNSET
+    """Awake report: App identity for explicitly scoped reports."""
+    scope: str | Unset = UNSET
+    """Awake report: Selected default or named environment; absent on aggregate reports."""
+    project_id: str | Unset = UNSET
+    """Awake report: Immutable project identity for named reports."""
+    environment_id: str | Unset = UNSET
+    """Awake report: Immutable named environment identity."""
+    coverage: RouteAwakeResponseCoverage | Unset = UNSET
+    """Awake report: Only retained, identity-matched deployment history is included; absent for aggregate reports."""
+    partial: bool | Unset = UNSET
+    """Awake report: True for scoped reports: unattributed history and telemetry gaps remain unknown."""
     window_clamped: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -79,6 +92,20 @@ class RouteAwakeResponse:
             routes_item = routes_item_data.to_dict()
             routes.append(routes_item)
 
+        app_id = self.app_id
+
+        scope = self.scope
+
+        project_id = self.project_id
+
+        environment_id = self.environment_id
+
+        coverage: str | Unset = UNSET
+        if not isinstance(self.coverage, Unset):
+            coverage = self.coverage
+
+        partial = self.partial
+
         window_clamped = self.window_clamped
 
         field_dict: dict[str, Any] = {}
@@ -101,6 +128,18 @@ class RouteAwakeResponse:
                 "routes": routes,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
+        if scope is not UNSET:
+            field_dict["scope"] = scope
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
+        if coverage is not UNSET:
+            field_dict["coverage"] = coverage
+        if partial is not UNSET:
+            field_dict["partial"] = partial
         if window_clamped is not UNSET:
             field_dict["window_clamped"] = window_clamped
 
@@ -144,6 +183,23 @@ class RouteAwakeResponse:
 
             routes.append(routes_item)
 
+        app_id = d.pop("app_id", UNSET)
+
+        scope = d.pop("scope", UNSET)
+
+        project_id = d.pop("project_id", UNSET)
+
+        environment_id = d.pop("environment_id", UNSET)
+
+        _coverage = d.pop("coverage", UNSET)
+        coverage: RouteAwakeResponseCoverage | Unset
+        if isinstance(_coverage, Unset):
+            coverage = UNSET
+        else:
+            coverage = check_route_awake_response_coverage(_coverage)
+
+        partial = d.pop("partial", UNSET)
+
         window_clamped = d.pop("window_clamped", UNSET)
 
         route_awake_response = cls(
@@ -161,6 +217,12 @@ class RouteAwakeResponse:
             other_routes_seconds=other_routes_seconds,
             routes_limit=routes_limit,
             routes=routes,
+            app_id=app_id,
+            scope=scope,
+            project_id=project_id,
+            environment_id=environment_id,
+            coverage=coverage,
+            partial=partial,
             window_clamped=window_clamped,
         )
 

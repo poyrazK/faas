@@ -11,6 +11,19 @@ SELECT um.minute::timestamptz AS minute,
 FROM usage_minutes um
 WHERE um.account_id = sqlc.arg(account_id)
   AND um.app_id = sqlc.arg(app_id)
+      AND (sqlc.arg(selected_scope)::text = '' OR EXISTS (
+          SELECT 1 FROM instances i JOIN deployments d ON d.id=i.deployment_id JOIN apps a ON a.id=d.app_id
+          WHERE i.id=um.instance_id AND d.app_id=um.app_id AND a.account_id=um.account_id AND i.app_id=um.app_id
+          AND d.scope=sqlc.arg(selected_scope)::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=sqlc.arg(selected_environment_id)::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
   AND um.meter_kind = 'app'
   AND um.minute >= sqlc.arg(since_at)
   AND um.minute < sqlc.arg(until_at)
@@ -31,6 +44,19 @@ WITH filtered AS MATERIALIZED (
     FROM request_telemetry rt
     WHERE rt.app_id = sqlc.arg(app_id)
       AND rt.account_id = sqlc.arg(account_id)
+      AND (sqlc.arg(selected_scope)::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=sqlc.arg(selected_scope)::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=sqlc.arg(selected_environment_id)::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
       AND rt.received_at >= sqlc.arg(since_at)
       AND rt.received_at < sqlc.arg(until_at)
       AND (rt.status BETWEEN 200 AND 299 OR rt.cold_boot)

@@ -35527,7 +35527,7 @@ CREATE TABLE public.request_telemetry (
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     content_outcome text DEFAULT ''::text NOT NULL,
-    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'deployment_v1:uncacheable'::text, 'deployment_v1:first'::text, 'deployment_v1:same_60'::text, 'deployment_v1:same_300'::text, 'deployment_v1:same_3600'::text, 'deployment_v1:same_long'::text, 'deployment_v1:changed_60'::text, 'deployment_v1:changed_300'::text, 'deployment_v1:changed_3600'::text, 'deployment_v1:changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -35588,7 +35588,7 @@ CREATE TABLE public.request_telemetry_202610 (
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     content_outcome text DEFAULT ''::text NOT NULL,
-    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'deployment_v1:uncacheable'::text, 'deployment_v1:first'::text, 'deployment_v1:same_60'::text, 'deployment_v1:same_300'::text, 'deployment_v1:same_3600'::text, 'deployment_v1:same_long'::text, 'deployment_v1:changed_60'::text, 'deployment_v1:changed_300'::text, 'deployment_v1:changed_3600'::text, 'deployment_v1:changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -35648,7 +35648,7 @@ CREATE TABLE public.request_telemetry_202611 (
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     content_outcome text DEFAULT ''::text NOT NULL,
-    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'deployment_v1:uncacheable'::text, 'deployment_v1:first'::text, 'deployment_v1:same_60'::text, 'deployment_v1:same_300'::text, 'deployment_v1:same_3600'::text, 'deployment_v1:same_long'::text, 'deployment_v1:changed_60'::text, 'deployment_v1:changed_300'::text, 'deployment_v1:changed_3600'::text, 'deployment_v1:changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -35708,7 +35708,7 @@ CREATE TABLE public.request_telemetry_202612 (
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     content_outcome text DEFAULT ''::text NOT NULL,
-    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'deployment_v1:uncacheable'::text, 'deployment_v1:first'::text, 'deployment_v1:same_60'::text, 'deployment_v1:same_300'::text, 'deployment_v1:same_3600'::text, 'deployment_v1:same_long'::text, 'deployment_v1:changed_60'::text, 'deployment_v1:changed_300'::text, 'deployment_v1:changed_3600'::text, 'deployment_v1:changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -35816,7 +35816,7 @@ CREATE TABLE public.request_telemetry_default (
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     content_outcome text DEFAULT ''::text NOT NULL,
-    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'deployment_v1:uncacheable'::text, 'deployment_v1:first'::text, 'deployment_v1:same_60'::text, 'deployment_v1:same_300'::text, 'deployment_v1:same_3600'::text, 'deployment_v1:same_long'::text, 'deployment_v1:changed_60'::text, 'deployment_v1:changed_300'::text, 'deployment_v1:changed_3600'::text, 'deployment_v1:changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -68683,3 +68683,127 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+CREATE TABLE project_environment_cache_policies (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ revision bigint NOT NULL CHECK (revision > 0 AND revision <= 9007199254740991),
+ rules jsonb NOT NULL CHECK (jsonb_typeof(rules)='array' AND jsonb_array_length(rules)<=20),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(app_id,environment_id)
+);
+CREATE TABLE environment_cache_policy_receipts (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ request_id uuid NOT NULL,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ request_hash text NOT NULL,
+ response jsonb NOT NULL,
+ PRIMARY KEY(account_id,request_id)
+);
+
+
+CREATE TABLE environment_cache_gateway_sessions (
+ node_id uuid PRIMARY KEY REFERENCES compute_nodes(id) ON DELETE CASCADE,
+ session_id uuid NOT NULL,
+ started_at timestamptz NOT NULL,
+ gateway_target_url text NOT NULL,
+ heartbeat_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE environment_cache_gateway_observations (
+ node_id uuid NOT NULL REFERENCES compute_nodes(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ session_id uuid NOT NULL,
+ revision bigint NOT NULL CHECK (revision>0),
+ observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(node_id,app_id,environment_id)
+);
+CREATE INDEX environment_cache_gateway_observations_policy_idx ON environment_cache_gateway_observations(app_id,environment_id);
+
+-- Preserve a monotonic revision when returning to live app inheritance.
+ALTER TABLE project_environment_cache_policies ADD COLUMN inherited boolean NOT NULL DEFAULT false;
+ALTER TABLE project_environment_cache_policies ADD CONSTRAINT environment_cache_inherited_empty CHECK (NOT inherited OR rules='[]'::jsonb);
+
+CREATE TABLE environment_cache_policy_history (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ revision bigint NOT NULL CHECK (revision>0 AND revision<=9007199254740991),
+ snapshot jsonb NOT NULL CHECK (jsonb_typeof(snapshot)='object'),
+ PRIMARY KEY(app_id,environment_id,revision)
+);
+
+CREATE TABLE environment_cache_purges (
+ id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY CHECK (id>0 AND id<=9007199254740991),
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ request_id uuid NOT NULL,
+ path text NOT NULL CHECK (octet_length(path)<=1024),
+ requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(account_id,request_id)
+);
+CREATE INDEX environment_cache_purges_target_idx ON environment_cache_purges(app_id,environment_id,id);
+CREATE TABLE environment_cache_purge_watermarks (
+ node_id uuid PRIMARY KEY REFERENCES compute_nodes(id) ON DELETE CASCADE,
+ session_id uuid NOT NULL,
+ last_id bigint NOT NULL CHECK (last_id>=0 AND last_id<=9007199254740991),
+ observed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE environment_cache_schedules (
+ schedule_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ scope text NOT NULL CHECK (length(scope) BETWEEN 1 AND 63),
+ request jsonb NOT NULL CHECK (jsonb_typeof(request)='object'),
+ execute_at timestamptz NOT NULL CHECK (isfinite(execute_at)),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ status text NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','executing','executed','failed','cancelled')),
+ lease_token uuid,
+ lease_until timestamptz,
+ finished_at timestamptz,
+ error_code text NOT NULL DEFAULT '' CHECK (length(error_code)<=64),
+ result jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(result)='object'),
+ CHECK ((status='executing')=(lease_token IS NOT NULL AND lease_until IS NOT NULL)),
+ CHECK ((status IN ('executed','failed','cancelled'))=(finished_at IS NOT NULL))
+);
+CREATE INDEX environment_cache_schedules_due ON environment_cache_schedules(execute_at) WHERE status IN ('scheduled','executing');
+CREATE INDEX environment_cache_schedules_target ON environment_cache_schedules(account_id,app_id,environment_id);
+
+ALTER TABLE environment_cache_schedules
+ ADD COLUMN replaces_schedule_id uuid UNIQUE REFERENCES environment_cache_schedules(schedule_id) DEFERRABLE INITIALLY DEFERRED,
+ ADD COLUMN replaced_by_schedule_id uuid UNIQUE REFERENCES environment_cache_schedules(schedule_id) DEFERRABLE INITIALLY DEFERRED,
+ ADD CONSTRAINT environment_cache_schedule_replaces CHECK (replaces_schedule_id IS NULL OR replaces_schedule_id<>schedule_id),
+ ADD CONSTRAINT environment_cache_schedule_replaced CHECK (replaced_by_schedule_id IS NULL OR (replaced_by_schedule_id<>schedule_id AND status='cancelled'));
+CREATE INDEX environment_cache_schedules_discovery ON environment_cache_schedules(account_id,app_id,environment_id,execute_at,schedule_id);
+
+CREATE TABLE environment_cache_schedule_event_counters (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ last_sequence bigint NOT NULL CHECK (last_sequence>0 AND last_sequence<=9007199254740991),
+ PRIMARY KEY(app_id,environment_id)
+);
+CREATE TABLE environment_cache_schedule_events (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
+ scope text NOT NULL CHECK (length(scope) BETWEEN 1 AND 63),
+ sequence bigint NOT NULL CHECK (sequence>0 AND sequence<=9007199254740991),
+ payload jsonb NOT NULL CHECK (jsonb_typeof(payload)='object'),
+ occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(app_id,environment_id,sequence)
+);
+
+ALTER TABLE environment_cache_schedule_event_counters
+ ADD COLUMN pruned_through bigint NOT NULL DEFAULT 0 CHECK (pruned_through>=0 AND pruned_through<=last_sequence);

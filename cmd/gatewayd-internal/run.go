@@ -2277,6 +2277,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// then start the durable repair loop alongside LISTEN/NOTIFY.
 	backend.WithEdgeRules(deps.edgeRulesMatcher)
 	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	go watchEnvironmentCacheConvergence(ctx, pgStore, deps.edgeRulesMatcher, osGetenv("FAAS_NODE_NAME"), log, responseCache)
 	go watchDurableCorsPresetChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	go watchDurableResponseCachePurges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
 	// App and traffic mutations still use notifications as their low-latency

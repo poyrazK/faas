@@ -2888,6 +2888,99 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentCacheGatewayObservation struct {
+	NodeID        pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	SessionID     pgtype.UUID
+	Revision      int64
+	ObservedAt    pgtype.Timestamptz
+}
+
+type EnvironmentCacheGatewaySession struct {
+	NodeID           pgtype.UUID
+	SessionID        pgtype.UUID
+	StartedAt        pgtype.Timestamptz
+	GatewayTargetUrl string
+	HeartbeatAt      pgtype.Timestamptz
+}
+
+type EnvironmentCachePolicyHistory struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Revision      int64
+	Snapshot      []byte
+}
+
+type EnvironmentCachePolicyReceipt struct {
+	AccountID     pgtype.UUID
+	RequestID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RequestHash   string
+	Response      []byte
+}
+
+type EnvironmentCachePurge struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RequestID     pgtype.UUID
+	Path          string
+	RequestedAt   pgtype.Timestamptz
+}
+
+type EnvironmentCachePurgeWatermark struct {
+	NodeID     pgtype.UUID
+	SessionID  pgtype.UUID
+	LastID     int64
+	ObservedAt pgtype.Timestamptz
+}
+
+type EnvironmentCacheSchedule struct {
+	ScheduleID           pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	ProjectID            pgtype.UUID
+	EnvironmentID        pgtype.UUID
+	Scope                string
+	Request              []byte
+	ExecuteAt            pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	Status               string
+	LeaseToken           pgtype.UUID
+	LeaseUntil           pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	ErrorCode            string
+	Result               []byte
+	ReplacesScheduleID   pgtype.UUID
+	ReplacedByScheduleID pgtype.UUID
+}
+
+type EnvironmentCacheScheduleEvent struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Scope         string
+	Sequence      int64
+	Payload       []byte
+	OccurredAt    pgtype.Timestamptz
+}
+
+type EnvironmentCacheScheduleEventCounter struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	LastSequence  int64
+	PrunedThrough int64
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID
@@ -7378,6 +7471,17 @@ type ProjectEnvironmentApproval struct {
 	CreatedAt         pgtype.Timestamptz
 	TokenKind         string
 	ConsumedAt        pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCachePolicy struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Revision      int64
+	Rules         []byte
+	UpdatedAt     pgtype.Timestamptz
+	Inherited     bool
 }
 
 type ProjectEnvironmentCleanupJob struct {

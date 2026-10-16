@@ -41,6 +41,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
+	"github.com/onebox-faas/faas/pkg/apid/cacheschedule"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
@@ -740,6 +741,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		if pruner, ok := srv.store.(state.EnvironmentCacheScheduleActivityPruner); ok {
+			go cacheschedule.RunActivityRetention(ctx, pruner, log)
+		}
+		if scheduleStore, ok := srv.store.(state.EnvironmentCacheScheduleWorker); ok {
+			go cacheschedule.Run(ctx, scheduleStore, log)
+		}
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)

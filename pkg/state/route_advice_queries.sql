@@ -11,11 +11,25 @@
 -- bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s).
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.status, rt.latency_ms, rt.cold_boot, rt.guest_outcome,
-           rt.content_outcome, rt.count::bigint AS requests, rt.received_at,
+           CASE WHEN sqlc.arg(selected_scope)::text='' OR starts_with(rt.content_outcome, 'deployment_v1:')
+                THEN replace(rt.content_outcome, 'deployment_v1:', '') ELSE '' END AS content_outcome, rt.count::bigint AS requests, rt.received_at,
            (rt.consumer_id IS NULL AND rt.platform_tenant_id IS NULL) AS anonymous
     FROM request_telemetry rt
     WHERE rt.app_id = sqlc.arg(app_id)
       AND rt.account_id = sqlc.arg(account_id)
+      AND (sqlc.arg(selected_scope)::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=sqlc.arg(selected_scope)::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=sqlc.arg(selected_environment_id)::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
       AND rt.received_at >= sqlc.arg(since_at)
       AND rt.received_at < sqlc.arg(until_at)
       AND starts_with(rt.route, rt.method || ' /')
@@ -75,6 +89,19 @@ WITH per_minute AS (
     JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
     WHERE rt.app_id = sqlc.arg(app_id)
       AND rt.account_id = sqlc.arg(account_id)
+      AND (sqlc.arg(selected_scope)::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=sqlc.arg(selected_scope)::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=sqlc.arg(selected_environment_id)::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
       AND rt.received_at >= sqlc.arg(since_at)
       AND rt.received_at < sqlc.arg(until_at)
       AND starts_with(rt.route, rt.method || ' /')
@@ -102,6 +129,19 @@ FROM (
     FROM request_telemetry rt
     WHERE rt.app_id = sqlc.arg(app_id)
       AND rt.account_id = sqlc.arg(account_id)
+      AND (sqlc.arg(selected_scope)::text = '' OR EXISTS (
+          SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+          WHERE d.id=rt.deployment_id AND d.app_id=rt.app_id AND a.account_id=rt.account_id
+          AND d.scope=sqlc.arg(selected_scope)::text
+          AND (d.scope='default' OR EXISTS (
+              SELECT 1 FROM project_environment_workload_deployment_specs ds
+              JOIN project_environment_workload_specs spec ON spec.id=ds.spec_id
+              JOIN project_environments e ON e.id=spec.environment_id
+              WHERE ds.deployment_id=d.id AND spec.app_id=a.id
+              AND e.id::text=sqlc.arg(selected_environment_id)::text
+              AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+          ))
+      ))
       AND rt.consumer_id = sqlc.arg(consumer_id)
       AND rt.route = sqlc.arg(route)::text
       AND rt.method = sqlc.arg(method)::text

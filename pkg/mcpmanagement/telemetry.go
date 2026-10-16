@@ -15,11 +15,15 @@ import (
 // Telemetry aggregates bridge operations without account, grant, selector or URI
 // labels. It owns a private registry; no default/global collectors are installed.
 type Telemetry struct {
-	registry *prometheus.Registry
-	requests *prometheus.CounterVec
-	duration *prometheus.HistogramVec
-	active   *prometheus.GaugeVec
-	updates  prometheus.Counter
+	registry       *prometheus.Registry
+	requests       *prometheus.CounterVec
+	duration       *prometheus.HistogramVec
+	active         *prometheus.GaugeVec
+	updates        prometheus.Counter
+	consumerReads  *prometheus.CounterVec
+	consumerLag    *prometheus.HistogramVec
+	consumerAckAge prometheus.Histogram
+	rejections     *prometheus.CounterVec
 }
 
 // NewTelemetry creates a process-level aggregate registry for management MCP.
@@ -29,9 +33,16 @@ func NewTelemetry() *Telemetry {
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gregale_management_mcp_request_duration_seconds", Help: "Bridge handler duration including admission, validation and customer API reads.", Buckets: []float64{.005, .025, .1, .5, 1, 5, 15, 30, 60, 120}}, []string{"operation", "tool"}),
 		active:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "gregale_management_mcp_active", Help: "Process aggregate reserved bridge capacity by fixed kind."}, []string{"kind"}),
 		updates:  prometheus.NewCounter(prometheus.CounterOpts{Name: "gregale_management_mcp_resource_updates_total", Help: "URI invalidations successfully sent to individual subscription recipients."})}
-	t.registry.MustRegister(t.requests, t.duration, t.active, t.updates)
-	for _, kind := range []string{"short_requests", "rollout_watches", "listen_streams", "resource_slots"} {
+	t.consumerReads = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gregale_management_mcp_consumer_reads_total", Help: "Successful consumer get observations by fixed status; repeated reads count again."}, []string{"status"})
+	t.consumerLag = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gregale_management_mcp_consumer_lag_events", Help: "Read-time consumer event counts by retained or expired kind; sampled on successful initialized gets, not a journal-wide backlog.", Buckets: prometheus.ExponentialBuckets(1, 10, 16)}, []string{"kind"})
+	t.consumerAckAge = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "gregale_management_mcp_consumer_ack_age_seconds", Help: "Time since last progress-changing acknowledgment sampled on successful gets; excludes uninitialized and future-dated acknowledgments. Not an expiry estimate.", Buckets: prometheus.ExponentialBuckets(1, 10, 9)})
+	t.rejections = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gregale_management_mcp_admission_rejections_total", Help: "Requests rejected because their fixed bridge admission pool was full, by kind."}, []string{"kind"})
+	t.registry.MustRegister(t.requests, t.duration, t.active, t.updates, t.consumerReads, t.consumerLag, t.consumerAckAge, t.rejections)
+	for _, kind := range []string{"short_requests", "rollout_watches", "activity_watches", "listen_streams", "resource_slots"} {
 		t.active.WithLabelValues(kind).Set(0)
+	}
+	for _, class := range []admissionClass{admissionShort, admissionRollout, admissionActivity} {
+		t.rejections.WithLabelValues(string(class)).Add(0)
 	}
 	return t
 }
@@ -53,6 +64,28 @@ func (t *Telemetry) observe(operation, tool, outcome string, start time.Time) {
 	}
 	t.requests.WithLabelValues(operation, tool, outcome).Inc()
 	t.duration.WithLabelValues(operation, tool).Observe(time.Since(start).Seconds())
+}
+
+func (t *Telemetry) observeConsumer(status string, lag *activityConsumerLag) {
+	if t == nil || lag == nil {
+		return
+	}
+	// Closed labels only, even if a future caller supplies an unexpected status.
+	switch status {
+	case "uninitialized", "ready", "cursor_expired":
+	default:
+		return
+	}
+	t.consumerReads.WithLabelValues(status).Inc()
+	if lag.RetainedPendingEvents != nil {
+		t.consumerLag.WithLabelValues("retained").Observe(float64(*lag.RetainedPendingEvents))
+	}
+	if lag.ExpiredUnacknowledgedEvents != nil {
+		t.consumerLag.WithLabelValues("expired").Observe(float64(*lag.ExpiredUnacknowledgedEvents))
+	}
+	if lag.SecondsSinceAck != nil {
+		t.consumerAckAge.Observe(*lag.SecondsSinceAck)
+	}
 }
 
 func telemetryOutcome(ctx context.Context, result mcp.Result, err error) string {
@@ -92,6 +125,10 @@ func telemetryCode(code string) string {
 		return "cancelled"
 	case "timeout":
 		return "timeout"
+	case "checkpoint_conflict", "consumer_generation_conflict", "consumer_capacity", "durable_state_required", "durable_state_unavailable", "cursor_expired", "recovery_restart_required":
+		return code
+	case "invalid_state":
+		return "durable_state_unavailable"
 	default:
 		return "error"
 	}

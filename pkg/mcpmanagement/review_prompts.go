@@ -27,11 +27,11 @@ func (m *management) getReviewPrompt(ctx context.Context, req *mcp.GetPromptRequ
 	if validateSegment(args.App, "app") != nil {
 		return nil, m.contextError(invalid("invalid_argument", "provide an existing app slug"))
 	}
-	if req.Params.Name != "gregale_deployment_review" && validateSegment(args.DeploymentID, "deployment_id") != nil {
+	if (req.Params.Name == "gregale_rollout_diagnosis" || req.Params.Name == "gregale_rollback_review") && validateSegment(args.DeploymentID, "deployment_id") != nil {
 		return nil, m.contextError(invalid("invalid_argument", "provide an exact deployment ID"))
 	}
-	if req.Params.Name == "gregale_deployment_review" && args.DeploymentID != "" {
-		return nil, m.contextError(invalid("invalid_argument", "deployment review does not accept a deployment ID"))
+	if (req.Params.Name == "gregale_deployment_review" || req.Params.Name == "gregale_awake_diagnosis") && args.DeploymentID != "" {
+		return nil, m.contextError(invalid("invalid_argument", "this review does not accept a deployment ID"))
 	}
 	if err := m.authorizeArgs(ctx, args); err != nil {
 		return nil, m.contextError(err)
@@ -55,6 +55,8 @@ func (m *management) getReviewPrompt(ctx context.Context, req *mcp.GetPromptRequ
 	selector, _ := json.Marshal(args)
 	instruction := "Review the scoped release, health and route-budget resources. Explain current mode, target identity, immutable image/source provenance, current settings, traffic or consumer effects and remaining uncertainty. If a deployment is later requested, use the matching image/source plan and guarded apply tools."
 	switch req.Params.Name {
+	case "gregale_awake_diagnosis":
+		instruction = "Use scoped health, routes and route budgets to explain current workload mode and telemetry gaps. Call gregale_get_route_awake and gregale_get_route_advice with this exact app/project/environment selector over the same time window. Reports include only retained deployment-attributed history and are partial; missing attribution is unknown. Learned cacheability includes only deployment-isolated observations; legacy comparisons are excluded. Read policy_context and each suggestion policy assessment: distinguish duplicates, conflicting settings, conditional overlaps and missing coverage. A revision is an observed desired-policy snapshot, not a write guard or proof of gateway enforcement. Do not infer an absent policy when reads are unavailable or change during collection. Never retry an unavailable scoped report without its environment selector; use scoped evidence only. Distinguish route-driven wakes, periodic polling, unattributed running time and missing telemetry. Separate learned cacheability evidence from estimates. Explain freshness, retention clamping and what-if assumptions; no savings or cache safety guarantees. Suggest investigation and human review only; never apply edge rules or settings."
 	case "gregale_rollout_diagnosis":
 		instruction = "Use gregale_watch_rollout for the exact deployment, then scoped health and route budgets. Separate acceptance, live artifact, fresh healthy serving and native completion. Inspect service handoff/ACK/drain blockers or worker generation residency. Worker convergence does not prove queue processing or desired replica counts. Report unknown evidence explicitly."
 	case "gregale_rollback_review":

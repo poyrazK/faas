@@ -20,41 +20,51 @@ const releasePlanTTL = 15 * time.Minute
 const maxReleasePlans = 256
 
 type releasePlan struct {
-	Budgets                 *routeBudgetPlan `json:"route_budgets,omitempty"`
-	budgetResult            *api.EnvironmentRouteBudgets
-	ID                      string                             `json:"plan_id"`
-	Action                  string                             `json:"action"`
-	AccountID               string                             `json:"account_id"`
-	APIBase                 string                             `json:"api_base"`
-	Profile                 string                             `json:"profile"`
-	AppID                   string                             `json:"app_id"`
-	App                     string                             `json:"app"`
-	Scope                   string                             `json:"scope"`
-	Project                 string                             `json:"project,omitempty"`
-	ProjectID               string                             `json:"project_id,omitempty"`
-	EnvironmentID           string                             `json:"environment_id,omitempty"`
-	ConfigurationHash       string                             `json:"configuration_hash"`
-	WorkloadRevision        int64                              `json:"workload_revision,omitempty"`
-	WorkloadConfigHash      string                             `json:"workload_config_hash,omitempty"`
-	Image                   string                             `json:"image,omitempty"`
-	Source                  *api.SourceReviewResponse          `json:"source,omitempty"`
-	RolloutMode             string                             `json:"rollout_mode,omitempty"`
-	RolloutPolicy           *rolloutPolicy                     `json:"rollout_policy,omitempty"`
-	PredecessorDeploymentID string                             `json:"predecessor_deployment_id,omitempty"`
-	ServiceRecovery         *api.ServiceRolloutRecoveryReceipt `json:"service_recovery,omitempty"`
-	RequestedRef            string                             `json:"requested_ref,omitempty"`
-	TargetDeploymentID      string                             `json:"target_deployment_id,omitempty"`
-	ExpectedCurrentID       string                             `json:"expected_current_deployment_id"`
-	Reason                  string                             `json:"reason"`
-	TrafficEffect           string                             `json:"traffic_effect"`
-	ExpiresAt               time.Time                          `json:"expires_at"`
-	appHash                 [32]byte
-	latestID                string
-	attempted               bool
-	result                  *api.DeploymentResponse
-	promoted                *api.DeploymentResponse
-	promotionAttempted      bool
-	review                  *api.AppReleaseReview
+	EnvironmentReschedule       *environmentReschedulePlan `json:"environment_cache_reschedule,omitempty"`
+	environmentRescheduleResult *api.EnvironmentCacheSchedule
+	EnvironmentSchedule         *environmentSchedulePlan `json:"environment_cache_schedule,omitempty"`
+	environmentScheduleResult   *api.EnvironmentCacheSchedule
+	EnvironmentPurge            *environmentPurgePlan `json:"environment_cache_purge,omitempty"`
+	environmentPurgeResult      *api.EnvironmentCachePurgeReceipt
+	EnvironmentCache            *environmentCachePlan `json:"environment_cache_policy,omitempty"`
+	environmentCacheResult      *api.EnvironmentCachePolicy
+	CacheRule                   *cacheRulePlan `json:"cache_rule,omitempty"`
+	cacheResult                 *cacheRuleReceipt
+	Budgets                     *routeBudgetPlan `json:"route_budgets,omitempty"`
+	budgetResult                *api.EnvironmentRouteBudgets
+	ID                          string                             `json:"plan_id"`
+	Action                      string                             `json:"action"`
+	AccountID                   string                             `json:"account_id"`
+	APIBase                     string                             `json:"api_base"`
+	Profile                     string                             `json:"profile"`
+	AppID                       string                             `json:"app_id"`
+	App                         string                             `json:"app"`
+	Scope                       string                             `json:"scope"`
+	Project                     string                             `json:"project,omitempty"`
+	ProjectID                   string                             `json:"project_id,omitempty"`
+	EnvironmentID               string                             `json:"environment_id,omitempty"`
+	ConfigurationHash           string                             `json:"configuration_hash"`
+	WorkloadRevision            int64                              `json:"workload_revision,omitempty"`
+	WorkloadConfigHash          string                             `json:"workload_config_hash,omitempty"`
+	Image                       string                             `json:"image,omitempty"`
+	Source                      *api.SourceReviewResponse          `json:"source,omitempty"`
+	RolloutMode                 string                             `json:"rollout_mode,omitempty"`
+	RolloutPolicy               *rolloutPolicy                     `json:"rollout_policy,omitempty"`
+	PredecessorDeploymentID     string                             `json:"predecessor_deployment_id,omitempty"`
+	ServiceRecovery             *api.ServiceRolloutRecoveryReceipt `json:"service_recovery,omitempty"`
+	RequestedRef                string                             `json:"requested_ref,omitempty"`
+	TargetDeploymentID          string                             `json:"target_deployment_id,omitempty"`
+	ExpectedCurrentID           string                             `json:"expected_current_deployment_id"`
+	Reason                      string                             `json:"reason"`
+	TrafficEffect               string                             `json:"traffic_effect"`
+	ExpiresAt                   time.Time                          `json:"expires_at"`
+	appHash                     [32]byte
+	latestID                    string
+	attempted                   bool
+	result                      *api.DeploymentResponse
+	promoted                    *api.DeploymentResponse
+	promotionAttempted          bool
+	review                      *api.AppReleaseReview
 }
 
 type planDeployArgs struct {
@@ -257,7 +267,7 @@ func (m *management) checkedPlan(ctx context.Context, id, action string) (*relea
 		return nil, invalid("plan_expired", "plan expired; inspect existing deployments before creating a new plan")
 	}
 	environment := ""
-	if p.Scope != api.DefaultEnvScope {
+	if p.Scope != api.DefaultEnvScope && p.Scope != cacheRulePolicyScope {
 		environment = p.Scope
 	}
 	app, env, err := m.appEnvironment(ctx, p.App, p.Project, environment, true)

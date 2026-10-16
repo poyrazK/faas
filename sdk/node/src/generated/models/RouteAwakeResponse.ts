@@ -7,6 +7,30 @@ import type { RouteAwakeRoute } from './RouteAwakeRoute.js';
  * How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time.
  */
 export type RouteAwakeResponse = {
+  /**
+   * Awake report: App identity for explicitly scoped reports.
+   */
+  app_id?: string;
+  /**
+   * Awake report: Selected default or named environment; absent on aggregate reports.
+   */
+  scope?: string;
+  /**
+   * Awake report: Immutable project identity for named reports.
+   */
+  project_id?: string;
+  /**
+   * Awake report: Immutable named environment identity.
+   */
+  environment_id?: string;
+  /**
+   * Awake report: Only retained, identity-matched deployment history is included; absent for aggregate reports.
+   */
+  coverage?: 'retained_deployment_history';
+  /**
+   * Awake report: True for scoped reports: unattributed history and telemetry gaps remain unknown.
+   */
+  partial?: boolean;
   slug: string;
   from: string;
   until: string;

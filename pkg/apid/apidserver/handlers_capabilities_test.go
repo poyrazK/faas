@@ -330,6 +330,13 @@ func TestGetCapabilitiesConditionalParkingBackend(t *testing.T) {
 			if got, exists := body["conditional_parking"]; !exists || got != tc.want {
 				t.Fatalf("conditional parking=%v exists=%v want=%v", got, exists, tc.want)
 			}
+			var response api.CapabilitiesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.EnvironmentCacheSchedules == nil || response.EnvironmentCacheSchedules.SupportsRecovery() != tc.want {
+				t.Fatalf("schedule recovery capabilities=%+v want=%v", response.EnvironmentCacheSchedules, tc.want)
+			}
 		})
 	}
 }

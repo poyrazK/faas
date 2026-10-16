@@ -114,6 +114,7 @@ func (m *MemStore) SetEnvironmentRouteBudgets(_ context.Context, account, app, s
 }
 
 func (m *MemStore) deleteEnvironmentBudgetsForAppLocked(app string) {
+	m.deleteEnvironmentCachePoliciesLocked(app, "")
 	for key := range m.environmentBudgetConfigs {
 		if strings.HasPrefix(key, app+"\x00") {
 			delete(m.environmentBudgetConfigs, key)
@@ -126,6 +127,7 @@ func (m *MemStore) deleteEnvironmentBudgetsForAppLocked(app string) {
 	}
 }
 func (m *MemStore) deleteEnvironmentBudgetConfigsLocked(environment string) {
+	m.deleteEnvironmentCachePoliciesLocked("", environment)
 	for key := range m.environmentBudgetConfigs {
 		if strings.HasSuffix(key, "\x00"+environment) {
 			delete(m.environmentBudgetConfigs, key)

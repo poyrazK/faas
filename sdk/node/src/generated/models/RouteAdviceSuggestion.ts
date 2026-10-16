@@ -5,11 +5,13 @@
 import type { CreateEdgeRuleRequest } from './CreateEdgeRuleRequest.js';
 import type { RouteAdviceEvidence } from './RouteAdviceEvidence.js';
 import type { RouteAdviceImpact } from './RouteAdviceImpact.js';
+import type { RouteAdvicePolicyAssessment } from './RouteAdvicePolicyAssessment.js';
 import type { RouteAdviceSetting } from './RouteAdviceSetting.js';
 /**
  * One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is empty and setting carries the proposal.
  */
 export type RouteAdviceSuggestion = {
+  policy?: RouteAdvicePolicyAssessment;
   /**
    * Stable for the same kind, method and route.
    */

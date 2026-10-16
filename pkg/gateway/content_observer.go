@@ -195,5 +195,13 @@ func contentOutcome(ctx context.Context, target Target, now time.Time) string {
 	if t == nil || (target.DeploymentID == "" && target.InstanceID == "") {
 		return ""
 	}
-	return t.finish(now)
+	if target.DeploymentID == "" {
+		return ""
+	}
+	// Both the comparison key and the persisted outcome carry provenance. Legacy
+	// comparisons were app-wide and cannot establish scoped cacheability.
+	if !t.done {
+		t.key = target.DeploymentID + "\x00" + t.key
+	}
+	return api.ContentOutcomeDeploymentPrefix + t.finish(now)
 }

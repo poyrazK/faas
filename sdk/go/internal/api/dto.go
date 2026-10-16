@@ -732,11 +732,22 @@ type CapabilityStatus struct {
 // CapabilitiesResponse is the account-scoped capability registry returned by
 // GET /v1/capabilities.
 type CapabilitiesResponse struct {
+	// Omission means schedule workflow compatibility has not been advertised.
+	EnvironmentCacheSchedules *EnvironmentCacheScheduleCapabilities `json:"environment_cache_schedules,omitempty"`
 	// ConditionalParking reports support on the serving control plane; omission means unsupported.
 	ConditionalParking bool               `json:"conditional_parking"`
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+}
+
+// EnvironmentCacheScheduleCapabilities describes serving API/backend support,
+// not selected-target authorization or fleet-wide writer readiness.
+type EnvironmentCacheScheduleCapabilities struct {
+	Listing          bool  `json:"listing"`
+	Activity         bool  `json:"activity"`
+	Checkpoint       bool  `json:"checkpoint"`
+	RetentionSeconds int64 `json:"retention_seconds"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
