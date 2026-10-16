@@ -11,6 +11,34 @@ import (
 	"github.com/google/uuid"
 )
 
+const DeploymentResponseCheckProtocolVersion = 1
+const DeploymentResponseCheckCapabilitiesControlPath = "/v1/internal/deployment-response-check-capabilities"
+
+const (
+	DeploymentResponseCheckGatewayUnsupported  = "gateway_unsupported"
+	DeploymentResponseCheckGatewayUnavailable  = "gateway_unavailable"
+	DeploymentResponseCheckGatewayUnconfigured = "gateway_unconfigured"
+)
+
+// DeploymentResponseCheckCapabilities reports installed protocol support and
+// forwarding configuration, not workload capacity or a guest health verdict.
+type DeploymentResponseCheckCapabilities struct {
+	ProtocolVersion   int    `json:"protocol_version"`
+	Available         bool   `json:"available"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+}
+
+func (c DeploymentResponseCheckCapabilities) SupportsCurrentProtocol() bool {
+	return c.ProtocolVersion == DeploymentResponseCheckProtocolVersion && c.Available && c.UnavailableReason == ""
+}
+
+func (c *Client) GetDeploymentResponseCheckCapabilities(ctx context.Context) (DeploymentResponseCheckCapabilities, error) {
+	var out DeploymentResponseCheckCapabilities
+	client := *c.http
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return out, c.doWithClientAndIdempotencyKey(ctx, &client, http.MethodGet, "/v1/deployments/response-check/capabilities", nil, &out, "")
+}
+
 // DeploymentResponseCheckRequest selects one GET against an owned deployment.
 // Named scopes require the catalog lifetime observed by the caller.
 type DeploymentResponseCheckRequest struct {

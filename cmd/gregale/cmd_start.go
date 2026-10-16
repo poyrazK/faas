@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -21,24 +22,25 @@ import (
 )
 
 type startRunner struct {
-	ctx            context.Context
-	prompt         startPrompt
-	secretsFile    string
-	waitTimeout    time.Duration
-	client         *Client
-	account        api.AccountResponse
-	session        startSession
-	statePath      string
-	startedAt      time.Time
-	lastRequest    *startRequestResult
-	requestFailure *startRequestFailure
-	progress       *startProgress
-	target         *startTarget
-	configuration  *envRequiredConfiguration
-	secretKeys     []string
-	sourceBaseline *startSourceSnapshot
-	reviewedSource *startSourceSnapshot
-	projectUpdates bool
+	ctx                 context.Context
+	prompt              startPrompt
+	secretsFile         string
+	waitTimeout         time.Duration
+	client              *Client
+	account             api.AccountResponse
+	session             startSession
+	statePath           string
+	startedAt           time.Time
+	lastRequest         *startRequestResult
+	requestFailure      *startRequestFailure
+	progress            *startProgress
+	target              *startTarget
+	configuration       *envRequiredConfiguration
+	secretKeys          []string
+	sourceBaseline      *startSourceSnapshot
+	reviewedSource      *startSourceSnapshot
+	projectUpdates      bool
+	cancelPendingUpload bool
 	// Use the same deploy implementation as deploy/dev. The local seam lets
 	// recovery tests observe acceptance without running a remote build.
 	deploy func(context.Context, []string, bool, ...deployExecution) int
@@ -310,7 +312,13 @@ func (r *startRunner) reviewAndDeploy() (int, bool) {
 }
 
 func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
+	if r.session.PendingSubmission != nil {
+		return printErr("A source submission still needs recovery", errors.New("run gregale start again to recover the pending launch before deploying another revision")), false
+	}
 	PrintProgress(osStdout, "3/4 · Check source and review deployment")
+	if err := r.requireStartCompatibility(r.ctx, r.client); err != nil {
+		return printErr("Server compatibility check failed", err), false
+	}
 	r.target = nil // Refresh app identity and configuration for every reviewed deploy.
 	r.reviewedSource = nil
 	report, ready, err := r.sourcePreflight()
@@ -396,7 +404,7 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	PrintProgress(osStdout, "4/4 · Build, boot and verify readiness")
 	// An explicit empty flag also matters: deploy must not inherit an
 	// environment from the original cwd after another source was selected.
-	args := []string{"--path", r.session.SourcePath, "--source=worktree", "--name", r.session.AppSlug, "--environment=" + r.session.Environment, "--timeout", strconv.Itoa(int(r.waitTimeout / time.Second))}
+	args := []string{"--path", r.session.SourcePath, "--source=worktree", "--name", r.session.AppSlug, "--environment=" + r.session.Environment, "--timeout", strconv.Itoa(int(r.waitTimeout / time.Second)), "--idempotency-key", uuid.NewString()}
 	if r.secretsFile != "" {
 		args = append(args, "--secrets-file", r.secretsFile)
 	}
@@ -411,6 +419,9 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 		resolveApp:             r.resolveDeployTarget,
 		sourcePreflightChecked: true,
 		compactProgress:        true,
+		onSubmission:           r.recordStartSubmission,
+		onUploadSession:        r.recordStartUpload,
+		onError:                r.recordStartSubmissionFailure,
 		onWaitEnd: func() {
 			r.progress.Close()
 		},
@@ -423,16 +434,17 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 			expectedAppID := r.session.AppID
 			r.session.DeploymentID, r.session.AppID, r.session.Status = dep.ID, dep.AppID, dep.Status
 			r.session.Revision, r.lastRequest = dep.Revision, nil
-			if r.projectUpdates {
-				r.session.RequireDeploymentEvidence = true
+			r.session.RequireDeploymentEvidence = true
+			if (expectedAppID != "" && expectedAppID != dep.AppID) || !r.deploymentScopeMatches(dep) {
+				identityErr = errors.New("accepted deployment does not match the reviewed app and environment; inspect its saved ID before continuing")
+			}
+			if dep.ID != "" && identityErr == nil {
+				r.session.PendingSubmission = nil
 			}
 			if dep.ID == "" {
 				saveErr = errors.New("API accepted a deployment without an ID")
 			} else {
 				saveErr = saveStartSession(r.statePath, r.session)
-			}
-			if (expectedAppID != "" && expectedAppID != dep.AppID) || !r.deploymentScopeMatches(dep) {
-				identityErr = errors.New("accepted deployment does not match the reviewed app and environment; inspect its saved ID before continuing")
 			}
 			if saveErr != nil || identityErr != nil {
 				cancel()
@@ -506,6 +518,12 @@ func (r *startRunner) terminal(dep api.DeploymentResponse) int {
 }
 
 func (r *startRunner) resume() int {
+	if r.session.PendingSubmission != nil {
+		if err := r.recoverStartSubmission(); err != nil {
+			r.printRecovery()
+			return printErr("Could not recover source submission", err)
+		}
+	}
 	PrintProgress(osStdout, "Resume · %s (deployment %s)", r.session.AppSlug, r.session.DeploymentID)
 	if err := r.verifyStartProject(r.ctx, r.client); err != nil {
 		return printErr("Could not recover linked target", err)
@@ -544,6 +562,15 @@ func (r *startRunner) resume() int {
 }
 
 func (r *startRunner) printRecovery() {
+	if pending := r.session.PendingSubmission; pending != nil {
+		PrintProgress(osStdout, "Run gregale start again from %s to check the pending launch.", r.session.ScopePath)
+		PrintProgress(osStdout, "Inspect app history: gregale deployments --app %s", safetext.ShellSingleQuote(r.session.AppSlug))
+		if r.session.DeploymentID != "" {
+			PrintProgress(osStdout, "Previously accepted deployment: gregale deployment %s", safetext.ShellSingleQuote(r.session.DeploymentID))
+		}
+		r.printPreviouslyVerified()
+		return
+	}
 	if r.session.DeploymentID == "" {
 		return
 	}
@@ -573,7 +600,7 @@ func (r *startRunner) completeLaunch() int {
 }
 
 func (r *startRunner) recoverFailure(code int) (int, bool) {
-	for code != 130 && code != 3 && r.session.Status == deploymentStatusFailed {
+	for code != 130 && code != 3 && r.session.Status == deploymentStatusFailed && r.session.PendingSubmission == nil {
 		choice, err := r.prompt.choose(r.ctx, "The deployment failed. Your source and deployment ID are saved.", []string{"I've fixed the code — review and retry", "Show deployment logs", "Finish", "Configure secrets from a file and review retry"}, 0)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

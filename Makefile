@@ -505,6 +505,7 @@ e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Po
 .PHONY: e2e-start
 e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
 	@test "$$(uname -s)" = Linux || (echo "e2e-start requires Linux terminal support" >&2; exit 1)
+	@command -v python3 >/dev/null 2>&1 || (echo "Python 3 is required for the Start live-runner API contracts" >&2; exit 1)
 	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-start refuses a skipped run" >&2; exit 1)
 	@test -z "$$FAAS_E2E_BIN_DIR" || (echo "Unset FAAS_E2E_BIN_DIR; e2e-start builds current daemon binaries" >&2; exit 1)
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-start needs reachable PostgreSQL" >&2; exit 1)
@@ -600,6 +601,15 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-start-acceptance test-start-native-acceptance
+native-start-acceptance: ## Qualify Start deploy/edit/configuration/recovery and park/wake against a dedicated native fleet
+	@GO="$(GO)" bash scripts/ci/run-native-start-acceptance.sh
+
+test-start-native-acceptance: ## Portable Start live-runner contracts and source detection; no native qualification claim
+	@python3 scripts/ci/start-native_test.py
+	@$(GO) test ./scripts/ci/start-relay -count=1
+	@$(GO) test ./cmd/gregale -run '^TestStartNativeFixtureDetection$$' -count=1
+
 .PHONY: native-scenario-restart-acceptance test-scenario-restart-acceptance test-scenario-dependency-postgres
 native-scenario-restart-acceptance: ## Verify native checkout batches, restart checkpoint matrix, pending recovery, failure/cancellation and cleanup
 	@GO="$(GO)" bash scripts/ci/run-native-scenario-restart-acceptance.sh

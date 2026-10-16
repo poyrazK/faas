@@ -275,11 +275,12 @@ func (f *startAcceptanceFixture) assertSession(t *testing.T, accepted, verified 
 		DeploymentID         string `json:"deployment_id"`
 		VerifiedDeploymentID string `json:"verified_deployment_id"`
 		Environment          string `json:"environment"`
+		RequireEvidence      bool   `json:"require_deployment_evidence"`
 	}
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if saved.AppID != f.platform.app.ID || saved.DeploymentID != accepted || saved.VerifiedDeploymentID != verified || saved.Environment != f.environment {
+	if saved.AppID != f.platform.app.ID || saved.DeploymentID != accepted || saved.VerifiedDeploymentID != verified || saved.Environment != f.environment || !saved.RequireEvidence {
 		t.Fatalf("session target/recovery IDs differ: %+v", saved)
 	}
 	if strings.Contains(string(data), f.platform.key) || strings.Contains(string(data), "normal-path:") || strings.Contains(string(data), "acceptance-marker") {
@@ -371,6 +372,38 @@ func TestE2E_Start_LaunchEditRedeploy(t *testing.T) {
 			s.wait(0)
 			t.Logf("verified app=%s scope=%s deployments=%s,%s", f.platform.app.ID, f.scope(), first.ID, second.ID)
 		})
+	}
+}
+
+func TestE2E_Start_InterruptedFirstLaunchResumesExactDeployment(t *testing.T) {
+	bin := buildGregale(t)
+	f := newStartAcceptanceFixture(t, bin, "start-first-resume", false, "")
+	s := f.start(t)
+	f.selectSource(s)
+	s.answer("Deploy this app (y/N) [n]: ", "y")
+	dep := f.accepted(t)
+	s.expect("Waiting for a builder")
+	if err := s.cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	s.wait(130)
+	f.assertSession(t, dep.ID, "")
+	f.publish(t, dep, "first-resumed")
+	s = f.start(t)
+	s.expect("Welcome back.")
+	s.answer("Choose [1]: ", "1")
+	s.expect("The gateway answered this health check")
+	s.answer("Choose [1]: ", "2")
+	s.answer("GET path [/healthz]: ", "/")
+	f.assertResponse(t, dep, "first-resumed", s)
+	if !strings.Contains(s.transcript(), "owner-authorized check") || strings.Contains(s.transcript(), "Verified URL") {
+		t.Fatal("resumed first launch claimed public deployment evidence without an owner check")
+	}
+	s.answer("Choose [1]: ", "1")
+	s.wait(0)
+	rows, err := f.platform.store.ListDeploymentsForApp(t.Context(), f.platform.app.ID, 10, 0)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("first-launch resume submitted another deployment: count=%d err=%v", len(rows), err)
 	}
 }
 

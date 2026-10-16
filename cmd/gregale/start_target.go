@@ -129,6 +129,9 @@ func (r *startRunner) resolveDeployTarget(ctx context.Context, client *Client, r
 	if err := r.verifyStartProject(ctx, client); err != nil {
 		return api.AppResponse{}, err
 	}
+	if err := r.requireStartCompatibility(ctx, client); err != nil {
+		return api.AppResponse{}, err
+	}
 	if !r.target.exists {
 		return client.CreateApp(ctx, req)
 	}

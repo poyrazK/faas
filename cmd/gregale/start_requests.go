@@ -90,7 +90,7 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 	var result startRequestResult
 	if api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) != api.AppVisibilityInternal && !app.RequireAuthn && (app.PublicAuth.Mode == "" || app.PublicAuth.Mode == api.AppPublicAuthModeOpen) {
 		result, err = r.requestPublic(app, path)
-		if err == nil && !result.edgeHealth && result.httpStatus >= 200 && result.httpStatus < 300 && result.servedDeployment == "" && (r.projectUpdates || r.session.RequireDeploymentEvidence) {
+		if err == nil && !result.edgeHealth && result.httpStatus >= 200 && result.httpStatus < 300 && result.servedDeployment == "" {
 			PrintProgress(osStdout, "The public response did not identify its deployment. Checking the selected deployment through your account...")
 			result, err = r.requestPrivate(app, path)
 			result.publicDeploymentCheck = true
@@ -102,45 +102,55 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 		if r.ctx.Err() != nil {
 			return 130
 		}
-		PrintWarn(osStdout, "The request did not complete. Check the recent app logs, then retry this check.")
+		var compatibility *startCompatibilityError
+		if errors.As(err, &compatibility) {
+			r.requestFailure.logsAllowed = false
+			if !compatibility.retryable {
+				r.requestFailure = nil
+				r.printRecovery()
+			}
+		} else {
+			PrintWarn(osStdout, "The request did not complete. Check the recent app logs, then retry this check.")
+		}
 		return printErr("Test request failed", err)
 	}
 	return r.verifyRequest(result, expectedGreeting)
 }
 
 func (r *startRunner) requestPrivate(app api.AppResponse, path string) (startRequestResult, error) {
+	if err := r.requireStartCompatibility(r.ctx, r.client); err != nil {
+		return startRequestResult{}, err
+	}
 	request := api.DeploymentResponseCheckRequest{AppID: r.session.AppID, Scope: scopeOrDefault(r.session.Environment), ProjectID: r.session.ProjectID, EnvironmentID: r.session.EnvironmentID, Path: path}
 	started := time.Now()
 	response, err := r.client.CheckDeploymentResponse(r.ctx, r.session.AppSlug, r.session.DeploymentID, request)
 	if err != nil {
-		var problem *APIError
-		if errors.As(err, &problem) && (problem.Problem.Status == http.StatusNotFound || problem.Problem.Status == http.StatusMethodNotAllowed) {
-			PrintWarn(osStdout, "The private deployment response could not be verified. This check needs server support for deployment response checks; no default-environment invocation was sent.")
-		}
-		return startRequestResult{}, err
+		return startRequestResult{}, startVerificationServiceError(err)
 	}
 	if !response.Matches(request, r.session.DeploymentID) {
-		return startRequestResult{}, errors.New("private response did not identify the accepted app, deployment, environment, and running replica")
+		return startRequestResult{}, errors.New("response did not identify the accepted app, deployment, environment, and running replica")
 	}
 	return startRequestResult{path: path, appURL: canonicalAppURL(app), body: response.Body, httpStatus: response.HTTPStatus, servedDeployment: response.DeploymentID, private: true, bodyTruncated: response.BodyTruncated, elapsed: time.Since(started)}, nil
 }
 
 func (r *startRunner) requestPublic(app api.AppResponse, path string) (startRequestResult, error) {
 	targetURL := canonicalAppURL(app)
-	if r.session.Environment != "" {
-		readCtx, cancel := context.WithTimeout(r.ctx, deploymentReceiptFetchTimeout)
-		defer cancel()
-		preview, err := r.client.GetDeploymentURL(readCtx, r.session.DeploymentID)
-		if err != nil {
+	readCtx, cancel := context.WithTimeout(r.ctx, deploymentReceiptFetchTimeout)
+	defer cancel()
+	preview, err := r.client.GetDeploymentURL(readCtx, r.session.DeploymentID)
+	if err != nil || !preview.Alive || preview.URL == "" {
+		if r.session.Environment != "" {
 			PrintWarn(osStdout, "The environment deployment URL could not be verified; no request was sent.")
-			return startRequestResult{}, fmt.Errorf("get environment deployment URL: %w", err)
-		}
-		if !preview.Alive || preview.DeploymentID != r.session.DeploymentID || preview.AppID != r.session.AppID || preview.URL == "" {
+			if err != nil {
+				return startRequestResult{}, fmt.Errorf("get environment deployment URL: %w", err)
+			}
 			return startRequestResult{}, errors.New("no live URL matching the accepted environment deployment is available; inspect its deployment URL and retry this check")
 		}
+	} else {
+		if preview.DeploymentID != r.session.DeploymentID || preview.AppID != r.session.AppID {
+			return startRequestResult{}, errors.New("the deployment URL does not match the accepted app and deployment in this environment; no request was sent")
+		}
 		targetURL = preview.URL
-	} else if preview := deploymentPreviewURL(r.ctx, r.client, r.session.DeploymentID); preview != "" {
-		targetURL = preview
 	}
 	base, err := url.Parse(targetURL)
 	if err != nil || base.Host == "" || base.User != nil || (base.Scheme != "https" && base.Scheme != "http") {
@@ -200,14 +210,14 @@ func (r *startRunner) verifyRequest(result startRequestResult, expectedGreeting 
 		PrintWarn(osStdout, "%s", startHTTPFailureHint(result.httpStatus))
 		return 1
 	}
-	if result.servedDeployment != "" && r.session.DeploymentID != "" && result.servedDeployment != r.session.DeploymentID {
+	if r.session.DeploymentID == "" || result.servedDeployment == "" {
 		r.renderRequestDetails(result, false)
-		PrintWarn(osStdout, "The request reached deployment %s, while this session deployed %s. Inspect traffic before retrying.", startResponseText(result.servedDeployment), r.session.DeploymentID)
+		PrintWarn(osStdout, "The response did not identify the accepted deployment. Inspect its routing or retry this check before treating the launch as verified.")
 		return 1
 	}
-	if (r.projectUpdates || r.session.RequireDeploymentEvidence) && result.servedDeployment == "" {
+	if result.servedDeployment != r.session.DeploymentID {
 		r.renderRequestDetails(result, false)
-		PrintWarn(osStdout, "The response did not identify the new deployment. Inspect its routing or retry this check before treating the update as verified.")
+		PrintWarn(osStdout, "The request reached deployment %s, while this session deployed %s. Inspect traffic before retrying.", startResponseText(result.servedDeployment), r.session.DeploymentID)
 		return 1
 	}
 	if expectedGreeting != "" && startResponseGreeting(result.body) != expectedGreeting {

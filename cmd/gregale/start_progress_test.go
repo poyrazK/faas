@@ -36,7 +36,8 @@ func TestStartSuccessResponsePreviewStaysShortAndSanitized(t *testing.T) {
 	stdout, _ := startTestEnvironment(t)
 	runner := startTestRunner(t, startTestSource(t), "")
 	runner.startedAt = time.Now().Add(-3 * time.Second)
-	result := startRequestResult{path: "/", appURL: "https://preview.example.test/", httpStatus: 200, body: strings.Repeat("line\x1b\n", 30), elapsed: 42 * time.Millisecond}
+	runner.session.DeploymentID = startResponseDeploymentID
+	result := startRequestResult{path: "/", appURL: "https://preview.example.test/", httpStatus: 200, servedDeployment: startResponseDeploymentID, body: strings.Repeat("line\x1b\n", 30), elapsed: 42 * time.Millisecond}
 	if code := runner.verifyRequest(result, ""); code != 0 {
 		t.Fatalf("code=%d stdout=%s", code, stdout)
 	}

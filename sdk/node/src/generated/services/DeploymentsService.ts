@@ -17,6 +17,7 @@ import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
+import type { DeploymentResponseCheckCapabilities } from '../models/DeploymentResponseCheckCapabilities.js';
 import type { DeploymentResponseCheckRequest } from '../models/DeploymentResponseCheckRequest.js';
 import type { DeploymentResponseCheckResult } from '../models/DeploymentResponseCheckResult.js';
 import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeResponse.js';
@@ -2270,6 +2271,37 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The SBOM populator has not produced an artefact for this build (code=build_sbom_unavailable), or the storage backend failed (code=capacity_unavailable).`,
+      },
+    });
+  }
+  /**
+   * Read deployment response-check compatibility before deploying.
+   * Requires deployment-write access. This read-only preflight does not require
+   * MFA, resolve an app, allocate capacity, create work, or contact a guest.
+   * Queries the configured gateway control listener with a three-second bound
+   * and returns protocol support and forwarding configuration. An unavailable
+   * gateway is reported in a 200 response with available=false and a stable
+   * unavailable_reason: gateway_unsupported, gateway_unconfigured, or
+   * gateway_unavailable. Account credentials and internal addresses are not
+   * forwarded or returned. A successful preflight is not a capacity or future
+   * availability guarantee. Responses use Cache-Control: no-store.
+   *
+   * @returns DeploymentResponseCheckCapabilities Current API/gateway compatibility; never cached.
+   * @throws ApiError
+   */
+  public static getDeploymentResponseCheckCapabilities(): CancelablePromise<DeploymentResponseCheckCapabilities> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/response-check/capabilities',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }

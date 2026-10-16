@@ -1396,6 +1396,7 @@ var methodRouteMap = map[string]string{
 	// conforms to the SDK's flat resource naming.
 	"POST /v1/apps/{slug}/invoke":                                  "InvokeApp",
 	"POST /v1/apps/{slug}/deployments/{deployment}/response-check": "CheckDeploymentResponse",
+	"GET /v1/deployments/response-check/capabilities":              "GetDeploymentResponseCheckCapabilities",
 	"POST /v1/apps/{slug}/invoke/async":                            "InvokeAppAsync",
 	"POST /v1/apps/{slug}/entities/invoke":                         "InvokeDurableEntity",
 	"GET /v1/apps/{slug}/entities/inspect":                         "InspectDurableEntity",

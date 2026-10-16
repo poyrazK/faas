@@ -47,7 +47,7 @@ func (c deploymentResponseChecker) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		c.problem(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if c.store == nil || c.picker == nil || c.ensure == nil || c.forward == nil {
+	if !c.configured() {
 		c.problem(w, http.StatusServiceUnavailable, deploymentCheckUnavailable, "deployment response check is not configured")
 		return
 	}

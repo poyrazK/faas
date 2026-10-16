@@ -18,6 +18,14 @@ whether to update it or create an app with another name. The review shows your
 account's app allowance and compute usage when available. Build logs are available
 through `gregale logs`.
 
+Start checks server compatibility before review and again before remote changes.
+An incompatible installation or verification-service outage stops submission with
+guidance; an earlier saved launch remains recoverable. Update the installation or
+retry when the service is available, then run `gregale start` again.
+If an upload's acceptance reply is lost, run Start again to check its saved
+pending submission before launching another revision. Supported upload sessions
+recover the exact accepted deployment without uploading source again.
+
 If the selected source is linked with `gregale link`, Start uses its project,
 app, and environment. A linked project with several workloads and no default app
 offers a workload picker. The review shows the selected target; configuration
@@ -60,7 +68,8 @@ accepted deployment and environment. They report the actual HTTP status without
 forwarding account credentials to the app. Application-owned authentication can
 still deny the GET; a private check does not establish public access. Older servers
 need deployment response-check support before these checks can complete.
-Updates require evidence for the accepted deployment. A successful public response
+Every launch, including the first launch and resumed sessions, requires evidence
+for the accepted deployment. A successful public response
 that omits its deployment identity is followed by an owner-authorized check,
 labeled separately from public URL verification. Gateway health responses cannot
 verify the app; choose another GET path that reaches an application route.

@@ -23,6 +23,12 @@ with a saved login, the healthy path needs just two answers:
 
 Browser login appears only when needed. Starters ask for a language (Node.js,
 Python, or Go) and a local directory. Recognized workspaces offer a service picker.
+Before deployment review, Start checks that the server can verify the accepted
+deployment. It repeats this read immediately before creating an app, configuring
+secrets, or uploading source. Unsupported installations show version/configuration
+guidance; a temporary service outage asks you to retry later. These checks submit
+no remote work and keep any previous saved launch. They take at most five seconds
+per read and do not guarantee that capacity will remain available after review.
 Start uses the selected source's nearest `.gregale/project.json` when it is linked
 with `gregale link`. It verifies the project, workload membership, and any named
 environment, then shows that target in the review. A project without a default
@@ -65,6 +71,9 @@ path. The check reports the actual HTTP status and a response preview; an HTTP
 401 or 403 from application-owned authentication remains a failed check.
 For named environments, public checks require a live URL identifying the accepted
 app and deployment. An unavailable URL stops the check.
+Default-environment preview URLs must also identify the accepted app and deployment
+before Start sends a request. An unavailable default preview can use the app URL;
+the response must still supply accepted-deployment evidence.
 The success screen shows the exact public URL that answered, including the tested
 health path or deployment preview, response time, and total session time. Private
 app URLs are labeled separately because an owner-authorized check does not verify
@@ -74,12 +83,20 @@ checks have a 20-second bound and a 4096-byte UTF-8 response preview, with trunc
 shown explicitly. Response previews show up to eight lines. Older servers without
 response-check support fail visibly; Start never substitutes a default-environment
 invocation. Deploy gatewayd-internal support before enabling the new API/CLI flow.
-Serving deployment headers are checked against the accepted deployment when present.
-For an update or resumed update, a successful public response without deployment
+Every launch, including a first launch or an older saved session, requires evidence
+identifying the accepted deployment. Serving deployment headers must match it.
+A successful public response without deployment
 identity is followed by an owner-authorized check of the accepted deployment.
 That result is labeled as an owner check and does not claim public URL verification.
+If an older server cannot provide this check, the launch remains unverified and
+keeps its accepted ID for recovery; an HTTP 200 alone cannot mark it successful.
 Public denials, redirects, edge health answers, and mismatched deployment headers
 remain failures; they do not trigger this check.
+If server support disappears while continuing an accepted launch, Start prints
+the saved deployment ID and instructions to check the installation and CLI versions.
+It does not offer app logs or alternate paths for an incompatible server. A
+temporary verification-service outage offers retry or finish while keeping the
+accepted ID. Retrying after recovery submits no replacement deployment.
 If the request fails, the session explains the failure and stays open. Retry the
 GET check on the accepted deployment, view recent app logs, choose another
 app-relative GET path, or finish. This also helps when a root route redirects or
@@ -148,6 +165,24 @@ deployment IDs, revisions, status, timestamps, and health paths without query st
 Local source comparisons and file hashes stay in memory. Tokens, secret values,
 secrets-file paths, greetings, response bodies, and request
 query values are omitted. Concurrent sessions in the same directory are refused.
+
+If the server accepts source but its reply is lost, a saved pending submission
+lets Start recover the exact deployment through its upload ID. This check happens
+before another launch can be offered, and an update keeps its previous accepted
+and verified IDs until the new ID is recovered. A fully uploaded source can
+continue its original commit. Recovery of a committed upload uses reads only;
+it does not need the source files or the normal upload cache, and does not repeat
+app creation, secrets or source upload. The normal readiness and response checks
+still have to succeed.
+
+The pending record adds only a retry key, transport, upload ID and byte count.
+An older CLI refuses a pending record; after recovery the record remains readable
+by older versions. Missing discovery records, service outages or changed target
+identities keep the launch pending. You can finish and keep its record. You can
+also cancel an unfinished upload before reviewing source again; a committed
+deployment is recovered rather than cancelled. On older servers using legacy
+multipart upload, an uncertain reply needs manual deployment-history inspection.
+Start preserves that record and does not automatically submit another deployment.
 
 The deployment wait uses the normal 1200-second default. Timeout returns exit code
 3; interruption returns 130. For a custom timeout or automation, use `gregale deploy`.

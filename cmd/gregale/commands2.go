@@ -2226,6 +2226,8 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	onQueued         func(api.DeploymentResponse)
+	onSubmission     func(deploySubmission) error
+	onUploadSession  func(deployUploadIdentity) error
 	onSourceSync     func(time.Duration, error)
 	onStage          func(string, string, int64, string)
 	onTerminal       func(api.DeploymentResponse) int
@@ -4163,8 +4165,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			var uploadErr error
 			uploadCtx := api.ContextWithIdempotencyKey(ctx, deployKey)
-			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, uploadCtx, slug, *tarball, progress, uploadOptions)
+			if err := execution.preparingSubmission(deployKey, "resumable", resolvedApp.ID, *tarball); err != nil {
+				return printErr("Could not save source submission", err)
+			}
+			dep, sourceSHA256, usedResumable, uploadErr = deployResumableTarball(client, uploadCtx, slug, *tarball, progress, execution.onUploadSession, uploadOptions)
 			if uploadErr == nil && !usedResumable {
+				if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
+					return printErr("Could not save source submission", err)
+				}
 				multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
 				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			}
@@ -4177,6 +4185,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		} else {
 			var deployErr error
+			if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
+				return printErr("Could not save source submission", err)
+			}
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
 			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {

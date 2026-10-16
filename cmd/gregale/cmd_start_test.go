@@ -79,11 +79,19 @@ func startTestRunner(t *testing.T, source, input string) *startRunner {
 	}
 }
 
-func startTestAPI(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+func startTestAPI(t *testing.T, handler http.HandlerFunc, compatibility ...http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/account" {
 			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: "acct-1", Email: "person@example.test", Plan: "free", Status: "active"})
+			return
+		}
+		if r.URL.Path == "/v1/deployments/response-check/capabilities" && r.Method == http.MethodGet {
+			if len(compatibility) != 0 {
+				compatibility[0](w, r)
+			} else {
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponseCheckCapabilities{ProtocolVersion: api.DeploymentResponseCheckProtocolVersion, Available: true})
+			}
 			return
 		}
 		handler(w, r)
@@ -173,6 +181,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 		if r.Header.Get("Authorization") != "" {
 			t.Error("account credentials sent to public app")
 		}
+		w.Header().Set(api.DeploymentIDHeader, "d1")
 		_, _ = fmt.Fprint(w, "Hello from Gregale!")
 	}))
 	defer public.Close()
@@ -236,7 +245,7 @@ func TestCmdStartLaunchAndPublicRequest(t *testing.T) {
 		}
 	}
 	saved, _, err := loadStartSession(statePath)
-	if err != nil || saved.Status != "live" || saved.DeploymentID != "d1" {
+	if err != nil || saved.Status != "live" || saved.DeploymentID != "d1" || !saved.RequireDeploymentEvidence {
 		t.Fatalf("saved result=%+v err=%v", saved, err)
 	}
 }
