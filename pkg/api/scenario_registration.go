@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"time"
 )
 
 // ScenarioTestRegistration exposes immutable workload IDs, never credentials.
 type ScenarioTestRegistration struct {
 	SchemaVersion int               `json:"schema_version"`
 	Members       map[string]string `json:"members"`
+	ExpiresAt     *time.Time        `json:"expires_at,omitempty"`
+	ExpiryState   string            `json:"expiry_state,omitempty"`
 }
 
 func ScenarioTestRegistrationSHA256(members map[string]string) string {

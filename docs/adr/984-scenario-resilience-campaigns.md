@@ -217,3 +217,13 @@ stability checks. Changing evidence invalidates the completion claim. Shared
 claims and runner locks are inspected without acquisition. The exported summary
 is informational, cannot waive recorded failures, grant coverage, refund budget,
 or reopen sealed or transferred work.
+
+Registration expiry is captured by the server from each member's preview lease;
+the namespace deadline is the latest persisted member deadline. The preview
+janitor may remove an expired namespace only after all member apps are deleted.
+Discovery is bounded by runs and grants no mutation authority: PostgreSQL
+serializes with registration/manual cleanup, compares discovered membership and
+deadline, and locks member apps before deleting membership and match evidence.
+Unknown legacy deadlines remain for explicit cleanup. Expiry observations are
+informational and cannot establish resource absence or test completion. The
+janitor does not extend its ownership to sessions or consumer credentials.

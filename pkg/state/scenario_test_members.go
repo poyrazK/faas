@@ -22,10 +22,11 @@ import (
 // Membership persists through soft deletion so no test app can fall back to
 // a production service while its VM is being drained.
 type ScenarioTestMember struct {
-	AccountID string
-	RunID     string
-	Workload  string
-	AppID     string
+	AccountID             string
+	RunID                 string
+	Workload              string
+	AppID                 string
+	RegistrationExpiresAt *time.Time
 }
 
 // ScenarioTestDNSChaosPolicy is the verified caller identity and run lease
@@ -76,17 +77,18 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 	}
 	for _, member := range members {
 		var eligible bool
+		var expiresAt time.Time
 		err := tx.QueryRow(ctx, `select account_id = $2 and preview_of_slug is not null and preview_pr_number = 0
 			and status <> 'deleted' and preview_pr_state = 'open' and preview_expires_at > now()
-			from apps where id = $1`, member.AppID, accountID).Scan(&eligible)
+			, coalesce(preview_expires_at, now()) from apps where id = $1 for share`, member.AppID, accountID).Scan(&eligible, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !eligible) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("validate scenario test app: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `insert into scenario_test_members (account_id, run_id, workload_name, app_id)
-			values ($1, $2, $3, $4)`, accountID, runID, member.Workload, member.AppID); err != nil {
+		if _, err := tx.Exec(ctx, `insert into scenario_test_members (account_id, run_id, workload_name, app_id, registration_expires_at)
+			values ($1, $2, $3, $4, $5)`, accountID, runID, member.Workload, member.AppID, expiresAt); err != nil {
 			return mapErr(err)
 		}
 	}
@@ -95,13 +97,17 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 
 func (s *PgStore) ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error) {
 	var member ScenarioTestMember
-	err := s.pool.QueryRow(ctx, `select account_id, run_id, workload_name, app_id
-		from scenario_test_members where app_id = $1`, appID).Scan(&member.AccountID, &member.RunID, &member.Workload, &member.AppID)
+	var expiry pgtype.Timestamptz
+	err := s.pool.QueryRow(ctx, `select account_id, run_id, workload_name, app_id, registration_expires_at
+		from scenario_test_members where app_id = $1`, appID).Scan(&member.AccountID, &member.RunID, &member.Workload, &member.AppID, &expiry)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ScenarioTestMember{}, ErrNotFound
 	}
 	if err != nil {
 		return ScenarioTestMember{}, fmt.Errorf("load scenario test member: %w", err)
+	}
+	if expiry.Valid && expiry.InfinityModifier == pgtype.Finite {
+		member.RegistrationExpiresAt = &expiry.Time
 	}
 	return member, nil
 }
@@ -141,6 +147,8 @@ func (m *MemStore) RegisterScenarioTestMembers(_ context.Context, accountID, run
 	for _, member := range members {
 		member.AccountID = accountID
 		member.RunID = runID
+		expiry := *m.apps[member.AppID].PreviewExpiresAt
+		member.RegistrationExpiresAt = &expiry
 		m.scenarioTestMembers[member.AppID] = member
 	}
 	return nil
@@ -152,6 +160,10 @@ func (m *MemStore) ScenarioTestMemberByApp(_ context.Context, appID string) (Sce
 	member, ok := m.scenarioTestMembers[appID]
 	if !ok {
 		return ScenarioTestMember{}, ErrNotFound
+	}
+	if member.RegistrationExpiresAt != nil {
+		expiry := *member.RegistrationExpiresAt
+		member.RegistrationExpiresAt = &expiry
 	}
 	return member, nil
 }
@@ -785,108 +797,4 @@ func (s *PgStore) DeleteScenarioTestMembers(ctx context.Context, accountID, runI
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-func (m *MemStore) ScenarioTestRegistration(_ context.Context, accountID, runID string) (map[string]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	members := map[string]string{}
-	for _, member := range m.scenarioTestMembers {
-		if member.AccountID == accountID && member.RunID == runID {
-			members[member.Workload] = member.AppID
-		}
-	}
-	if len(members) == 0 {
-		return nil, ErrNotFound
-	}
-	return members, nil
-}
-func (s *PgStore) ScenarioTestRegistration(ctx context.Context, accountID, runID string) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `select workload_name,app_id::text from scenario_test_members where account_id=$1 and run_id=$2`, accountID, runID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	members := map[string]string{}
-	for rows.Next() {
-		var name, id string
-		if err := rows.Scan(&name, &id); err != nil {
-			return nil, err
-		}
-		members[name] = id
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(members) == 0 {
-		return nil, ErrNotFound
-	}
-	return members, nil
-}
-
-func (s *PgStore) PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error) {
-	if maxRuns < 1 {
-		return 0, nil
-	}
-	result, err := s.pool.Exec(ctx, `with finished as (
-		select m.account_id, m.run_id from scenario_test_members m
-		join apps a on a.id = m.app_id
-		group by m.account_id, m.run_id
-		having bool_and(a.status = 'deleted')
-		limit $1
-	), removed_matches as (
-		delete from scenario_test_chaos_matches c using finished f
-		where c.account_id = f.account_id and c.run_id = f.run_id
-		returning c.run_id
-	)
-	delete from scenario_test_members m using finished f
-	where m.account_id = f.account_id and m.run_id = f.run_id`, maxRuns)
-	if err != nil {
-		return 0, fmt.Errorf("prune scenario test members: %w", err)
-	}
-	return int(result.RowsAffected()), nil
-}
-
-func (m *MemStore) PruneScenarioTestMembers(_ context.Context, maxRuns int) (int, error) {
-	if maxRuns < 1 {
-		return 0, nil
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	groups := make(map[string]bool)
-	for _, member := range m.scenarioTestMembers {
-		key := member.AccountID + "\x00" + member.RunID
-		if _, seen := groups[key]; !seen {
-			groups[key] = true
-		}
-		if app, ok := m.apps[member.AppID]; ok && app.Status != AppDeleted {
-			groups[key] = false
-		}
-	}
-	deleted := 0
-	prunedGroups := 0
-	for appID, member := range m.scenarioTestMembers {
-		if prunedGroups >= maxRuns {
-			break
-		}
-		key := member.AccountID + "\x00" + member.RunID
-		if groups[key] {
-			delete(m.scenarioTestMembers, appID)
-			deleted++
-			// Count the group once, after its final member is removed.
-			remaining := false
-			for _, other := range m.scenarioTestMembers {
-				if other.AccountID == member.AccountID && other.RunID == member.RunID {
-					remaining = true
-					break
-				}
-			}
-			if !remaining {
-				prunedGroups++
-				delete(m.scenarioTestChaosPlans, key)
-				m.deleteScenarioChaosMatchesLocked(member.AccountID, member.RunID)
-			}
-		}
-	}
-	return deleted, nil
 }

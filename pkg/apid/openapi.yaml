@@ -15905,6 +15905,39 @@ paths:
         required: true
         description: Lowercase hexadecimal ID shared only by sessions in this test run.
         schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    get:
+      tags: [dev]
+      operationId: getScenarioTestRegistration
+      summary: Inspect test namespace membership and its persisted expiry.
+      description: >-
+        Expiry is derived from member session leases at registration. An expired
+        namespace remains present until every member session is deleted and the
+        bounded janitor removes it, or explicit conditional cleanup succeeds.
+        Unknown legacy deadlines are never automatically expired. Empty membership
+        explicitly confirms absence; expiry alone does not.
+      responses:
+        '200':
+          description: Versioned membership and server-observed expiry status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema_version, members, expiry_state]
+                properties:
+                  schema_version: { type: integer, enum: [1] }
+                  members:
+                    type: object
+                    additionalProperties: { type: string }
+                  expires_at:
+                    type: string
+                    format: date-time
+                    description: Latest persisted member deadline; omitted for unknown or absent registrations.
+                  expiry_state:
+                    type: string
+                    enum: [pending, expired, unknown, absent]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     put:
       tags: [dev]
       operationId: registerScenarioTest

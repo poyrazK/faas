@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestScenarioRegistrationReadAndConditionalDelete(t *testing.T) {
@@ -17,7 +18,7 @@ func TestScenarioRegistrationReadAndConditionalDelete(t *testing.T) {
 		}
 		if r.Method == "GET" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"schema_version":1,"members":{"app":"one","worker":"two"}}`))
+			_, _ = w.Write([]byte(`{"schema_version":1,"members":{"app":"one","worker":"two"},"expires_at":"2026-10-01T00:00:00Z","expiry_state":"expired"}`))
 			return
 		}
 		if r.Method != "DELETE" || r.URL.Path != "/v1/dev/test-runs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/registration" || r.URL.Query().Get("members_sha256") != digest {
@@ -29,7 +30,7 @@ func TestScenarioRegistrationReadAndConditionalDelete(t *testing.T) {
 	defer server.Close()
 	client := NewClient(server.URL, "test-token")
 	registration, err := client.GetScenarioTestRegistration(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-	if err != nil || registration.SchemaVersion != 1 || ScenarioTestRegistrationSHA256(registration.Members) != digest {
+	if err != nil || registration.SchemaVersion != 1 || ScenarioTestRegistrationSHA256(registration.Members) != digest || registration.ExpiryState != "expired" || registration.ExpiresAt == nil || !registration.ExpiresAt.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatal("registration response lost", registration, err)
 	}
 	if err := client.DeleteScenarioTestRegistration(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", digest); err != nil || deletes != 1 {

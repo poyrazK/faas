@@ -151,7 +151,7 @@ def main():
             return 1
         registration_contracts = run("registration-contracts", [go, "test", "-p=1",
             STATE_GCFLAGS, "-count=1",
-            "-run", "^(TestScenarioRegistration|TestScenarioTest(Members|Conditional))", "./pkg/api", "./pkg/state"])
+            "-run", "^(TestScenarioRegistration|TestScenarioTest(Members|Conditional|Expiry)|TestPgStoreScenario(TestMembers|ConditionalCleanup))", "./pkg/api", "./pkg/state"])
         if not registration_contracts["passed"]:
             return 1
         registration_api = run("registration-api", [go, "test", "-p=1", STATE_GCFLAGS,

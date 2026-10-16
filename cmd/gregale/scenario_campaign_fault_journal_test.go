@@ -17,6 +17,8 @@ type campaignFaultAPI struct {
 	members          map[string]string
 	revokes, deletes int
 	fail             bool
+	expiry           *time.Time
+	expiryState      string
 }
 
 func (f *campaignFaultAPI) GetAPIConsumer(context.Context, string, string) (api.APIConsumerResponse, error) {
@@ -34,7 +36,7 @@ func (f *campaignFaultAPI) GetScenarioTestRegistration(context.Context, string) 
 	if f.members == nil {
 		return api.ScenarioTestRegistration{}, errors.New("unsupported registration API")
 	}
-	return api.ScenarioTestRegistration{SchemaVersion: 1, Members: f.members}, nil
+	return api.ScenarioTestRegistration{SchemaVersion: 1, Members: f.members, ExpiresAt: f.expiry, ExpiryState: f.expiryState}, nil
 }
 func (f *campaignFaultAPI) DeleteScenarioTestRegistration(_ context.Context, _ string, digest string) error {
 	if digest != api.ScenarioTestRegistrationSHA256(f.members) {
@@ -125,13 +127,30 @@ func TestCampaignFaultCompletionDoesNotForgeExecution(t *testing.T) {
 	if err := writeTestCampaignJSON(filepath.Join(directory, "checkpoint.json"), cp); err != nil {
 		t.Fatal(err)
 	}
-	client := &campaignFaultAPI{members: map[string]string{project: "owned"}}
+	past := time.Now().UTC().Add(-time.Hour)
+	client := &campaignFaultAPI{members: map[string]string{project: "owned"}, expiry: &past, expiryState: "expired"}
 	report := testCampaignRecoveryCompletion{RecoveryComplete: true, ResourceEvidenceComplete: true}
 	applyTestCampaignFaultCompletion(context.Background(), &report, client, plan, cp, scenarios, directory, false)
 	if !report.FaultResourcesVerified || report.FaultResourcesAbsent || report.RecoveryComplete {
 		t.Fatal("live namespace certified absent")
 	}
+	if len(report.FaultResources) != 1 || report.FaultResources[0].RegistrationExpiryState != "expired" || report.FaultResources[0].RegistrationExpiresAt == nil {
+		t.Fatal("completion lost expired registration status")
+	}
+	client.expiry, client.expiryState = nil, ""
+	report = testCampaignRecoveryCompletion{ResourceEvidenceComplete: true}
+	applyTestCampaignFaultCompletion(context.Background(), &report, client, plan, cp, scenarios, directory, false)
+	if !report.FaultResourcesVerified || report.FaultResourcesAbsent || len(report.FaultResources) != 1 || report.FaultResources[0].RegistrationExpiryState != "unknown" {
+		t.Fatal("older API expiry capability was guessed")
+	}
+	client.expiryState = "expired"
+	report = testCampaignRecoveryCompletion{ResourceEvidenceComplete: true}
+	applyTestCampaignFaultCompletion(context.Background(), &report, client, plan, cp, scenarios, directory, false)
+	if report.FaultResourcesVerified || report.FaultResourcesAbsent {
+		t.Fatal("malformed expiry metadata was accepted")
+	}
 	client.members = map[string]string{}
+	client.expiry, client.expiryState = nil, "absent"
 	report = testCampaignRecoveryCompletion{ResourceEvidenceComplete: true}
 	applyTestCampaignFaultCompletion(context.Background(), &report, client, plan, cp, scenarios, directory, false)
 	if !report.FaultResourcesAbsent || report.RecoveryComplete || report.TestExecutionComplete {

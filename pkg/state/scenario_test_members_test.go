@@ -77,6 +77,11 @@ func TestScenarioTestMembersFenceAndCleanup(t *testing.T) {
 	if _, err := store.SoftDeleteAppCascade(ctx, second.ID); err != nil {
 		t.Fatal(err)
 	}
+	for id, member := range store.scenarioTestMembers {
+		past := time.Now().Add(-time.Hour)
+		member.RegistrationExpiresAt = &past
+		store.scenarioTestMembers[id] = member
+	}
 	if removed, err := store.PruneScenarioTestMembers(ctx, 10); err != nil || removed != 1 {
 		t.Fatalf("prune deleted run = (%d, %v)", removed, err)
 	}

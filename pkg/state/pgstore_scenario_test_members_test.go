@@ -12,7 +12,7 @@ import (
 )
 
 func TestPgStoreScenarioTestMembers(t *testing.T) {
-	store, ctx := pgStore(t)
+	store, pool, ctx := pgStoreWithPool(t)
 	account, err := store.CreateAccount(ctx, "scenario-members-pg@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +53,9 @@ func TestPgStoreScenarioTestMembers(t *testing.T) {
 		if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := pool.Exec(ctx, `update scenario_test_members set registration_expires_at=now()-interval '1 minute' where account_id=$1 and run_id=$2`, account.ID, runID); err != nil {
+		t.Fatal(err)
 	}
 	if removed, err := store.PruneScenarioTestMembers(ctx, 1); err != nil || removed != 2 {
 		t.Fatalf("prune finished run = (%d, %v)", removed, err)

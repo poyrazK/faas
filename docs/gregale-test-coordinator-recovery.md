@@ -148,9 +148,27 @@ dedicated acceptance account; a cloud workspace without KVM cannot qualify it.
 New campaign journals record registration intent before the namespace API call,
 and consumer creation intent before provisioning. They retain workload app IDs,
 consumer IDs, app slugs, run-specific external references and requested key expiry
-times. They never store consumer keys or run secrets. Namespace membership has
-no independent expiry deadline; deleting expired sessions alone does not prove
-that its registration rows are gone.
+times. They never store consumer keys or run secrets. Namespace registrations
+also persist the member session deadlines captured by the server at registration.
+The run expires at the latest known member deadline. Extending a session lease
+does not extend that captured deadline, but a live member always blocks removal.
+Deleting expired sessions alone does not prove that registration rows are gone.
+
+The existing preview janitor sweeps a bounded number of expired registrations
+after every member app has been deleted. PostgreSQL rechecks the discovered
+membership and deadline under the same run lock used by registration and manual
+cleanup, and locks member apps before removal. Busy or changed runs are skipped
+for a later sweep. The sweep never deletes sessions or revokes consumers.
+Explicit cleanup can still remove a verified namespace before its deadline.
+
+The expiry migration captures existing finite member session deadlines; missing
+deadlines and registrations from older server binaries remain `unknown` and
+require explicit cleanup. Deploy the migration before the updated API. Its read
+response adds `expires_at` and `expiry_state` (`pending`, `expired`, `unknown`, or
+`absent`). Cleanup and completion observations include
+`registration_expires_at` and `registration_expiry_state`; an older API without
+expiry metadata is reported as unknown. Expiry is informational and never
+substitutes for fresh membership/session absence checks or execution evidence.
 
 After verifying all workers have terminated and recovering their locks, run:
 

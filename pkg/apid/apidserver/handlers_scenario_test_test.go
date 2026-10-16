@@ -43,7 +43,7 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 	}
 	registration := e.Do(t, "GET", path, nil, nil)
 	var inventory api.ScenarioTestRegistration
-	if registration.Code != 200 || json.Unmarshal(registration.Body.Bytes(), &inventory) != nil || inventory.SchemaVersion != 1 || inventory.Members["api"] != apiSession.App.ID {
+	if registration.Code != 200 || json.Unmarshal(registration.Body.Bytes(), &inventory) != nil || inventory.SchemaVersion != 1 || inventory.Members["api"] != apiSession.App.ID || inventory.ExpiresAt == nil || inventory.ExpiryState != "pending" {
 		t.Fatalf("registration inventory: %d %s", registration.Code, registration.Body.String())
 	}
 	chaosPath := path + "/chaos"

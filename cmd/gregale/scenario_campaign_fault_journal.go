@@ -46,9 +46,11 @@ type testCampaignFaultClient interface {
 	RevokeAPIConsumer(context.Context, string, string) (api.APIConsumerResponse, error)
 }
 type testCampaignFaultObservation struct {
-	RunID        string            `json:"run_id"`
-	Registration string            `json:"registration"`
-	Consumers    map[string]string `json:"consumers"`
+	RunID                   string            `json:"run_id"`
+	Registration            string            `json:"registration"`
+	Consumers               map[string]string `json:"consumers"`
+	RegistrationExpiresAt   *time.Time        `json:"registration_expires_at,omitempty"`
+	RegistrationExpiryState string            `json:"registration_expiry_state"`
 }
 
 // Read and validate all journals before issuing even the first mutation.
@@ -156,7 +158,11 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 			return observations, err
 		} else if live.SchemaVersion != 1 || live.Members == nil {
 			return observations, errors.New("registration lookup capability unavailable")
-		} else if len(live.Members) == 0 {
+		}
+		if err := observeTestCampaignRegistrationExpiry(&observation, live); err != nil {
+			return observations, err
+		}
+		if len(live.Members) == 0 {
 			observation.Registration = "absent"
 		} else {
 			if j.Faults.Registration == "pending" || j.Faults.Registration == "deleted" {
@@ -184,11 +190,44 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 					return observations, errors.New("registration absence not confirmed")
 				}
 				observation.Registration = "absent"
+				if err := observeTestCampaignRegistrationExpiry(&observation, confirmed); err != nil {
+					return observations, err
+				}
 			}
 		}
 		observations = append(observations, observation)
 	}
 	return observations, nil
+}
+
+// Expiry is informational: an elapsed deadline never replaces a live absence
+// check, and older APIs with no expiry capability remain explicitly unknown.
+func observeTestCampaignRegistrationExpiry(out *testCampaignFaultObservation, live api.ScenarioTestRegistration) error {
+	state := live.ExpiryState
+	if state == "" {
+		state = "unknown"
+		if len(live.Members) == 0 {
+			state = "absent"
+		}
+	}
+	switch state {
+	case "pending", "expired":
+		if len(live.Members) == 0 || live.ExpiresAt == nil || live.ExpiresAt.IsZero() {
+			return errors.New("registration expiry metadata incomplete")
+		}
+	case "unknown":
+		if len(live.Members) == 0 || live.ExpiresAt != nil {
+			return errors.New("invalid unknown registration expiry")
+		}
+	case "absent":
+		if len(live.Members) != 0 || live.ExpiresAt != nil {
+			return errors.New("registration expiry does not prove absence")
+		}
+	default:
+		return errors.New("unknown registration expiry state")
+	}
+	out.RegistrationExpiryState, out.RegistrationExpiresAt = state, live.ExpiresAt
+	return nil
 }
 
 // Persist observations apart from immutable execution receipts. No credential

@@ -1914,8 +1914,9 @@ type Store interface {
 	// Membership is removed only after its apps are soft-deleted.
 	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string, expected ...string) error
 	ScenarioTestRegistration(ctx context.Context, accountID, runID string) (map[string]string, error)
+	ScenarioTestRegistrationStatus(ctx context.Context, accountID, runID string) (api.ScenarioTestRegistration, error)
 	// PruneScenarioTestMembers removes abandoned namespaces only after every
-	// member app is soft-deleted by the preview janitor.
+	// member app is soft-deleted and the persisted registration deadline expired.
 	PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error)
 	// ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) lists
 	// every non-deleted preview row for the account, across all

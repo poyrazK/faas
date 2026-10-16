@@ -179,14 +179,14 @@ func (s *server) getScenarioTestRegistration(w http.ResponseWriter, r *http.Requ
 		s.notFound(w, "no such test environment")
 		return
 	}
-	members, err := s.store.ScenarioTestRegistration(r.Context(), acct.ID, runID)
+	inventory, err := s.store.ScenarioTestRegistrationStatus(r.Context(), acct.ID, runID)
 	if errors.Is(err, state.ErrNotFound) {
-		writeJSON(w, http.StatusOK, api.ScenarioTestRegistration{SchemaVersion: 1, Members: map[string]string{}})
+		writeJSON(w, http.StatusOK, api.ScenarioTestRegistration{SchemaVersion: 1, Members: map[string]string{}, ExpiryState: "absent"})
 		return
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("read test registration"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.ScenarioTestRegistration{SchemaVersion: 1, Members: members})
+	writeJSON(w, http.StatusOK, inventory)
 }
