@@ -18,7 +18,7 @@ export type CustomMetricSeriesResponse = {
    */
   step: string;
   /**
-   * "prometheus" or "degraded: <reason>".
+   * "prometheus", or "degraded: <reason>" when the metric history could not be read.
    */
   source: string;
   points: any[] | null;

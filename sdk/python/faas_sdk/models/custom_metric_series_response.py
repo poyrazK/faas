@@ -34,7 +34,7 @@ class CustomMetricSeriesResponse:
     step: str
     """Prometheus step between points."""
     source: str
-    """"prometheus" or "degraded: <reason>"."""
+    """"prometheus", or "degraded: <reason>" when the metric history could not be read."""
     points: list[CustomMetricSeriesPoint] | None
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

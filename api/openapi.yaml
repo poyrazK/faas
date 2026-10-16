@@ -69977,7 +69977,7 @@ components:
         kind: { type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count." }
         range: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'] }
         step: { type: string, description: "Prometheus step between points." }
-        source: { type: string, description: '"prometheus" or "degraded: <reason>".' }
+        source: { type: string, description: '"prometheus", or "degraded: <reason>" when the metric history could not be read.' }
         points:
           type: [array, "null"]
           items: { $ref: '#/components/schemas/CustomMetricSeriesPoint' }
