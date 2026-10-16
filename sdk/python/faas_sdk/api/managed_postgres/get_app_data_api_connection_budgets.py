@@ -54,9 +54,9 @@ def sync_detailed(
 ) -> Response[DataAPIConnectionBudgets | Problem]:
     """Inspect shared database budgets for Data API bindings
 
-     Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL,
-    reserve connections or change admission. Current adapters have no verified usable-capacity
-    observation and return unknown with canonical pool estimates. Database snapshots are independent.
+     Lists independently sampled planning reports for the app's shared managed Data API databases,
+    including other bindings in the same account. Requires managed PostgreSQL read permission. Reads
+    metadata without waking SQL or changing admission; current adapters retain unknown capacity.
 
     Args:
         slug (str):
@@ -87,9 +87,9 @@ def sync(
 ) -> DataAPIConnectionBudgets | Problem | None:
     """Inspect shared database budgets for Data API bindings
 
-     Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL,
-    reserve connections or change admission. Current adapters have no verified usable-capacity
-    observation and return unknown with canonical pool estimates. Database snapshots are independent.
+     Lists independently sampled planning reports for the app's shared managed Data API databases,
+    including other bindings in the same account. Requires managed PostgreSQL read permission. Reads
+    metadata without waking SQL or changing admission; current adapters retain unknown capacity.
 
     Args:
         slug (str):
@@ -115,9 +115,9 @@ async def asyncio_detailed(
 ) -> Response[DataAPIConnectionBudgets | Problem]:
     """Inspect shared database budgets for Data API bindings
 
-     Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL,
-    reserve connections or change admission. Current adapters have no verified usable-capacity
-    observation and return unknown with canonical pool estimates. Database snapshots are independent.
+     Lists independently sampled planning reports for the app's shared managed Data API databases,
+    including other bindings in the same account. Requires managed PostgreSQL read permission. Reads
+    metadata without waking SQL or changing admission; current adapters retain unknown capacity.
 
     Args:
         slug (str):
@@ -146,9 +146,9 @@ async def asyncio(
 ) -> DataAPIConnectionBudgets | Problem | None:
     """Inspect shared database budgets for Data API bindings
 
-     Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL,
-    reserve connections or change admission. Current adapters have no verified usable-capacity
-    observation and return unknown with canonical pool estimates. Database snapshots are independent.
+     Lists independently sampled planning reports for the app's shared managed Data API databases,
+    including other bindings in the same account. Requires managed PostgreSQL read permission. Reads
+    metadata without waking SQL or changing admission; current adapters retain unknown capacity.
 
     Args:
         slug (str):

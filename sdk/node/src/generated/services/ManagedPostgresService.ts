@@ -521,14 +521,17 @@ export class ManagedPostgresService {
   }
   /**
    * Inspect shared database budgets for Data API bindings
-   * Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL, reserve connections or change admission. Current adapters have no verified usable-capacity observation and return unknown with canonical pool estimates. Database snapshots are independent.
-   * @returns DataAPIConnectionBudgets Bounded credential-free planning and explicit unknown coverage
-   * @returns Problem Authentication, ownership or metadata read error
+   * Lists independently sampled planning reports for the app's shared managed Data API databases, including other bindings in the same account. Requires managed PostgreSQL read permission. Reads metadata without waking SQL or changing admission; current adapters retain unknown capacity.
+   * @returns DataAPIConnectionBudgets Per-database estimates and unknown coverage for this app's managed Data API bindings
+   * @returns Problem Data API app lookup, permission or budget inventory failure
    * @throws ApiError
    */
   public static getAppDataApiConnectionBudgets({
     slug,
   }: {
+    /**
+     * App whose managed Data API bindings select the shared database reports.
+     */
     slug: string,
   }): CancelablePromise<DataAPIConnectionBudgets | Problem> {
     return __request(OpenAPI, {

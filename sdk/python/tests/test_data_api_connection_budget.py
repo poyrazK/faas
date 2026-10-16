@@ -25,11 +25,13 @@ def test_budget_clients_preserve_unknown_capacity_without_inventing_zero() -> No
         "inventory": dict.fromkeys(
             "bindings data_api_consumers auth_consumers migration_bindings other_bindings "
             "resident_instances parked_instances auxiliary_instances active_tasks "
-            "rotation_pending overlap_consumers stale_node_instances".split(), 0
+            "rotation_pending overlap_consumers stale_node_instances".split(),
+            0,
         ),
         "demand": dict.fromkeys(
             "data_api_resident_estimate data_api_wake_estimate auth_wake_estimate "
-            "control_headroom migration_headroom modeled_peak_connections".split(), 0
+            "control_headroom migration_headroom modeled_peak_connections".split(),
+            0,
         ),
         "capacity": {"state": "unknown"},
         "reasons": ["capacity_unverified"],
@@ -47,7 +49,13 @@ def test_budget_clients_preserve_unknown_capacity_without_inventing_zero() -> No
         return httpx.Response(200, json=report)
 
     client = AuthenticatedClient(base_url="https://management.example", token="fixture")
-    client.set_httpx_client(httpx.Client(transport=httpx.MockTransport(respond), base_url="https://management.example", headers={"authorization": "Bearer fixture"}))
+    client.set_httpx_client(
+        httpx.Client(
+            transport=httpx.MockTransport(respond),
+            base_url="https://management.example",
+            headers={"authorization": "Bearer fixture"},
+        )
+    )
     one = get_managed_postgres_connection_budget.sync(database, client=client)
     many = get_app_data_api_connection_budgets.sync("notes", client=client)
     assert isinstance(one, ManagedPostgresConnectionBudget)

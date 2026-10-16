@@ -94,3 +94,25 @@ test('in-flight submissions and recovery cannot overlap', async () => {
   resolve(new Response(JSON.stringify([row])))
   assert.equal((await first).outcome, 'saved')
 })
+
+test('response limits and rate responses preserve the receipt until explicit same-key recovery', async () => {
+  for (const [code, status, message] of [
+    ['response_too_large', 502, 'The save response was too large. Its outcome is uncertain.'],
+    ['data_api_rate_limited', 429, 'Too many requests. Wait before checking the save outcome.'],
+    ['custom_rate_response', 429, 'Too many requests. Wait before checking the save outcome.'],
+  ]) {
+    const payloads = []
+    const form = createNoteForm(make(async (_, init) => {
+      payloads.push(JSON.parse(init.body))
+      if (payloads.length === 1) return new Response(JSON.stringify({ code, message: 'private failure detail' }), { status })
+      return new Response(JSON.stringify([row]))
+    }), { createKey: () => key })
+    assert.deepEqual(await form.submit({ body: 'hello', tags: '' }), { outcome: 'failed', message, uncertain: true })
+    assert.equal(form.pending.idempotency_key, key)
+    assert.deepEqual(await form.submit({ body: 'different', tags: '' }), { outcome: 'pending' })
+    assert.equal(payloads.length, 1)
+    assert.deepEqual(await form.reconcile(), { outcome: 'saved', note: row })
+    assert.deepEqual(payloads[1], payloads[0])
+    assert.equal(form.pending, null)
+  }
+})

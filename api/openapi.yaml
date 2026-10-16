@@ -5839,22 +5839,23 @@ paths:
       - name: slug
         in: path
         required: true
+        description: App whose managed Data API bindings select the shared database reports.
         schema: { type: string }
     get:
       operationId: getAppDataAPIConnectionBudgets
       summary: Inspect shared database budgets for Data API bindings
-      description: Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL, reserve connections or change admission. Current adapters have no verified usable-capacity observation and return unknown with canonical pool estimates. Database snapshots are independent.
+      description: Lists independently sampled planning reports for the app's shared managed Data API databases, including other bindings in the same account. Requires managed PostgreSQL read permission. Reads metadata without waking SQL or changing admission; current adapters retain unknown capacity.
       tags: [managed_postgres]
       responses:
         '200':
-          description: Bounded credential-free planning and explicit unknown coverage
+          description: Per-database estimates and unknown coverage for this app's managed Data API bindings
           headers:
-            Cache-Control: { schema: { type: string }, description: Always no-store }
+            Cache-Control: { schema: { type: string }, description: Prevents caching the app's independently sampled database reports. }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DataAPIConnectionBudgets' }
         default:
-          description: Authentication, ownership or metadata read error
+          description: Data API app lookup, permission or budget inventory failure
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
