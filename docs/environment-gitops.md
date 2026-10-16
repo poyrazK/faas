@@ -428,6 +428,12 @@ review qualification remain outside this local-fixture coverage. The v2
 exclusive native matrix. Older image-only v1 reports cannot qualify this matrix.
 The report still grants no production authorization.
 
+The manual [GitOps native CI lane](ops/gitops-native-ci.md) runs this complete
+matrix on an exclusive runner at the exact `main` dispatch commit. It verifies
+the private v2 record against the raw events and artifact fingerprints before
+publishing a sanitized CI summary. The lane still requires an eligible host;
+adding the workflow does not establish an executed native acceptance pass.
+
 ## Next implementation steps
 
 1. Pass dedicated Linux capture/restore acceptance. The scheduler requests

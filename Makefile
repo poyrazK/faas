@@ -1490,6 +1490,8 @@ test-environment-gitops-native: ## Isolated native API/worker/queue and source s
 .PHONY: test-environment-gitops-report
 test-environment-gitops-report: ## Test structured native acceptance evidence; no KVM or database required.
 	@python3 scripts/gitops_native_report_test.py
+	@python3 scripts/ci/gitops_native_ci_test.py
+	@bash -n scripts/ci/run-gitops-native-acceptance.sh
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.

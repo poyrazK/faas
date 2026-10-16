@@ -239,10 +239,8 @@ def initialize(repo, requested, host_class):
     return directory
 
 
-def finish(repo, directory, stages, reason, exit_code):
-    path = directory / "report.json"
-    report = json.loads(path.read_text())
-    final = metadata(repo)
+def assess(report, final, stages, reason, exit_code, events):
+    """Recompute the verdict from observed evidence, without trusting flags."""
     initial = report["initial"]
     identity_stable = initial == final and initial["source"]["clean"] and bool(
         re.fullmatch(r"[a-f0-9]{40}", initial["source"]["commit"] or ""))
@@ -254,7 +252,6 @@ def finish(repo, directory, stages, reason, exit_code):
                          all(initial["fixtures"].get(key) and initial["fixtures"][key]["bytes"] > 0 for key in FIXTURES) and
                          all(versions.get(key) for key in ("go", "firecracker", "jailer", "postgres_client")) and
                          versions["go"] == versions["go_required"])
-    events = read_events(directory / "test-events.jsonl")
     native = (report["host_class"] == "native" and initial["host"]["system"] == "Linux" and
               initial["host"]["architecture"] == "x86_64" and initial["host"]["virtualization_probe"] == "none")
     supported = (native or report["host_class"] == "nested-diagnostic" and
@@ -278,14 +275,20 @@ def finish(repo, directory, stages, reason, exit_code):
         failures.append("unsupported_or_unverified_host")
     if not events["complete"]:
         failures.append("required_test_matrix_incomplete")
-    report.update(finished_at=utc_now(), final=final, source_and_inputs_unchanged=identity_stable,
-                  metadata_complete=bool(metadata_complete), stages=stages, failure_reasons=failures,
-                  command_exit_code=exit_code, exit_code=exit_code or (0 if passed else 1), events=events, result=result,
-                  native_acceptance_passed=bool(passed and native),
-                  source_scheduled_jobs_passed=bool(passed and native),
+    return dict(final=final, source_and_inputs_unchanged=identity_stable,
+                metadata_complete=bool(metadata_complete), stages=stages, failure_reasons=failures,
+                command_exit_code=exit_code, exit_code=exit_code or (0 if passed else 1), events=events, result=result,
+                native_acceptance_passed=bool(passed and native), source_scheduled_jobs_passed=bool(passed and native))
+
+
+def finish(repo, directory, stages, reason, exit_code):
+    path = directory / "report.json"
+    report = json.loads(path.read_text())
+    observed = assess(report, metadata(repo), stages, reason, exit_code, read_events(directory / "test-events.jsonl"))
+    report.update(finished_at=utc_now(), **observed,
                   artifacts={name: fingerprint(directory / name) for name in ARTIFACTS})
     write_json(path, report)
-    return passed
+    return observed["exit_code"] == 0
 
 
 def main():

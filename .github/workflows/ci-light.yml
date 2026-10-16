@@ -502,10 +502,10 @@ jobs:
           GOMAXPROCS: 2
           GREGALE_GITOPS_ACCEPTANCE: '1'
         run: |
-          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitarchive/|gitlabfixture/|builderbase|harness|fakeregistry|testdata/(helloserver|gitopsjob)/)|scripts/(test-environment-gitops-native|gitops_native_report)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitarchive/|gitlabfixture/|builderbase|harness|fakeregistry|testdata/(helloserver|gitopsjob)/)|scripts/(test-environment-gitops-native|gitops_native_report|ci/(gitops.native|run-gitops-native))|\.github/workflows/(ci(-light)?|gitops-native)\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
-          python3 scripts/gitops_native_report_test.py
+          make test-environment-gitops-report
           go test -race -p 1 ./pkg/e2etest/gitarchive ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
           # TestMain prepares the shared daemons before the HTTP case starts.
           go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m

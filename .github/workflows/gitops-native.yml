@@ -1,0 +1,75 @@
+name: GitOps native acceptance
+
+# Deliberately manual and main-only: this executes privileged reviewed code on
+# an exclusive host. A CI pass records evidence; it enables no production gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitops-native-exclusive-host
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: make test-environment-gitops-report
+
+  native:
+    name: GitOps native matrix (exclusive KVM, amd64)
+    needs: contracts
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, gregale-gitops-acceptance]
+    environment: gitops-acceptance
+    # Outlast the 300m test alarm, compilation and bounded TERM cleanup. The
+    # inner timeout leaves room for the always-run verdict and artifact steps.
+    timeout-minutes: 360
+    steps:
+      - name: Select a fresh evidence directory outside the checkout
+        run: |
+          printf 'GREGALE_GITOPS_CI_EVIDENCE=%s/gregale-gitops-native-%s-%s\n' \
+            "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run both providers and both source kinds with pre/post leak gates
+        id: acceptance
+        run: |
+          timeout --signal=TERM --kill-after=5m 330m \
+            sudo -n --preserve-env=PATH bash scripts/ci/run-gitops-native-acceptance.sh \
+            "$GITHUB_SHA" "$GREGALE_GITOPS_CI_EVIDENCE"
+      - name: Verify exact-commit evidence and publish sanitized verdict
+        if: always()
+        env:
+          NATIVE_OUTCOME: ${{ steps.acceptance.outcome }}
+        run: |
+          sudo -n python3 scripts/ci/gitops-native-verdict.py \
+            --directory "$GREGALE_GITOPS_CI_EVIDENCE" --expected-sha "$GITHUB_SHA" \
+            --runner-outcome "$NATIVE_OUTCOME"
+      - name: Show qualification summary
+        if: always()
+        run: cat "$GREGALE_GITOPS_CI_EVIDENCE/public/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain sanitized evidence (raw logs stay private on the host)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitops-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.GREGALE_GITOPS_CI_EVIDENCE }}/public/summary.json
+            ${{ env.GREGALE_GITOPS_CI_EVIDENCE }}/public/summary.md
+          if-no-files-found: error
+          retention-days: 14
