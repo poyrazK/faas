@@ -272,7 +272,7 @@ supply reason defaults. The expired count covers all expired deadlines, independ
 of the horizon.
 
 Every deadline flag requires `--watch`, a valid `--deadline-window` and at least
-one positive total or reason warning. The horizon accepts whole milliseconds
+one positive total, reason or ratio warning. The horizon accepts whole milliseconds
 100ms..24h. Warning and recovery durations independently default to one minute and
 accept 100ms..24h; explicit zero durations are invalid. Counts use the same exact
 integer bound as the Go options. Existing watch freshness and timeout limits apply.
@@ -316,3 +316,7 @@ acknowledgments. Its checkpoint format is Python-specific. See
 recipients with explicit minimum cohort size, integer basis-point warning/recovery
 boundaries and sustained fresh confirmation. Low/empty cohorts remain unknown.
 See [ratio configuration, exact boundaries and checkpoint compatibility](event-deadline-ratio-alerts.md).
+
+The CLI also accepts percentage-based ratio settings:
+`--deadline-expired-ratio-threshold`, `--deadline-expired-ratio-recovery`, and
+`--deadline-expired-ratio-min-recipients`. See [ratio CLI usage](event-deadline-ratio-alerts.md#cli-ratio-watch).

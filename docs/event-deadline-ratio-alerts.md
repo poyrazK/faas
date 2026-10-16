@@ -104,8 +104,9 @@ Historical samples and timer progress never become fresh proof. Existing configu
 without this option keep their request behavior and checkpoint policy.
 
 Older clients reject the new metric; upgrade the resuming client before loading a
-checkpoint containing it. This Go slice adds no CLI flags, Node/Python watch options,
-server endpoints, migrations or notification destinations. The existing complete
+checkpoint containing it. The CLI exposes these options as documented below;
+Node/Python watches currently expose count conditions only. No server endpoints,
+migrations or notification destinations are added. The existing complete
 window read supplies all count and ratio conditions, so no extra request is added
 per ratio. Existing read budgets and unknown-on-timeout behavior apply.
 
@@ -114,3 +115,60 @@ expired rows leave retention, or deadlines acquire overrides; it can worsen as
 nonexpired work completes. Resolution does not prove expired deliveries recovered
 or business processing succeeded. Count and ratio incidents can overlap for the
 same work and remain independent.
+
+## CLI ratio watch
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch \
+  --deadline-window 5m \
+  --deadline-expired-ratio-threshold 10 \
+  --deadline-expired-ratio-recovery 5 \
+  --deadline-expired-ratio-min-recipients 100 \
+  --deadline-sustain 1m --deadline-recovery-sustain 2m \
+  --interval 5s --timeout 10m --confirmation-progress \
+  --checkpoint ./delivery-health.json --alerts-json
+```
+
+Percent arguments are decimal numbers from 0 through 100, with at most two digits
+after the decimal point. `10` means 10%, not 10 basis points. `0.01` is the smallest
+positive warning. Use `0.5`, not `.5`; exponent notation, signs, percent suffixes,
+trailing decimal points, nonfinite values and extra fractional digits are rejected.
+Conversion to integer basis points uses decimal arithmetic, never float rounding.
+Repeated ratio flags are rejected.
+
+A zero warning disables the ratio condition; omitted warning also leaves it disabled.
+Recovery and minimum flags require a positive warning. An enabled ratio always
+requires `--deadline-expired-ratio-min-recipients` in 1..9007199254740991; there is no
+implicit minimum. Recovery must be strictly below warning. Omission defaults to
+warning minus **0.01 percentage points**, while explicit zero requires no expired
+work in a qualifying cohort. For example, warning `10` without recovery uses 9.99%.
+
+These settings require `--watch`, a valid `--deadline-window` and at least one
+positive count or ratio warning. The existing `--deadline-sustain` and
+`--deadline-recovery-sustain` durations are shared by all selected count and ratio
+conditions. Ratio-only watches are supported. Invalid combinations fail before
+authentication, polling or checkpoint preparation. Absolute count/reason flags
+continue to work alongside the ratio.
+
+Final text output shows state, warning/recovery percentages, minimum cohort and,
+when complete eligible evidence is available, the observed percentage, expired
+numerator, deadline-bearing denominator and observation timestamp. Approximate
+percentages are prefixed with `~`; rounding display values never controls alerts.
+Zero denominators display an undefined ratio rather than 0%. Low cohorts explain
+that confirmation is unknown. Missing/incomplete evidence displays unavailable
+rather than inventing a percentage or cohort. Confirmation diagnostics distinguish
+stale/repeated observations, gaps, pending sustain and notification blockage.
+`--confirmation-progress` prints these details after every observation too.
+
+Text lifecycle alerts on stderr also label ratios as percentages. `--alerts-json`
+keeps the existing alert JSON schema and **basis-point units**, and final `--json`
+keeps the existing result with basis-point conditions plus raw window counts.
+Do not combine live text progress with `--json`.
+
+Use the existing checkpoint/resume/acknowledgment options. Resume requires the same
+effective horizon, minimum cohort, warning/recovery percentages and sustain policy;
+decimal forms such as `5`, `5.0` and `5.00` have the same effective value. Persist
+before notification and deduplicate replayed alerts as usual. Low cohorts and lost
+evidence retain the Go `confirmation_lost` lifecycle described above; they never
+produce a successful ratio recovery by themselves. The CLI adds no read or delivery
+action beyond the existing Go watch.

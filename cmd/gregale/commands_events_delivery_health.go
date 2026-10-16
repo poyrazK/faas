@@ -257,6 +257,10 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 				if err := json.NewEncoder(os.Stderr).Encode(alert); err != nil {
 					return err
 				}
+			} else if isDeadlineRatioMetric(alert.Metric) {
+				if err := printDeadlineRatioAlert(alert); err != nil {
+					return err
+				}
 			} else {
 				if _, err := fmt.Fprintf(os.Stderr, "%s %s | app %s | subscription %s | incident %s | sequence %d | value %.3f | threshold %.3f | %s\n", alert.Metric, alert.Transition, alert.AppID, alert.SubscriptionID, alert.IncidentID, alert.Sequence, alert.Value, alert.Threshold, alert.Reason); err != nil {
 					return err
@@ -265,6 +269,7 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 		}
 		if f.confirmationProgress != nil && *f.confirmationProgress {
 			printDeadlineHealthConditions(progress.Conditions)
+			printDeadlineRatioHealth(progress)
 			printDeliveryHealthConfirmations(progress.Confirmations)
 		}
 		return nil
@@ -287,6 +292,7 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 			_, _ = fmt.Fprintf(osStdout, "SLO %s: %s (%s) | value %.6f | target %.6f | samples %d/%d | coverage %s | budget burn %.3fx\n", v.Metric, v.Status, v.Reason, v.Value, v.Threshold, v.Samples, v.MinimumSamples, v.Coverage, v.ErrorBudgetBurnRate)
 		}
 		printDeadlineHealthConditions(result.Conditions)
+		printDeadlineRatioHealth(result)
 		printDeliveryHealthConfirmations(result.Confirmations)
 		_, _ = fmt.Fprintf(osStdout, "Watch stopped: %s | observations %d | alert sequence %d\n", result.StopReason, result.Observations, result.Sequence)
 	}

@@ -3406,3 +3406,16 @@ Use repeatable `--deadline-upcoming-reason REASON=N` and
 `--deadline-expired-reason REASON=N`, with matching `-reason-recovery` flags for
 inclusive recovery counts. Existing checkpoint/resume and JSON alert delivery
 apply. See [CLI configuration, validation and recovery semantics](event-subscription-deadline-window.md#cli-watch).
+
+
+### Expired backlog percentage alerts
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+```
+
+This opens at >=10% expired among at least 100 pending deadline-bearing recipients
+and confirms recovery at <=5%. Insufficient cohorts stay unknown. Text progress
+shows the observed percentage and raw cohort; JSON retains basis-point units and
+raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
+[ratio validation and lifecycle semantics](event-deadline-ratio-alerts.md#cli-ratio-watch).

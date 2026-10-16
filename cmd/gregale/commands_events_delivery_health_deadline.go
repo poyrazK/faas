@@ -12,11 +12,13 @@ import (
 
 type deliveryHealthDeadlineFlags struct {
 	window            api.EventDeliveryDeadlineWindowOptions
+	ratio             *deliveryHealthDeadlineRatioFlags
 	sustain, recovery time.Duration
 }
 
 func newDeliveryHealthDeadlineFlags(fs *flag.FlagSet) *deliveryHealthDeadlineFlags {
 	f := &deliveryHealthDeadlineFlags{}
+	f.ratio = newDeliveryHealthDeadlineRatioFlags(fs)
 	fs.DurationVar(&f.window.Within, "deadline-window", 0, "upcoming deadline horizon (whole milliseconds, 100ms-24h); required for deadline alerts")
 	fs.Int64Var(&f.window.Upcoming, "deadline-upcoming-threshold", 0, "upcoming deadline count warning; zero disables")
 	fs.Int64Var(&f.window.Expired, "deadline-expired-threshold", 0, "all expired deadline count warning; zero disables")
@@ -73,7 +75,12 @@ func (f *deliveryHealthDeadlineFlags) options() (*api.EventDeliveryRateRiskOptio
 	if f.sustain < api.EventDeliveryHealthWatchThresholdMin || f.sustain > api.EventDeliveryHealthWatchThresholdMax || f.recovery < api.EventDeliveryHealthWatchThresholdMin || f.recovery > api.EventDeliveryHealthWatchThresholdMax {
 		return nil, fmt.Errorf("deadline warning and recovery sustain must be 100ms-24h")
 	}
-	enabled := false
+	ratio, err := f.ratio.options()
+	if err != nil {
+		return nil, err
+	}
+	f.window.ExpiredRatio = ratio
+	enabled := ratio != nil
 	for _, cohort := range []struct {
 		warning             int64
 		recovery            *int64
@@ -99,14 +106,14 @@ func (f *deliveryHealthDeadlineFlags) options() (*api.EventDeliveryRateRiskOptio
 		}
 	}
 	if !enabled {
-		return nil, fmt.Errorf("deadline settings require at least one positive total or reason warning threshold")
+		return nil, fmt.Errorf("deadline settings require at least one positive total, reason or ratio warning threshold")
 	}
 	return &api.EventDeliveryRateRiskOptions{DeadlineWindow: &f.window, Sustain: f.sustain, RecoverySustain: f.recovery}, nil
 }
 
 func printDeadlineHealthConditions(conditions []api.EventDeliveryHealthCondition) {
 	for _, c := range conditions {
-		if !strings.HasPrefix(c.Metric, "deadline_window.") {
+		if !strings.HasPrefix(c.Metric, "deadline_window.") || isDeadlineRatioMetric(c.Metric) {
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "Deadline %s: %s | last count %.0f | warning >= %.0f for %.3fs | recovery <= %.0f for %.3fs\n", oneLine(c.Metric), oneLine(c.State), c.Value, c.Threshold, c.SustainSeconds, c.RecoveryThreshold, c.RecoverySustainSeconds)
