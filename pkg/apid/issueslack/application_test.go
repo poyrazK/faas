@@ -18,7 +18,7 @@ func TestApplicationSlackMessagesUseSafeLabelsAndIssueLinks(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := string(raw)
-			for _, want := range []string{"Gregale Issues", "production", "burst", "51", "123.456", "https://gregale.dev/dashboard/apps/exports/issues?issue=issue-id"} {
+			for _, want := range []string{"Gregale Issues", "production", "burst", "51", "123.456", "https://gregale.dev/dashboard/apps/exports/issues?issue=issue-id", "https://gregale.dev/dashboard/apps/exports/issues/issue-id/triage"} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("missing %q: %s", want, text)
 				}

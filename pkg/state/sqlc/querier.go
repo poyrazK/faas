@@ -1589,6 +1589,16 @@ type Querier interface {
 	IssueApplicationSlackPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationSlackPolicyPutParams) error
 	IssueApplicationSlackReleaseClaims(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueApplicationSlackRoute(ctx context.Context, db DBTX, arg IssueApplicationSlackRouteParams) (IssueApplicationSlackRouteRow, error)
+	IssueApplicationTriageAudit(ctx context.Context, db DBTX, arg IssueApplicationTriageAuditParams) error
+	IssueApplicationTriageCancelSlack(ctx context.Context, db DBTX, issueID pgtype.UUID) error
+	IssueApplicationTriageGet(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriageGetRow, error)
+	IssueApplicationTriageHistory(ctx context.Context, db DBTX, arg IssueApplicationTriageHistoryParams) ([]IssueApplicationTriageHistoryRow, error)
+	IssueApplicationTriagePrune(ctx context.Context, db DBTX, arg IssueApplicationTriagePruneParams) error
+	IssueApplicationTriagePut(ctx context.Context, db DBTX, arg IssueApplicationTriagePutParams) error
+	IssueApplicationTriageReleaseLease(ctx context.Context, db DBTX, issueID pgtype.UUID) error
+	IssueApplicationTriageReset(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriage, error)
+	IssueApplicationTriageScope(ctx context.Context, db DBTX, arg IssueApplicationTriageScopeParams) (IssueApplicationTriageScopeRow, error)
+	IssueApplicationTriageSnoozed(ctx context.Context, db DBTX, issueID pgtype.UUID) (bool, error)
 	IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApplySplitRuleParams) (int64, error)
 	IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error)
 	IssueAttribution(ctx context.Context, db DBTX, arg IssueAttributionParams) ([]IssueAttributionRow, error)

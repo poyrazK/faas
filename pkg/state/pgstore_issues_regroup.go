@@ -127,6 +127,9 @@ func issueSplitGroup(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, root sqlc.
 	if err != nil {
 		return sqlc.AppIssue{}, err
 	}
+	if err = resetApplicationTriage(ctx, q, tx, member, actor); err != nil {
+		return sqlc.AppIssue{}, err
+	}
 	details := map[string]string{"member_issue_id": in.MemberIssueID, "canonical_issue_id": issueID(root.ID)}
 	for _, row := range []sqlc.AppIssue{root, member} {
 		if err = issueRegroupAudit(ctx, q, tx, row, "split", actor, details, now); err != nil {

@@ -22,6 +22,13 @@ func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.T
 	if row.State == "ignored" && (!row.IgnoredUntil.Valid || row.IgnoredUntil.Time.After(now)) {
 		return nil
 	}
+	snoozed, err := q.IssueApplicationTriageSnoozed(ctx, tx, row.ID)
+	if err != nil {
+		return err
+	}
+	if snoozed {
+		return nil
+	}
 	policy, err := issueApplicationSlackPolicy(ctx, q, tx, issueID(row.AppID), issueID(row.AccountID))
 	if err != nil {
 		return err

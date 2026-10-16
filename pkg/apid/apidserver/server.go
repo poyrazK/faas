@@ -3987,6 +3987,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/saved-views", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSavedViewHandler))))
 	mux.Handle("GET /oauth/linear/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.linearOAuthCallback))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerHealthHandler))))
+	// ADR-1237: browser-only response state; deliberately excluded from public OpenAPI.
+	mux.Handle("GET /dashboard/apps/{slug}/issues/{issue_id}/triage", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplicationTriageHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/triage", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplicationTriageActionHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageActionHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationsHandler))))

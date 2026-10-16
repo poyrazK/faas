@@ -639,10 +639,12 @@ The current application-error alert surface has these boundaries (reviewed
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
 | Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation, interactive acknowledgment and per-rule channel overrides |
+| Response | Native issue acknowledgment, timed snoozing and bounded handling history | Native reminders, backup-team escalation and a dedicated incident inbox |
 
 Native Slack delivery now connects application alerts to team channels.
-Tracker-sync acknowledgment, reminders and escalation policies remain a separate
-workflow; application alerts do not yet share those incident controls. Ending an ignore
+Native application issues now have dashboard acknowledgment and snoozing.
+Tracker-sync reminders and escalation remain separate; native application alerts
+do not yet have those policies. Ending an ignore
 period does not retroactively notify about suppressed customer-impact crossings.
 
 ## Limits
@@ -1046,7 +1048,8 @@ routing and retry semantics. A fallback already captured for an alert remains it
 route if a preferred destination is enabled later.
 
 **Recent Slack deliveries** combines tracker and application delivery status.
-Application entries link to the issue; tracker entries link to incident handling.
+Application entries link to the issue; application messages also link to response
+controls. Tracker entries link to incident handling.
 Retained failed application jobs can be retried only while the same application
 policy and destination revisions remain enabled. Automatic/manual retries reuse
 the same message ID; Slack delivery remains at least once, so ambiguous timeouts
@@ -1059,8 +1062,8 @@ Slack delivery is skipped and the visible skipped counter increases; error captu
 activity and generic webhooks still commit. These omissions are not backfilled.
 Terminal history expires after seven days, with bounded cleanup; an expired thread
 root can cause a later alert to start a fresh thread. Tracker retention remains
-independent. Application acknowledgment, snoozing, escalation and interactive Slack
-actions are not included in this increment.
+independent. Native application acknowledgment and snoozing are described below;
+application reminders, escalation and interactive Slack actions remain future work.
 
 ## GitHub and Linear tracker links
 
@@ -1844,3 +1847,37 @@ Raw Slack response bodies and bot tokens are never shown in delivery errors.
 Messages contain identifiers, a safe reason and dashboard links, without stack
 frames or issue titles. Delivery history follows the existing notice retention;
 thread roots with no retained deliveries are cleaned up automatically.
+
+### Native issue acknowledgment and snoozing
+
+Open **Acknowledge or snooze this issue** from issue details, or use the response
+link in a native application Slack message. The app owner and current responders
+can view and update shared response state. Responders must remain organization
+members and be the assigned account, members of the assigned team, or members of
+the currently eligible native Slack routing team. This narrow page does not grant
+access to occurrence evidence or app settings. Owner plan eligibility, account
+status and abuse holds also apply.
+
+Acknowledgment records who saw the issue and when. It does not resolve the issue,
+change ownership, or suppress subsequent alerts. Snooze native alerts for up to
+30 days with an optional reason (1,024 UTF-8 bytes). Snoozing cancels outstanding
+native Slack jobs for that issue and skips new native deliveries while active.
+An already sending HTTP message may still arrive. Capture, threshold evaluation,
+activity and generic webhooks continue; tracker-sync notices are independent.
+
+The response page shows snooze expiry, the actor/reason, acknowledgment and the
+most recent 100 handling actions. Expiry automatically permits future selected
+alerts without a worker. It does not replay skipped alerts or emit a wake-up
+notification. Clearing snooze preserves acknowledgment. Save conflicts require
+reloading the page. Repeated effective actions leave revisions/history unchanged.
+
+Resolution or ignore disables response actions. Reopening, regression and splitting
+out an original group start a fresh response and reject forms from before the
+change. Reassignment preserves the recorded response, but access follows current
+membership/ownership. Merging preserves the destination's response; source aliases
+are not actionable and their response is not transferred. History is bounded across
+responses and historical actors do not establish present access.
+
+Native application reminders, escalation, a snoozed-incident inbox/filter and Slack
+interactive actions remain future work. This dashboard feature adds no public API
+or SDK endpoint.

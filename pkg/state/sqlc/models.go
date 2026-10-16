@@ -3904,6 +3904,29 @@ type IssueApplicationSlackPolicy struct {
 	UnroutedAlerts    int64
 }
 
+type IssueApplicationTriage struct {
+	IssueID        pgtype.UUID
+	IncidentID     pgtype.UUID
+	Revision       int64
+	AcknowledgedBy pgtype.UUID
+	AcknowledgedAt pgtype.Timestamptz
+	SnoozedUntil   pgtype.Timestamptz
+	SnoozedBy      pgtype.UUID
+	SnoozeReason   string
+}
+
+type IssueApplicationTriageActivity struct {
+	ID           pgtype.UUID
+	IssueID      pgtype.UUID
+	IncidentID   pgtype.UUID
+	Revision     int64
+	ActorID      pgtype.UUID
+	Action       string
+	CreatedAt    pgtype.Timestamptz
+	SnoozedUntil pgtype.Timestamptz
+	Reason       string
+}
+
 type IssueEvent struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID

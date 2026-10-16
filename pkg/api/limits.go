@@ -10555,3 +10555,10 @@ const (
 	IssueApplicationSlackHistoryRetention = 7 * 24 * time.Hour
 	IssueApplicationSlackCleanupBatch     = 1000
 )
+
+// Native issue response controls retain bounded history independently of capture.
+const (
+	IssueApplicationTriageHistoryMax     = 100
+	IssueApplicationSnoozeReasonMaxBytes = 1024
+	IssueApplicationSnoozeMax            = 30 * 24 * time.Hour
+)

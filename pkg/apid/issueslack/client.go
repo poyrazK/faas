@@ -187,7 +187,7 @@ func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) 
 	body := map[string]any{"channel": c.ChannelID, "client_msg_id": c.ID, "text": heading, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false, "blocks": []any{
 		map[string]any{"type": "header", "text": map[string]any{"type": "plain_text", "text": heading}},
 		map[string]any{"type": "section", "text": map[string]any{"type": "plain_text", "text": detail}},
-		map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "link", "text": "Open issue", "url": link}}}}},
+		map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "link", "text": "Open issue", "url": link}, map[string]any{"type": "link", "text": "Acknowledge or snooze", "url": root + "/issues/" + url.PathEscape(c.IssueID) + "/triage"}}}}},
 	}}
 	if c.ThreadTS != "" {
 		if !state.ValidIssueSlackTimestamp(c.ThreadTS) {

@@ -58997,7 +58997,7 @@ CREATE TABLE public.issue_team_slack_deliveries (
  expires_at timestamptz NOT NULL DEFAULT clock_timestamp()+interval '24 hours',
  claim_id uuid,
  claim_until timestamptz,
- last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','destination_unavailable','delivery_expired','attempts_exhausted','token_unavailable','transport_error','rate_limited','slack_unavailable','slack_rejected','invalid_auth','channel_not_found','not_in_channel','missing_scope','thread_unavailable','invalid_response')),
+ last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','issue_snoozed','destination_unavailable','delivery_expired','attempts_exhausted','token_unavailable','transport_error','rate_limited','slack_unavailable','slack_rejected','invalid_auth','channel_not_found','not_in_channel','missing_scope','thread_unavailable','invalid_response')),
  response_code integer NOT NULL DEFAULT 0 CHECK(response_code BETWEEN 0 AND 599),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -59047,6 +59047,30 @@ CREATE TABLE public.issue_application_slack_policies (
 CREATE UNIQUE INDEX issue_slack_activity_delivery ON public.issue_team_slack_deliveries(activity_id) WHERE activity_id IS NOT NULL;
 CREATE INDEX issue_slack_application_history ON public.issue_team_slack_deliveries(created_at,delivery_seq) WHERE activity_id IS NOT NULL;
 
+CREATE TABLE public.issue_application_triage (
+ issue_id uuid PRIMARY KEY REFERENCES public.app_issues(id) ON DELETE CASCADE,
+ incident_id uuid NOT NULL DEFAULT gen_random_uuid(),
+ revision bigint NOT NULL CHECK(revision>0),
+ acknowledged_by uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ acknowledged_at timestamptz,
+ snoozed_until timestamptz,
+ snoozed_by uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ snooze_reason text NOT NULL DEFAULT '' CHECK(octet_length(snooze_reason)<=1024),
+ CHECK((acknowledged_at IS NOT NULL) OR acknowledged_by IS NULL),
+ CHECK(snoozed_until IS NOT NULL OR (snoozed_by IS NULL AND snooze_reason=''))
+);
+CREATE TABLE public.issue_application_triage_activity (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
+ incident_id uuid NOT NULL,
+ revision bigint NOT NULL CHECK(revision>0),
+ actor_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ action text NOT NULL CHECK(action IN ('acknowledge','snooze','unsnooze','reset')),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ snoozed_until timestamptz,
+ reason text NOT NULL DEFAULT '' CHECK(octet_length(reason)<=1024),
+ UNIQUE(issue_id,revision)
+);
 CREATE VIEW public.issue_slack_delivery_sources AS
 SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id,
  COALESCE(n.kind,act.action,'')::text AS kind,COALESCE(n.reason,'')::text AS reason,(COALESCE(act.details,'{}'::jsonb) || CASE WHEN i.id IS NOT NULL THEN jsonb_build_object('environment',i.environment) ELSE '{}'::jsonb END)::jsonb AS details,
@@ -59060,6 +59084,7 @@ SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id
    AND i.assignee_team_id IS NOT DISTINCT FROM d.assigned_team_id AND i.assignee_account_id IS NOT DISTINCT FROM d.assigned_account_id
    AND NOT (i.state='ignored' AND (i.ignored_until IS NULL OR i.ignored_until>clock_timestamp()))
    AND NOT EXISTS(SELECT 1 FROM public.issue_group_links gl WHERE gl.issue_id=i.id)
+   AND NOT EXISTS(SELECT 1 FROM public.issue_application_triage tr WHERE tr.issue_id=i.id AND tr.snoozed_until>clock_timestamp())
    AND EXISTS(SELECT 1 FROM public.app_issue_team_members tm WHERE tm.team_id=dst.team_id AND tm.account_id=ANY(d.recipient_account_ids)
      AND (tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM public.org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)))
  END,false)::boolean AS eligible,

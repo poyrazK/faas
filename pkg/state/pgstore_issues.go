@@ -393,6 +393,11 @@ func issueAttribution(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, in Rec
 }
 
 func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, action, actor string, details map[string]string, now time.Time) error {
+	if action == "regressed" || action == "reopened" {
+		if err := resetApplicationTriage(ctx, q, tx, row, actor); err != nil {
+			return err
+		}
+	}
 	raw, err := json.Marshal(details)
 	if err != nil {
 		return err
