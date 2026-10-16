@@ -99,6 +99,10 @@ type Plan struct {
 	OutputSQL        string
 	OutputRestricted string
 
+	// Agg, when set, maintains the grouped query incrementally (ModeGroup);
+	// otherwise affected groups are re-aggregated with OutputRestricted.
+	Agg *AggPlan
+
 	// params holds one hidden, explicitly typed target per query parameter.
 	// Every derived query carries them, so parameter numbers and types stay
 	// fixed even where the clause that used a parameter was dropped.
@@ -160,7 +164,11 @@ func Compile(ctx context.Context, conn *pgx.Conn, sql string) (*Plan, error) {
 	}
 	reason := recomputeReason(sel, hasAgg, hasWindow)
 	if reason == "" {
-		err = p.compileKeyed(ctx, conn, sel)
+		names := make([]string, len(desc.Fields))
+		for i, f := range desc.Fields {
+			names[i] = f.Name
+		}
+		err = p.compileKeyed(ctx, conn, sel, hasAgg, names)
 		var fallback recomputeError
 		if errors.As(err, &fallback) {
 			reason, err = string(fallback), nil
@@ -287,8 +295,8 @@ func recomputeReason(sel *pgq.SelectStmt, hasAgg, hasWindow bool) string {
 		return "set operation"
 	case sel.WithClause != nil:
 		return "WITH clause"
-	case len(sel.DistinctClause) > 0:
-		return "DISTINCT"
+	case len(sel.DistinctClause) > 0 && (!plainDistinct(sel) || len(sel.GroupClause) > 0 || hasAgg):
+		return "DISTINCT ON or DISTINCT with aggregates"
 	case len(sel.SortClause) > 0, sel.LimitCount != nil, sel.LimitOffset != nil:
 		return "ORDER BY or LIMIT"
 	case len(sel.WindowClause) > 0, hasWindow:
@@ -297,10 +305,6 @@ func recomputeReason(sel *pgq.SelectStmt, hasAgg, hasWindow bool) string {
 		return "VALUES"
 	case len(sel.FromClause) == 0:
 		return "no FROM clause"
-	case sel.HavingClause != nil && len(sel.GroupClause) == 0:
-		return "HAVING without GROUP BY"
-	case hasAgg && len(sel.GroupClause) == 0:
-		return "aggregate without GROUP BY"
 	}
 	reason := ""
 	walkNodes(sel, func(n *pgq.Node) {
@@ -337,7 +341,7 @@ func (j *joinNode) rels() []int {
 	return append(j.left.rels(), j.right.rels()...)
 }
 
-func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.SelectStmt) error {
+func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.SelectStmt, hasAgg bool, names []string) error {
 	var roots []*joinNode
 	for _, item := range sel.FromClause {
 		root, err := p.fromItem(ctx, conn, item)
@@ -382,31 +386,16 @@ func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.Select
 			lineage = append(lineage, resTarget(lineageColumn(i, k), columnRef(rel.Alias, key)))
 		}
 	}
-	if len(sel.GroupClause) == 0 {
+	grouped := len(sel.GroupClause) > 0 || hasAgg || sel.HavingClause != nil || plainDistinct(sel)
+	if !grouped {
 		p.Mode = ModeLineage
 		rowSel := cloneSelect(sel)
 		rowSel.TargetList = p.withParams(append(rowSel.TargetList, lineage...))
 		if err := p.restrictRows(rowSel); err != nil {
 			return err
 		}
-	} else {
-		p.Mode = ModeGroup
-		groups, err := groupExprs(sel)
-		if err != nil {
-			return err
-		}
-		p.NGroups = len(groups)
-		input := cloneSelect(plainSelect(sel.FromClause, sel.WhereClause))
-		for k, g := range groups {
-			input.TargetList = append(input.TargetList, resTarget(groupColumn(k), cloneNode(g)))
-		}
-		input.TargetList = p.withParams(append(input.TargetList, lineage...))
-		if err := p.restrictRows(input); err != nil {
-			return err
-		}
-		if err := p.compileOutput(ctx, conn, sel, groups); err != nil {
-			return err
-		}
+	} else if err := p.compileGrouped(ctx, conn, sel, names, lineage); err != nil {
+		return err
 	}
 	if hasOuter {
 		join := cloneSelect(plainSelect(sel.FromClause, nil))
@@ -588,19 +577,75 @@ func groupExprs(sel *pgq.SelectStmt) ([]*pgq.Node, error) {
 	return out, nil
 }
 
-// compileOutput builds the grouped query with hidden group keys and its
-// group-restricted variant. Group key types come from preparing the input.
-func (p *Plan) compileOutput(ctx context.Context, conn *pgx.Conn, sel *pgq.SelectStmt, groups []*pgq.Node) error {
-	desc, err := conn.Prepare(ctx, "", p.RowSQL)
-	if err != nil {
-		return fmt.Errorf("livequery: prepare group input: %w", err)
-	}
-	p.GroupTypes = make([]string, len(groups))
-	for _, f := range desc.Fields {
-		var k int
-		if _, err := fmt.Sscanf(f.Name, hiddenPrefix+"g%d", &k); err != nil || k >= len(groups) {
-			continue
+// compileGrouped plans a GROUP BY, plain DISTINCT or whole-table aggregate
+// query: incrementally when every aggregate allows it, otherwise by
+// re-aggregating affected groups (GROUP BY only; the others recompute).
+func (p *Plan) compileGrouped(ctx context.Context, conn *pgx.Conn, sel *pgq.SelectStmt, names []string, lineage []*pgq.Node) error {
+	p.Mode = ModeGroup
+	var groups []*pgq.Node
+	if plainDistinct(sel) {
+		for _, t := range sel.TargetList {
+			groups = append(groups, t.GetResTarget().Val)
 		}
+	} else {
+		var err error
+		if groups, err = groupExprs(sel); err != nil {
+			return err
+		}
+	}
+	p.NGroups = len(groups)
+	if err := p.groupTypes(ctx, conn, sel, groups); err != nil {
+		return err
+	}
+	agg, why, err := p.compileAggregates(ctx, conn, sel, groups, names)
+	if err != nil {
+		return err
+	}
+	if agg == nil && len(sel.GroupClause) == 0 {
+		return recomputeError(why)
+	}
+	input := cloneSelect(plainSelect(sel.FromClause, sel.WhereClause))
+	for k, g := range groups {
+		input.TargetList = append(input.TargetList, resTarget(groupColumn(k), cloneNode(g)))
+	}
+	if agg != nil {
+		p.Agg = agg
+		for j, arg := range agg.args {
+			if arg != nil {
+				input.TargetList = append(input.TargetList, resTarget(aggColumn(j), cloneNode(arg)))
+			}
+		}
+	}
+	input.TargetList = p.withParams(append(input.TargetList, lineage...))
+	if err := p.restrictRows(input); err != nil {
+		return err
+	}
+	if agg == nil {
+		return p.compileOutput(sel, groups)
+	}
+	return nil
+}
+
+// groupTypes fills GroupTypes by preparing the group expressions over the
+// query's FROM and WHERE.
+func (p *Plan) groupTypes(ctx context.Context, conn *pgx.Conn, sel *pgq.SelectStmt, groups []*pgq.Node) error {
+	p.GroupTypes = make([]string, len(groups))
+	if len(groups) == 0 {
+		return nil
+	}
+	probe := cloneSelect(plainSelect(sel.FromClause, sel.WhereClause))
+	for k, g := range groups {
+		probe.TargetList = append(probe.TargetList, resTarget(groupColumn(k), cloneNode(g)))
+	}
+	sql, err := deparseSelect(probe)
+	if err != nil {
+		return err
+	}
+	desc, err := conn.Prepare(ctx, "", sql)
+	if err != nil {
+		return fmt.Errorf("livequery: prepare group keys: %w", err)
+	}
+	for k, f := range desc.Fields {
 		var typ string
 		if err := conn.QueryRow(ctx, "SELECT format_type($1, $2)", f.DataTypeOID, f.TypeModifier).Scan(&typ); err != nil {
 			return fmt.Errorf("livequery: group key type: %w", err)
@@ -610,6 +655,13 @@ func (p *Plan) compileOutput(ctx context.Context, conn *pgx.Conn, sel *pgq.Selec
 		}
 		p.GroupTypes[k] = typ
 	}
+	return nil
+}
+
+// compileOutput builds the grouped query with hidden group keys and its
+// group-restricted variant, for re-aggregating affected groups.
+func (p *Plan) compileOutput(sel *pgq.SelectStmt, groups []*pgq.Node) error {
+	var err error
 	out := cloneSelect(sel)
 	for k, g := range groups {
 		out.TargetList = append(out.TargetList, resTarget(groupColumn(k), cloneNode(g)))

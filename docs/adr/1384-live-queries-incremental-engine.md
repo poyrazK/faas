@@ -428,6 +428,40 @@ Phase 0 did not cover:
 - **Performance:** not measured. That is the first Phase 1 work, together with
   the operator preview.
 
+### Phase 1 progress (2026-10-16)
+
+- **Plan groups.** Subscriptions with the same SQL share one plan group,
+  compiled once. Every maintenance statement serves all members: their
+  arguments are unnested from arrays and joined LATERAL, and rows carry their
+  member. Identical arguments share a member. Statements per round depend on
+  the number of distinct queries, not subscribers.
+- **Incremental aggregates.**
+  - `count`, `count(t.*)`, and `sum` and `avg` over integer and numeric
+    arguments are kept per group. The engine uses exact decimal arithmetic
+    and tracks numeric display scales, so text matches PostgreSQL.
+  - PostgreSQL computes `min` and `max`: from the current extreme plus new
+    values, or from the group's cached values after a removal that may have
+    taken the extreme.
+  - PostgreSQL sums groups that hold NaN or Infinity.
+  - One batched statement evaluates the select list and HAVING from group
+    keys and aggregate values.
+  - Plain DISTINCT and aggregates without GROUP BY use the same path. Other
+    aggregates, and sums of floating-point values, re-aggregate the affected
+    groups.
+- **Benchmark** (local PG16 on a shared, loaded laptop; 100k orders, 200
+  writes/s):
+
+  | Subscribers | Statements/round | Commit-to-delta |
+  |---|---|---|
+  | 100 | about 11 | p50 23 ms, p95 46–103 ms |
+  | 1,000 | about 11 | p50 41 ms, p95 92 ms |
+
+  Before plan groups, 300 subscribers needed 417 statements per round
+  (p95 227 ms). Tail latency needs a dedicated host to measure.
+- **Oracle soak** with aggregates, DISTINCT, numeric specials and
+  multi-member plan groups: 25 seeds, 26,808 transactions, 1,097 incremental
+  passes, 11,652 comparisons, zero divergences.
+
 ## Consequences
 
 - **TRUNCATE waits.** TRUNCATE and table rewrites on live tables wait for the

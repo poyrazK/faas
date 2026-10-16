@@ -42,9 +42,11 @@ func TestCompileModes(t *testing.T) {
 		{`SELECT c.id, count(m.*) AS n, max(m.body) FROM channels c LEFT JOIN messages m ON m.channel_id = c.id GROUP BY c.id`, ModeGroup, true, ""},
 		{`SELECT channel_id % 3 AS bucket, count(*) FROM messages GROUP BY 1 HAVING count(*) > 1`, ModeGroup, false, ""},
 		{`SELECT * FROM messages ORDER BY created_at DESC LIMIT 10`, ModeRecompute, false, "ORDER BY or LIMIT"},
-		{`SELECT count(*) FROM messages`, ModeRecompute, false, "aggregate without GROUP BY"},
+		{`SELECT count(*), sum(id), min(body) FROM messages`, ModeGroup, false, ""},
+		{`SELECT string_agg(body, ',') FROM messages`, ModeRecompute, false, "aggregate string_agg"},
 		{`SELECT * FROM channels WHERE id IN (SELECT channel_id FROM members WHERE user_id = $1)`, ModeRecompute, false, "subquery"},
-		{`SELECT DISTINCT channel_id FROM messages`, ModeRecompute, false, "DISTINCT"},
+		{`SELECT DISTINCT channel_id FROM messages`, ModeGroup, false, ""},
+		{`SELECT DISTINCT ON (channel_id) channel_id, body FROM messages`, ModeRecompute, false, "DISTINCT ON or DISTINCT with aggregates"},
 	} {
 		p, err := Compile(ctx, conn, tc.sql)
 		if err != nil {
@@ -63,7 +65,11 @@ func TestCompileModes(t *testing.T) {
 				}
 			}
 		}
-		if p.Mode == ModeGroup {
+		if p.Mode == ModeGroup && p.Agg != nil {
+			if _, err := conn.Prepare(ctx, "", p.Agg.FinalizeSQL); err != nil {
+				t.Fatalf("%s: finalize SQL does not prepare: %v\n%s", tc.sql, err, p.Agg.FinalizeSQL)
+			}
+		} else if p.Mode == ModeGroup {
 			if _, err := conn.Prepare(ctx, "", p.OutputRestricted); err != nil {
 				t.Fatalf("%s: group-restricted SQL does not prepare: %v\n%s", tc.sql, err, p.OutputRestricted)
 			}

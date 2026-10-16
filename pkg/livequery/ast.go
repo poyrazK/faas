@@ -16,6 +16,7 @@ const hiddenPrefix = "__lq_"
 func lineageColumn(rel, key int) string { return fmt.Sprintf("%sl%d_%d", hiddenPrefix, rel, key) }
 func groupColumn(k int) string          { return fmt.Sprintf("%sg%d", hiddenPrefix, k) }
 func paramColumn(k int) string          { return fmt.Sprintf("%sp%d", hiddenPrefix, k) }
+func aggColumn(j int) string            { return fmt.Sprintf("%sa%d", hiddenPrefix, j) }
 
 // parseValue parses a scalar SQL expression.
 func parseValue(expr string) (*pgq.Node, error) {

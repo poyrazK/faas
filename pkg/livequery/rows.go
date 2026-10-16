@@ -35,8 +35,10 @@ func encodeValues(values []*string) string {
 // where an outer join produced NULLs for that relation.
 type keyedRow struct {
 	values  []*string // visible values, group key values, or nil
+	aggs    []*string // group input of incremental aggregates: argument values
 	lineage []string
-	enc     string // encodeValues(values)
+	group   string // group input: encodeValues of the group key values
+	enc     string // encodeValues of values and aggs
 }
 
 // keyedSet indexes rows by each relation's lineage key.
@@ -118,12 +120,16 @@ type resultShape struct {
 	names   []string
 	lineage [][]int // relation -> key column positions
 	groups  []int   // group key positions
+	aggs    []int   // aggregate argument positions (-1 for count(*))
 }
 
-func shapeOf(fields []string, relations []*Relation, groups int) (resultShape, error) {
-	s := resultShape{sub: -1, lineage: make([][]int, len(relations)), groups: make([]int, groups)}
+func shapeOf(fields []string, relations []*Relation, groups, aggs int) (resultShape, error) {
+	s := resultShape{sub: -1, lineage: make([][]int, len(relations)), groups: make([]int, groups), aggs: make([]int, aggs)}
 	for i := range s.groups {
 		s.groups[i] = -1
+	}
+	for i := range s.aggs {
+		s.aggs[i] = -1
 	}
 	for i, rel := range relations {
 		s.lineage[i] = make([]int, len(rel.Keys))
@@ -143,6 +149,8 @@ func shapeOf(fields []string, relations []*Relation, groups int) (resultShape, e
 			s.lineage[rel][key] = pos
 		case scan(name, hiddenPrefix+"g%d", &g) && g < groups:
 			s.groups[g] = pos
+		case scan(name, hiddenPrefix+"a%d", &g) && g < aggs:
+			s.aggs[g] = pos
 		case scan(name, hiddenPrefix+"p%d", &g):
 		default:
 			return s, fmt.Errorf("livequery: unexpected hidden column %s", name)
@@ -159,7 +167,9 @@ func scan(s, format string, args ...any) bool {
 func pick(values []*string, positions []int) []*string {
 	out := make([]*string, len(positions))
 	for i, p := range positions {
-		out[i] = values[p]
+		if p >= 0 {
+			out[i] = values[p]
+		}
 	}
 	return out
 }

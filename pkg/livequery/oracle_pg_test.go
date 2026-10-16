@@ -39,9 +39,9 @@ func (s oracleSchema) ddl() string {
 	var b strings.Builder
 	for _, t := range s.tables {
 		if s.composite[t] {
-			fmt.Fprintf(&b, "CREATE TABLE %s (k1 int, k2 text, a int NOT NULL, b int, s text, ref bigint, PRIMARY KEY (k1, k2));\n", t)
+			fmt.Fprintf(&b, "CREATE TABLE %s (k1 int, k2 text, a int NOT NULL, b int, s text, ref bigint, n numeric, PRIMARY KEY (k1, k2));\n", t)
 		} else {
-			fmt.Fprintf(&b, "CREATE TABLE %s (id bigint PRIMARY KEY, a int NOT NULL, b int, s text, ref bigint);\n", t)
+			fmt.Fprintf(&b, "CREATE TABLE %s (id bigint PRIMARY KEY, a int NOT NULL, b int, s text, ref bigint, n numeric);\n", t)
 		}
 	}
 	return b.String()
@@ -149,20 +149,63 @@ func (s oracleSchema) randomQuery(r *rand.Rand) oracleQuery {
 			sel += ", " + pickOne(r, groups) + " AS g2"
 			groupBy = " GROUP BY 1, 2"
 		}
-		sel += fmt.Sprintf(", count(*) AS n, count(%s.a) AS nb, sum(%s.a) AS sa, min(%s.s) AS mn, max(coalesce(%s.b, -1)) AS mx",
-			b, a, b, b)
-		sel += fmt.Sprintf(", string_agg(coalesce(%s.s, '~'), ',' ORDER BY coalesce(%s.s, '~')) AS agg", b, b)
+		sel += ", " + s.aggregates(r, a, b)
+		if r.IntN(3) == 0 {
+			sel += fmt.Sprintf(", string_agg(coalesce(%s.s, '~'), ',' ORDER BY coalesce(%s.s, '~')) AS agg", b, b)
+		}
 		having := ""
 		if r.IntN(3) == 0 {
 			having = " HAVING count(*) > 1"
 		}
 		return oracleQuery{sql: sel + " FROM " + from + where + groupBy + having, args: params}
 	case 8:
-		return oracleQuery{sql: fmt.Sprintf("SELECT %s.a, %s.s FROM %s%s ORDER BY 1 DESC NULLS LAST, 2 NULLS FIRST LIMIT 4", aliases[0], aliases[0], from, where), args: params}
+		switch r.IntN(3) {
+		case 0:
+			return oracleQuery{sql: fmt.Sprintf("SELECT %s.a, %s.s FROM %s%s ORDER BY 1 DESC NULLS LAST, 2 NULLS FIRST LIMIT 4", aliases[0], aliases[0], from, where), args: params}
+		case 1:
+			a, b := pickOne(r, aliases), pickOne(r, aliases)
+			having := ""
+			if r.IntN(2) == 0 {
+				params = append(params, int64(r.IntN(6)))
+				having = fmt.Sprintf(" HAVING count(*) > $%d", len(params))
+			}
+			return oracleQuery{sql: "SELECT " + s.aggregates(r, a, b) + " FROM " + from + where + having, args: params}
+		default:
+			a, b := pickOne(r, aliases), pickOne(r, aliases)
+			return oracleQuery{sql: fmt.Sprintf("SELECT DISTINCT %s.a %% 3 AS d1, %s.s AS d2 FROM %s%s", a, b, from, where), args: params}
+		}
 	default:
 		t := pickOne(r, s.tables)
 		return oracleQuery{sql: fmt.Sprintf("SELECT count(*) AS n, sum(a) AS sa FROM %s WHERE ref IN (SELECT a FROM %s)", t, pickOne(r, s.tables))}
 	}
+}
+
+// aggregates returns a random list of incrementally maintainable aggregates.
+func (s oracleSchema) aggregates(r *rand.Rand, a, b string) string {
+	all := []string{
+		"count(*) AS n",
+		fmt.Sprintf("count(%s.a) AS nb", b),
+		fmt.Sprintf("sum(%s.a) AS sa", a),
+		fmt.Sprintf("sum(%s.n) AS sn", b),
+		fmt.Sprintf("avg(%s.a) AS aa", a),
+		fmt.Sprintf("avg(%s.n) AS an", b),
+		fmt.Sprintf("min(%s.s) AS mn", b),
+		fmt.Sprintf("max(%s.s) AS mxs", a),
+		fmt.Sprintf("min(%s.n) AS mnn", a),
+		fmt.Sprintf("max(coalesce(%s.b, -1)) AS mx", b),
+		fmt.Sprintf("sum(%s.a::numeric / 4) AS sq", a),
+		fmt.Sprintf("count(%s.*) AS rows_%s", b, b),
+	}
+	var out []string
+	for _, agg := range all {
+		if r.IntN(2) == 0 {
+			out = append(out, agg)
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, all[0])
+	}
+	return strings.Join(out, ", ")
 }
 
 // writer runs random transactions until it has committed or abandoned n.
@@ -206,15 +249,20 @@ func (s oracleSchema) statement(r *rand.Rand, t string, strs []any) (string, []a
 		return v
 	}
 	ref := maybeNull(1 + r.IntN(40))
+	nums := []any{nil, "1.5", "2.25", "-3", "0.125", "7", "10.000"}
+	if r.IntN(30) == 0 {
+		nums = []any{"NaN", "Infinity", "-Infinity"}
+	}
+	num := pickOne(r, nums)
 	if s.composite[t] {
 		switch r.IntN(6) {
 		case 0, 1:
-			return fmt.Sprintf("INSERT INTO %s VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING", t),
-				[]any{1 + r.IntN(20), pickOne(r, []string{"p", "q"}), r.IntN(10), maybeNull(r.IntN(10)), pickOne(r, strs), ref}
+			return fmt.Sprintf("INSERT INTO %s VALUES ($1, $2, $3, $4, $5, $6, $7::numeric) ON CONFLICT DO NOTHING", t),
+				[]any{1 + r.IntN(20), pickOne(r, []string{"p", "q"}), r.IntN(10), maybeNull(r.IntN(10)), pickOne(r, strs), ref, num}
 		case 2:
 			return fmt.Sprintf("UPDATE %s SET k2 = CASE k2 WHEN 'p' THEN 'q' ELSE 'p' END WHERE k1 = $1", t), []any{1 + r.IntN(20)}
 		case 3:
-			return fmt.Sprintf("UPDATE %s SET a = $1, s = $2 WHERE k1 = $3", t), []any{r.IntN(10), pickOne(r, strs), 1 + r.IntN(20)}
+			return fmt.Sprintf("UPDATE %s SET a = $1, s = $2, n = $3::numeric WHERE k1 = $4", t), []any{r.IntN(10), pickOne(r, strs), num, 1 + r.IntN(20)}
 		case 4:
 			return fmt.Sprintf("UPDATE %s SET ref = $1 WHERE k1 = $2", t), []any{ref, 1 + r.IntN(20)}
 		default:
@@ -223,10 +271,10 @@ func (s oracleSchema) statement(r *rand.Rand, t string, strs []any) (string, []a
 	}
 	switch r.IntN(11) {
 	case 0, 1, 2:
-		return fmt.Sprintf("INSERT INTO %s VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING", t),
-			[]any{1 + r.IntN(40), r.IntN(10), maybeNull(r.IntN(10)), pickOne(r, strs), ref}
+		return fmt.Sprintf("INSERT INTO %s VALUES ($1, $2, $3, $4, $5, $6::numeric) ON CONFLICT (id) DO NOTHING", t),
+			[]any{1 + r.IntN(40), r.IntN(10), maybeNull(r.IntN(10)), pickOne(r, strs), ref, num}
 	case 3:
-		return fmt.Sprintf("UPDATE %s SET a = $1, b = $2 WHERE id = $3", t), []any{r.IntN(10), maybeNull(r.IntN(10)), 1 + r.IntN(40)}
+		return fmt.Sprintf("UPDATE %s SET a = $1, b = $2, n = $3::numeric WHERE id = $4", t), []any{r.IntN(10), maybeNull(r.IntN(10)), num, 1 + r.IntN(40)}
 	case 4:
 		return fmt.Sprintf("UPDATE %s SET ref = $1 WHERE id = $2", t), []any{ref, 1 + r.IntN(40)}
 	case 5:
@@ -270,13 +318,14 @@ func TestOracleRandomWorkloads(t *testing.T) {
 			total.Applied += stats.Applied
 			total.Held += stats.Held
 			total.Keyed += stats.Keyed
+			total.Incremental += stats.Incremental
 			total.Rebuilds += stats.Rebuilds
 			total.Verified += stats.Verified
 			total.ExpandedKeys += stats.ExpandedKeys
 		})
 	}
 	t.Logf("oracle totals: %+v", total)
-	if total.Keyed == 0 || total.ExpandedKeys == 0 {
+	if total.Keyed == 0 || total.ExpandedKeys == 0 || total.Incremental == 0 {
 		t.Fatalf("incremental paths not exercised: %+v", total)
 	}
 }

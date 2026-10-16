@@ -52,6 +52,7 @@ type Stats struct {
 	Applied      int // transactions applied
 	Held         int // transactions decoded before a marker but not yet visible
 	Keyed        int // keyed maintenance passes (lineage or group), per plan group
+	Incremental  int // of those, incremental aggregate passes
 	Rebuilds     int // full re-evaluations (recompute mode, truncation), per plan group
 	Verified     int // oracle comparisons
 	ExpandedKeys int // preserved-side keys added for outer joins

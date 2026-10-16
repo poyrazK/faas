@@ -3,6 +3,7 @@ package livequery
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -38,6 +39,15 @@ type member struct {
 	input  *keyedSet // group mode: input rows (values = group keys)
 	join   *keyedSet // outer joins: lineage of the FROM clause
 	groups map[string]*keyedRow
+	agg    map[string]*aggGroup // incremental aggregates: state by group
+}
+
+// aggCount is the number of aggregate argument columns the plan reads.
+func (g *planGroup) aggCount() int {
+	if g.plan.Agg == nil {
+		return 0
+	}
+	return len(g.plan.Agg.Specs)
 }
 
 // batchArgs returns the leading parameters of a batched statement for the
@@ -72,7 +82,7 @@ func (g *planGroup) read(ctx context.Context, tx pgx.Tx, sql string, ms []*membe
 	if err != nil {
 		return nil, resultShape{}, err
 	}
-	shape, err := shapeOf(names, g.plan.Relations, g.plan.NGroups)
+	shape, err := shapeOf(names, g.plan.Relations, g.plan.NGroups, g.aggCount())
 	if err != nil {
 		return nil, shape, err
 	}
@@ -108,10 +118,12 @@ func (g *planGroup) readKeyed(ctx context.Context, tx pgx.Tx, sql string, ms []*
 			r := &keyedRow{lineage: shape.lineageOf(values)}
 			if groupValues {
 				r.values = pick(values, shape.groups)
+				r.aggs = pick(values, shape.aggs)
+				r.group = encodeValues(r.values)
 			} else {
 				r.values = pick(values, shape.visible)
 			}
-			r.enc = encodeValues(r.values)
+			r.enc = encodeValues(append(slices.Clone(r.values), r.aggs...))
 			set[rowID(r.lineage...)] = r
 		}
 		out[m] = set
@@ -199,6 +211,10 @@ func (g *planGroup) step(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*mem
 	case g.plan.Mode == ModeLineage:
 		g.stats.Keyed++
 		err = g.maintainLineage(ctx, tx, ready, g.keysFor(cs))
+	case g.plan.Mode == ModeGroup && g.plan.Agg != nil:
+		g.stats.Keyed++
+		g.stats.Incremental++
+		err = g.maintainAgg(ctx, tx, ready, g.keysFor(cs))
 	case g.plan.Mode == ModeGroup:
 		g.stats.Keyed++
 		err = g.maintainGroup(ctx, tx, ready, g.keysFor(cs))
@@ -286,7 +302,11 @@ func (g *planGroup) rebuild(ctx context.Context, tx pgx.Tx, ms []*member) error 
 			}
 			m.groups = map[string]*keyedRow{}
 		}
-		if err := g.readGroups(ctx, tx, p.OutputSQL, ms, nil); err != nil {
+		if p.Agg != nil {
+			if err := g.rebuildAgg(ctx, tx, ms); err != nil {
+				return err
+			}
+		} else if err := g.readGroups(ctx, tx, p.OutputSQL, ms, nil); err != nil {
 			return err
 		}
 	}
@@ -398,10 +418,10 @@ func (g *planGroup) maintainGroup(ctx context.Context, tx pgx.Tx, ms []*member, 
 		affected := map[string][]*string{}
 		for id := range m.input.matching(keys) {
 			r := m.input.rows[id]
-			affected[r.enc] = r.values
+			affected[r.group] = r.values
 		}
 		for _, r := range fresh[m] {
-			affected[r.enc] = r.values
+			affected[r.group] = r.values
 		}
 		m.input.replace(keys, fresh[m])
 		if len(affected) == 0 {
