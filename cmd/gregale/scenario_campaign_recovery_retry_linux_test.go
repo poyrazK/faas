@@ -256,6 +256,14 @@ func TestCampaignRecoveryRetryAfterProcessDeath(t *testing.T) {
 }
 
 func TestCampaignRecoveryGuardProtocol(t *testing.T) {
+	inactivePath := filepath.Join(t.TempDir(), "inactive-claim.json")
+	inactive := &testCampaignBundleResolver{Index: testCampaignBundleIndex{ClaimPath: inactivePath}}
+	if _, err := releaseTestCampaignClaim(inactive); err == nil {
+		t.Fatal("inactive import acquired recovery authority")
+	}
+	if _, err := os.Lstat(inactivePath + ".recovery.lock"); !os.IsNotExist(err) {
+		t.Fatal("inactive import created a persistent guard")
+	}
 	// adr: 984 — stable advisory-lock inodes exclude concurrent recoverers and reject unverifiable legacy guards.
 	path := filepath.Join(t.TempDir(), "recovery.lock")
 	if err := os.WriteFile(path, nil, 0600); err != nil {

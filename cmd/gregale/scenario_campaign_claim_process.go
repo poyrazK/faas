@@ -233,6 +233,14 @@ func prepareTestCampaignClaimRecovery(resolver *testCampaignBundleResolver) (tes
 }
 
 func releaseTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaignClaimAssessment, error) {
+	if resolver == nil {
+		return testCampaignClaimAssessment{}, errors.New("--handoff is required")
+	}
+	// An inspection-only or mismatched import must not create a persistent
+	// guard at an empty or otherwise unauthorized claim path.
+	if err := resolver.requireClaim(true); err != nil {
+		return testCampaignClaimAssessment{}, err
+	}
 	release, err := acquireTestCampaignRecoveryGuard(resolver.Index.ClaimPath + ".recovery.lock")
 	if err != nil {
 		return testCampaignClaimAssessment{}, err
