@@ -1222,7 +1222,7 @@ func (q *Queries) InsertEventExecutionLineageBackfillCase(ctx context.Context, d
 }
 
 const listEventExecutionLineageCases = `-- name: ListEventExecutionLineageCases :many
-SELECT subscription_id, outbox_id, account_id, app_id, diagnostic_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id>$4::bigint AND retain_until>clock_timestamp()
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id>$4::bigint AND retain_until>clock_timestamp()
 ORDER BY outbox_id LIMIT $5::integer
 `
 
@@ -1254,7 +1254,6 @@ func (q *Queries) ListEventExecutionLineageCases(ctx context.Context, db DBTX, a
 			&i.OutboxID,
 			&i.AccountID,
 			&i.AppID,
-			&i.DiagnosticID,
 			&i.AcceptedAt,
 			&i.RootInvocationID,
 			&i.RootCreatedAt,
@@ -1264,6 +1263,7 @@ func (q *Queries) ListEventExecutionLineageCases(ctx context.Context, db DBTX, a
 			&i.RetryCount,
 			&i.RecordedAt,
 			&i.RetainUntil,
+			&i.DiagnosticID,
 		); err != nil {
 			return nil, err
 		}
@@ -1432,7 +1432,7 @@ func (q *Queries) ListEventExecutionLineageRetryJobs(ctx context.Context, db DBT
 }
 
 const lockEventExecutionLineageCase = `-- name: LockEventExecutionLineageCase :one
-SELECT subscription_id, outbox_id, account_id, app_id, diagnostic_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id=$4::bigint AND retain_until>clock_timestamp() FOR UPDATE
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id=$4::bigint AND retain_until>clock_timestamp() FOR UPDATE
 `
 
 type LockEventExecutionLineageCaseParams struct {
@@ -1455,7 +1455,6 @@ func (q *Queries) LockEventExecutionLineageCase(ctx context.Context, db DBTX, ar
 		&i.OutboxID,
 		&i.AccountID,
 		&i.AppID,
-		&i.DiagnosticID,
 		&i.AcceptedAt,
 		&i.RootInvocationID,
 		&i.RootCreatedAt,
@@ -1465,6 +1464,7 @@ func (q *Queries) LockEventExecutionLineageCase(ctx context.Context, db DBTX, ar
 		&i.RetryCount,
 		&i.RecordedAt,
 		&i.RetainUntil,
+		&i.DiagnosticID,
 	)
 	return i, err
 }
@@ -1558,7 +1558,7 @@ func (q *Queries) LockNextEventExecutionLineageRetryJob(ctx context.Context, db 
 }
 
 const previewEventExecutionLineageRetries = `-- name: PreviewEventExecutionLineageRetries :many
-SELECT subscription_id, outbox_id, account_id, app_id, diagnostic_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid
+SELECT subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid
  AND subscription_id=$3::uuid AND outbox_id>$4::bigint AND retain_until>clock_timestamp()
  AND status IN ('unresolved','conflict') AND ($5::text='' OR reason=$5::text)
 ORDER BY outbox_id LIMIT $6::integer
@@ -1594,7 +1594,6 @@ func (q *Queries) PreviewEventExecutionLineageRetries(ctx context.Context, db DB
 			&i.OutboxID,
 			&i.AccountID,
 			&i.AppID,
-			&i.DiagnosticID,
 			&i.AcceptedAt,
 			&i.RootInvocationID,
 			&i.RootCreatedAt,
@@ -1604,6 +1603,7 @@ func (q *Queries) PreviewEventExecutionLineageRetries(ctx context.Context, db DB
 			&i.RetryCount,
 			&i.RecordedAt,
 			&i.RetainUntil,
+			&i.DiagnosticID,
 		); err != nil {
 			return nil, err
 		}
@@ -1902,7 +1902,7 @@ func (q *Queries) SaveEventExecutionLineageRetryJob(ctx context.Context, db DBTX
 
 const updateEventExecutionLineageCaseRetry = `-- name: UpdateEventExecutionLineageCaseRetry :one
 UPDATE event_execution_lineage_cases SET root_created_at=coalesce(root_created_at,$1::timestamptz),status=$2::text,reason=$3::text,revision=revision+1,retry_count=retry_count+1,recorded_at=clock_timestamp(),retain_until=greatest(retain_until,clock_timestamp()+make_interval(secs=>$4::integer))
-WHERE subscription_id=$5::uuid AND outbox_id=$6::bigint RETURNING subscription_id, outbox_id, account_id, app_id, diagnostic_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until
+WHERE subscription_id=$5::uuid AND outbox_id=$6::bigint RETURNING subscription_id, outbox_id, account_id, app_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until, diagnostic_id
 `
 
 type UpdateEventExecutionLineageCaseRetryParams struct {
@@ -1929,7 +1929,6 @@ func (q *Queries) UpdateEventExecutionLineageCaseRetry(ctx context.Context, db D
 		&i.OutboxID,
 		&i.AccountID,
 		&i.AppID,
-		&i.DiagnosticID,
 		&i.AcceptedAt,
 		&i.RootInvocationID,
 		&i.RootCreatedAt,
@@ -1939,6 +1938,7 @@ func (q *Queries) UpdateEventExecutionLineageCaseRetry(ctx context.Context, db D
 		&i.RetryCount,
 		&i.RecordedAt,
 		&i.RetainUntil,
+		&i.DiagnosticID,
 	)
 	return i, err
 }

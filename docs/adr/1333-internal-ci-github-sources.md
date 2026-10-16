@@ -2,7 +2,7 @@
 
 - Status: accepted for internal qualification; disabled by default
 - Date: 2026-10-15
-- Extends: ADR-1331 (CI control plane), ADR-1332 (execution qualification)
+- Extends: ADR-1347 (CI control plane), ADR-1332 (execution qualification)
 
 ## Decision
 

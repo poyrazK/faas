@@ -2,7 +2,7 @@
 
 - Status: accepted for internal contract qualification; unwired and disabled
 - Date: 2026-10-15
-- Extends: ADR-1331, ADR-1332, ADR-1333
+- Extends: ADR-1347, ADR-1332, ADR-1333
 
 ## Decision
 

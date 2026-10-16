@@ -1003,6 +1003,13 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 	return clientIP.String(), proto
 }
 
+// TrustedIngressPeer reports whether r's direct peer is a configured ingress
+// peer, the same test CanonicalForwardingContext applies before it reads any
+// forwarded header.
+func TrustedIngressPeer(r *http.Request, trustedIngressCIDRs []netip.Prefix) bool {
+	return trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+}
+
 func trustsIngressPeer(peer netip.Addr, trustedIngressCIDRs []netip.Prefix) bool {
 	if !peer.IsValid() {
 		return false

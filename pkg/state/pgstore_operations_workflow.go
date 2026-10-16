@@ -199,6 +199,23 @@ func interruptOperationWorkflowTx(ctx context.Context, tx sqlc.DBTX, runID strin
 	return q.CloseCustomerOperationWorkflowAttempts(ctx, tx, id)
 }
 
+// stopOperationWorkflowTx interrupts running steps, skips pending ones, ends
+// the run and projects the result. The caller holds the run and operation locks.
+func stopOperationWorkflowTx(ctx context.Context, tx pgx.Tx, runID, reason string) error {
+	q := sqlc.New()
+	id := mustPgUUID(runID)
+	if err := interruptOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return err
+	}
+	if err := q.SkipCancelledCustomerOperationWorkflowSteps(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := q.CancelCustomerOperationWorkflow(ctx, tx, sqlc.CancelCustomerOperationWorkflowParams{RunID: id, Reason: reason}); err != nil {
+		return err
+	}
+	return syncOperationWorkflowTx(ctx, tx, runID)
+}
+
 func (s *PgStore) cancelOperationWorkflow(ctx context.Context, snapshot Operation, generation int) (Operation, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -234,16 +251,7 @@ func (s *PgStore) cancelOperationWorkflow(ctx context.Context, snapshot Operatio
 	if err := operationSaveTx(ctx, tx, op, event); err != nil {
 		return Operation{}, err
 	}
-	if err := interruptOperationWorkflowTx(ctx, tx, snapshot.WorkflowRunID); err != nil {
-		return Operation{}, err
-	}
-	if err := q.SkipCancelledCustomerOperationWorkflowSteps(ctx, tx, runID); err != nil {
-		return Operation{}, err
-	}
-	if err := q.CancelCustomerOperationWorkflow(ctx, tx, runID); err != nil {
-		return Operation{}, err
-	}
-	if err := syncOperationWorkflowTx(ctx, tx, snapshot.WorkflowRunID); err != nil {
+	if err := stopOperationWorkflowTx(ctx, tx, snapshot.WorkflowRunID, "cancelled by operation owner"); err != nil {
 		return Operation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

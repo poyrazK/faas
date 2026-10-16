@@ -544,7 +544,7 @@ func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
 
 	responder := func(query string) string {
 		switch {
-		case strings.Contains(query, "sum by (app, class)(increase(gateway_request_duration_seconds_count"):
+		case strings.Contains(query, "app_class:gateway_request_duration_seconds_count:increase5m"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s","class":"2xx"},"value":[1,"12"]},{"metric":{"app":"%s","class":"2xx"},"value":[1,"0"]}]}}`, active.ID, idle.ID)
 		case strings.Contains(query, "gateway_cold_boot_total"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"0"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID, idle.ID)

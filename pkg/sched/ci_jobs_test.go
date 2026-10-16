@@ -1,3 +1,5 @@
+// adr: 1336
+// CI scheduling stays default-deny and records output only after native stop.
 package sched
 
 import (

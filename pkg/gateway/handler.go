@@ -5883,6 +5883,16 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	workloadAdmissionScope := app.Scope
+	if app.PinnedDeploymentScope != "" {
+		workloadAdmissionScope = app.PinnedDeploymentScope
+	}
+	// Authenticated candidate verification has its own exact-attempt guard.
+	// Ordinary requests are fenced before any edge/cache response can serve.
+	if !deploymentSmoke && !h.workloadAdmissionOpen(w, r, app.ID, workloadAdmissionScope) {
+		return
+	}
+
 	// ADR-847: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
@@ -6755,6 +6765,9 @@ haveApp:
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"
 	}
+	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
+		return
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -6862,6 +6875,9 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		// A thaw prefers the frozen instance this session is pinned to
+		// (ADR-1151): its in-memory state is why the app keeps affinity.
+		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
 		var cancelWakePage context.CancelFunc
 		showWakePage := acceptsWakePage(r)
 		if showWakePage {

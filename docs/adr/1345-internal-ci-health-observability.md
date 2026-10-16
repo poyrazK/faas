@@ -2,7 +2,7 @@
 
 - Status: implemented behind existing default-off internal gates
 - Date: 2026-10-16
-- Extends: ADR-1337, ADR-1339, ADR-1341, ADR-1342, ADR-1343 and ADR-1344
+- Extends: ADR-1337, ADR-1339, ADR-1341, ADR-1342, ADR-1348 and ADR-1349
 
 ## Decision
 

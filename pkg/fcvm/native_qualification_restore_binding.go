@@ -112,7 +112,7 @@ func (j *nativeQualificationRestoreJournal) producer(ctx context.Context, instan
 	if err != nil {
 		return nil, err
 	}
-	if r.Execution != permit.Execution || r.Generation != permit.Generation || r.KernelBootID != permit.KernelBootID || r.Capture != permit.Capture ||
+	if r.Execution != permit.Execution || r.Generation != permit.Generation || r.KernelBootID != permit.KernelBootID || !r.Capture.Equal(permit.Capture) ||
 		!r.AcceptedAt.Equal(permit.AcceptedAt) || !r.Deadline.Equal(permit.Deadline) ||
 		r.Execution.InstanceID != instance || !r.CreateStarted || r.Revoked || !j.incoming.clock().Before(r.Deadline) {
 		return nil, errors.New("native qualification restore: target producer changed, expired or was revoked")

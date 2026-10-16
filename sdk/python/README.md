@@ -272,6 +272,13 @@ destination cannot inherit session authority. Application authentication remains
 subject to HTTPX's normal redirect policy. Gregale authorizes scope at every hop.
 See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
+## Application Auth tokens
+
+`pip install 'faas_sdk[auth]'`, then verify application Auth access tokens and
+check permissions with `faas_sdk.auth.AuthClient` (`verify`, `authorize` and
+their `_async` forms). See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 ## Runtime feature flags
 
 Managed Python ASGI applications can use Gregale's customer-aware runtime flag
@@ -410,6 +417,22 @@ request after an uncertain reply; the returned `queued` receipt describes the
 original decision. Read delivery status separately. Business results and
 execution generations are unaffected. The legacy retry method remains available.
 
+
+
+### Application standards
+
+The generated `faas_sdk.api.orgs` modules include
+`preview_application_standard_assignment`, `get_application_standard_review`,
+`get_application_standard_operation`, `get_application_standard_enrollment`,
+and `list_application_standard_exceptions`. Use their typed request/response
+models through the authenticated client's `inner` transport.
+
+Preview saves affected applications and blockers without activating an
+assignment. Progress preserves desired, persisted and observed state.
+Enrollment includes the installed exception deadline, while exception history
+retains approval/revocation details, server `as_of` time and an exclusive UUID
+cursor. Activation and exception mutation APIs remain gated pending runtime
+acceptance.
 
 ## Object version protection
 

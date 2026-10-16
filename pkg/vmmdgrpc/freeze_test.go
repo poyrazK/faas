@@ -30,6 +30,7 @@ type freezeStubVMM struct {
 	required  bool
 	freezes   []fcvm.FreezeOptions
 	thaws     []string
+	thawOpts  []fcvm.ThawOptions
 	resumed   []string
 	// onAwait runs inside AwaitFrozen.
 	onAwait func()
@@ -40,8 +41,9 @@ func (f *freezeStubVMM) Freeze(_ context.Context, _ string, opts fcvm.FreezeOpti
 	return fcvm.FreezeReport{Pause: 400 * time.Microsecond, Reclaim: 9 * time.Millisecond, BeforeBytes: 200 << 20, AfterBytes: 60 << 20}, f.freezeErr
 }
 
-func (f *freezeStubVMM) Thaw(_ context.Context, instance string) error {
+func (f *freezeStubVMM) ThawWith(_ context.Context, instance string, opts fcvm.ThawOptions) error {
 	f.thaws = append(f.thaws, instance)
+	f.thawOpts = append(f.thawOpts, opts)
 	return f.thawErr
 }
 
@@ -119,28 +121,33 @@ func TestFreezeInstanceHandler(t *testing.T) {
 
 func TestThawInstanceHandler(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		vmm       VmmdAPI
-		required  bool
-		wantCode  codes.Code
-		wantThaws int
+		name         string
+		vmm          VmmdAPI
+		required     bool
+		afterRestore bool
+		wantCode     codes.Code
+		wantThaws    int
 	}{
 		{name: "thawed", vmm: &freezeStubVMM{}, wantCode: codes.OK, wantThaws: 1},
 		{name: "thawed with image healthcheck", vmm: &freezeStubVMM{required: true}, required: true, wantCode: codes.OK, wantThaws: 1},
+		{name: "thawed running after_restore", vmm: &freezeStubVMM{}, afterRestore: true, wantCode: codes.OK, wantThaws: 1},
 		{name: "image healthcheck contract missing", vmm: &freezeStubVMM{}, required: true, wantCode: codes.InvalidArgument},
 		{name: "no capability", vmm: stubVMM{}, wantCode: codes.Unimplemented},
 		{name: "not live", vmm: &freezeStubVMM{thawErr: errors.New("thaw vm-a: instance is not live")}, wantCode: codes.Internal, wantThaws: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(tc.vmm, nil, "1.17.0", nil)
-			resp, err := s.ThawInstance(t.Context(), &vmmdpb.ThawInstanceRequest{Instance: "vm-a", ImageHealthcheckRequired: tc.required})
+			resp, err := s.ThawInstance(t.Context(), &vmmdpb.ThawInstanceRequest{Instance: "vm-a", ImageHealthcheckRequired: tc.required, RunAfterRestore: tc.afterRestore})
 			if status.Code(err) != tc.wantCode {
 				t.Fatalf("ThawInstance err = %v, want %v", err, tc.wantCode)
 			}
 			if f, ok := tc.vmm.(*freezeStubVMM); ok && len(f.thaws) != tc.wantThaws {
 				t.Fatalf("Thaw calls = %v, want %d", f.thaws, tc.wantThaws)
 			}
-			if err == nil && (resp.GetInstance() != "vm-a" || resp.GetImageHealthcheckVerified() != tc.required) {
+			if f, ok := tc.vmm.(*freezeStubVMM); ok && tc.wantThaws > 0 && f.thawOpts[0].RunResumeHook != tc.afterRestore {
+				t.Fatalf("thaw options = %+v, want RunResumeHook=%v", f.thawOpts[0], tc.afterRestore)
+			}
+			if err == nil && (resp.GetInstance() != "vm-a" || resp.GetImageHealthcheckVerified() != tc.required || resp.GetAfterRestoreRan() != tc.afterRestore) {
 				t.Fatalf("response = %v", resp)
 			}
 		})
@@ -158,6 +165,7 @@ func TestFrozenRefusalsMapToFailedPrecondition(t *testing.T) {
 		{err: fmt.Errorf("park vm-a: %w", fcvm.ErrInstanceFrozen), code: api.CodeFrozenInstanceRefused},
 		{err: fmt.Errorf("freeze vm-a: %w: builder VM", fcvm.ErrNotFreezable), code: api.CodeInstanceNotFreezable},
 		{err: fmt.Errorf("freeze vm-a: %w", fcvm.ErrInstanceBusy), code: api.CodeInstanceBusy},
+		{err: fmt.Errorf("freeze vm-a: %w", fcvm.ErrCompressUnavailable), code: api.CodeFrozenCompressUnavailable},
 	} {
 		err := grpcerr.ToStatus(toProblem(tc.err))
 		if status.Code(err) != codes.FailedPrecondition || problemCode(t, err) != tc.code {

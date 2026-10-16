@@ -426,6 +426,7 @@
     - internal-ci.json
     - edge-rules.json
     - durable-entities.json
+    - frozen-tier.json
   notify:
     - restart grafana-server
     - reload grafana provisioning

@@ -10,7 +10,7 @@ import type { OperationRecoveryStep } from './OperationRecoveryStep.js';
 export type OperationRecoveryInspection = {
   operation_id: string;
   generation: number;
-  state: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+  state: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
   failure_code?: string;
   cancellation_requested: boolean;
   execution_kind: 'http' | 'workflow' | 'job';

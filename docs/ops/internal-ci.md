@@ -428,7 +428,7 @@ needed. Receipts retain hashed request identity and request/application times;
 they survive restart and prevent duplicate recovery. Retain them during binary
 rollback; migration rollback refuses a nonempty journal. Recovery publishes
 the existing result without creating Jobs runs or executing commands. See
-[ADR-1343](../adr/1343-internal-ci-check-delivery-recovery.md).
+[ADR-1348](../adr/1348-internal-ci-check-delivery-recovery.md).
 
 ## Archive terminal execution history
 
@@ -491,7 +491,7 @@ them. Check retry generations remain lifetime bounded, including after archive.
 Account deletion removes owned archive receipts; managed storage tombstones
 continue to survive. Database rollback refuses archives because compacted
 detail cannot be reconstructed. See
-[ADR-1344](../adr/1344-internal-ci-execution-archival.md).
+[ADR-1349](../adr/1349-internal-ci-execution-archival.md).
 
 ## Definition and offline planning
 

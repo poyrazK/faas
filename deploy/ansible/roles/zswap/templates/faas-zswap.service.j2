@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=onebox-faas memory-only compressed swap for frozen VMs (ADR-906 decision 6)
+Requires=faas-tenant.slice
+After=faas-tenant.slice local-fs.target
+Before=faas-vmmd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/faas-zswap-setup
+
+[Install]
+WantedBy=multi-user.target

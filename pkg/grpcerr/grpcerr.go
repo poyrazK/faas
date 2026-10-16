@@ -69,6 +69,8 @@ func codeToGRPC(code string) codes.Code {
 		return codes.NotFound
 	case api.CodeNotImplemented:
 		return codes.Unimplemented
+	case api.CodeGitHubAccountConflict:
+		return codes.AlreadyExists
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted
@@ -77,7 +79,7 @@ func codeToGRPC(code string) codes.Code {
 		// stale route and wakes the instance through schedd.
 		return codes.Unavailable
 	case api.CodeBeforeCheckpointFailed, api.CodeDatabaseCutoverFenced, api.CodeEnvironmentQualificationUnconfirmed,
-		api.CodeInstanceNotFreezable, api.CodeInstanceBusy, api.CodeFrozenInstanceRefused:
+		api.CodeInstanceNotFreezable, api.CodeInstanceBusy, api.CodeFrozenInstanceRefused, api.CodeFrozenCompressUnavailable:
 		return codes.FailedPrecondition
 	case api.CodeBillingPastDue,
 		api.CodeUnauthorized:

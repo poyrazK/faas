@@ -2390,12 +2390,12 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	// delete-then-add appended it after them. Each argv is per-netns:
 	// `ip netns exec fc-i-1 nft …`. The tap name is "tap0" verbatim in
 	// argv (no quotes); nft's printer adds quotes when listing rules.
-	wantReplace := `ip netns exec fc-i-1 nft replace rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept`
+	wantReplace := `ip netns exec fc-i-1 nft insert rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept ; delete rule ip faas forward handle 7`
 	if !run.ran(wantReplace) {
 		t.Errorf("missing %q in command stream", wantReplace)
 	}
 	if run.ran("nft add rule") || run.ran("nft delete rule") {
-		t.Errorf("patch appended or deleted a rule instead of replacing it in place")
+		t.Errorf("patch appended or deleted a rule outside the in-place swap")
 	}
 	// Cached state refreshed: the next patch's fast-path
 	// compares against the new baseline.
@@ -2482,7 +2482,7 @@ func TestUpdateEgressAllowlist_SameAllowlistNoOp(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("first push: %v", err)
 	}
-	if !run.ran("nft replace rule") {
+	if !run.ran("nft insert rule") {
 		t.Fatal("first push should have run nft")
 	}
 	// Second push — same allowlist as the cached baseline
@@ -2809,14 +2809,14 @@ func TestUpdateEgressAllowlist_TwoPatchesInRow_WithCaptureRunner(t *testing.T) {
 	}
 	// The first patch replaces handle 9; the second replaces the
 	// handle captured after patch 1, not 9.
-	if !run.ran(`replace rule ip faas forward handle 9 `) {
+	if !run.ran(`insert rule ip faas forward handle 9 `) {
 		t.Errorf("patch 1 replace-by-handle 9 missing")
 	}
 	var sawReplacePatch2 bool
 	run.mu.Lock()
 	for _, c := range run.commands {
 		join := strings.Join(c, " ")
-		if strings.Contains(join, "replace rule ip faas forward handle") &&
+		if strings.Contains(join, "insert rule ip faas forward handle") &&
 			!strings.Contains(join, "handle 9 ") {
 			sawReplacePatch2 = true
 			t.Logf("patch 2 replace argv: %s", join)
@@ -2897,10 +2897,10 @@ func TestUpdateEgressAllowlist_V6FailureLeavesV4Untouched(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from v6 replace failure")
 	}
-	if !run.ran("replace rule ip faas forward handle 11 iifname tap0 ip daddr { 8.8.8.0/24 }") {
+	if !run.ran("insert rule ip faas forward handle 11 iifname tap0 ip daddr { 8.8.8.0/24 }") {
 		t.Error("v4 replace-by-handle 11 missing")
 	}
-	if !run.ran("replace rule ip6 faas forward handle 22") {
+	if !run.ran("insert rule ip6 faas forward handle 22") {
 		t.Error("v6 replace-by-handle 22 was not attempted")
 	}
 	if run.ran("2001:db8::/32") || run.ran("1.2.3.0/24") || run.ran("nft add rule") {

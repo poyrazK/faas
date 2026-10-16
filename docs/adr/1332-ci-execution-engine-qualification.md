@@ -2,7 +2,7 @@
 
 - Status: accepted for internal engine qualification; not launched
 - Date: 2026-10-15
-- Extends: ADR-1331 (internal CI control plane), ADR-099 (Jobs)
+- Extends: ADR-1347 (internal CI control plane), ADR-099 (Jobs)
 
 ## Decision
 

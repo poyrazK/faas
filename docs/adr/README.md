@@ -56,6 +56,22 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1347 | [Internal CI control plane with compute admission closed](1347-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1332 | [Durable CI execution engine qualification without compute dispatch](1332-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1333 | [Account-owned GitHub sources for blocked CI admission](1333-internal-ci-github-sources.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1334 | [Dormant CI adapter to Gregale Jobs](1334-dormant-ci-jobs-adapter.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1335 | [CI guest runner and task-scoped transfers](1335-ci-guest-runner-and-scoped-transfers.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1336 | [Disabled CI scheduler boundary and incomplete-output recovery](1336-disabled-ci-scheduler-boundary.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1337 | [Disabled CI HTTPS transport, private storage and retention](1337-ci-private-storage-and-retention.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1338 | [Opt-in CI native acceptance harness](1338-ci-native-acceptance-harness.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1339 | [Disabled internal CI execution service](1339-internal-ci-execution-service.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1340 | [Internal CI execution profiles](1340-internal-ci-execution-profiles.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1341 | [Default-off GitHub push automation for internal CI](1341-internal-ci-github-automation.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1342 | [Default-off GitHub Checks for internal CI executions](1342-internal-ci-execution-checks.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1348 | [Internal CI Check delivery diagnostics and bounded recovery](1348-internal-ci-check-delivery-recovery.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1349 | [Internal CI execution archival and reusable history slots](1349-internal-ci-execution-archival.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1345 | [Internal CI health and bounded worker observations](1345-internal-ci-health-observability.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1346 | [Internal CI operational alerts and dashboard](1346-internal-ci-alerts-and-dashboard.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
@@ -215,6 +231,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 480 | [Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md) | proposed | App, preview and custom-domain hosts own /v1, /status, /docs, /login, /oauth/* and the edge well-known documents |
 | 460 | [Prepared network policy retention](460-prepared-network-policy-retention.md) | proposed | Preserve fresh unused exact-policy spares within ADR-149's existing global capacity |
 | 499 | [Customer-cohort production route monitoring](499-customer-cohort-production-route-monitoring.md) | accepted | Opt-in tenant/consumer budgets, redacted identity details, aggregate impact counts, and a bounded recovery inventory |
+| 595 | [Versioned inherited application standards](595-inherited-application-standards.md) | implementation in progress | Organization-owned versions, automatic enrollment, reviewed rollouts, field provenance and bounded exceptions; runtime acceptance pending |
+
 | 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 427 | [Exclusive operation policy retirement](427-exclusive-operation-policy-retirement.md) | accepted | Idle retirement preserves ownership history and releases the active policy quota slot |
 | 428 | [Native gRPC request stream admission](428-native-grpc-request-stream-admission.md) | accepted | Incremental bounded native gRPC requests and duplex response controls through the gateway handler |
@@ -530,6 +548,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1184 | [Receipt-budget warning recovery hysteresis](1184-receipt-budget-warning-recovery-hysteresis.md) | accepted | Separate recovery boundaries and sustained fresh recovery with versioned checkpoints |
 | 1185 | [Receipt-budget watcher confirmation progress](1185-receipt-budget-watcher-confirmation-progress.md) | accepted | Local fresh-sample and duration diagnostics separate from checkpoint evidence |
 | 1186 | [Application event delivery-attempt context](1186-application-event-delivery-attempt-context.md) | accepted | Authoritative transient attempt counters and replay lineage with validated SDK context |
+| 1195 | [Unified operation timeline](1195-unified-operation-timeline.md) | accepted | `GET /v1/apps/{slug}/operations/{id}/timeline` merges events, HTTP and workflow step attempts and completion deliveries with per-source cursors; `customer_operation_attempt_instances` points each HTTP attempt at an instance log window; account-only |
 | 1161 | [Image runs (`gregale run --image`)](1161-image-runs.md) | accepted for an operator-gated preview | One-task Job runs against a cached per-image `image_run` runner job; Docker ENTRYPOINT/CMD rules; `api.ImageRunCachedImages`; gate `FAAS_IMAGE_RUNS` |
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
@@ -540,6 +559,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
 | 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
+| 1343 | [App edge on compute nodes behind Cloudflare Tunnel](1343-app-edge-on-compute-nodes.md) | proposed | Every compute node runs a `cloudflared` connector and a gatewayd-public that routes to its own gatewayd-internal socket; `*.<apps domain>` moves to the tunnel, platform hosts and custom domains stay on the control plane; credential-bound app paths are forwarded to the control plane; CPU/RAM hold-back, per-node monitoring and connector withdrawal before drain; off by default, on per manifest |
+| 1344 | [Availability architecture: regional cells, three-zone Postgres HA, fenced compute](1344-availability-architecture-cells-zones-fencing.md) | proposed | Makes the regional branch's cells and directory highly available: 3 zones per cell, self-run Patroni + etcd with a synchronous standby, every-edge global ingress, node leases with self-fencing (quota still released only by signed stop proof), static stability and a zero-downtime contract; phases P0–P6 plus landing the regional branch |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -1063,6 +1084,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-1197 · Operation event waits and signals](1197-operation-event-waits-and-signals.md)
+- [ADR-1196 · Operation deadlines and budgets](1196-operation-deadlines-and-budgets.md)
+- [ADR-1194 · Operation waits and approvals](1194-operation-waits-and-approvals.md)
+- [ADR-1193 · Webhook-submitted customer Operations](1193-webhook-submitted-customer-operations.md)
+
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
@@ -1097,3 +1123,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+- [ADR-1133: Undelivered service calls re-route outside the retry budget](1133-undelivered-service-calls-reroute.md)
+- [ADR-1131: Customer service map from unsampled service-proxy edges](1131-customer-service-map.md)
+
+- [ADR-1134: Wake-ahead learns private TCP edges](1134-wake-ahead-learns-private-tcp.md)
+- [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
+
+- [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)

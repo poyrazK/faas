@@ -7,7 +7,7 @@
  */
 export type OperationDeliveryInspection = {
   operation_id: string;
-  business_state: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+  business_state: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
   operation_expires_at: string;
   observed_at: string;
   state: string;

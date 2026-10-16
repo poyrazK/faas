@@ -63,6 +63,11 @@ class ApplyResponse:
     the-loop). On staging or enqueue failure the per-app Error
     field is populated and the IDs are empty.
     """
+    unchanged: list[str] | Unset = UNSET
+    """Slugs in apps that this apply did not rebuild: nothing in them
+    changed, or --only left them out. apps is the whole project
+    membership, so a client compares it with builds plus unchanged.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -184,6 +189,10 @@ class ApplyResponse:
                 builds_item = builds_item_data.to_dict()
                 builds.append(builds_item)
 
+        unchanged: list[str] | Unset = UNSET
+        if not isinstance(self.unchanged, Unset):
+            unchanged = self.unchanged
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -244,6 +253,8 @@ class ApplyResponse:
             field_dict["apps"] = apps
         if builds is not UNSET:
             field_dict["builds"] = builds
+        if unchanged is not UNSET:
+            field_dict["unchanged"] = unchanged
 
         return field_dict
 
@@ -387,6 +398,8 @@ class ApplyResponse:
 
                 builds.append(builds_item)
 
+        unchanged = cast(list[str], d.pop("unchanged", UNSET))
+
         apply_response = cls(
             project_slug=project_slug,
             scan_source=scan_source,
@@ -417,6 +430,7 @@ class ApplyResponse:
             project_id=project_id,
             apps=apps,
             builds=builds,
+            unchanged=unchanged,
         )
 
         apply_response.additional_properties = d

@@ -314,6 +314,11 @@ the task finishes (ADR-1163).
 
 ## Image runs
 
+> **Preview.** Image runs are enabled by the platform operator. Until
+> `FAAS_IMAGE_RUNS=1` is set on the control plane, `POST /v1/image-runs`
+> returns 404. Interactive runs (`-it`) also need `FAAS_INTERACTIVE_IMAGE_RUNS=1`;
+> without it they return 501.
+
 `gregale run --image IMAGE [ARG...]` runs one command from an OCI image in a
 fresh microVM, the way `docker run` does (ADR-1161):
 
