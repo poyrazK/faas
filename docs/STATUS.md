@@ -76,6 +76,19 @@ checks. Supported native execution of these new phases remains pending. The
 portable SDK/package and TLS/SCRAM tests are separate from guest qualification;
 this change does not enable provisioning or alter provider resources or billing.
 
+## Concurrent backend cancellation — 2026-10-16
+
+The follow-up to PR #4768 holds shared-worker slots through cancellation
+cleanup. Node receives an abort signal, Python acknowledges completed cleanup,
+and function hook handlers receive socket-derived lifecycle context (ADR-1345).
+Portable interpreter/race tests and real TLS/SCRAM PostgreSQL integration check
+bounded admission, blocked-write rollback, healthy neighbours, pool replacement
+and worker-death recovery. [Portable evidence](ops/evidence/20261016-function-backend-concurrency/REPORT.md)
+and the [acceptance procedure](ops/function-backend-concurrency-acceptance.md)
+separate these process checks from native VM qualification. Native execution is
+pending: this workspace lacks KVM. Function hooks execute in one worker; this
+does not qualify VM-wide pool draining or durable post-response `waitUntil`.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)

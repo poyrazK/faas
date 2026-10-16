@@ -1,0 +1,10 @@
+LEAK: cannot inspect native loop loop0: [Errno 2] No such file or directory: '/dev/loop0'
+LEAK: cannot inspect native loop loop1: [Errno 2] No such file or directory: '/dev/loop1'
+LEAK: cannot inspect native loop loop2: [Errno 2] No such file or directory: '/dev/loop2'
+LEAK: cannot inspect native loop loop3: [Errno 2] No such file or directory: '/dev/loop3'
+LEAK: cannot inspect native loop loop4: [Errno 2] No such file or directory: '/dev/loop4'
+LEAK: cannot inspect native loop loop5: [Errno 2] No such file or directory: '/dev/loop5'
+LEAK: cannot inspect native loop loop6: [Errno 2] No such file or directory: '/dev/loop6'
+LEAK: cannot inspect native loop loop7: [Errno 2] No such file or directory: '/dev/loop7'
+leakcheck FAILED
+make: *** [Makefile:486: leakcheck] Error 1

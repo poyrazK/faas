@@ -113,7 +113,14 @@ func (l *Lines) Close(healthy bool) {
 		}
 		l.w.mux.unregister(l.id)
 		if !healthy {
-			go l.pool.cancel(l.ctx, l.w, l.id)
+			// Cancellation is not completion. Retain the slot until the adapter
+			// has finished cleanup or the worker has been retired.
+			grace := cancelAckGrace
+			go func() {
+				defer l.pool.release(l.w, true)
+				l.pool.cancel(l.ctx, l.w, l.id, grace)
+			}()
+			return
 		}
 		l.pool.release(l.w, true)
 	})

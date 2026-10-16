@@ -1,0 +1,15 @@
+=== RUN   TestConcurrentFunctionPostgres
+=== RUN   TestConcurrentFunctionPostgres/bounded_admission_and_cancellation
+2026/10/16 13:15:26 node22 runner: handler error: context canceled
+=== RUN   TestConcurrentFunctionPostgres/trusted_hooks_and_pool_replacement
+=== RUN   TestConcurrentFunctionPostgres/lost_SQL_session_and_thaw_callback
+=== RUN   TestConcurrentFunctionPostgres/worker_replacement_and_context_isolation
+2026/10/16 13:15:26 node22 runner: handler error: workerpool: read response: EOF
+2026/10/16 13:15:26 node22 runner: handler error: workerpool: read response: EOF
+--- PASS: TestConcurrentFunctionPostgres (0.86s)
+    --- PASS: TestConcurrentFunctionPostgres/bounded_admission_and_cancellation (0.05s)
+    --- PASS: TestConcurrentFunctionPostgres/trusted_hooks_and_pool_replacement (0.02s)
+    --- PASS: TestConcurrentFunctionPostgres/lost_SQL_session_and_thaw_callback (0.01s)
+    --- PASS: TestConcurrentFunctionPostgres/worker_replacement_and_context_isolation (0.15s)
+PASS
+ok  	github.com/onebox-faas/faas/guest/runners/internal	1.935s

@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/pkg/rootfs	8.055s
+ok  	github.com/onebox-faas/faas/guest/runners/internal	8.837s
+ok  	github.com/onebox-faas/faas/guest/runners/internal/runnerparity	2.143s
+ok  	github.com/onebox-faas/faas/guest/runners/internal/workerpool	4.825s

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -21,7 +22,24 @@ type sharedAdapter struct {
 	t      *testing.T
 	stdin  io.Writer
 	lines  chan []byte
-	stderr *bytes.Buffer
+	stderr *adapterLog
+}
+
+type adapterLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *adapterLog) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *adapterLog) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 type sharedLine struct {
@@ -49,7 +67,7 @@ func startSharedAdapter(t *testing.T, interpreter, adapter string, concurrency i
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &sharedAdapter{t: t, stdin: stdin, lines: make(chan []byte, 64), stderr: &bytes.Buffer{}}
+	a := &sharedAdapter{t: t, stdin: stdin, lines: make(chan []byte, 64), stderr: &adapterLog{}}
 	cmd.Stderr = a.stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -154,8 +172,8 @@ func TestNodeFunctionAdapterSharedWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := `const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-export async function handler(event) {
-  if (event.path === "/hang") await new Promise(() => {});
+export async function handler(event, ctx) {
+  if (event.path === "/hang") await new Promise((_, reject) => ctx.signal.addEventListener("abort", () => reject(ctx.signal.reason), {once:true}));
   if (event.path === "/stream") {
     return { statusCode: 200, body: (async function* () { yield "a"; await sleep(20); yield "b"; })() };
   }

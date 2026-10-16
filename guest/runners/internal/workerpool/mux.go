@@ -48,14 +48,14 @@ type mux struct {
 	mu      sync.Mutex
 	nextID  uint64
 	streams map[string]*stream
-	// cancels holds the restart timer of every cancel not yet acknowledged.
-	cancels map[string]*time.Timer
+	// cancels holds completion fences for cancellations still cleaning up.
+	cancels map[string]chan struct{}
 	// err is set once the worker's stdout has ended.
 	err error
 }
 
 func newMux() *mux {
-	return &mux{writeSem: make(chan struct{}, 1), streams: map[string]*stream{}, cancels: map[string]*time.Timer{}}
+	return &mux{writeSem: make(chan struct{}, 1), streams: map[string]*stream{}, cancels: map[string]chan struct{}{}}
 }
 
 func (m *mux) register() (string, *stream) {
@@ -86,9 +86,9 @@ func (m *mux) route(line []byte) {
 	}
 	m.mu.Lock()
 	if ack {
-		if timer := m.cancels[id]; timer != nil {
-			timer.Stop()
+		if done := m.cancels[id]; done != nil {
 			delete(m.cancels, id)
+			close(done)
 		}
 		m.mu.Unlock()
 		return
@@ -106,9 +106,9 @@ func (m *mux) fail(err error) {
 	m.err = err
 	streams := m.streams
 	m.streams = map[string]*stream{}
-	for id, timer := range m.cancels {
-		timer.Stop()
+	for id, done := range m.cancels {
 		delete(m.cancels, id)
+		close(done)
 	}
 	m.mu.Unlock()
 	for _, s := range streams {
@@ -116,16 +116,17 @@ func (m *mux) fail(err error) {
 	}
 }
 
-// expectAck arms timer for id's cancel acknowledgement. It reports false
+// expectAck registers a completion fence for id's cancellation. It reports false
 // when the worker is already gone and there is nothing to cancel.
-func (m *mux) expectAck(id string, timer *time.Timer) bool {
+func (m *mux) expectAck(id string) (<-chan struct{}, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
-		return false
+		return nil, false
 	}
-	m.cancels[id] = timer
-	return true
+	done := make(chan struct{})
+	m.cancels[id] = done
+	return done, true
 }
 
 var idPrefix = []byte(`{"__faas_id":"`)
@@ -223,21 +224,23 @@ func (p *pool) demux(w *worker) {
 
 // cancel tells a shared worker to drop request id. It outlives the request's
 // ctx, which has usually ended. A worker that cannot take the cancel, or does
-// not acknowledge it within cancelAckGrace, is not running its event loop and
-// is restarted.
-func (p *pool) cancel(ctx context.Context, w *worker, id string) {
-	timer := time.AfterFunc(cancelAckGrace, func() {
-		log.Printf("workerpool: worker %d did not acknowledge cancelling a request within %s; restarting it", w.cmd.Process.Pid, cancelAckGrace)
-		p.retire(w)
-	})
-	if !w.mux.expectAck(id, timer) {
-		timer.Stop()
+// not finish cleanup within the acknowledgement budget, is retired so abandoned
+// work cannot occupy a slot indefinitely.
+func (p *pool) cancel(ctx context.Context, w *worker, id string, grace time.Duration) {
+	done, ok := w.mux.expectAck(id)
+	if !ok {
 		return
 	}
-	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelAckGrace)
+	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
 	defer cancel()
 	if _, err := w.send(sendCtx, []byte(`{"__faas_cancel":"`+id+`"}`+"\n")); err != nil {
-		timer.Stop()
+		p.retire(w)
+		return
+	}
+	select {
+	case <-done:
+	case <-sendCtx.Done():
+		log.Printf("workerpool: worker %d did not finish cancelling a request within %s; restarting it", w.cmd.Process.Pid, grace)
 		p.retire(w)
 	}
 }

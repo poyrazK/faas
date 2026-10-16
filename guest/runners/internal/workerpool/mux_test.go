@@ -34,6 +34,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 		return
 	}
 	slots, _ := strconv.Atoi(os.Getenv("HELPER_CONCURRENCY"))
+	ackDelay, _ := strconv.Atoi(os.Getenv("HELPER_CANCEL_ACK_DELAY_MS"))
 	var mu sync.Mutex
 	write := func(v any) {
 		body, _ := json.Marshal(v)
@@ -57,7 +58,14 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 			os.Exit(2)
 		}
 		if req.Cancel != nil {
-			write(map[string]string{"__faas_cancelled": *req.Cancel})
+			if ackDelay > 0 {
+				go func(id string) {
+					time.Sleep(time.Duration(ackDelay) * time.Millisecond)
+					write(map[string]string{"__faas_cancelled": id})
+				}(*req.Cancel)
+			} else {
+				write(map[string]string{"__faas_cancelled": *req.Cancel})
+			}
 			continue
 		}
 		switch value := req.Value; {
@@ -86,12 +94,12 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 	}
 }
 
-func muxPool(t *testing.T, slots int) (*pool, int) {
+func muxPool(t *testing.T, slots int, extraEnv ...string) (*pool, int) {
 	t.Helper()
 	p := newPool(Spec{
 		Executable: os.Args[0],
 		Args:       []string{"-test.run=^TestWorkerpoolMuxHelperProcess$", "--"},
-		Env:        append(os.Environ(), "GO_WANT_WORKERPOOL_MUX_HELPER=1", "HELPER_CONCURRENCY="+strconv.Itoa(slots)),
+		Env:        append(append(os.Environ(), "GO_WANT_WORKERPOOL_MUX_HELPER=1", "HELPER_CONCURRENCY="+strconv.Itoa(slots)), extraEnv...),
 	})
 	t.Cleanup(func() {
 		p.mu.Lock()
@@ -253,6 +261,35 @@ func TestSharedWorkerCancelKeepsWorker(t *testing.T) {
 	}
 	if got.PID != pid {
 		t.Fatalf("worker %d replaced by %d after an acknowledged cancel", pid, got.PID)
+	}
+}
+
+// Cleanup still consumes capacity even after the HTTP caller has gone away.
+func TestSharedWorkerCancelRetainsSlotUntilCleanupAcknowledged(t *testing.T) {
+	p, pid := muxPool(t, 2, "HELPER_CANCEL_ACK_DELAY_MS=300")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var requests []*Lines
+	for range maxWorkers * 2 {
+		lines, err := p.open(ctx, testRequest{Value: "hang"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, lines)
+		defer lines.Close(true)
+	}
+	requests[0].Close(false)
+	wait, stop := context.WithTimeout(ctx, 80*time.Millisecond)
+	defer stop()
+	if lines, err := p.open(wait, testRequest{Value: "too-early"}); !errors.Is(err, context.DeadlineExceeded) {
+		if lines != nil {
+			lines.Close(true)
+		}
+		t.Fatalf("occupied cancellation slot was reused before cleanup: %v", err)
+	}
+	var got muxLine
+	if err := p.invoke(ctx, testRequest{Value: "after-cleanup"}, &got); err != nil || got.PID != pid {
+		t.Fatalf("acknowledged slot was not reusable on its original worker: %+v, %v", got, err)
 	}
 }
 

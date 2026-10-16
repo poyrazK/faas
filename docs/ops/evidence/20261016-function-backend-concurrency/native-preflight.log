@@ -1,0 +1,6 @@
+--- FAIL: TestFunctionConcurrencyMetal (0.00s)
+    function_concurrency_metal_test.go:44: function qualification requires root on native x86_64 Linux
+FAIL
+FAIL	github.com/onebox-faas/faas/cmd/e2e	54.553s
+FAIL
+make: *** [Makefile:462: test-metal] Error 1

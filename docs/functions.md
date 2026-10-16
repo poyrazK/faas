@@ -43,8 +43,8 @@ An idle function parks after 30 seconds by default on every plan; set
 Between requests a function's VM may be paused: once nothing has been in
 flight for 2 seconds, its vCPUs stop until the next request, which resumes
 them in under a millisecond. Timers and intervals in your code do not run
-while it is paused, as on AWS Lambda; finish background work with
-`waitUntil()` ([Node](runtimes/node24.md)) before the request ends. At the
+while it is paused, as on AWS Lambda; await work that must finish before
+the request ends, or deliver it through a durable queue. At the
 idle timeout a function may be [frozen](cold-wake.md#frozen-instances)
 instead of parked. Set `lifecycle.pause` in `gregale.yaml` to `when_idle` to
 keep it running between requests, or to `never` to turn off both.
@@ -258,14 +258,59 @@ The value can be up to your plan's per-instance concurrency (`gregale app
   global interpreter lock, so this helps handlers that wait, not ones that
   compute.
 - A request whose client goes away or that runs out of time is cancelled
-  without stopping the worker. Python cancels an async handler's task. A
-  sync handler's thread cannot be stopped: its output is dropped, a
-  generator body stops at its next piece, and the slot frees when the
-  handler returns. Node drops its output, but the promise runs until it
-  settles. A worker that cannot respond to a cancel within 5 seconds is
-  restarted.
+  cooperatively. Node aborts `ctx.signal` and a Fetch handler's
+  `request.signal`; pass the signal to downstream I/O. Python cancels an
+  async handler's task. A sync handler may poll `ctx.cancelled.is_set()`;
+  its thread cannot be forcibly interrupted. Cancelled output is suppressed.
+  The slot stays occupied through handler and stream cleanup, including
+  async `finally` blocks. A handler that cannot finish cancellation within
+  five seconds causes its worker to restart, failing its other in-flight
+  requests too.
 - Go SDK functions keep one request per process. A `binary` function's
   handler can serve several by advertising them in its ready line, as the
   shared worker protocol in ADR-1342 describes.
 
 See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
+
+### Database requests and cancellation
+
+Keep a pool at module scope and pass each request's own signal:
+
+```js
+import pg from 'pg';
+import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/postgres/runtime';
+
+const db = createPostgresPool(
+  () => new pg.Pool({...postgresPoolConfig(process.env.DATABASE_URL), max: 4}),
+  {maxInFlight: 4},
+);
+
+export async function handler(event, ctx) {
+  const result = await db.query('SELECT id FROM notes LIMIT 20', [], {signal: ctx.signal});
+  return {body: result.rows};
+}
+```
+
+The SQL connection limit and `maxInFlight` apply per worker process. Budget
+for up to four workers per VM and all live instances. `database_busy` means
+the local admission bound was reached. Cancellation closes the checked-out
+connection; PostgreSQL may keep executing until it notices the disconnect or
+the statement deadline. An uncommitted single-query transaction rolls back,
+but cancellation cannot undo an already committed write. The adapter never
+replays SQL; use application idempotency when retrying an uncertain COMMIT.
+
+Configured function lifecycle endpoints can inspect `ctx.lifecycle_hook`,
+which is `before_checkpoint`, `after_restore` or an empty string. The runner
+derives it from guest-init's loopback socket and marker; event headers and
+request bodies cannot set it. Match both this context and your configured
+hook path before calling a resource hook. A hook runs in one worker, so it
+cannot prove that pools in every worker have drained. The single HTTP-process
+PostgreSQL starter remains the reference for checkpoint pool ownership.
+
+The completion fence covers the handler and its response stream. Await work
+that must finish with the invocation; the generated Node `waitUntil` scaffold
+is not qualified for keeping an instance alive after its response. Use a
+durable queue for detached work that must survive worker replacement.
+
+See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md)
+and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

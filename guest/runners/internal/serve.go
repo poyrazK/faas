@@ -43,6 +43,9 @@ type Envelope struct {
 	// handler registers on TailPipePath; 0 disables the tail.
 	WaitUntilSec int    `json:"wait_until_sec"`
 	TailPipePath string `json:"tail_pipe_path,omitempty"`
+	// LifecycleHook is derived from the socket peer and guest-init's marker,
+	// never from the request body or a forwarded client address.
+	LifecycleHook string `json:"lifecycle_hook,omitempty"`
 }
 
 // Response frames (ADR-999). A line without a frame is a complete §4.9
@@ -89,13 +92,14 @@ func Serve(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
 	body, _ := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	env := Envelope{
-		Method:       r.Method,
-		Path:         r.URL.Path,
-		Headers:      RequestHeaders(r.Header),
-		Query:        r.URL.RawQuery,
-		BodyB64:      base64.StdEncoding.EncodeToString(body),
-		WaitUntilSec: cfg.WaitUntilSec,
-		TailPipePath: cfg.TailPipePath,
+		Method:        r.Method,
+		Path:          r.URL.Path,
+		Headers:       RequestHeaders(r.Header),
+		Query:         r.URL.RawQuery,
+		BodyB64:       base64.StdEncoding.EncodeToString(body),
+		WaitUntilSec:  cfg.WaitUntilSec,
+		TailPipePath:  cfg.TailPipePath,
+		LifecycleHook: lifecycleHook(r),
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), invocationTimeout(r.Header))
 	defer cancel()

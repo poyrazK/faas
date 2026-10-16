@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,6 +42,7 @@ import (
 // routes /users/* to another function, queue bindings and event triggers
 // reach the function, and prune_env removes an undeclared key.
 func TestFunctionConcurrencyMetal(t *testing.T) {
+	requireFunctionConcurrencyFixtures(t)
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping metal function concurrency test")
 	}
@@ -89,8 +92,8 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 			name, runtime, runner, file, source string
 			abandon, wantCancels                string
 		}{
-			// Node drops an abandoned request's output; its promise runs on.
-			{"node", "node22", nodeRunner, "handler.js", nodeSharedHandler, "/hang", ""},
+			// Node aborts this request's signal and waits for cleanup.
+			{"node", "node22", nodeRunner, "handler.js", nodeSharedHandler, "/hang", "1"},
 			// Python cancels an async handler's task, which counts it.
 			{"python async", "python312", pythonRunner, "handler.py", pythonAsyncSharedHandler, "/hang", "1"},
 			// A sync handler's thread finishes; the cancel is acknowledged then.
@@ -247,6 +250,41 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 	})
 }
 
+// Qualification must exercise every interpreter and the CLI. Ordinary metal
+// development runs may still select the fixtures available on their host.
+func requireFunctionConcurrencyFixtures(t *testing.T) {
+	t.Helper()
+	if os.Getenv("FAAS_REQUIRE_FUNCTION_CONCURRENCY_METAL") != "1" {
+		return
+	}
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || os.Geteuid() != 0 {
+		t.Fatal("function qualification requires root on native x86_64 Linux")
+	}
+	if _, err := os.Stat("/dev/kvm"); err != nil {
+		t.Fatal("function qualification requires /dev/kvm; skips cannot qualify this suite")
+	}
+	if _, err := os.Stat("/etc/faas/builder-acceptance-host"); err != nil {
+		t.Fatal("function qualification requires a designated isolated acceptance host")
+	}
+	if err := exec.Command("systemd-detect-virt", "--quiet").Run(); err == nil {
+		t.Fatal("virtualized/container runs cannot qualify native function concurrency")
+	} else {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			t.Fatal("could not establish native host class")
+		}
+	}
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
+		t.Fatal("qualification requires an enabled disposable PostgreSQL fixture")
+	}
+	for _, key := range []string{"FAAS_TEST_KERNEL", "FAAS_BUILDER_BASE_PATH", "FAAS_GUEST_INIT", "FAAS_E2E_FUNCTION_RUNNER_GO124", "FAAS_E2E_FUNCTION_RUNNER_NODE22", "FAAS_E2E_FUNCTION_RUNNER_PYTHON312", "FAAS_E2E_GREGALE_BIN"} {
+		info, err := os.Stat(os.Getenv(key))
+		if err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("qualification requires a readable %s artifact", key)
+		}
+	}
+}
+
 // exerciseSharedFunction checks a function deployed with
 // function_concurrency=8 (ADR-1342): one worker answers eight concurrent
 // 2 s requests, and after a client abandons abandonPath the same worker
@@ -268,17 +306,29 @@ func exerciseSharedFunction(t *testing.T, h *e2etest.Harness, key, slug, abandon
 	var wg sync.WaitGroup
 	replies := make(chan sharedWorkerReply, 8)
 	for range 8 {
-		wg.Go(func() { replies <- sharedWorkerGet(t, h, key, host, "/slow", time.Minute) })
+		wg.Go(func() {
+			start := time.Now()
+			reply := sharedWorkerGet(t, h, key, host, "/slow", time.Minute)
+			reply.elapsed = time.Since(start)
+			replies <- reply
+		})
 	}
 	wg.Wait()
 	close(replies)
 	elapsed := time.Since(started)
 	pids := map[string]bool{}
+	latencies := make([]time.Duration, 0, 8)
+	peakRSS := 0
 	for reply := range replies {
 		pids[reply.pid] = true
+		latencies = append(latencies, reply.elapsed)
+		rss, _ := strconv.Atoi(reply.rssMB)
+		peakRSS = max(peakRSS, rss)
 	}
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 	t.Logf("ADR-1342 evidence: %s: 8 concurrent 2 s requests answered in %v by %d worker process(es) %v (first request pid %s)",
 		slug, elapsed.Round(10*time.Millisecond), len(pids), sortedKeys(pids), first.pid)
+	t.Logf("concurrency sample: throughput=%.2f requests/s; eight-sample p95=%s; interpreter RSS high-water=%d MB (0 if unreported)", 8/elapsed.Seconds(), latencies[len(latencies)-1].Round(time.Millisecond), peakRSS)
 	if len(pids) != 1 || !pids[first.pid] {
 		t.Fatalf("requests ran in workers %v; want the one shared worker %s", sortedKeys(pids), first.pid)
 	}
@@ -367,23 +417,28 @@ func deployRuntimeFunction(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool,
 // root's size. /slow takes 2 s; /hang never answers; /abandon takes 3 s.
 const nodeSharedHandler = `const fs = require("fs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let cancels = 0;
 function disk() {
   const st = fs.statfsSync("/");
   return "disk_total_mb=" + Math.floor(st.blocks * st.bsize / 1048576) + " disk_free_mb=" + Math.floor(st.bavail * st.bsize / 1048576);
 }
-exports.handler = async (event) => {
+exports.handler = async (event, ctx) => {
   if (event.path === "/slow") await sleep(2000);
-  if (event.path === "/hang") await new Promise(() => {});
+  if (event.path === "/hang") await new Promise((_, reject) => ctx.signal.addEventListener("abort", () => {
+    cancels += 1;
+    reject(ctx.signal.reason);
+  }, {once:true}));
   return {
     statusCode: 200,
     headers: { "content-type": "text/plain" },
-    body: "who=node pid=" + process.pid + " slots=" + (process.env.FAAS_FUNCTION_CONCURRENCY || "-") + " cancels=0 " + disk() + " path=" + event.path,
+    body: "who=node pid=" + process.pid + " slots=" + (process.env.FAAS_FUNCTION_CONCURRENCY || "-") + " cancels=" + cancels + " " + disk() + " path=" + event.path + " rss_mb=" + Math.ceil(process.resourceUsage().maxRSS / 1024),
   };
 };
 `
 
 const pythonAsyncSharedHandler = `import asyncio
 import os
+import resource
 
 cancels = 0
 
@@ -403,11 +458,13 @@ async def handler(event, ctx):
         cancels += 1
         raise
     body = "who=python pid=%d slots=%s cancels=%d %s path=%s" % (os.getpid(), os.environ.get("FAAS_FUNCTION_CONCURRENCY", "-"), cancels, disk(), path)
+    body += " rss_mb=%d" % (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)
     return {"statusCode": 200, "headers": {"content-type": "text/plain"}, "body": body}
 `
 
 const pythonSyncSharedHandler = `import os
 import time
+import resource
 
 def disk():
     st = os.statvfs("/")
@@ -420,6 +477,7 @@ def handler(event, ctx):
     if path == "/abandon":
         time.sleep(3)
     body = "who=python-sync pid=%d slots=%s cancels=0 %s path=%s" % (os.getpid(), os.environ.get("FAAS_FUNCTION_CONCURRENCY", "-"), disk(), path)
+    body += " rss_mb=%d" % (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)
     return {"statusCode": 200, "headers": {"content-type": "text/plain"}, "body": body}
 `
 
@@ -461,6 +519,8 @@ func secretSealingEnv(t *testing.T) []string {
 type sharedWorkerReply struct {
 	who, pid, slots, cancels, tok, path string
 	diskTotal, diskFree                 string
+	rssMB                               string
+	elapsed                             time.Duration
 }
 
 // sharedWorkerGet sends GET path to the function behind host and parses the
@@ -506,6 +566,8 @@ func sharedWorkerGet(t *testing.T, h *e2etest.Harness, key, host, path string, t
 			reply.diskFree = value
 		case "path":
 			reply.path = value
+		case "rss_mb":
+			reply.rssMB = value
 		}
 	}
 	return reply

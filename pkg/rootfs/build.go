@@ -1116,10 +1116,9 @@ if (process.env.FAAS_PERSISTENT_WORKER === "1") {
 // one request's output: its id, whether its stream has started, and whether
 // the runner cancelled it.
 const output = (id) => {
-  const out = { streaming: false, cancelled: false };
+  const out = { streaming: false, cancelled: false, controller: new AbortController() };
   out.emit = (frame) => {
-    if (out.cancelled) return;
-    process.stdout.write(JSON.stringify(id === undefined ? frame : { __faas_id: id, ...frame }) + "\n");
+    if (!out.cancelled) process.stdout.write(JSON.stringify(id === undefined ? frame : { __faas_id: id, ...frame }) + "\n");
   };
   return out;
 };
@@ -1157,6 +1156,11 @@ async function streamIterable(out, status, headers, body) {
 async function respondFetchBody(out, status, headers, body) {
   if (!body) { emitWhole(out, status, headers, Buffer.alloc(0)); return; }
   const reader = body.getReader();
+  let cancelling;
+  const abort = () => { cancelling ||= reader.cancel().catch(() => {}); };
+  out.controller.signal.addEventListener("abort", abort, { once: true });
+  if (out.controller.signal.aborted) abort();
+  try {
   const pending = Symbol("pending");
   const buffered = [];
   let read = reader.read();
@@ -1170,10 +1174,15 @@ async function respondFetchBody(out, status, headers, body) {
   emitHead(out, status, headers);
   emitChunk(out, Buffer.concat(buffered));
   for (let next = await read; !next.done; next = await reader.read()) {
-    if (out.cancelled) { reader.cancel().catch(() => {}); return; }
+    if (out.cancelled) { abort(); return; }
     emitChunk(out, toBuffer(next.value));
   }
   out.emit({ frame: "end" });
+  } finally {
+    out.controller.signal.removeEventListener("abort", abort);
+    if (cancelling) await cancelling;
+    reader.releaseLock();
+  }
 }
 
 // handleOne answers one request: input is the raw line, or the decoded
@@ -1209,6 +1218,8 @@ async function handleOne(input, out) {
   }
   const ctx = {
     invocation_id: invocationID,
+    lifecycle_hook: env.lifecycle_hook || "",
+    signal: out.controller.signal,
     log,
     // Workers-style handlers commonly call ctx.waitUntil(). The runner's
     // existing tail host is fed by its runtime shim; keep this adapter
@@ -1225,7 +1236,7 @@ async function handleOne(input, out) {
     const method = env.method || "POST";
     const requestURL = new URL(env.path || "/", "http://faas.local");
     if (env.query) requestURL.search = env.query.startsWith("?") ? env.query : "?" + env.query;
-    const requestInit = { method, headers };
+    const requestInit = { method, headers, signal: ctx.signal };
     const requestBody = Buffer.from(env.body_b64 || "", "base64");
     if (method !== "GET" && method !== "HEAD" && requestBody.length > 0) requestInit.body = requestBody;
     const request = new Request(requestURL, requestInit);
@@ -1280,6 +1291,7 @@ async function handleOne(input, out) {
   }
   emitWhole(out, status, normalizedHeaders, Buffer.from(responseBody));
   } catch (err) {
+    if (out.cancelled) return;
     const rawMessage = err instanceof Error ? err.message : String(err);
     const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
     console.error(err && err.stack ? err.stack : err);
@@ -1302,9 +1314,9 @@ async function handleOne(input, out) {
   }
 }
 
-// A shared worker starts each request as it arrives. A cancelled request's
-// output is dropped (its promise cannot be aborted), and every cancel is
-// acknowledged so the runner knows the event loop is still turning.
+// Cancellation suppresses output and aborts the request's I/O signal. Ack only
+// after its handler and stream have actually stopped; the runner retires an
+// uncooperative worker instead of handing its occupied slot to another request.
 const inflight = new Map();
 const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of lines) {
@@ -1316,16 +1328,22 @@ for await (const line of lines) {
   let request;
   try { request = JSON.parse(line); } catch (err) { console.error(err); continue; }
   if (typeof request.__faas_cancel === "string") {
-    const out = inflight.get(request.__faas_cancel);
-    if (out) out.cancelled = true;
-    inflight.delete(request.__faas_cancel);
-    process.stdout.write(JSON.stringify({ __faas_cancelled: request.__faas_cancel }) + "\n");
+    const id = request.__faas_cancel;
+    const out = inflight.get(id);
+    if (out) {
+      out.cancelled = true;
+      out.controller.abort();
+      if (!out.cancelling) {
+        out.cancelling = true;
+        void out.done.then(() => process.stdout.write(JSON.stringify({ __faas_cancelled: id }) + "\n"));
+      }
+    } else process.stdout.write(JSON.stringify({ __faas_cancelled: id }) + "\n");
     continue;
   }
   const id = String(request.__faas_id);
   const out = output(id);
   inflight.set(id, out);
-  handleOne(request, out).finally(() => inflight.delete(id));
+  out.done = handleOne(request, out).finally(() => inflight.delete(id));
 }
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);
@@ -1397,7 +1415,10 @@ asyncio.set_event_loop(loop)
 
 class _Context:
     log = _Log()
-    def __init__(self, invocation): self.invocation_id = invocation
+    def __init__(self, invocation, cancelled=None, lifecycle_hook=""):
+        self.invocation_id = invocation
+        self.cancelled = cancelled if cancelled is not None else threading.Event()
+        self.lifecycle_hook = lifecycle_hook
 
 # Response frames (ADR-999): one line is a complete response; a "head" line
 # starts a streamed one that "chunk" lines continue and "end" closes.
@@ -1508,8 +1529,9 @@ def _serve_lines():
         # infrastructure failure, and the durable queue re-ran the failing
         # handler. Mirror the Node adapter: a terminal handler_error envelope.
         try:
-            event, invocation_id = _event(json.loads(line))
-            result = handler(event, _Context(invocation_id))
+            request = json.loads(line)
+            event, invocation_id = _event(request)
+            result = handler(event, _Context(invocation_id, lifecycle_hook=request.get("lifecycle_hook", "")))
             if inspect.isawaitable(result): result = loop.run_until_complete(result)
             status, headers_out, response_body = _shape(result)
             if _is_stream_body(response_body):
@@ -1544,14 +1566,16 @@ def _emit_tagged(frame):
         real_stdout.write(line)
         real_stdout.flush()
 
-async def _serve_one(request, rid, tasks):
+async def _serve_one(request, rid, cancelled):
     # The id goes first so the runner routes the line without decoding it.
-    emit = lambda frame: _emit_tagged({"__faas_id": rid, **frame})
+    def emit(frame):
+        if not cancelled.is_set():
+            _emit_tagged({"__faas_id": rid, **frame})
     invocation_id = ""
     streaming = False
     try:
         event, invocation_id = _event(request)
-        status, headers_out, response_body = _shape(await handler(event, _Context(invocation_id)))
+        status, headers_out, response_body = _shape(await handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", ""))))
         if _is_stream_body(response_body):
             streaming = True
             emit({"frame": "head", "status": status, "headers": headers_out})
@@ -1567,8 +1591,6 @@ async def _serve_one(request, rid, tasks):
         traceback.print_exc()
         message = _error_message(exc)
         emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
-    finally:
-        tasks.pop(rid, None)
 
 async def _await(awaitable):
     return await awaitable
@@ -1584,7 +1606,7 @@ def _serve_sync(request, rid, cancelled):
     streaming = False
     try:
         event, invocation_id = _event(request)
-        result = handler(event, _Context(invocation_id))
+        result = handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", "")))
         if inspect.isawaitable(result):
             result = asyncio.run_coroutine_threadsafe(_await(result), loop).result()
         status, headers_out, response_body = _shape(result)
@@ -1623,8 +1645,8 @@ def _cancel_threaded(rid, entry):
     cancelled.set()
     work.add_done_callback(lambda _done: _emit_tagged({"__faas_cancelled": rid}))
 
-# A shared worker runs each request as a task. A cancel cancels the task,
-# and every cancel is acknowledged so the runner knows the loop is turning.
+# Ack cancellation only once async finally blocks or handler threads have
+# completed; a running cleanup still owns its worker slot.
 async def _serve_shared():
     reader = asyncio.StreamReader(limit=1 << 30)
     await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
@@ -1642,17 +1664,26 @@ async def _serve_shared():
             continue
         cancel = request.get("__faas_cancel")
         if cancel is not None:
-            entry = tasks.pop(cancel, None)
+            entry = tasks.get(cancel)
+            if entry is not None and entry[1].is_set():
+                continue
             if entry is not None and not handler_is_async:
                 _cancel_threaded(cancel, entry)
                 continue
             if entry is not None:
-                entry.cancel()
-            _emit_tagged({"__faas_cancelled": cancel})
+                work, cancelled = entry
+                cancelled.set()
+                work.cancel()
+                work.add_done_callback(lambda _done, rid=cancel: _emit_tagged({"__faas_cancelled": rid}))
+            else:
+                _emit_tagged({"__faas_cancelled": cancel})
             continue
         rid = str(request.get("__faas_id", ""))
         if handler_is_async:
-            tasks[rid] = loop.create_task(_serve_one(request, rid, tasks))
+            cancelled = threading.Event()
+            work = loop.create_task(_serve_one(request, rid, cancelled))
+            work.add_done_callback(lambda _done, rid=rid: tasks.pop(rid, None))
+            tasks[rid] = (work, cancelled)
         else:
             tasks[rid] = _start_threaded(request, rid, tasks)
 

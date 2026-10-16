@@ -86,7 +86,7 @@ loop and Python's asyncio can wait on many requests in one process.
    request; a request whose reader falls more than 16 MiB behind fails and
    is cancelled. A request the runner abandons (client gone, deadline) is
    cancelled, not its worker. A worker that does not acknowledge a cancel
-   within 5 s is not turning its event loop and is restarted; a worker that
+   within 5 s has exceeded its cleanup budget and is restarted; a worker that
    exits fails only its in-flight requests. Recycle on snapshot restore
    (ADR-687) closes idle shared workers at once and busy ones when their
    last request leaves.
@@ -122,8 +122,10 @@ loop and Python's asyncio can wait on many requests in one process.
 - Opting in means a handler's module state is shared by concurrent
   requests. Handlers must not keep per-request data in globals; this is why
   the default stays one.
-- Node cannot abort a promise. A cancelled Node request's output is dropped
-  and its work runs until it settles; Python cancels the task.
+- [ADR-1345](1345-function-cancellation-cleanup-and-lifecycle-context.md)
+  completes cancellation: Node gets an abort signal and Python cancellation
+  waits for cleanup. The shared slot stays occupied until acknowledgement;
+  an uncooperative handler loses its worker after five seconds.
 - A streamed response to a slow client is bounded by the 16 MiB per-request
   queue instead of pipe backpressure.
 - Billing is unchanged: plan RAM + 8 MB per running second.
@@ -132,8 +134,6 @@ loop and Python's asyncio can wait on many requests in one process.
 - A `functions:` deploy makes extra API calls only for functions that set
   something, plus one edge-rule listing per function app to reconcile
   routes.
-- Not covered: queue and event subscriptions in a functions manifest, and
-  deleting env keys a manifest stops listing.
 
 ## Alternatives
 
