@@ -4139,6 +4139,14 @@ type IssueSlackOauthFlow struct {
 	ExpiresAt        pgtype.Timestamptz
 }
 
+type IssueSlackRoutingPolicy struct {
+	AppID                pgtype.UUID
+	AccountID            pgtype.UUID
+	Revision             int64
+	InstallationRevision int64
+	Rules                []byte
+}
+
 type IssueSourceMapArtifact struct {
 	AppID              pgtype.UUID
 	DeploymentID       pgtype.UUID
@@ -4194,6 +4202,8 @@ type IssueTeamSlackDelivery struct {
 	AssignedTeamID            pgtype.UUID
 	AssignedAccountID         pgtype.UUID
 	ReminderID                pgtype.UUID
+	RoutingRevision           int64
+	RoutingRuleKey            string
 }
 
 type IssueTeamSlackDestination struct {
@@ -4217,6 +4227,7 @@ type IssueTeamSlackThread struct {
 	DestinationRevision int64
 	IncidentID          pgtype.UUID
 	RootTs              string
+	ChannelID           string
 }
 
 type IssueTrackerAutoSync struct {

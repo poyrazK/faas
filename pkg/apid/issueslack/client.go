@@ -174,6 +174,9 @@ func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) 
 	if value := c.Details["rule_key"]; safeApplicationValue.MatchString(value) {
 		detail += "\nRule: " + value
 	}
+	if state.ValidSlackRoutingKey(c.RoutingRuleKey) {
+		detail += "\nChannel routing rule: " + c.RoutingRuleKey
+	}
 	for _, field := range []struct{ key, label string }{
 		{"reminder_sequence", "Reminder"}, {"observed_events", "Events in window"}, {"minimum_events", "Event threshold"}, {"identified_customers", "Verified customers"}, {"minimum_customers", "Customer threshold"}, {"window_seconds", "Window (seconds)"},
 	} {

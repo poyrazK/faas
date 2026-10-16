@@ -29,6 +29,8 @@ type PutIssueSlackDestination struct {
 	TokenSealed       []byte `json:"-"`
 }
 type IssueSlackDelivery struct {
+	RoutingRuleKey                                                                                                string
+	RoutingRevision                                                                                               int64
 	ID, NotificationID, ActivityID, ReminderID, IssueID, IncidentID, TeamName, ChannelID, Kind, Status, LastError string
 	CanRetry                                                                                                      bool
 	Attempts, DestinationRevision                                                                                 int64
@@ -36,6 +38,8 @@ type IssueSlackDelivery struct {
 	NextAttemptAt, CreatedAt, UpdatedAt                                                                           time.Time
 }
 type IssueSlackClaim struct {
+	RoutingRuleKey                                                                                                                                        string
+	RoutingRevision                                                                                                                                       int64
 	ID, AppID, AccountID, DestinationID, NotificationID, IncidentID, IssueID, LinkID, AppSlug, TeamID, ChannelID, Kind, Reason, ThreadTS, ClaimID, Status string
 	Application                                                                                                                                           bool
 	Interactive                                                                                                                                           bool

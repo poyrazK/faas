@@ -638,7 +638,7 @@ The current application-error alert surface has these boundaries (reviewed
 | Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
-| Slack | OAuth workspace installation, verified team channels, revocation handling, native alerts/incident threads, retries and delivery status | Per-rule channel overrides, rotating tokens and Enterprise Grid organization grants |
+| Slack | OAuth workspace installation, verified team and per-rule channels, routing preview/history, revocation handling, native threads and retries | Rotating tokens and Enterprise Grid organization grants |
 | Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Resolve and assign directly in Slack |
 
 Native Slack delivery now connects application alerts to team channels.
@@ -1056,9 +1056,47 @@ the event's same whole second is conservatively disabled. An already sending req
 may still arrive. Reconnect after operator signing-secret changes.
 
 This adds managed workspace consent, verified channel selection and installation
-lifecycle handling to the Sentry comparison. Automatic rotating-token refresh,
-Enterprise Grid organization grants and per-rule channel routing remain gaps.
+lifecycle handling to the Sentry comparison. Automatic rotating-token refresh and
+Enterprise Grid organization grants remain gaps. Per-rule native alert channel
+routing is described below.
 See [ADR-1242](adr/1242-native-slack-oauth-installation.md).
+
+### Route native alerts to different Slack channels
+
+Open **Slack channel rules** from Issues → Tracker sync notifications. Connect
+Slack and configure the teams’ default destinations first. Add up to 20 ordered
+rules with a unique key, alert type, channel and optional environment, routed-team
+filter or frequency-alert rule key. A frequency key only applies to frequency
+thresholds. Invite the bot to each channel first; enabled channels are verified
+when you save. Channel discovery is bounded, and another joined channel ID can be
+entered directly.
+
+The first enabled matching rule wins. **Move up/down** changes the unsaved draft;
+**Preview draft routing** shows the team, channel and selected rule without saving
+or sending a message. The preview uses your sample alert/environment, optional
+frequency key and assigned team, then applies the same native fallback as delivery.
+Disabled alert events and missing team destinations are shown explicitly. Ignored
+or snoozed issues can still suppress actual delivery.
+
+Rules choose channels after team routing. They do not change issue ownership,
+response permissions or captured recipients. With no match, the alert uses the
+team’s default channel. Rules apply to new issues, regressions, customer-impact
+thresholds and event-frequency thresholds. Reminders, backup-team escalations and
+tracker notices keep their team destinations. Frequency-alert evaluation and
+cooldowns are independent of Slack channel rules.
+
+**Save channel rules** checks the expected revision and current workspace after
+channel verification. Changed rules cancel old queued native activity alerts;
+identical saves preserve the queue. No past alert is replayed or moved. An already
+sending request may still arrive. A reconnect leaves old rules inactive until you
+review and save channels for the new connection. Removed bot membership or an
+archived channel results in a delivery failure, without rerouting the alert.
+
+Recent Slack deliveries retain the selected rule key, routing revision and channel,
+including after edits or removal. Default deliveries say **team default channel**.
+Threads are distinct per issue and channel; a post to an override channel never
+uses another channel’s thread. Slack response buttons retain exact-message binding
+and current Gregale permissions. See [ADR-1243](adr/1243-native-slack-channel-routing.md).
 
 ### Native application Slack alerts
 

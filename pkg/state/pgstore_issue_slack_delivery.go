@@ -35,7 +35,7 @@ func (s *PgStore) ClaimIssueSlackDelivery(ctx context.Context) (IssueSlackClaim,
 	if err != nil {
 		return out, false, err
 	}
-	out = IssueSlackClaim{ID: issueID(r.ID), AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), DestinationID: issueID(r.DestinationID), DestinationRevision: r.DestinationRevision, NotificationID: issueID(r.NotificationID), IncidentID: issueID(r.IncidentID), IssueID: issueID(r.IssueID), LinkID: issueID(r.LinkID), AppSlug: r.AppSlug, TeamID: issueID(r.TeamID), ChannelID: r.ChannelID, Kind: r.Kind, Reason: r.Reason, Attempt: int(r.Attempt) + 1, TokenSealed: r.TokenSealed, Status: "in_flight"}
+	out = IssueSlackClaim{RoutingRuleKey: r.RoutingRuleKey, RoutingRevision: r.RoutingRevision, ID: issueID(r.ID), AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), DestinationID: issueID(r.DestinationID), DestinationRevision: r.DestinationRevision, NotificationID: issueID(r.NotificationID), IncidentID: issueID(r.IncidentID), IssueID: issueID(r.IssueID), LinkID: issueID(r.LinkID), AppSlug: r.AppSlug, TeamID: issueID(r.TeamID), ChannelID: r.ChannelID, Kind: r.Kind, Reason: r.Reason, Attempt: int(r.Attempt) + 1, TokenSealed: r.TokenSealed, Status: "in_flight"}
 	out.Application = r.ActivityID.Valid || r.ReminderID.Valid
 	if out.Application {
 		if err = json.Unmarshal(r.Details, &out.Details); err != nil {
@@ -67,7 +67,7 @@ func (s *PgStore) ClaimIssueSlackDelivery(ctx context.Context) (IssueSlackClaim,
 	if err = q.IssueSlackDestinationLease(ctx, tx, sqlc.IssueSlackDestinationLeaseParams{ID: r.DestinationID, ClaimID: issueUUID(out.ClaimID), ClaimUntil: until}); err != nil {
 		return out, false, err
 	}
-	args := sqlc.IssueSlackThreadEnsureParams{DestinationID: r.DestinationID, DestinationRevision: r.DestinationRevision, IncidentID: r.IncidentID}
+	args := sqlc.IssueSlackThreadEnsureParams{DestinationID: r.DestinationID, DestinationRevision: r.DestinationRevision, IncidentID: r.IncidentID, ChannelID: r.ChannelID}
 	if err = q.IssueSlackThreadEnsure(ctx, tx, args); err != nil {
 		return out, false, err
 	}
@@ -100,11 +100,11 @@ func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClai
 	if err != nil {
 		return err
 	}
-	if held.DestinationRevision != c.DestinationRevision || issueID(held.DestinationID) != c.DestinationID || issueID(held.IncidentID) != c.IncidentID {
+	if held.DestinationRevision != c.DestinationRevision || issueID(held.DestinationID) != c.DestinationID || issueID(held.IncidentID) != c.IncidentID || held.ChannelID != c.ChannelID {
 		return ErrIssueSlackClaimLost
 	}
 	if r.Status == "succeeded" || r.ResetThread {
-		root, err := q.IssueSlackThreadGet(ctx, tx, sqlc.IssueSlackThreadGetParams{DestinationID: held.DestinationID, DestinationRevision: held.DestinationRevision, IncidentID: held.IncidentID})
+		root, err := q.IssueSlackThreadGet(ctx, tx, sqlc.IssueSlackThreadGetParams{DestinationID: held.DestinationID, DestinationRevision: held.DestinationRevision, IncidentID: held.IncidentID, ChannelID: held.ChannelID})
 		if err != nil {
 			return err
 		}
@@ -113,7 +113,7 @@ func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClai
 			if r.ResetThread {
 				ts = ""
 			}
-			if err = q.IssueSlackThreadSet(ctx, tx, sqlc.IssueSlackThreadSetParams{DestinationID: held.DestinationID, DestinationRevision: held.DestinationRevision, IncidentID: held.IncidentID, RootTs: ts}); err != nil {
+			if err = q.IssueSlackThreadSet(ctx, tx, sqlc.IssueSlackThreadSetParams{DestinationID: held.DestinationID, DestinationRevision: held.DestinationRevision, IncidentID: held.IncidentID, ChannelID: held.ChannelID, RootTs: ts}); err != nil {
 				return err
 			}
 		}

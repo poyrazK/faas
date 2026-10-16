@@ -10605,3 +10605,10 @@ const (
 	IssueSlackSnoozeShort           = time.Hour
 	IssueSlackSnoozeLong            = 24 * time.Hour
 )
+
+// Native Slack channel routing bounds (ADR-1243).
+const (
+	IssueSlackRoutingMaxRules            = 20
+	IssueSlackRoutingKeyMaxBytes         = 48
+	IssueSlackRoutingEnvironmentMaxBytes = 63
+)

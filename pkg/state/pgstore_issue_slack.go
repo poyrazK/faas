@@ -87,7 +87,7 @@ func (s *PgStore) ListIssueSlackDeliveries(ctx context.Context, app, owner strin
 	rows, err := sqlc.New().IssueSlackDeliveryList(ctx, s.pool, sqlc.IssueSlackDeliveryListParams{ID: issueUUID(app), AccountID: issueUUID(owner), Limit: api.IssueSlackDeliveryPageSize})
 	out := []IssueSlackDelivery{}
 	for _, r := range rows {
-		out = append(out, IssueSlackDelivery{ID: issueID(r.ID), NotificationID: issueID(r.NotificationID), ActivityID: issueID(r.ActivityID), ReminderID: issueID(r.ReminderID), IssueID: issueID(r.IssueID), IncidentID: issueID(r.IncidentID), TeamName: r.TeamName, ChannelID: r.ChannelID, Kind: r.Kind, Status: r.Status, LastError: r.LastError, Attempts: r.TotalAttempts, DestinationRevision: r.DestinationRevision, CanRetry: r.CanRetry, ResponseCode: int(r.ResponseCode), NextAttemptAt: r.NextAttemptAt.Time, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time})
+		out = append(out, IssueSlackDelivery{RoutingRuleKey: r.RoutingRuleKey, RoutingRevision: r.RoutingRevision, ID: issueID(r.ID), NotificationID: issueID(r.NotificationID), ActivityID: issueID(r.ActivityID), ReminderID: issueID(r.ReminderID), IssueID: issueID(r.IssueID), IncidentID: issueID(r.IncidentID), TeamName: r.TeamName, ChannelID: r.ChannelID, Kind: r.Kind, Status: r.Status, LastError: r.LastError, Attempts: r.TotalAttempts, DestinationRevision: r.DestinationRevision, CanRetry: r.CanRetry, ResponseCode: int(r.ResponseCode), NextAttemptAt: r.NextAttemptAt.Time, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time})
 	}
 	return out, err
 }

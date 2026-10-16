@@ -1761,6 +1761,10 @@ type Querier interface {
 	IssueSlackRelease(ctx context.Context, db DBTX, arg IssueSlackReleaseParams) error
 	IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRetryParams) error
 	IssueSlackRetryGet(ctx context.Context, db DBTX, arg IssueSlackRetryGetParams) (IssueSlackRetryGetRow, error)
+	IssueSlackRoutingCancel(ctx context.Context, db DBTX, arg IssueSlackRoutingCancelParams) error
+	IssueSlackRoutingPolicy(ctx context.Context, db DBTX, arg IssueSlackRoutingPolicyParams) (IssueSlackRoutingPolicyRow, error)
+	IssueSlackRoutingPut(ctx context.Context, db DBTX, arg IssueSlackRoutingPutParams) error
+	IssueSlackRoutingRelease(ctx context.Context, db DBTX, arg IssueSlackRoutingReleaseParams) error
 	IssueSlackTerminal(ctx context.Context, db DBTX, arg IssueSlackTerminalParams) error
 	IssueSlackThreadCleanup(ctx context.Context, db DBTX) error
 	IssueSlackThreadEnsure(ctx context.Context, db DBTX, arg IssueSlackThreadEnsureParams) error

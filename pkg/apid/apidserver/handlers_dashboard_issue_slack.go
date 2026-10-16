@@ -14,6 +14,10 @@ import (
 
 func (s *server) dashboardTrackerSlackAction(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) bool {
 	kind := r.PostForm.Get("settings_kind")
+	if kind == "slack_routing" {
+		s.dashboardSlackRoutingAction(w, r, acct, app)
+		return true
+	}
 	if kind == "slack_oauth_start" || kind == "slack_oauth_finish" || kind == "slack_oauth_disconnect" || kind == "slack_oauth_destination" {
 		s.dashboardSlackOAuthAction(w, r, acct, app)
 		return true

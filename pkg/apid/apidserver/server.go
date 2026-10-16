@@ -4001,6 +4001,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/triage", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplicationTriageActionHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageActionHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/slack-routing", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSlackRoutingHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationsHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationPolicyHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-review", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerReviewHandler))))

@@ -124,6 +124,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1219: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1219: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1221: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1243 owner-only Slack routing editor.
 	"GET /oauth/slack/callback":                                       true, // ADR-1242 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1223: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook

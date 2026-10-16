@@ -15,7 +15,7 @@ import (
 
 // The caller holds the app lock. Routing, source activity and queue admission
 // commit atomically, without requiring an app webhook subscription or network I/O.
-func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, activityID pgtype.UUID, action string, now time.Time) error {
+func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, activityID pgtype.UUID, action string, details map[string]string, now time.Time) error {
 	if !ApplicationSlackEvent(action) {
 		return nil
 	}
@@ -43,6 +43,17 @@ func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.T
 	if err != nil {
 		return err
 	}
+	routing, err := readSlackRouting(ctx, q, tx, issueID(row.AppID), issueID(row.AccountID))
+	if err != nil {
+		return err
+	}
+	channel, ruleKey := route.ChannelID, ""
+	if routing.Active && route.OauthRevision.Valid && route.OauthRevision.Int64 == routing.InstallationRevision {
+		ruleKey, channel = MatchIssueSlackRouting(routing.Rules, action, row.Environment, details["rule_key"], issueID(route.TeamID))
+		if ruleKey == "" {
+			channel = route.ChannelID
+		}
+	}
 	ok, err := applicationSlackCapacity(ctx, q, tx, row.AppID)
 	if err != nil {
 		return err
@@ -54,7 +65,7 @@ func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.T
 		return err
 	}
 	id := uuid.NewSHA1(uuid.UUID(activityID.Bytes), []byte("application-slack"))
-	return q.IssueApplicationSlackEnqueue(ctx, tx, sqlc.IssueApplicationSlackEnqueueParams{ID: issueUUID(id.String()), DestinationID: route.ID, DestinationRevision: route.Revision, ActivityID: activityID, IssueID: row.ID, ChannelID: route.ChannelID, PolicyRevision: pgtype.Int8{Int64: policy.Revision, Valid: true}, Recipients: route.Recipients, AssignedTeamID: row.AssigneeTeamID, AssignedAccountID: row.AssigneeAccountID})
+	return q.IssueApplicationSlackEnqueue(ctx, tx, sqlc.IssueApplicationSlackEnqueueParams{ID: issueUUID(id.String()), DestinationID: route.ID, DestinationRevision: route.Revision, ActivityID: activityID, IssueID: row.ID, ChannelID: channel, RoutingRevision: routing.Revision, RoutingRuleKey: ruleKey, PolicyRevision: pgtype.Int8{Int64: policy.Revision, Valid: true}, Recipients: route.Recipients, AssignedTeamID: row.AssigneeTeamID, AssignedAccountID: row.AssigneeAccountID})
 }
 
 func applicationSlackCapacity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app pgtype.UUID) (bool, error) {

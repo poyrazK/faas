@@ -21,7 +21,7 @@ SELECT a.id FROM apps a JOIN issue_team_slack_destinations dst ON dst.app_id=a.i
 JOIN issue_team_slack_deliveries d ON d.destination_id=dst.id
 WHERE d.status IN ('pending','failed','in_flight') AND LEAST(GREATEST(d.next_attempt_at,dst.next_send_at),d.expires_at)<=clock_timestamp()
 AND (d.claim_until IS NULL OR d.claim_until<=clock_timestamp()) AND (dst.claim_until IS NULL OR dst.claim_until<=clock_timestamp())
-AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
+AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.channel_id=d.channel_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
 ORDER BY d.delivery_seq LIMIT 1 FOR UPDATE OF a SKIP LOCKED;
 -- name: IssueSlackCandidateDelivery :one
 SELECT d.*,dst.app_id,dst.account_id,dst.team_id,dst.token_sealed,a.slug AS app_slug,src.issue_id,src.link_id,src.kind,src.reason,src.details,
@@ -33,7 +33,7 @@ JOIN apps a ON a.id=dst.app_id JOIN accounts owner ON owner.id=a.account_id
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id
 WHERE a.id=sqlc.arg(app_id) AND d.status IN ('pending','failed','in_flight') AND LEAST(GREATEST(d.next_attempt_at,dst.next_send_at),d.expires_at)<=clock_timestamp()
 AND (d.claim_until IS NULL OR d.claim_until<=clock_timestamp()) AND (dst.claim_until IS NULL OR dst.claim_until<=clock_timestamp())
-AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
+AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.channel_id=d.channel_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
 ORDER BY d.delivery_seq LIMIT 1;
 -- name: IssueSlackClaim :exec
 UPDATE issue_team_slack_deliveries SET status='in_flight',attempt=attempt+1,total_attempts=total_attempts+1,claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1;
@@ -42,11 +42,11 @@ UPDATE issue_team_slack_destinations SET claim_id=$2,claim_until=$3 WHERE id=$1;
 -- name: IssueSlackTerminal :exec
 UPDATE issue_team_slack_deliveries SET status=$2,last_error=$3,claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp() WHERE id=$1;
 -- name: IssueSlackThreadEnsure :exec
-INSERT INTO issue_team_slack_threads(destination_id,destination_revision,incident_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING;
+INSERT INTO issue_team_slack_threads(destination_id,destination_revision,incident_id,channel_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING;
 -- name: IssueSlackThreadGet :one
-SELECT root_ts FROM issue_team_slack_threads WHERE destination_id=$1 AND destination_revision=$2 AND incident_id=$3;
+SELECT root_ts FROM issue_team_slack_threads WHERE destination_id=$1 AND destination_revision=$2 AND incident_id=$3 AND channel_id=$4;
 -- name: IssueSlackThreadSet :exec
-UPDATE issue_team_slack_threads SET root_ts=$4 WHERE destination_id=$1 AND destination_revision=$2 AND incident_id=$3;
+UPDATE issue_team_slack_threads SET root_ts=$5 WHERE destination_id=$1 AND destination_revision=$2 AND incident_id=$3 AND channel_id=$4;
 -- name: IssueSlackHeld :one
 SELECT d.* FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
 WHERE d.id=$1 AND d.claim_id=$2 AND d.claim_until>clock_timestamp() AND d.status='in_flight'
@@ -64,7 +64,7 @@ UPDATE issue_team_slack_deliveries SET status=$2,last_error=$3,response_code=$4,
 -- name: IssueSlackRelease :exec
 UPDATE issue_team_slack_destinations SET claim_id=NULL,claim_until=NULL,next_send_at=$3 WHERE id=$1 AND claim_id=$2;
 -- name: IssueSlackDeliveryList :many
-SELECT d.id,d.notification_id,d.activity_id,d.reminder_id,src.issue_id,d.incident_id,d.destination_revision,d.status,d.total_attempts,d.last_error,d.response_code,d.next_attempt_at,d.created_at,d.updated_at,d.channel_id,t.name AS team_name,src.kind,
+SELECT d.id,d.notification_id,d.activity_id,d.reminder_id,src.issue_id,d.incident_id,d.destination_revision,d.status,d.total_attempts,d.last_error,d.response_code,d.next_attempt_at,d.created_at,d.updated_at,d.channel_id,d.routing_revision,d.routing_rule_key,t.name AS team_name,src.kind,
  (dst.enabled AND dst.revision=d.destination_revision AND d.status IN ('failed','dead') AND src.application_retry_allowed)::boolean AS can_retry
 FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
 JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id JOIN app_issue_teams t ON t.id=dst.team_id
@@ -78,7 +78,7 @@ WHERE d.id=$1 AND a.id=$2 AND a.account_id=$3;
 -- name: IssueSlackRetry :exec
 UPDATE issue_team_slack_deliveries SET status='pending',attempt=0,last_error='',next_attempt_at=clock_timestamp(),expires_at=sqlc.arg(expires_at),updated_at=clock_timestamp() WHERE id=$1;
 -- name: IssueSlackThreadCleanup :exec
-DELETE FROM issue_team_slack_threads t WHERE NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries d WHERE d.destination_id=t.destination_id AND d.destination_revision=t.destination_revision AND d.incident_id=t.incident_id);
+DELETE FROM issue_team_slack_threads t WHERE NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries d WHERE d.destination_id=t.destination_id AND d.destination_revision=t.destination_revision AND d.incident_id=t.incident_id AND d.channel_id=t.channel_id);
 
 -- name: IssueApplicationSlackPolicy :one
 SELECT COALESCE(p.enabled,false)::boolean AS enabled,COALESCE(p.revision,0)::bigint AS revision,
@@ -99,13 +99,13 @@ WITH candidates AS (
  SELECT sqlc.narg(assigned_team_id)::uuid AS team_id,0 AS priority
  UNION ALL SELECT sqlc.narg(fallback_team_id)::uuid,1
 )
-SELECT dst.id,dst.revision,dst.channel_id,array_agg(tm.account_id ORDER BY tm.account_id)::uuid[] AS recipients
+SELECT dst.id,dst.revision,dst.channel_id,dst.team_id,t.name AS team_name,dst.oauth_revision,array_agg(tm.account_id ORDER BY tm.account_id)::uuid[] AS recipients
 FROM candidates c JOIN issue_team_slack_destinations dst ON dst.team_id=c.team_id AND dst.app_id=sqlc.arg(app_id) AND dst.account_id=sqlc.arg(account_id) AND dst.enabled
 JOIN apps a ON a.id=dst.app_id AND a.account_id=dst.account_id
 JOIN app_issue_teams t ON t.id=dst.team_id AND t.app_id=a.id
 JOIN app_issue_team_members tm ON tm.team_id=t.id
 WHERE tm.account_id=a.account_id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=tm.account_id AND m.removed_at IS NULL)
-GROUP BY dst.id,dst.revision,dst.channel_id,c.priority ORDER BY c.priority LIMIT 1;
+GROUP BY dst.id,dst.revision,dst.channel_id,t.name,c.priority ORDER BY c.priority LIMIT 1;
 -- name: IssueApplicationSlackHistoryTrim :execrows
 DELETE FROM issue_team_slack_deliveries WHERE id IN (
  SELECT d.id FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
@@ -118,8 +118,8 @@ SELECT count(*) FROM issue_team_slack_deliveries d JOIN issue_team_slack_destina
 UPDATE issue_application_slack_policies SET skipped_deliveries=skipped_deliveries+CASE WHEN sqlc.arg(capacity)::boolean THEN 1 ELSE 0 END,
  unrouted_alerts=unrouted_alerts+CASE WHEN sqlc.arg(capacity)::boolean THEN 0 ELSE 1 END WHERE app_id=sqlc.arg(app_id);
 -- name: IssueApplicationSlackEnqueue :exec
-INSERT INTO issue_team_slack_deliveries(id,destination_id,destination_revision,activity_id,incident_id,channel_id,application_policy_revision,recipient_account_ids,assigned_team_id,assigned_account_id)
-VALUES(sqlc.arg(id),sqlc.arg(destination_id),sqlc.arg(destination_revision),sqlc.arg(activity_id),sqlc.arg(issue_id),sqlc.arg(channel_id),sqlc.arg(policy_revision),sqlc.arg(recipients)::uuid[],sqlc.narg(assigned_team_id),sqlc.narg(assigned_account_id)) ON CONFLICT DO NOTHING;
+INSERT INTO issue_team_slack_deliveries(id,destination_id,destination_revision,activity_id,incident_id,channel_id,application_policy_revision,recipient_account_ids,assigned_team_id,assigned_account_id,routing_revision,routing_rule_key)
+VALUES(sqlc.arg(id),sqlc.arg(destination_id),sqlc.arg(destination_revision),sqlc.arg(activity_id),sqlc.arg(issue_id),sqlc.arg(channel_id),sqlc.arg(policy_revision),sqlc.arg(recipients)::uuid[],sqlc.narg(assigned_team_id),sqlc.narg(assigned_account_id),sqlc.arg(routing_revision),sqlc.arg(routing_rule_key)) ON CONFLICT DO NOTHING;
 -- name: IssueApplicationSlackHistoryExpire :exec
 DELETE FROM issue_team_slack_deliveries target WHERE target.status IN ('succeeded','dead','canceled') AND target.updated_at<sqlc.arg(before) AND target.id IN (
  SELECT d.id FROM issue_team_slack_deliveries d WHERE (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL) AND d.status IN ('succeeded','dead','canceled') AND d.updated_at<sqlc.arg(before)
