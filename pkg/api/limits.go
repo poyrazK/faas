@@ -11588,6 +11588,25 @@ const (
 // Maximum payload-free outbox rows mirrored per source for the inspector.
 const RealtimeInspectorSampleMax = 32
 
+// Live queries (ADR-1384): sealed-query bounds and live frame sizes. The SQL
+// and parameter bounds match Neon Realtime's; the sealed payload bound keeps a
+// subscribe frame well inside LiveQueryClientFrameMaxBytes.
+const (
+	LiveQuerySealDefaultTTL        = 60 * time.Second
+	LiveQuerySealMaxTTL            = 5 * time.Minute
+	LiveQuerySealClockSkew         = 30 * time.Second
+	LiveQuerySQLMaxBytes           = 32 << 10
+	LiveQueryParamsMax             = 256
+	LiveQueryParamMaxBytes         = 16 << 10
+	LiveQuerySealPayloadMaxBytes   = 48 << 10
+	LiveQueryDatabaseIDMaxBytes    = 128
+	LiveQuerySecretRotationOverlap = 24 * time.Hour
+	LiveQuerySubscriptionIDMax     = 64
+	LiveQueryClientFrameMaxBytes   = 80 << 10
+	LiveQueryServerFrameMaxBytes   = 256 << 10
+	LiveQueryResultRowsMax         = 10000
+)
+
 // Bounded backend-worker realtime consumer groups (ADR-1030).
 const (
 	RealtimeConsumerGroupsMaxPerEndpoint       = 8
