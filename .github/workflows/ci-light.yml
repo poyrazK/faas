@@ -468,6 +468,12 @@ jobs:
         if: matrix.shard == 1
         with:
           node-version: '22'
+      - name: queue worker safe completion canary
+        if: matrix.shard == 1
+        run: |
+          if grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
+          fi
       - name: generated PostgreSQL starter TLS recovery
         if: matrix.shard == 1
         env:
@@ -479,7 +485,7 @@ jobs:
           fi
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
-      - name: PostgreSQL fixture API and guest compilation (no KVM)
+      - name: PostgreSQL fixture API and binding guest compilation (no KVM)
         if: matrix.shard == 4
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
@@ -487,12 +493,39 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
         run: |
-          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/(managed_postgres_native|object_storage_native|queue_binding_native)|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|storagefixture/|storagestarter/|storage_guest_manifest|queuestarter/|queue_(catalog|guest_manifest)|buildtags)|scripts/(test-(managed-postgres|object-storage|queue-bindings)-native|ci/((managed-postgres|object-storage|queue-bindings)-native|native_guest_evidence))|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
           python3 scripts/ci/managed-postgres-native-verdict_test.py
+          python3 scripts/ci/object-storage-native-verdict_test.py
+          python3 scripts/ci/queue-bindings-native-verdict_test.py
+          python3 scripts/ci/queue-bindings-native-runner_test.py
+          sh -n scripts/test-queue-bindings-native.sh
+          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
+          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
-          go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
+          go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
+      - uses: actions/setup-python@v7
+        if: matrix.shard == 1
+        with:
+          python-version: '3.12'
+      - name: generated Python PostgreSQL starter TLS recovery
+        if: matrix.shard == 1
+        env:
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          if ! grep -qE '^(cmd/gregale/templates/(rest-api-postgres-python/|python_postgres_test.go|embed.go)|pkg/e2etest/postgresstarter/|sdk/python/(faas_sdk/|scripts/sync_binding_starters.py|tests/(async_storage_fixture.py|test_async.*storage))|examples/object-storage-rotation-python/|scripts/ci/test_python_postgres_starter.sh|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/python-starter-postgres-ca.pem"
+          bash scripts/ci/test_python_postgres_starter.sh "$RUNNER_TEMP/python-starter-postgres-ca.pem"
+      - name: generated Python storage starter HTTPS and recovery
+        if: matrix.shard == 1
+        run: |
+          if ! grep -qE '^(cmd/gregale/templates/(object-storage-python/|python_storage_test.go|embed.go)|sdk/python/(faas_sdk/|scripts/sync_binding_starters.py)|scripts/ci/test_python_storage_starter.sh|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          bash scripts/ci/test_python_storage_starter.sh
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.

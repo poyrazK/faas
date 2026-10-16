@@ -3934,9 +3934,20 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		return App{}, mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var found int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
-		return App{}, mapErr(err)
+	if p.ExpectedServiceBindingFingerprint != "" {
+		var before App
+		if err := scanAppInto(&before, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id)); err != nil {
+			return App{}, mapErr(err)
+		}
+		p, err = prepareServiceBindingPlanUpdate(before, p)
+		if err != nil {
+			return App{}, err
+		}
+	} else {
+		var found int
+		if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
+			return App{}, mapErr(err)
+		}
 	}
 	app, err := updateApp(ctx, tx, id, p)
 	if err != nil {

@@ -328,8 +328,9 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
-	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
+	"BindingVerificationRunListOptions": true, // Client query builder; filters are declared on the list routes.
+	"DurableEntityInspectRequest":       true, // Inspection selectors are query parameters declared on the route, not a JSON body.
+	"EventRetentionQuery":               true, // client-only retention query options; route parameters are the wire contract
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
 	// Edge-protection summary parts are inline objects of
@@ -592,6 +593,7 @@ var codeExclude = map[string]bool{
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
 	"ObjectStorageReleaseRequirements": true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
+	"QueueReleaseRequirements":         true, // Bounded binding-name map, validated by pkg/api.ValidateQueueReleaseRequirements.
 	"EdgeRuleMatchExpr":                true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"DevBridgeScope":                   true, // wire types live in pkg/devbridge; digests never cross the wire
 	"DevBridgeSession":                 true,
@@ -1210,6 +1212,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
+		filepath.Join(root, "pkg", "api", "project_release_bindings.go"),
+		filepath.Join(root, "pkg", "api", "project_release_staging.go"),
+		filepath.Join(root, "pkg", "api", "queue_binding_canary.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_run.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_run_list.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_qualification.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_review.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "project_binding_verification_run.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-958 — zero-config guest tracing manifest DTO

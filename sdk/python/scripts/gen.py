@@ -140,6 +140,10 @@ def pre_normalize_spec(spec: Path) -> Path:
 
 
 WRAPPER_MODULES = (
+    "_binding_qualification.py",
+    "_binding_creation.py",
+    "_binding_runner.py",
+    "_binding_runner_diagnostics.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -157,6 +161,12 @@ WRAPPER_MODULES = (
     "operations_runtime.py",
     "job_operations_runtime.py",
     "object_storage_runtime.py",
+    "_binding_client_runtime.py",
+    "postgres_pool_runtime.py",
+    "async_postgres_pool_runtime.py",
+    "_async_binding_client_runtime.py",
+    "async_object_storage_runtime.py",
+    "async_secret_reload_runtime.py",
     "secret_reload_runtime.py",
     "operations.py",
     "event_consumer_transactions.py",
@@ -992,6 +1002,29 @@ from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recov
 __all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
 from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+
+from ._binding_runner import (
+    BindingVerificationRecoveryError, BindingVerificationProgress,
+    run_binding_verification, run_project_binding_verification,
+    arun_binding_verification, arun_project_binding_verification,
+)
+__all__ += (
+    "BindingVerificationRecoveryError", "BindingVerificationProgress",
+    "run_binding_verification", "run_project_binding_verification",
+    "arun_binding_verification", "arun_project_binding_verification",
+)
+from ._binding_creation import (
+    BindingVerificationCreationError,
+    create_binding_verification_from_review,
+    reconcile_binding_verification_creation,
+    create_project_binding_verification_from_review,
+    reconcile_project_binding_verification_creation,
+    acreate_binding_verification_from_review,
+    areconcile_binding_verification_creation,
+    acreate_project_binding_verification_from_review,
+    areconcile_project_binding_verification_creation,
+)
+__all__ += ('BindingVerificationCreationError', 'create_binding_verification_from_review', 'reconcile_binding_verification_creation', 'create_project_binding_verification_from_review', 'reconcile_project_binding_verification_creation', 'acreate_binding_verification_from_review', 'areconcile_binding_verification_creation', 'acreate_project_binding_verification_from_review', 'areconcile_project_binding_verification_creation')
 '''
 
 
@@ -1164,7 +1197,6 @@ def _canonicalise_to_head(
     return reconciled
 
 
-
 def _preserve_routing_replay_guard_precision(package: Path) -> None:
     """Keep a receipt guard's RFC3339 text intact, including nanosecond precision."""
     path = package / "models" / "replay_event_fanout_failure_request.py"
@@ -1174,6 +1206,7 @@ def _preserve_routing_replay_guard_precision(package: Path) -> None:
     text = text.replace("self.expected_accepted_at.isoformat()", "self.expected_accepted_at")
     text = text.replace("datetime.datetime.fromisoformat(_expected_accepted_at)", "_expected_accepted_at")
     path.write_text(text)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])

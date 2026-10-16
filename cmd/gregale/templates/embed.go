@@ -34,7 +34,10 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node
+// Include private Python module filenames, which directory embedding omits.
+//
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node
+//go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -64,8 +67,10 @@ var Names = []string{
 	"queue-worker",
 	"s3-uploader",
 	"object-storage-node",
+	"object-storage-python",
 	"slack-bot",
 	"rest-api-postgres",
+	"rest-api-postgres-python",
 	"cron-worker",
 	"webhook-receiver",
 	"ai-chat",
@@ -86,6 +91,14 @@ var Names = []string{
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
+	"object-storage-python": {
+		".gitignore":     "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
+	"rest-api-postgres-python": {
+		".gitignore":     "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
 	"object-storage-node": {
 		".gitignore":     "node_modules/\n.gregale/\n.env\n.env.*\n*.secrets\n",
 		".gregaleignore": "/test/\n/node_modules/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
@@ -420,7 +433,7 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "object-storage-node", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
+	case "s3-uploader", "object-storage-node", "object-storage-python", "slack-bot", "rest-api-postgres", "rest-api-postgres-python", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"

@@ -7,7 +7,11 @@ import type { AdoptEnvironmentGitOpsResponse } from '../models/AdoptEnvironmentG
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { ApproveEnvironmentGitRevisionRequest } from '../models/ApproveEnvironmentGitRevisionRequest.js';
 import type { ApproveEnvironmentGitRevisionResponse } from '../models/ApproveEnvironmentGitRevisionResponse.js';
+import type { BindingVerificationRunList } from '../models/BindingVerificationRunList.js';
+import type { CheckedProjectReleaseManifest } from '../models/CheckedProjectReleaseManifest.js';
+import type { CheckedProjectReleaseResponse } from '../models/CheckedProjectReleaseResponse.js';
 import type { CreateEnvironmentGitSourceRequest } from '../models/CreateEnvironmentGitSourceRequest.js';
+import type { CreateProjectBindingVerificationRunRequest } from '../models/CreateProjectBindingVerificationRunRequest.js';
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
@@ -20,9 +24,13 @@ import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOp
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
+import type { PrepareProjectRollbackRequest } from '../models/PrepareProjectRollbackRequest.js';
 import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
+import type { ProjectBindingVerificationReview } from '../models/ProjectBindingVerificationReview.js';
+import type { ProjectBindingVerificationRun } from '../models/ProjectBindingVerificationRun.js';
+import type { ProjectBindingVerificationRunDiagnostics } from '../models/ProjectBindingVerificationRunDiagnostics.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
@@ -43,6 +51,7 @@ import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
 import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
+import type { ProjectReleaseStage } from '../models/ProjectReleaseStage.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
@@ -52,6 +61,8 @@ import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectRe
 import type { RebindEnvironmentGitSourceRequest } from '../models/RebindEnvironmentGitSourceRequest.js';
 import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
+import type { ReviewProjectBindingVerificationRequest } from '../models/ReviewProjectBindingVerificationRequest.js';
+import type { StageProjectReleaseRequest } from '../models/StageProjectReleaseRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
@@ -1569,6 +1580,399 @@ export class ProjectsService {
     });
   }
   /**
+   * Lease candidate service capacity without publishing routes.
+   * Stages the exact service deployments in a complete prepared forward or rollback manifest.
+   * Non-GitOps live materialized candidates only; mirror recipients and active service rollouts are excluded.
+   * Policy and routing changes fail closed.
+   * Schedd uses normal admission, preserves serving allocations and never grants extra concurrency.
+   * Capacity is billable. Repeating the same manifest reuses its unexpired lease without extending it.
+   * A different manifest conflicts until the current stage is cancelled or expires.
+   * Qualification and activation remain explicit and independently recheck readiness and evidence.
+   *
+   * @returns ProjectReleaseStage Current staging lease and observed service readiness; this conveys no binding evidence.
+   * @throws ApiError
+   */
+  public static stageCheckedProjectRelease({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: StageProjectReleaseRequest,
+  }): CancelablePromise<ProjectReleaseStage> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/staging',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Observe a candidate staging lease.
+   * @returns ProjectReleaseStage Current staging lease and observed service readiness; this conveys no binding evidence.
+   * @throws ApiError
+   */
+  public static getProjectReleaseStage({
+    slug,
+    environment,
+    stage,
+  }: {
+    slug: string,
+    environment: string,
+    stage: string,
+  }): CancelablePromise<ProjectReleaseStage> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'stage': stage,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel temporary candidate capacity; active graph and traffic allocations remain authoritative.
+   * @returns ProjectReleaseStage Current staging lease and observed service readiness; this conveys no binding evidence.
+   * @throws ApiError
+   */
+  public static cancelProjectReleaseStage({
+    slug,
+    environment,
+    stage,
+  }: {
+    slug: string,
+    environment: string,
+    stage: string,
+  }): CancelablePromise<ProjectReleaseStage> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'stage': stage,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Prepare a pinned graph manifest without changing routes.
+   * Requires an enforced binding release policy on every project member scope.
+   * Preparation freezes exact deployments, active graph or weighted fallback,
+   * policy revisions and internal service targets. It is a metadata observation,
+   * not an evidence grant. Qualification uses candidate-specific task probes.
+   * Activation independently checks all member evidence, service edges, artifacts,
+   * full project membership, current policy, evidence expiry, active graph CAS
+   * and service replica readiness in one transaction. A blocked graph keeps
+   * current routes. No target handler calls or wakes are made by service probes.
+   * Generic graph publication and deactivation remain fail closed under enforcement.
+   *
+   * @returns CheckedProjectReleaseManifest Prepare a pinned graph manifest without changing routes.
+   * @throws ApiError
+   */
+  public static prepareCheckedProjectRelease({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: PublishProjectReleaseSetRequest,
+  }): CancelablePromise<CheckedProjectReleaseManifest> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/prepare',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Activate a pinned graph with fresh checked binding evidence.
+   * Requires an enforced binding release policy on every project member scope.
+   * Preparation freezes exact deployments, active graph or weighted fallback,
+   * policy revisions and internal service targets. It is a metadata observation,
+   * not an evidence grant. Qualification uses candidate-specific task probes.
+   * Activation independently checks all member evidence, service edges, artifacts,
+   * full project membership, current policy, evidence expiry, active graph CAS
+   * and service replica readiness in one transaction. A blocked graph keeps
+   * current routes. No target handler calls or wakes are made by service probes.
+   * Generic graph publication and deactivation remain fail closed under enforcement.
+   *
+   * @returns CheckedProjectReleaseResponse Activate a pinned graph with fresh checked binding evidence.
+   * @throws ApiError
+   */
+  public static activateCheckedProjectRelease({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: CheckedProjectReleaseManifest,
+  }): CancelablePromise<CheckedProjectReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/activate',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Prepare recovery to an explicit retained historical graph.
+   * Selects an inactive, unexpired historical release in this project environment.
+   * Requires a different expected active release, exact historical membership,
+   * current enforced policies, fresh target-specific evidence and ready artifacts
+   * and service replicas. Historical expiry is checked again at commit.
+   * Publishes a new immutable release recording rollback_source_release_id and
+   * rollback_previous_release_id; history never grants a policy waiver.
+   * Use an Idempotency-Key for mutation retries. No deployments are awakened.
+   *
+   * @returns CheckedProjectReleaseManifest Prepare recovery to an explicit retained historical graph.
+   * @throws ApiError
+   */
+  public static prepareCheckedProjectRollback({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: PrepareProjectRollbackRequest,
+  }): CancelablePromise<CheckedProjectReleaseManifest> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Recover a retained historical graph with fresh binding evidence.
+   * Selects an inactive, unexpired historical release in this project environment.
+   * Requires a different expected active release, exact historical membership,
+   * current enforced policies, fresh target-specific evidence and ready artifacts
+   * and service replicas. Historical expiry is checked again at commit.
+   * Publishes a new immutable release recording rollback_source_release_id and
+   * rollback_previous_release_id; history never grants a policy waiver.
+   * Use an Idempotency-Key for mutation retries. No deployments are awakened.
+   *
+   * @returns CheckedProjectReleaseResponse Recover a retained historical graph with fresh binding evidence.
+   * @throws ApiError
+   */
+  public static rollbackCheckedProjectRelease({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: CheckedProjectReleaseManifest,
+  }): CancelablePromise<CheckedProjectReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/rollback',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Prepare checked return to exact 100% weighted fallback routes.
+   * Requires one eligible materialized live 100% fallback per current workload,
+   * a current active graph and enforced binding policies on every fallback.
+   * Preparation observes routes without changing them. Use the returned manifest
+   * to qualify exact fallback service dependencies, then deactivate explicitly.
+   * ttl_seconds is zero because the retired graph keeps its existing TTL.
+   * Deactivation compares active graph, complete fallback routing, current policies,
+   * fresh evidence, artifacts and service readiness atomically. PostgreSQL rechecks
+   * routing and evidence expiry at commit. Missing routes and traffic splits block.
+   * The retired release contains an immutable deactivation receipt. Use an
+   * Idempotency-Key for retries. GitOps-managed workloads remain blocked.
+   *
+   * @returns CheckedProjectReleaseManifest Prepare checked return to exact 100% weighted fallback routes.
+   * @throws ApiError
+   */
+  public static prepareCheckedProjectDeactivation({
+    slug,
+    environment,
+  }: {
+    slug: string,
+    environment: string,
+  }): CancelablePromise<CheckedProjectReleaseManifest> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Deactivate the current graph after checking every fallback recipient.
+   * Requires one eligible materialized live 100% fallback per current workload,
+   * a current active graph and enforced binding policies on every fallback.
+   * Preparation observes routes without changing them. Use the returned manifest
+   * to qualify exact fallback service dependencies, then deactivate explicitly.
+   * ttl_seconds is zero because the retired graph keeps its existing TTL.
+   * Deactivation compares active graph, complete fallback routing, current policies,
+   * fresh evidence, artifacts and service readiness atomically. PostgreSQL rechecks
+   * routing and evidence expiry at commit. Missing routes and traffic splits block.
+   * The retired release contains an immutable deactivation receipt. Use an
+   * Idempotency-Key for retries. GitOps-managed workloads remain blocked.
+   *
+   * @returns CheckedProjectReleaseResponse Deactivate the current graph after checking every fallback recipient.
+   * @throws ApiError
+   */
+  public static deactivateCheckedProjectRelease({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: CheckedProjectReleaseManifest,
+  }): CancelablePromise<CheckedProjectReleaseResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/deactivate',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Get the active project release graph.
    * Returns 404 when no active release exists in this project environment.
    * @returns ProjectReleaseSetResponse Currently active release graph and its immutable deployment membership.
@@ -2436,6 +2840,254 @@ export class ProjectsService {
         scope_exclusion_not_found so the existence of a
         project is not leaked via the operator surface.
         `,
+      },
+    });
+  }
+  /**
+   * List retained verification receipt summaries without requalifying evidence.
+   * Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
+   * @returns BindingVerificationRunList Bounded retained receipt summaries; not a permanent history or proof of current qualification.
+   * @throws ApiError
+   */
+  public static listProjectBindingVerificationRuns({
+    slug,
+    environment,
+    limit = 20,
+    cursor,
+    deploymentId,
+    status,
+  }: {
+    slug: string,
+    environment: string,
+    limit?: number,
+    cursor?: string,
+    deploymentId?: string,
+    status?: 'pending' | 'passed' | 'cancelled' | 'expired',
+  }): CancelablePromise<BindingVerificationRunList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+        'deployment_id': deploymentId,
+        'status': status,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * createProjectBindingVerificationRun
+   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @throws ApiError
+   */
+  public static createProjectBindingVerificationRun({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: CreateProjectBindingVerificationRunRequest,
+  }): CancelablePromise<ProjectBindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Normal admission or receipt capacity reached.`,
+      },
+    });
+  }
+  /**
+   * getProjectBindingVerificationRun
+   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @throws ApiError
+   */
+  public static getProjectBindingVerificationRun({
+    slug,
+    environment,
+    run,
+  }: {
+    slug: string,
+    environment: string,
+    run: string,
+  }): CancelablePromise<ProjectBindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'run': run,
+      },
+      errors: {
+        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Normal admission or receipt capacity reached.`,
+      },
+    });
+  }
+  /**
+   * cancelProjectBindingVerificationRun
+   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @throws ApiError
+   */
+  public static cancelProjectBindingVerificationRun({
+    slug,
+    environment,
+    run,
+  }: {
+    slug: string,
+    environment: string,
+    run: string,
+  }): CancelablePromise<ProjectBindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'run': run,
+      },
+      errors: {
+        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Normal admission or receipt capacity reached.`,
+      },
+    });
+  }
+  /**
+   * resumeProjectBindingVerificationRun
+   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @throws ApiError
+   */
+  public static resumeProjectBindingVerificationRun({
+    slug,
+    environment,
+    run,
+  }: {
+    slug: string,
+    environment: string,
+    run: string,
+  }): CancelablePromise<ProjectBindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'run': run,
+      },
+      errors: {
+        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Normal admission or receipt capacity reached.`,
+      },
+    });
+  }
+  /**
+   * completeProjectBindingVerificationRun
+   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @throws ApiError
+   */
+  public static completeProjectBindingVerificationRun({
+    slug,
+    environment,
+    run,
+  }: {
+    slug: string,
+    environment: string,
+    run: string,
+  }): CancelablePromise<ProjectBindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'run': run,
+      },
+      errors: {
+        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Normal admission or receipt capacity reached.`,
+      },
+    });
+  }
+  /**
+   * Review verification without creating receipts or admitting work
+   * @returns ProjectBindingVerificationReview Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
+   * @throws ApiError
+   */
+  public static reviewProjectBindingVerification({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    slug: string,
+    environment: string,
+    requestBody: ReviewProjectBindingVerificationRequest,
+  }): CancelablePromise<ProjectBindingVerificationReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `Read access to every reviewed binding domain is required.`,
+        409: `The selected deployment, policy or prepared manifest changed.`,
+        503: `A complete review could not be read.`,
+      },
+    });
+  }
+  /**
+   * Explain verification blockers and safe public changes without admitting work
+   * @returns ProjectBindingVerificationRunDiagnostics Read-only public observations and suggested recovery; grants no admission or activation authority.
+   * @throws ApiError
+   */
+  public static getProjectBindingVerificationRunDiagnostics({
+    slug,
+    environment,
+    run,
+  }: {
+    slug: string,
+    environment: string,
+    run: string,
+  }): CancelablePromise<ProjectBindingVerificationRunDiagnostics> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'run': run,
+      },
+      errors: {
+        400: `Invalid receipt UUID.`,
+        403: `Read access to every reviewed binding domain is required.`,
+        404: `No owned receipt was found.`,
+        503: `Receipt metadata could not be read.`,
       },
     });
   }

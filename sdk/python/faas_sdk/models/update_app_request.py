@@ -142,6 +142,9 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    expected_service_binding_fingerprint: str | Unset = UNSET
+    """Apply only if the locked app service settings still match this fingerprint. Supported only for app-level
+    service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior."""
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     tracing: TracingConfig | Unset = UNSET
@@ -384,6 +387,8 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        expected_service_binding_fingerprint = self.expected_service_binding_fingerprint
 
         profiling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profiling, Unset):
@@ -845,6 +850,8 @@ class UpdateAppRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if expected_service_binding_fingerprint is not UNSET:
+            field_dict["expected_service_binding_fingerprint"] = expected_service_binding_fingerprint
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
@@ -998,6 +1005,8 @@ class UpdateAppRequest:
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+        expected_service_binding_fingerprint = d.pop("expected_service_binding_fingerprint", UNSET)
+
         _profiling = d.pop("profiling", UNSET)
         profiling: ProfilingConfig | Unset
         if isinstance(_profiling, Unset):
@@ -2004,6 +2013,7 @@ class UpdateAppRequest:
         cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
 
         update_app_request = cls(
+            expected_service_binding_fingerprint=expected_service_binding_fingerprint,
             profiling=profiling,
             tracing=tracing,
             visibility=visibility,

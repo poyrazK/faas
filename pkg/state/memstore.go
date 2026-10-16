@@ -138,6 +138,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	bindingVerificationRuns map[string]verificationRunRecord
+	graphVerificationRuns   map[string]graphVerificationRecord
+	queueBindingCanaries    map[string]queueCanaryRecord
+
 	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
 	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
 	eventExecutionCoverage               map[string]executionCoverage
@@ -186,6 +190,7 @@ type MemStore struct {
 	capacityInstanceResources            map[string]capacityResources
 	serviceCapacityProtection            bool
 	serviceRecovery                      map[string]ServiceRecovery
+	projectReleaseStages                 map[string]projectReleaseStage
 	devBridgeSessions                    map[string]devbridge.Session
 	devBridgeWebhookReplays              map[string]devbridge.WebhookReplay
 	featureFlagVersions                  map[string][]FeatureFlagVersion
@@ -6144,11 +6149,16 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	var guardErr error
+	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	before := a
 	if a.ScalingPolicyRevision <= 0 {
 		a.ScalingPolicyRevision = 1

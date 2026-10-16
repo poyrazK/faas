@@ -980,6 +980,16 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		if problem := validateServiceBindingPlanRequest(req, environment.Slug); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		if *req.ExpectedServiceBindingFingerprint != state.ServiceBindingFingerprint(app) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+			return
+		}
+	}
 	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
 	if callerProblem != nil {
 		api.WriteProblem(w, callerProblem)
@@ -1492,6 +1502,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		params.ExpectedServiceBindingFingerprint = *req.ExpectedServiceBindingFingerprint
+	}
 	if environment.Slug != "" {
 		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
 		return
@@ -1523,7 +1536,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if problem := state.ServiceCapacityProblem(err); problem != nil {
+		if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
 			// The caller only sees a generic 503; keep the cause. Under load,

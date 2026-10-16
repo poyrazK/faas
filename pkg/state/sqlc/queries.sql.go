@@ -1866,6 +1866,60 @@ func (q *Queries) AttachProjectEnvironmentCloneDeployment(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const authorizeBindingReleaseDeactivation = `-- name: AuthorizeBindingReleaseDeactivation :one
+SELECT authorize_binding_release_deactivation($1::uuid,$2::text,$3::uuid,$4::text,$5::jsonb,$6::jsonb)::boolean
+`
+
+type AuthorizeBindingReleaseDeactivationParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+	ReceiptID   pgtype.UUID
+	OldID       string
+	Members     []byte
+	Fences      []byte
+}
+
+func (q *Queries) AuthorizeBindingReleaseDeactivation(ctx context.Context, db DBTX, arg AuthorizeBindingReleaseDeactivationParams) (bool, error) {
+	row := db.QueryRow(ctx, authorizeBindingReleaseDeactivation,
+		arg.ProjectID,
+		arg.Environment,
+		arg.ReceiptID,
+		arg.OldID,
+		arg.Members,
+		arg.Fences,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const authorizeBindingReleaseGraph = `-- name: AuthorizeBindingReleaseGraph :one
+SELECT authorize_binding_release_graph($1::uuid,$2::text,$3::uuid,$4::text,$5::jsonb,$6::jsonb)::boolean
+`
+
+type AuthorizeBindingReleaseGraphParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+	NewID       pgtype.UUID
+	OldID       string
+	Members     []byte
+	Fences      []byte
+}
+
+func (q *Queries) AuthorizeBindingReleaseGraph(ctx context.Context, db DBTX, arg AuthorizeBindingReleaseGraphParams) (bool, error) {
+	row := db.QueryRow(ctx, authorizeBindingReleaseGraph,
+		arg.ProjectID,
+		arg.Environment,
+		arg.NewID,
+		arg.OldID,
+		arg.Members,
+		arg.Fences,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const authorizeBindingReleaseTraffic = `-- name: AuthorizeBindingReleaseTraffic :one
 SELECT authorize_binding_release_traffic($1::jsonb)::boolean
 `
@@ -3011,6 +3065,32 @@ func (q *Queries) CheckedRollbackForTarget(ctx context.Context, db DBTX, targetI
 	var receipt []byte
 	err := row.Scan(&receipt)
 	return receipt, err
+}
+
+const checkedRollbackSourceForShare = `-- name: CheckedRollbackSourceForShare :one
+SELECT (to_jsonb(rs) || jsonb_build_object('environment',rs.environment_slug,
+ 'members',COALESCE((SELECT jsonb_agg(jsonb_build_object('app_id',rm.app_id,'deployment_id',rm.deployment_id)) FROM project_release_members rm WHERE rm.release_id=rs.id),'[]'::jsonb)))::jsonb AS release
+FROM project_release_sets rs WHERE rs.id=$1 AND rs.account_id=$2 AND rs.project_id=$3 AND rs.environment_slug=$4
+FOR SHARE OF rs
+`
+
+type CheckedRollbackSourceForShareParams struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) CheckedRollbackSourceForShare(ctx context.Context, db DBTX, arg CheckedRollbackSourceForShareParams) ([]byte, error) {
+	row := db.QueryRow(ctx, checkedRollbackSourceForShare,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+	)
+	var release []byte
+	err := row.Scan(&release)
+	return release, err
 }
 
 const checkedRollbackTargetFacts = `-- name: CheckedRollbackTargetFacts :one
@@ -22035,6 +22115,36 @@ func (q *Queries) InsertBlockedLifecycleHistory(ctx context.Context, db DBTX, ar
 	return err
 }
 
+const insertCheckedProjectRelease = `-- name: InsertCheckedProjectRelease :one
+INSERT INTO project_release_sets(id,account_id,project_id,environment_slug,active,ttl_seconds,rollback_source_release_id,rollback_previous_release_id)
+VALUES($1,$2,$3,$4,true,$5,$6::uuid,$7::uuid) RETURNING created_at
+`
+
+type InsertCheckedProjectReleaseParams struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	ProjectID                 pgtype.UUID
+	EnvironmentSlug           string
+	TtlSeconds                int32
+	RollbackSourceReleaseID   pgtype.UUID
+	RollbackPreviousReleaseID pgtype.UUID
+}
+
+func (q *Queries) InsertCheckedProjectRelease(ctx context.Context, db DBTX, arg InsertCheckedProjectReleaseParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, insertCheckedProjectRelease,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentSlug,
+		arg.TtlSeconds,
+		arg.RollbackSourceReleaseID,
+		arg.RollbackPreviousReleaseID,
+	)
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const insertCheckedRollback = `-- name: InsertCheckedRollback :exec
 INSERT INTO deployment_rollback_operations(id,app_id,scope,target_deployment_id,current_deployment_id,status,receipt)
  VALUES($1,$2,$3,$4,$5,$6,$7)
@@ -32272,7 +32382,7 @@ func (q *Queries) ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUI
 
 const listBindingVerificationTasks = `-- name: ListBindingVerificationTasks :many
 SELECT DISTINCT ON (binding_verification->>'type', binding_verification->>'binding', deployment_scope)
- binding_verification, deployment_id, deployment_scope, status,
+ id, binding_verification, deployment_id, deployment_scope, status,
  CASE WHEN octet_length(stdout_tail) <= 4096 THEN stdout_tail ELSE '' END AS stdout,
  (output_truncated OR octet_length(stdout_tail) > 4096) AS truncated,
  exit_code, created_at, finished_at
@@ -32280,20 +32390,23 @@ FROM app_tasks
 WHERE account_id = $1 AND app_id = $2
  AND binding_verification IS NOT NULL
  AND binding_verification->>'type' = ANY($3::text[])
- AND (NOT $4::boolean OR deployment_id = $5::uuid)
+ AND (binding_verification->>'type' <> 'service' OR coalesce(binding_verification->>'target_deployment_id','') = coalesce($4::jsonb->>(binding_verification->>'binding'),''))
+ AND (NOT $5::boolean OR deployment_id = $6::uuid)
 ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
- CASE WHEN deployment_id = $5::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC
+ CASE WHEN deployment_id = $6::uuid THEN 0 ELSE 1 END, created_at DESC, id DESC
 `
 
 type ListBindingVerificationTasksParams struct {
 	AccountID            pgtype.UUID
 	AppID                pgtype.UUID
 	Kinds                []string
+	ServiceTargets       []byte
 	ExactDeployment      bool
 	SelectedDeploymentID pgtype.UUID
 }
 
 type ListBindingVerificationTasksRow struct {
+	ID                  pgtype.UUID
 	BindingVerification []byte
 	DeploymentID        pgtype.UUID
 	DeploymentScope     string
@@ -32310,6 +32423,7 @@ func (q *Queries) ListBindingVerificationTasks(ctx context.Context, db DBTX, arg
 		arg.AccountID,
 		arg.AppID,
 		arg.Kinds,
+		arg.ServiceTargets,
 		arg.ExactDeployment,
 		arg.SelectedDeploymentID,
 	)
@@ -32321,6 +32435,7 @@ func (q *Queries) ListBindingVerificationTasks(ctx context.Context, db DBTX, arg
 	for rows.Next() {
 		var i ListBindingVerificationTasksRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.BindingVerification,
 			&i.DeploymentID,
 			&i.DeploymentScope,
@@ -57061,6 +57176,7 @@ update invocations i set state='dispatching',
   received_at=coalesce(i.received_at,clock_timestamp()), attempts=i.attempts+1
 where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
   and i.state='pending' and i.due_at<=clock_timestamp()
+  and not exists(select 1 from queue_binding_canaries c where c.id=i.id and (c.cancelled or c.expires_at<=clock_timestamp() or i.attempts<>0 or i.replay_generation<>0))
   and ($4::text='' or i.deployment_scope=$4::text)
   and (i.queue_binding_id=$5::uuid or ($4::text='' and i.queue_binding_id is null
     and (i.queue_name=$6 or (i.queue_name='' and i.work_policy_name is null
@@ -65905,6 +66021,20 @@ func (q *Queries) RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DB
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordCheckedProjectDeactivation = `-- name: RecordCheckedProjectDeactivation :exec
+UPDATE project_release_sets SET active=false,expires_at=clock_timestamp()+(ttl_seconds*interval '1 second'),deactivation=$1::jsonb WHERE id=$2 AND active AND deactivation IS NULL
+`
+
+type RecordCheckedProjectDeactivationParams struct {
+	Receipt []byte
+	ID      pgtype.UUID
+}
+
+func (q *Queries) RecordCheckedProjectDeactivation(ctx context.Context, db DBTX, arg RecordCheckedProjectDeactivationParams) error {
+	_, err := db.Exec(ctx, recordCheckedProjectDeactivation, arg.Receipt, arg.ID)
+	return err
 }
 
 const recordCloneCheckpointMigrationAdoption = `-- name: RecordCloneCheckpointMigrationAdoption :exec
@@ -76283,9 +76413,9 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 
 const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one
 UPDATE app_binding_release_policies p SET mode=$1,revision=p.revision+1,max_age_seconds=$2,
- require_application_ack=$3,reason=$4,object_storage_requirements=$5::jsonb,updated_at=clock_timestamp()
-FROM apps a WHERE p.app_id=a.id AND a.id=$6 AND a.account_id=$7 AND a.status<>'deleted'
- AND p.scope=$8 AND p.revision=$9
+ require_application_ack=$3,reason=$4,object_storage_requirements=$5::jsonb,queue_requirements=$6::jsonb,updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=$7 AND a.account_id=$8 AND a.status<>'deleted'
+ AND p.scope=$9 AND p.revision=$10
 RETURNING to_jsonb(p)::jsonb AS policy
 `
 
@@ -76295,6 +76425,7 @@ type UpdateBindingReleasePolicyParams struct {
 	RequireApplicationAck     bool
 	Reason                    string
 	ObjectStorageRequirements []byte
+	QueueRequirements         []byte
 	AppID                     pgtype.UUID
 	AccountID                 pgtype.UUID
 	Scope                     string
@@ -76308,6 +76439,7 @@ func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg U
 		arg.RequireApplicationAck,
 		arg.Reason,
 		arg.ObjectStorageRequirements,
+		arg.QueueRequirements,
 		arg.AppID,
 		arg.AccountID,
 		arg.Scope,
@@ -78724,12 +78856,12 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 }
 
 const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
-INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements)
-SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb
-FROM apps a WHERE a.id=$8 AND a.account_id=$9 AND a.status<>'deleted'
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements,queue_requirements)
+SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb,$8::jsonb
+FROM apps a WHERE a.id=$9 AND a.account_id=$10 AND a.status<>'deleted'
  AND $3::bigint=0
 ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
- max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,updated_at=clock_timestamp()
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,queue_requirements=EXCLUDED.queue_requirements,updated_at=clock_timestamp()
 WHERE app_binding_release_policies.revision=$3::bigint
 RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy
 `
@@ -78742,6 +78874,7 @@ type WriteBindingReleasePolicyParams struct {
 	RequireApplicationAck     bool
 	Reason                    string
 	ObjectStorageRequirements []byte
+	QueueRequirements         []byte
 	AppID                     pgtype.UUID
 	AccountID                 pgtype.UUID
 }
@@ -78755,6 +78888,7 @@ func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg Wr
 		arg.RequireApplicationAck,
 		arg.Reason,
 		arg.ObjectStorageRequirements,
+		arg.QueueRequirements,
 		arg.AppID,
 		arg.AccountID,
 	)

@@ -990,11 +990,21 @@ jobs:
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: PostgreSQL native verdict contracts
         if: matrix.id == 'b'
-        run: python3 scripts/ci/managed-postgres-native-verdict_test.py
+        run: |
+          python3 scripts/ci/managed-postgres-native-verdict_test.py
+          python3 scripts/ci/object-storage-native-verdict_test.py
+          python3 scripts/ci/queue-bindings-native-verdict_test.py
+          python3 scripts/ci/queue-bindings-native-runner_test.py
+          sh -n scripts/test-queue-bindings-native.sh
+          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
+          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
       - uses: actions/setup-node@v7
         if: matrix.id == 'b'
         with:
           node-version: '22'
+      - name: queue worker safe completion canary
+        if: matrix.id == 'b'
+        run: go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
       - name: generated PostgreSQL starter TLS recovery
         if: matrix.id == 'b'
         env:
@@ -1003,7 +1013,7 @@ jobs:
         run: |
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
-      - name: PostgreSQL fixture API and guest compilation (no KVM)
+      - name: PostgreSQL fixture API and binding guest compilation (no KVM)
         if: matrix.id == 'b'
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
@@ -1012,7 +1022,14 @@ jobs:
           GOMAXPROCS: 2
         run: |
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
-          go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
+          go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
+      - uses: actions/setup-python@v7
+        if: matrix.id == 'b'
+        with:
+          python-version: '3.12'
+      - name: generated Python PostgreSQL starter TLS recovery
+        if: matrix.id == 'b'
+        run: bash scripts/ci/test_python_postgres_starter.sh "$RUNNER_TEMP/starter-postgres-ca.pem"
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10
@@ -2151,6 +2168,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ruamel.yaml 'openapi-python-client==0.29.0' pytest pytest-asyncio httpx
           python -m pip install -e .
+          python -m pip install -r ../../cmd/gregale/templates/rest-api-postgres-python/requirements.txt
+          python -m pip install -r ../../cmd/gregale/templates/object-storage-python/requirements.txt
+          python -m pip install -r ../../examples/object-storage-rotation-python/requirements.txt
+      - name: shared service-binding SDK contract
+        run: |
+          python scripts/ci/check-service-binding-sdk-contract.py
+          python scripts/ci/test_service_binding_sdk_contract.py
+      - name: canonical Python binding starter drift
+        run: python sdk/python/scripts/sync_binding_starters.py --check
+      - name: materialized Python storage starter HTTP/HTTPS acceptance
+        run: GREGALE_PYTHON=$(command -v python) go test -race -p 2 ./cmd/gregale/templates -run '^TestPythonStorageStarter' -count=1 -v -timeout=180s
       - name: gen + assert clean diff
         working-directory: sdk/python
         run: |

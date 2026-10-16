@@ -791,6 +791,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-906: Frozen instances](906-frozen-instances.md)
 - [ADR-1151: Pause tiers — quiet pause between requests, frozen after idle](1151-pause-tiers.md)
+- [ADR-1152: Runtime binding audiences and explicit queue release requirements](1152-binding-runtime-audiences-and-queue-release-requirements.md)
+- [ADR-1153: Unified binding-policy verification](1153-unified-binding-policy-verification.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -882,3 +884,57 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1154: Checked project binding release graphs](1154-checked-project-binding-release-graphs.md)
+
+- [ADR-1158: Push queue binding handler completion canaries](1158-push-queue-binding-completion-canaries.md)
+
+- [ADR-1159: Bounded parallel binding verification](1159-bounded-parallel-binding-verification.md)
+
+- [ADR-1160: Ledger-backed canary dispatch authority](1160-ledger-backed-canary-dispatch-authority.md)
+
+- [ADR-1161: Durable single-app binding verification runs](1161-durable-single-app-binding-verification-runs.md)
+
+- [ADR-1162: Durable project binding verification runs](1162-durable-project-binding-verification-runs.md)
+
+- [ADR-1163: Server-generated binding verification reviews](1163-server-generated-binding-verification-reviews.md)
+
+- [ADR-1164: Reusable binding verification runners](1164-reusable-binding-verification-runners.md)
+
+- [ADR-1165: Binding verification run diagnostics](1165-binding-verification-run-diagnostics.md)
+
+- [ADR-1166: Shared verification admission budgets](1166-shared-verification-admission-budgets.md)
+
+- [ADR-1167: Automatic verification recovery diagnostics](1167-automatic-verification-recovery-diagnostics.md)
+
+- [ADR-1171: Verification qualification waiting](1171-verification-qualification-waiting.md)
+
+- [ADR-1172: Verification write reconciliation](1172-verification-write-reconciliation.md)
+
+- [ADR-1173: Binding CLI progress and recovery summaries](1173-binding-cli-progress.md)
+
+- [ADR-1174: Verification creation reconciliation](1174-verification-creation-reconciliation.md)
+
+- [ADR-1175: PostgreSQL pool runtime bindings](1175-postgres-pool-runtime-bindings.md)
+
+- [ADR-1176: Canonical PostgreSQL starter bindings](1176-canonical-postgres-starter-bindings.md)
+
+- [ADR-1177: Async Python PostgreSQL bindings](1177-async-python-postgres-bindings.md)
+
+- [ADR-1178: Python PostgreSQL starter recovery](1178-python-postgres-starter-recovery.md)
+
+- [ADR-1179: Async Python object-storage bindings](1179-async-python-object-storage-bindings.md)
+
+- [ADR-1180: Python object-storage starter recovery](1180-python-object-storage-starter-recovery.md)
+
+- [ADR-1181: Node object-storage starter recovery](1181-node-object-storage-starter-recovery.md)
+
+- [ADR-1182: Native object-storage starter acceptance](1182-native-object-storage-starter-acceptance.md)
+
+- [ADR-1183: Python storage explicit TLS trust](1183-python-storage-explicit-tls-trust.md)
+
+- [ADR-1184: Native storage starter runtime matrix](1184-native-storage-starter-runtime-matrix.md)
+
+- [ADR-1185: PostgreSQL native acceptance repair](1185-postgres-native-acceptance-repair.md)
+- [ADR-1186: Python PostgreSQL native acceptance](1186-python-postgres-native-acceptance.md)
+- [ADR-1187: Queue worker completion acceptance](1187-queue-worker-completion-acceptance.md)

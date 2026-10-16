@@ -293,7 +293,7 @@ func TestCmdBindingsVerifyAllReportsEveryOmission(t *testing.T) {
 					}
 				}
 			} else {
-				for _, reason := range []string{"queue_probe_unsupported", "outbound_probe_unconfigured", "binding_disabled", "outside_deployment_scope", "unknown_binding_type"} {
+				for _, reason := range []string{"queue_delivery_unsupported", "outbound_probe_unconfigured", "binding_disabled", "outside_deployment_scope", "unknown_binding_type"} {
 					if !strings.Contains(out.String(), reason) {
 						t.Fatalf("missing %s: %s", reason, out.String())
 					}

@@ -23,12 +23,19 @@ import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
 import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
+import type { BindingVerificationReview } from '../models/BindingVerificationReview.js';
+import type { BindingVerificationRun } from '../models/BindingVerificationRun.js';
+import type { BindingVerificationRunDiagnostics } from '../models/BindingVerificationRunDiagnostics.js';
+import type { BindingVerificationRunList } from '../models/BindingVerificationRunList.js';
+import type { BindingVerificationRunStep } from '../models/BindingVerificationRunStep.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckProfileRegressionRequest } from '../models/CheckProfileRegressionRequest.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
+import type { CreateBindingVerificationRunRequest } from '../models/CreateBindingVerificationRunRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
+import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
@@ -76,10 +83,12 @@ import type { ProfileDeploymentCheck } from '../models/ProfileDeploymentCheck.js
 import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.js';
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
+import type { QueueBindingCanary } from '../models/QueueBindingCanary.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
+import type { ReviewBindingVerificationRequest } from '../models/ReviewBindingVerificationRequest.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
 import type { RouteAdviceResponse } from '../models/RouteAdviceResponse.js';
@@ -118,6 +127,7 @@ import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadRespons
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
 import type { SetCanaryRouteGateRequest } from '../models/SetCanaryRouteGateRequest.js';
 import type { SetObjectStorageBindingReleasePolicyRequest } from '../models/SetObjectStorageBindingReleasePolicyRequest.js';
+import type { SetQueueBindingReleasePolicyRequest } from '../models/SetQueueBindingReleasePolicyRequest.js';
 import type { SetRouteHealthGateRequest } from '../models/SetRouteHealthGateRequest.js';
 import type { SetRouteMonitorRequest } from '../models/SetRouteMonitorRequest.js';
 import type { SetRoutePrioritiesRequest } from '../models/SetRoutePrioritiesRequest.js';
@@ -187,6 +197,8 @@ export class AppsService {
    * cutovers, legacy recovery and project release graph switches fail closed
    * until they support binding fences. Policies with storage requirements must use
    * release-policy-with-object-storage for updates, including explicit clearing.
+   * Policies with queue requirements must use release-policy-with-queues and
+   * explicitly retain or clear every queue and storage requirement.
    * To recover without evidence, explicitly
    * set off with the current revision and a reason, then retry. Every update
    * has durable policy history. Existing traffic is not changed by this call.
@@ -290,6 +302,63 @@ export class AppsService {
     });
   }
   /**
+   * Replace release policy with explicit per-binding queue readiness requirements.
+   * Requires deploy:write or admin and completed MFA. queue_requirements is
+   * explicit, including an empty object to clear it. Names select one shared
+   * or selected-environment push binding; consumer_readiness requires a
+   * confirmed queue environment and an enabled, active, healthy scheduler
+   * consumer with a poll at most thirty seconds old. Missing, ambiguous,
+   * disabled, external pull, unobserved or
+   * stale consumers block. Connectivity and message delivery remain
+   * unverified; passed readiness policies retain partial coverage. Unlisted
+   * queues retain strict unsupported coverage. Existing storage requirements
+   * must be explicitly retained or cleared. Policy and queue facts, and poll
+   * expiry, are checked at the traffic write. This call sends no messages and
+   * performs no probes. Older servers return 404 before mutation.
+   *
+   * @returns BindingReleasePolicy Saved policy with explicit queue requirements and incremented revision.
+   * @throws ApiError
+   */
+  public static setQueueBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetQueueBindingReleasePolicyRequest,
+    /**
+     * Deployment scope whose queue release requirements will be replaced. Omit for default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy-with-queues',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Inspect all runtime resource bindings attached to an app.
    * Read-only, best-effort metadata for service, PostgreSQL, object-storage,
    * queue and outbound bindings. Requires apps:read or admin. PostgreSQL
@@ -312,6 +381,7 @@ export class AppsService {
   public static getAppBindingInventory({
     slug,
     deploymentId,
+    serviceTargets,
     scope,
   }: {
     /**
@@ -322,6 +392,10 @@ export class AppsService {
      * Select evidence for this exact app-owned, materialized live deployment, including zero-traffic candidates. No fallback to evidence from another deployment. Omit to use the manual-task selection.
      */
     deploymentId?: string,
+    /**
+     * JSON object mapping declared service names to exact live deployment UUIDs in the caller scope. Requires deployment_id. Target evidence is isolated from ordinary any-replica evidence. Does not change routes or grant access.
+     */
+    serviceTargets?: string,
     /**
      * Filter database and bucket binding scopes. Omit to include all scopes. App-wide service, queue and outbound bindings always remain included.
      */
@@ -335,6 +409,7 @@ export class AppsService {
       },
       query: {
         'deployment_id': deploymentId,
+        'service_targets': serviceTargets,
         'scope': scope,
       },
       errors: {
@@ -6576,6 +6651,411 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Publish one explicitly consented safe message through a push queue binding.
+   * Requires a live pinned deployment declaring this binding in GREGALE_QUEUE_CANARY_BINDINGS. Uses normal queue and runtime capacity; no traffic change.
+   * @returns QueueBindingCanary Published canary; publication does not prove delivery or handler completion.
+   * @throws ApiError
+   */
+  public static createQueueBindingCanary({
+    slug,
+    requestBody,
+  }: {
+    slug: string,
+    requestBody: CreateQueueBindingCanaryRequest,
+  }): CancelablePromise<QueueBindingCanary> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/queue-canaries',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Observe exact-deployment queue completion evidence.
+   * @returns QueueBindingCanary Current evidence; an in-flight handler may finish after cancellation.
+   * @throws ApiError
+   */
+  public static getQueueBindingCanary({
+    slug,
+    canary,
+  }: {
+    slug: string,
+    canary: string,
+  }): CancelablePromise<QueueBindingCanary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/queue-canaries/{canary}',
+      path: {
+        'slug': slug,
+        'canary': canary,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel the canary and revoke its evidence.
+   * @returns QueueBindingCanary Current evidence; an in-flight handler may finish after cancellation.
+   * @throws ApiError
+   */
+  public static cancelQueueBindingCanary({
+    slug,
+    canary,
+  }: {
+    slug: string,
+    canary: string,
+  }): CancelablePromise<QueueBindingCanary> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/bindings/queue-canaries/{canary}',
+      path: {
+        'slug': slug,
+        'canary': canary,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List retained verification receipt summaries without requalifying evidence.
+   * Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
+   * @returns BindingVerificationRunList Bounded retained receipt summaries; not a permanent history or proof of current qualification.
+   * @throws ApiError
+   */
+  public static listBindingVerificationRuns({
+    slug,
+    limit = 20,
+    cursor,
+    deploymentId,
+    status,
+    scope,
+    includeMembers = false,
+  }: {
+    slug: string,
+    limit?: number,
+    cursor?: string,
+    deploymentId?: string,
+    status?: 'pending' | 'passed' | 'cancelled' | 'expired',
+    scope?: string,
+    includeMembers?: boolean,
+  }): CancelablePromise<BindingVerificationRunList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/verification-runs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+        'deployment_id': deploymentId,
+        'status': status,
+        'scope': scope,
+        'include_members': includeMembers,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create a reviewed fixed-deadline single-app verification receipt.
+   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static createBindingVerificationRun({
+    slug,
+    requestBody,
+  }: {
+    slug: string,
+    requestBody: CreateBindingVerificationRunRequest,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Observe the original plan and current owned or reused resource status.
+   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static getBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    slug: string,
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Block admissions and cancel only unfinished work owned by this run.
+   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static cancelBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    slug: string,
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Confirm the original review without extending deadlines or replacing work.
+   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static resumeBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    slug: string,
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/resume',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Complete only after fresh server-side policy preflight.
+   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static completeBindingVerificationRun({
+    slug,
+    run,
+  }: {
+    slug: string,
+    run: string,
+  }): CancelablePromise<BindingVerificationRun> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/complete',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically admit one frozen step or return its previously recorded resource.
+   * @returns BindingVerificationRunStep Durable receipt with original identity and deadline.
+   * @throws ApiError
+   */
+  public static admitBindingVerificationRunStep({
+    slug,
+    run,
+    step,
+  }: {
+    slug: string,
+    run: string,
+    step: number,
+  }): CancelablePromise<BindingVerificationRunStep> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/steps/{step}/admit',
+      path: {
+        'slug': slug,
+        'run': run,
+        'step': step,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Review verification without creating receipts or admitting work
+   * @returns BindingVerificationReview Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
+   * @throws ApiError
+   */
+  public static reviewBindingVerification({
+    slug,
+    requestBody,
+  }: {
+    slug: string,
+    requestBody: ReviewBindingVerificationRequest,
+  }): CancelablePromise<BindingVerificationReview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/bindings/verification-runs/review',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `Read access to every reviewed binding domain is required.`,
+        409: `The selected deployment, policy or prepared manifest changed.`,
+        503: `A complete review could not be read.`,
+      },
+    });
+  }
+  /**
+   * Explain verification blockers and safe public changes without admitting work
+   * @returns BindingVerificationRunDiagnostics Read-only public observations and suggested recovery; grants no admission or activation authority.
+   * @throws ApiError
+   */
+  public static getBindingVerificationRunDiagnostics({
+    slug,
+    run,
+  }: {
+    slug: string,
+    run: string,
+  }): CancelablePromise<BindingVerificationRunDiagnostics> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics',
+      path: {
+        'slug': slug,
+        'run': run,
+      },
+      errors: {
+        400: `Invalid receipt UUID.`,
+        403: `Read access to every reviewed binding domain is required.`,
+        404: `No owned receipt was found.`,
+        503: `Receipt metadata could not be read.`,
       },
     });
   }

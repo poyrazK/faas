@@ -895,7 +895,8 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	// the time it lands in the store, so we never see one here.
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
-		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
+		ServiceBindingFingerprint: state.ServiceBindingFingerprint(a),
+		ID:                        a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
 		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
