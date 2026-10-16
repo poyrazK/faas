@@ -108,8 +108,9 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	return change, nil
 }
 
-// hostedPageChange reads branding, CAPTCHA and activity retention. The page
-// sends the CAPTCHA provider, site key and secret together.
+// hostedPageChange reads branding, CAPTCHA, email delivery and activity
+// retention. The page sends the CAPTCHA provider, site key and secret
+// together, and the email provider, sender and API key together.
 func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	for name, target := range map[string]**string{"brand_name": &change.UIName, "brand_color": &change.UIColor, "brand_logo_url": &change.UILogoURL} {
 		if form.Has(name) {
@@ -119,6 +120,9 @@ func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	}
 	if form.Has("captcha_provider") {
 		change.Captcha = &authsettings.Captcha{Provider: form.Get("captcha_provider"), SiteKey: strings.TrimSpace(form.Get("captcha_site_key")), Secret: strings.TrimSpace(form.Get("captcha_secret"))}
+	}
+	if form.Has("email_provider") {
+		change.Email = &authsettings.Email{Provider: form.Get("email_provider"), From: strings.TrimSpace(form.Get("email_from")), APIKey: strings.TrimSpace(form.Get("email_api_key"))}
 	}
 	if form.Has("activity_retention_days") {
 		days := 0

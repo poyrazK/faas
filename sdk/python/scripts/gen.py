@@ -191,6 +191,7 @@ WRAPPER_MODULES = (
     "release_context.py",
     "dev_bridge.py",
     "webhook.py",
+    "auth.py",
     "pre_auth_target.py",
     "ai_gateway.py",
     "issues.py",

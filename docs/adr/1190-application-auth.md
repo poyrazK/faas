@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -373,8 +373,10 @@ policy allow the provider's script, frame, style and connection origins.
 
 ### Scale to zero
 
-The gateway, Data API and realtime service verify tokens against cached JWKS.
-A parked auth app therefore wakes only for sign-in, refresh, administration,
+The gateway, Data API and realtime service verify tokens against cached JWKS,
+and so do the Go and Python backend SDKs, with the same five-minute cache and
+at most one refetch every 30 seconds for an unknown key ID. A parked auth app
+therefore wakes only for sign-in, refresh, administration,
 organization changes and the front's storage, realtime and workflow checks.
 
 Sign-out and bans take effect on the next check that calls
@@ -399,11 +401,14 @@ in `pkg/api/limits.go`.
 2. The `auth` template, `gregale auth create|status`, and the migration
    overlay check. Signing-key rotation (`gregale auth keys`) and typed settings
    (`gregale auth config|providers` and the dashboard) followed, then
-   lifecycle events and the activity view.
+   lifecycle events and the activity view. The dashboard later gained email
+   delivery and signing-key rotation, with the CLI's rules shared through
+   `pkg/authsettings`.
 3. The `gregale_auth` schema and helpers, the verifier allowance, the
    `/authz/v1` API, declarative `AUTH_AUTHZ` roles and policies, and `--auth`
    for the Data API and edge JWT rules.
-4. Hosted pages, the `@gregale/auth` SDK and the email hook.
+4. Hosted pages, the `@gregale/auth` SDK and the email hook. Go and Python
+   backend SDKs (`sdk/go/auth`, `faas_sdk.auth`) followed.
 5. The storage, realtime and workflow checks.
 6. Dashboard user and organization screens through the auth app's admin API
    with an owner-held key, user import, and native acceptance.
