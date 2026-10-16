@@ -108,6 +108,8 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodPut, named, h.server.saveAutomationDraft
 	case "live-list":
 		return http.MethodGet, named + "/live-verifications", h.server.listAutomationLiveVerifications
+	case "baseline-list":
+		return http.MethodGet, named + "/live-baselines", h.server.listAutomationLiveBaselines
 	case "baseline-get":
 		return http.MethodGet, named + "/live-baselines/" + url.PathEscape(op.BaselineName), h.server.getAutomationLiveBaseline
 	case "baseline-history":

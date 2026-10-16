@@ -515,6 +515,27 @@ routing. Promotion is a deliberate metadata write; it never starts workflows or
 checks assertions. It requires a token with deploy-write scope. Reading the head,
 history or gate requires app-read scope.
 
+Discover existing names and their current evidence health with:
+
+```sh
+gregale automations live baseline list --app billing --name paid-invoice --json
+```
+
+The dashboard's **Named baselines** catalog shows each head, policy and target,
+retained case results, renewal blockers and inspection links. **Prepare replacement
+suite** navigates to the saved-suite controls; starting real work and promoting
+replacement evidence still require their own confirmations. An empty catalog
+means this automation has no named baselines. Missing retained evidence leaves
+its audit receipt visible.
+
+Evidence availability and renewal readiness are separate. Passing retained
+reports can remain usable for a historical baseline even when its target is old
+or its runs exceed the policy's age limit for a new promotion. The catalog checks
+renewal with the original run timestamps; it does not refresh evidence or declare
+a CI gate verdict. CI still evaluates its distinct candidate and the named
+baseline through the gate command. Discovery requires app-read scope, returns at
+most 20 heads sorted by name in one coherent read, and works with execution off.
+
 In the dashboard, select a retained live suite and open **Named baselines**.
 Enter a baseline name to view its current receipt, policy and promotion history.
 Review the version 2 policy and choose **Preview promotion** to see qualification,

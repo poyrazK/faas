@@ -83,3 +83,19 @@ func writeBaselineError(w http.ResponseWriter, err error) {
 	}
 	writeSuiteError(w, err)
 }
+
+// List reads heads and retained evidence in one store snapshot.
+func (s BaselineService) List(w http.ResponseWriter, r *http.Request, appID string) {
+	w.Header().Set("Cache-Control", "no-store")
+	store, ok := s.Store.(state.AutomationLiveBaselineListingStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("Baseline discovery is unavailable."))
+		return
+	}
+	view, err := store.ListAutomationLiveBaselines(r.Context(), appID, r.PathValue("name"))
+	if err != nil {
+		writeBaselineError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}

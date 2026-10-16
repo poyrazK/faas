@@ -486,6 +486,46 @@ func (q *Queries) InsertAutomationLiveVerification(ctx context.Context, db DBTX,
 	return i, err
 }
 
+const listAutomationLiveBaselineHeads = `-- name: ListAutomationLiveBaselineHeads :many
+SELECT DISTINCT ON (baseline_name) promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions
+WHERE app_id=$1 AND name=$2 ORDER BY baseline_name,revision DESC LIMIT $3
+`
+
+type ListAutomationLiveBaselineHeadsParams struct {
+	AppID pgtype.UUID
+	Name  string
+	Limit int32
+}
+
+func (q *Queries) ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, arg ListAutomationLiveBaselineHeadsParams) ([]WorkflowAutomationLiveBaselinePromotion, error) {
+	rows, err := db.Query(ctx, listAutomationLiveBaselineHeads, arg.AppID, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowAutomationLiveBaselinePromotion{}
+	for rows.Next() {
+		var i WorkflowAutomationLiveBaselinePromotion
+		if err := rows.Scan(
+			&i.PromotionID,
+			&i.AppID,
+			&i.Name,
+			&i.BaselineName,
+			&i.Revision,
+			&i.SuiteID,
+			&i.Receipt,
+			&i.PromotedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAutomationLiveSuites = `-- name: ListAutomationLiveSuites :many
 SELECT id, app_id, name, automation_version, published_version, deployment_id, cases, created_at, updated_at, managed FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER BY created_at DESC,id DESC LIMIT $3
 `

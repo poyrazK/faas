@@ -942,6 +942,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream":                   "StreamJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
+	"GET /v1/apps/{slug}/automations/{name}/live-baselines":                                      "ListAutomationLiveBaselines",
 	"GET /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}":                           "GetAutomationLiveBaseline",
 	"GET /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history":                   "GetAutomationLiveBaselineHistory",
 	"PUT /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}": "PromoteAutomationLiveBaseline",

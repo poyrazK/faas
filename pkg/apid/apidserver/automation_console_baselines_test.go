@@ -118,6 +118,14 @@ func TestAutomationConsoleBaselinePreviewPromotionAndConflict(t *testing.T) {
 		t.Fatal("unsafe history", refreshed.Code)
 	}
 
+	discovery := e.Do(t, http.MethodGet, root+"/live-baselines", nil, nil)
+	var catalog api.ListAutomationLiveBaselinesResponse
+	if discovery.Code != 200 || discovery.Header().Get("Cache-Control") != "no-store" || json.Unmarshal(discovery.Body.Bytes(), &catalog) != nil || len(catalog.Baselines) != 1 || catalog.Baselines[0].Baseline.Revision != 1 || catalog.Baselines[0].EvidenceStatus != "usable" || catalog.Baselines[0].RenewalStatus != "passed" {
+		t.Fatal("discovery", discovery.Code, discovery.Body.String())
+	}
+	if !strings.Contains(refreshed.Body.String(), "Passing reports retained") || !strings.Contains(refreshed.Body.String(), "Prepare replacement suite") {
+		t.Fatal("missing dashboard catalog")
+	}
 	baselineSection := refreshed.Body.String()[strings.Index(refreshed.Body.String(), `<section id="automation-baselines">`):]
 	baselineSection = baselineSection[:strings.Index(baselineSection, "</section>")]
 	if strings.Contains(baselineSection, "PRIVATE") {

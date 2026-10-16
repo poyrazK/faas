@@ -20,6 +20,7 @@ func (s *Service) inspectBaseline(r *http.Request, scope Scope, data *dashboard.
 	if data.Version == 0 {
 		return
 	}
+	s.inspectBaselineCatalog(r, scope, data)
 	form := data.Baseline
 	if form == nil {
 		name := r.URL.Query().Get("baseline_name")

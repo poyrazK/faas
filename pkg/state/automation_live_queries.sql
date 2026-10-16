@@ -85,3 +85,7 @@ INSERT INTO workflow_automation_live_baseline_promotions(promotion_id,app_id,nam
 
 -- name: PruneAutomationLiveBaselineHistory :exec
 DELETE FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 AND revision <= $4;
+
+-- name: ListAutomationLiveBaselineHeads :many
+SELECT DISTINCT ON (baseline_name) * FROM workflow_automation_live_baseline_promotions
+WHERE app_id=$1 AND name=$2 ORDER BY baseline_name,revision DESC LIMIT $3;

@@ -248,9 +248,15 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
         "actor_account_id": deployment_id,
         "promoted_at": "2026-10-16T10:00:00+00:00",
         "suite": {
-            "id": suite_id, "name": "case/report", "version": 7, "published_version": 4,
-            "deployment_id": deployment_id, "created_at": "2026-10-16T09:59:00+00:00",
-            "updated_at": "2026-10-16T09:59:00+00:00", "case_count": 1, "linked_runs": 1,
+            "id": suite_id,
+            "name": "case/report",
+            "version": 7,
+            "published_version": 4,
+            "deployment_id": deployment_id,
+            "created_at": "2026-10-16T09:59:00+00:00",
+            "updated_at": "2026-10-16T09:59:00+00:00",
+            "case_count": 1,
+            "linked_runs": 1,
         },
         "policy": policy,
         "policy_hash": "a" * 64,
@@ -261,3 +267,25 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     assert AutomationLiveBaseline.from_dict(receipt).to_dict() == receipt
     history = {"promotions": [receipt]}
     assert AutomationLiveBaselineHistory.from_dict(history).to_dict() == history
+
+    from faas_sdk.api.workflows.list_automation_live_baselines import _get_kwargs as list_baselines
+    from faas_sdk.models.list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
+
+    listing = list_baselines("billing", "case/report")
+    assert listing["method"] == "get"
+    assert listing["url"] == "/v1/apps/billing/automations/case%2Freport/live-baselines"
+    assert "json" not in listing
+    payload = {
+        "observed_at": "2026-10-16T12:00:00+00:00",
+        "baselines": [{
+            "baseline": receipt,
+            "evidence_status": "usable",
+            "renewal_status": "inconclusive",
+            "outdated": True,
+            "reasons": ["candidate_outdated"],
+            "cases": [{"name": "happy", "run_id": suite_id, "status": "passed"}],
+            "age_seconds": 3601.0,
+            "max_age_seconds": 3600,
+        }],
+    }
+    assert ListAutomationLiveBaselinesResponse.from_dict(payload).to_dict() == payload

@@ -43,3 +43,9 @@ func (s *server) promoteAutomationLiveBaseline(w http.ResponseWriter, r *http.Re
 	}
 	service.Promote(w, r, appID, account.ID, keyID)
 }
+
+func (s *server) listAutomationLiveBaselines(w http.ResponseWriter, r *http.Request, account state.Account) {
+	if service, appID, ok := s.liveBaselineService(w, r, account); ok {
+		service.List(w, r, appID)
+	}
+}

@@ -138,3 +138,22 @@ test('named baseline promotion preserves explicit revision and policy; head and 
   const root = '/v1/apps/billing/automations/case%2Freport/live-baselines/production';
   assert.deepEqual(calls, [`PUT ${root}/promotions/${promotionId}`, `GET ${root}`, `GET ${root}/history`]);
 });
+
+test('baseline discovery is one scoped read and preserves evidence health', async t => {
+  const result = { baselines: [{ baseline: { baseline_name: 'production', revision: 2 }, evidence_status: 'usable', renewal_status: 'inconclusive', outdated: true, reasons: ['candidate_outdated'], cases: [{ name: 'happy', run_id: 'retained-run', status: 'passed' }], age_seconds: 3601, max_age_seconds: 3600 }], observed_at: '2026-10-16T12:00:00Z' };
+  let calls = 0;
+  const server = createServer((req, res) => {
+    calls++;
+    assert.equal(req.method, 'GET');
+    assert.equal(req.url, '/v1/apps/billing/automations/case%2Freport/live-baselines');
+    assert.equal(req.headers.authorization, 'Bearer token');
+    assert.equal(req.headers['content-length'], undefined);
+    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
+  assert.deepEqual(await WorkflowsService.listAutomationLiveBaselines({ slug: 'billing', name: 'case/report' }), result);
+  assert.equal(calls, 1);
+});

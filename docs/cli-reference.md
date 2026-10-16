@@ -5642,7 +5642,18 @@ Start, observe and check saved cases against real execution
 
 Explicitly promote and inspect named baseline audit history
 
-`gregale automations live baseline <show|history|promote>`
+`gregale automations live baseline <list|show|history|promote>`
+
+##### automations live baseline list
+
+Discover baseline heads and read retained evidence health; never execute
+
+`gregale automations live baseline list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
 
 ##### automations live baseline show
 

@@ -155,7 +155,7 @@ func TestBaselineBrowsingIsReadOnlyAndScoped(t *testing.T) {
 				t.Fatal("missing CI command")
 			}
 			for _, call := range host.calls {
-				if call.Kind != "baseline-get" && call.Kind != "baseline-history" {
+				if call.Kind != "baseline-list" && call.Kind != "baseline-get" && call.Kind != "baseline-history" {
 					t.Fatal("browsing mutated state")
 				}
 			}

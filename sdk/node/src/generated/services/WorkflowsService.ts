@@ -20,6 +20,7 @@ import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflo
 import type { CreateWorkflowCallbackWebhookBindingRequest } from '../models/CreateWorkflowCallbackWebhookBindingRequest.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
+import type { ListAutomationLiveBaselinesResponse } from '../models/ListAutomationLiveBaselinesResponse.js';
 import type { ListAutomationLiveSuitesResponse } from '../models/ListAutomationLiveSuitesResponse.js';
 import type { ListAutomationLiveVerificationsResponse } from '../models/ListAutomationLiveVerificationsResponse.js';
 import type { ListAutomationRevisionsResponse } from '../models/ListAutomationRevisionsResponse.js';
@@ -2607,6 +2608,45 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Discover named baseline heads and current retained evidence health.
+   * Read-only coherent snapshot, sorted by baseline name and bounded by the 20-name quota. Requires app read scope. Never runs workflows, checks assertions, repairs evidence or promotes. Evidence availability and renewal readiness are separate observations, not CI gate verdicts: historical baseline targets and baseline age remain allowed by CI. Renewal evaluates original run age and the current target against each promoted policy.
+   * @returns ListAutomationLiveBaselinesResponse Current heads and current retained evidence observations; historical audit receipts remain immutable.
+   * @throws ApiError
+   */
+  public static listAutomationLiveBaselines({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    name: string,
+  }): CancelablePromise<ListAutomationLiveBaselinesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/automations/{name}/live-baselines',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

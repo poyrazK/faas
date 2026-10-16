@@ -86,6 +86,9 @@ func TestAutomationLiveBaselineAuthenticatedPromotionAndReadOnlyScopes(t *testin
 		if got := e.DoAs(t, http.MethodGet, path, nil, nil, token); got.Code != wantRead {
 			t.Fatal("read scope", scope, got.Code)
 		}
+		if got := e.DoAs(t, http.MethodGet, root+"/live-baselines", nil, nil, token); got.Code != wantRead {
+			t.Fatal("discovery scope", scope, got.Code)
+		}
 		got := e.DoAs(t, http.MethodPut, path+"/promotions/"+uuid.NewString(), request, nil, token)
 		if got.Code != wantWrite {
 			t.Fatal("write scope", scope, got.Code, got.Body.String())
@@ -109,6 +112,16 @@ func TestAutomationLiveBaselineAuthenticatedPromotionAndReadOnlyScopes(t *testin
 	}
 	if got := e.Do(t, http.MethodGet, strings.Replace(path, "/automations/baseline/", "/automations/foreign/", 1), nil, nil); got.Code != 404 {
 		t.Fatal("foreign automation read", got.Code)
+	}
+
+	if got := e.Do(t, http.MethodGet, strings.Replace(root, "/automations/baseline", "/automations/foreign", 1)+"/live-baselines", nil, nil); got.Code != 404 {
+		t.Fatal("foreign discovery", got.Code)
+	}
+	discoveryRequest := httptest.NewRequest(http.MethodGet, root+"/live-baselines", nil)
+	discoveryResponse := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(discoveryResponse, discoveryRequest)
+	if discoveryResponse.Code != 401 {
+		t.Fatal("unauthenticated discovery", discoveryResponse.Code)
 	}
 	runs, _, err := store.ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
 	if err != nil || len(runs) != 1 {

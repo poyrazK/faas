@@ -195,6 +195,8 @@ export type { AutomationHealthResponse } from './AutomationHealthResponse.js';
 export type { AutomationHealthRun } from './AutomationHealthRun.js';
 export type { AutomationHealthStepFailure } from './AutomationHealthStepFailure.js';
 export type { AutomationLiveBaseline } from './AutomationLiveBaseline.js';
+export type { AutomationLiveBaselineCaseHealth } from './AutomationLiveBaselineCaseHealth.js';
+export type { AutomationLiveBaselineHealth } from './AutomationLiveBaselineHealth.js';
 export type { AutomationLiveBaselineHistory } from './AutomationLiveBaselineHistory.js';
 export type { AutomationLiveBaselinePolicy } from './AutomationLiveBaselinePolicy.js';
 export type { AutomationLiveExpectation } from './AutomationLiveExpectation.js';
@@ -845,6 +847,7 @@ export type { LinkPlatformTenantConsumerRequest } from './LinkPlatformTenantCons
 export type { LinkPlatformTenantSurfaceRequest } from './LinkPlatformTenantSurfaceRequest.js';
 export type { ListAuditEventsResponse } from './ListAuditEventsResponse.js';
 export type { ListAuditLogResponse } from './ListAuditLogResponse.js';
+export type { ListAutomationLiveBaselinesResponse } from './ListAutomationLiveBaselinesResponse.js';
 export type { ListAutomationLiveSuitesResponse } from './ListAutomationLiveSuitesResponse.js';
 export type { ListAutomationLiveVerificationsResponse } from './ListAutomationLiveVerificationsResponse.js';
 export type { ListAutomationRevisionsResponse } from './ListAutomationRevisionsResponse.js';

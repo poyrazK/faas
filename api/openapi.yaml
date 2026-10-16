@@ -48344,6 +48344,50 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-baselines:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveBaselines
+      summary: Discover named baseline heads and current retained evidence health.
+      description: 'Read-only coherent snapshot, sorted by baseline name and bounded by the 20-name quota. Requires
+        app read scope. Never runs workflows, checks assertions, repairs evidence or promotes. Evidence availability
+        and renewal readiness are separate observations, not CI gate verdicts: historical baseline targets and baseline
+        age remain allowed by CI. Renewal evaluates original run age and the current target against each promoted
+        policy.'
+      responses:
+        '200':
+          description: Current heads and current retained evidence observations; historical audit receipts remain
+            immutable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveBaselinesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
   /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -69965,6 +70009,91 @@ components:
           type: number
           format: double
           minimum: 0
+    AutomationLiveBaselineCaseHealth:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - passed
+          - failed
+          - pending
+          - unavailable
+          - not_started
+    AutomationLiveBaselineHealth:
+      type: object
+      additionalProperties: false
+      required:
+      - baseline
+      - evidence_status
+      - renewal_status
+      - reasons
+      - outdated
+      - cases
+      properties:
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveBaseline'
+        evidence_status:
+          type: string
+          enum:
+          - usable
+          - failed
+          - unavailable
+          description: Availability of current recorded reports; not a gate verdict.
+        renewal_status:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          description: Whether this same suite qualifies for a new promotion now.
+        reasons:
+          type: array
+          items:
+            type: string
+        outdated:
+          type: boolean
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaselineCaseHealth'
+        age_seconds:
+          type: number
+          description: Oldest original retained run age. Negative values indicate future timestamps.
+        oldest_run_created_at:
+          type: string
+          format: date-time
+        max_age_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036
+    ListAutomationLiveBaselinesResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - baselines
+      - observed_at
+      properties:
+        baselines:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaselineHealth'
+        observed_at:
+          type: string
+          format: date-time
     AutomationLiveBaselineHistory:
       type: object
       additionalProperties: false

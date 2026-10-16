@@ -26,16 +26,18 @@ type automationLiveBaselineOptions struct {
 func parseAutomationLiveBaseline(args []string) (automationLiveBaselineOptions, error) {
 	var o automationLiveBaselineOptions
 	if len(args) == 0 {
-		return o, errors.New("choose baseline show, history or promote")
+		return o, errors.New("choose baseline list, show, history or promote")
 	}
 	o.verb = args[0]
-	if o.verb != "show" && o.verb != "history" && o.verb != "promote" {
-		return o, errors.New("choose baseline show, history or promote")
+	if o.verb != "list" && o.verb != "show" && o.verb != "history" && o.verb != "promote" {
+		return o, errors.New("choose baseline list, show, history or promote")
 	}
 	fs := newFlagSet("automations live baseline "+o.verb, flag.ContinueOnError, io.Discard)
 	fs.StringVar(&o.app, "app", "", "app slug")
 	fs.StringVar(&o.name, "name", "", "automation name")
-	fs.StringVar(&o.alias, "baseline-name", "", "named release track, such as production")
+	if o.verb != "list" {
+		fs.StringVar(&o.alias, "baseline-name", "", "named release track, such as production")
+	}
 	var policyPath string
 	if o.verb == "promote" {
 		fs.StringVar(&o.promotionID, "promotion-id", "", "stable promotion UUID; preserve for retries")
@@ -49,8 +51,8 @@ func parseAutomationLiveBaseline(args []string) (automationLiveBaselineOptions, 
 	if err := fs.Parse(args[1:]); err != nil {
 		return o, errors.New("could not parse baseline flags; use automations live baseline --help")
 	}
-	if fs.NArg() != 0 || !validCLISlug(o.app) || !api.ValidAutomationLiveBaselineName(o.alias) || o.name == "" {
-		return o, errors.New("provide --app, --name and a valid --baseline-name, without positional arguments")
+	if fs.NArg() != 0 || !validCLISlug(o.app) || (o.verb != "list" && !api.ValidAutomationLiveBaselineName(o.alias)) || o.name == "" {
+		return o, errors.New("provide --app and --name, plus a valid --baseline-name for show, history or promote; no positional arguments")
 	}
 	if o.verb != "promote" {
 		return o, nil
@@ -92,6 +94,9 @@ func cmdAutomationsLiveBaseline(args []string) int {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, api.AutomationLiveProgressRequestTimeout)
 	defer cancel()
+	if o.verb == "list" {
+		return runAutomationLiveBaselineList(ctx, client, o)
+	}
 	if o.verb == "history" {
 		view, err := client.GetAutomationLiveBaselineHistory(ctx, o.app, o.name, o.alias)
 		if err != nil {

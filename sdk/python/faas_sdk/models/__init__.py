@@ -383,6 +383,11 @@ from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
 from .automation_live_baseline import AutomationLiveBaseline
+from .automation_live_baseline_case_health import AutomationLiveBaselineCaseHealth
+from .automation_live_baseline_case_health_status import AutomationLiveBaselineCaseHealthStatus
+from .automation_live_baseline_health import AutomationLiveBaselineHealth
+from .automation_live_baseline_health_evidence_status import AutomationLiveBaselineHealthEvidenceStatus
+from .automation_live_baseline_health_renewal_status import AutomationLiveBaselineHealthRenewalStatus
 from .automation_live_baseline_history import AutomationLiveBaselineHistory
 from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
 from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
@@ -1745,6 +1750,7 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
 from .list_automation_live_suites_response import ListAutomationLiveSuitesResponse
 from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
@@ -4993,6 +4999,11 @@ __all__ = (
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
     "AutomationLiveBaseline",
+    "AutomationLiveBaselineCaseHealth",
+    "AutomationLiveBaselineCaseHealthStatus",
+    "AutomationLiveBaselineHealth",
+    "AutomationLiveBaselineHealthEvidenceStatus",
+    "AutomationLiveBaselineHealthRenewalStatus",
     "AutomationLiveBaselineHistory",
     "AutomationLiveBaselinePolicy",
     "AutomationLiveBaselinePolicyVersion",
@@ -6309,6 +6320,7 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationLiveBaselinesResponse",
     "ListAutomationLiveSuitesResponse",
     "ListAutomationLiveVerificationsResponse",
     "ListAutomationRevisionsResponse",
