@@ -1,4 +1,4 @@
-// adr:1161 — API-side plan review and receipt lifecycle.
+// adr:1354 — API-side plan review and receipt lifecycle.
 package bindings
 
 import (

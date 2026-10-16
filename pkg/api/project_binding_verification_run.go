@@ -1,4 +1,4 @@
-// adr:1162 — durable qualification of a frozen release graph.
+// adr:1355 — durable qualification of a frozen release graph.
 package api
 
 import (

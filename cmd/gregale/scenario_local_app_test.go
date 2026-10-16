@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -14,8 +15,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,166 +25,60 @@ import (
 	"time"
 )
 
-// These helper tests run in a subprocess so the lifecycle tests exercise actual
-// foreground commands and process groups without requiring Node, curl, or Docker.
-func TestManagedLocalAppHelper(t *testing.T) {
-	mode := os.Getenv("GREGALE_LOCAL_APP_HELPER")
-	if mode == "" {
-		return
-	}
-	fail := func(err error) {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(9)
-	}
-	_, _ = fmt.Fprintln(os.Stdout, "app-private-log")
-	if mode == "exit" {
-		os.Exit(7)
-	}
-	if mode == "exit-zero" {
-		os.Exit(0)
-	}
-	if mode == "child" {
-		signal.Ignore(syscall.SIGTERM)
-		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+//go:embed testdata/managed-local-helper/main.go
+var managedLocalHelperSource string
+
+var managedLocalHelperBuild struct {
+	once   sync.Once
+	binary string
+	err    error
+}
+
+func managedLocalHelperBinary(t *testing.T) string {
+	t.Helper()
+	managedLocalHelperBuild.once.Do(func() {
+		// TestMain owns TMPDIR for the whole suite; a per-test TempDir would remove
+		// this shared executable before later lifecycle tests use it.
+		root, err := os.MkdirTemp("", "managed-local-helper-")
 		if err != nil {
-			fail(err)
+			managedLocalHelperBuild.err = err
+			return
 		}
-		if err := os.WriteFile("child-address", []byte(listener.Addr().String()), 0o600); err != nil {
-			fail(err)
+		source := filepath.Join(root, "main.go")
+		if err = os.WriteFile(source, []byte(managedLocalHelperSource), 0600); err != nil {
+			managedLocalHelperBuild.err = err
+			return
 		}
-		_ = http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
-		os.Exit(0)
-	}
-	host, port := os.Getenv("HOST"), os.Getenv("PORT")
-	baseURL := "http://" + net.JoinHostPort(host, port)
-	if host != "127.0.0.1" || os.Getenv("GREGALE_TEST_HOST") != host || os.Getenv("GREGALE_TEST_PORT") != port || os.Getenv("GREGALE_TEST_URL") != baseURL || os.Getenv("FAAS_TOKEN") != "" {
-		fail(fmt.Errorf("managed app received invalid environment"))
-	}
-	if len(os.Args) > 1 && strings.HasPrefix(os.Args[len(os.Args)-1], "endpoint=") && os.Args[len(os.Args)-1] != "endpoint="+net.JoinHostPort(host, port) {
-		fail(fmt.Errorf("managed app received invalid command placeholders"))
-	}
-	if mode == "descendant" {
-		exe, err := os.Executable()
+		managedLocalHelperBuild.binary = filepath.Join(root, "helper")
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		args := []string{"build", "-o", managedLocalHelperBuild.binary}
+		if info, ok := debug.ReadBuildInfo(); ok {
+			for _, setting := range info.Settings {
+				if setting.Key == "-race" && setting.Value == "true" {
+					args = append(args, "-race")
+				}
+			}
+		}
+		command := exec.CommandContext(ctx, "go", append(args, source)...)
+		output, err := command.CombinedOutput()
 		if err != nil {
-			fail(err)
-		}
-		child := exec.Command(exe, "-test.run=^TestManagedLocalAppHelper$")
-		child.Env = append(os.Environ(), "GREGALE_LOCAL_APP_HELPER=child")
-		child.Stdout, child.Stderr = os.Stdout, os.Stderr
-		if err := child.Start(); err != nil {
-			fail(err)
-		}
-		deadline := time.Now().Add(3 * time.Second)
-		for {
-			if _, err := os.Stat("child-address"); err == nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				fail(fmt.Errorf("child did not start"))
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	listener, err := net.Listen("tcp4", net.JoinHostPort(host, port))
-	if err != nil {
-		fail(err)
-	}
-	marker, _ := json.Marshal(map[string]string{"url": baseURL, "run": os.Getenv("GREGALE_TEST_RUN_ID"), "case": os.Getenv("GREGALE_TEST_CASE")})
-	if err := appendLocalAppHelperFile("starts.jsonl", append(marker, '\n')); err != nil {
-		fail(err)
-	}
-	started := time.Now()
-	var mu sync.Mutex
-	server := &http.Server{ReadHeaderTimeout: time.Second}
-	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/health":
-			if mode == "never-ready" || time.Since(started) < 120*time.Millisecond {
-				w.WriteHeader(503)
-				return
-			}
-			w.WriteHeader(204)
-		case "/redirect":
-			http.Redirect(w, request, "/health", http.StatusFound)
-		case "/check":
-			var data map[string]any
-			_ = json.Unmarshal([]byte(os.Getenv("GREGALE_TEST_DATA_JSON")), &data)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"run": os.Getenv("GREGALE_TEST_RUN_ID"), "customer": data["customer"]})
-		case "/crash":
-			os.Exit(7)
-		case "/slow":
-			select {
-			case <-request.Context().Done():
-			case <-time.After(10 * time.Second):
-			}
-		default:
-			mu.Lock()
-			err := appendLocalAppHelperFile("order.log", []byte(strings.TrimPrefix(request.URL.Path, "/")+":"+os.Getenv("GREGALE_TEST_CASE")+"\n"))
-			mu.Unlock()
-			if err != nil {
-				w.WriteHeader(500)
-				return
-			}
-			w.WriteHeader(204)
+			managedLocalHelperBuild.err = fmt.Errorf("build managed local fixture: %w: %s", err, output)
 		}
 	})
-	if mode == "ignore-term" {
-		signal.Ignore(syscall.SIGTERM)
-	} else {
-		terminated := make(chan os.Signal, 1)
-		signal.Notify(terminated, syscall.SIGTERM)
-		go func() {
-			<-terminated
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			_ = server.Shutdown(ctx)
-		}()
+	if managedLocalHelperBuild.err != nil {
+		t.Fatal(managedLocalHelperBuild.err)
 	}
-	_ = server.Serve(listener)
-	os.Exit(0)
-}
-
-func appendLocalAppHelperFile(path string, data []byte) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	_, err = file.Write(data)
-	return err
-}
-
-func TestManagedLocalFixtureHelper(t *testing.T) {
-	if os.Getenv("GREGALE_LOCAL_APP_HELPER") == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, "GET", os.Getenv("GREGALE_TEST_URL")+"/"+os.Args[len(os.Args)-1], nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != 204 {
-		t.Fatalf("fixture status = %d", response.StatusCode)
-	}
+	return managedLocalHelperBuild.binary
 }
 
 func managedLocalTestSpec(t *testing.T, mode string) *testLocalAppSpec {
 	t.Helper()
 	t.Setenv("GREGALE_LOCAL_APP_HELPER", mode)
 	t.Setenv("GORACE", "atexit_sleep_ms=0")
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	exe := managedLocalHelperBinary(t)
 	return &testLocalAppSpec{
-		Command:         []string{exe, "-test.run=^TestManagedLocalAppHelper$", "--", "endpoint=${local.host}:${local.port}"},
+		Command:         []string{exe, "app", "endpoint=${local.host}:${local.port}"},
 		Readiness:       testLocalReadinessSpec{Path: "/health", Status: 204, Timeout: "3s"},
 		ShutdownTimeout: "1s",
 	}
@@ -191,11 +86,7 @@ func managedLocalTestSpec(t *testing.T, mode string) *testLocalAppSpec {
 
 func managedLocalFixtureCommand(t *testing.T, phase string) []string {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return []string{exe, "-test.run=^TestManagedLocalFixtureHelper$", "--", phase}
+	return []string{managedLocalHelperBinary(t), "fixture", phase}
 }
 
 func captureManagedLocalOutput(t *testing.T) (*bytes.Buffer, *bytes.Buffer) {
@@ -373,6 +264,8 @@ func TestManagedLocalFailuresStillCleanUpAndStop(t *testing.T) {
 				scenario.Checks[0].Expect.Status = 403
 				scenario.Cleanup = append(scenario.Cleanup, managedLocalFixtureCommand(t, "cleanup"))
 			case "crash":
+				// This case tests process-exit evidence, not the startup timeout.
+				spec.Readiness.Timeout = "5s"
 				scenario.Checks[0].Path = "/crash"
 			case "canceled":
 				var cancel context.CancelFunc
@@ -388,7 +281,20 @@ func TestManagedLocalFailuresStillCleanUpAndStop(t *testing.T) {
 			if receipt.Status != "failed" || (receipt.Error == "" && receipt.CleanupError == "") || receipt.LocalApp == nil || receipt.LocalApp.Shutdown == "not_started" || receipt.LocalApp.Shutdown == "failed" {
 				t.Fatalf("failed run = %+v, app = %+v", receipt, receipt.LocalApp)
 			}
-			if time.Since(started) > 5*time.Second {
+			budget := 5 * time.Second
+			if failure == "crash" {
+				budget = 7 * time.Second
+				var startup time.Duration
+				for _, phase := range receipt.Phases {
+					if phase.Name == "startup" {
+						startup = time.Duration(phase.DurationMS) * time.Millisecond
+					}
+				}
+				if time.Since(started)-startup > 2*time.Second {
+					t.Fatalf("crash handling and cleanup did not cancel promptly: %s", time.Since(started)-startup)
+				}
+			}
+			if time.Since(started) > budget {
 				t.Fatalf("failure did not cancel promptly: %s", time.Since(started))
 			}
 			if failure == "early-exit" || failure == "zero-exit" || failure == "crash" {

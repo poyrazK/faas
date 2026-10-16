@@ -31,28 +31,13 @@ func automaticSuppressionReplay(e api.WorkflowRecoveryAutomaticAction, r api.Sup
 	return e.Status == "suppressed" && e.Suppression != nil && e.Suppression.Reason == r.Reason
 }
 func automaticBlockedEligible(p api.WorkflowRecoveryPolicyResponse, e api.WorkflowRecoveryAutomaticAction, version int64) bool {
-	return p.Policy.Enabled && p.Policy.Mode == "automatic_retry" && p.AutomaticExecution != nil && p.AutomaticExecution.PausedAt == nil && e.BlockedNotification == nil && (e.Status == "pending" && e.Reason == "evidence_unknown" && version == p.Version || e.Status == "applied" && e.Result == nil)
-}
-func automaticBlockedEvidence(ctx context.Context, s WorkflowRecoveryReviewInspector, account, app, review string, e api.WorkflowRecoveryAutomaticAction, now time.Time) (bool, error) {
-	if e.Status == "pending" {
-		retained, err := s.GetWorkflowRecoveryPolicyReview(ctx, account, app, review)
-		if err != nil {
-			return false, fmt.Errorf("inspect blocked retry decision: %w", err)
-		}
-		if retained.ReviewDecision != nil && retained.ReviewDecision.Decision == "dismissed" {
-			return false, nil
-		}
+	if e.Status != "pending" && e.Status != "applied" {
+		return false
 	}
-	status, err := InspectWorkflowRecoveryReview(ctx, s, account, app, review, now)
-	if err != nil {
-		return false, fmt.Errorf("inspect blocked automatic retry: %w", err)
+	if n := e.BlockedNotification; n != nil && n.State != "recovered" {
+		return true
 	}
-	for _, a := range status.Actions {
-		if a.Position == e.Position && a.Kind == "retry" && a.ChildJobID == e.ChildJobID {
-			return a.Outcome == "unknown" && !a.Complete && (e.Status == "applied" || a.Status == "unknown" || a.Reason == "run_not_retained"), nil
-		}
-	}
-	return false, nil
+	return p.Policy.Enabled && api.WorkflowRecoveryPolicyAutomaticMode(p.Policy.Mode) && p.AutomaticExecution != nil && p.AutomaticExecution.PausedAt == nil && (e.Status == "pending" && e.Reason == "evidence_unknown" && version == p.Version || e.Status == "applied" && e.Result == nil)
 }
 func automaticBlockedPayload(app, slug, review string, version int64, e api.WorkflowRecoveryAutomaticAction, now time.Time) api.WorkflowRecoveryQueueBlockedWebhookPayload {
 	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:recovery-action:"+e.ActionID+":blocked")).String()
@@ -64,5 +49,5 @@ func automaticBlockedReceipt(payload api.WorkflowRecoveryQueueBlockedWebhookPayl
 	if len(receivers) == 0 {
 		status = "no_receivers"
 	}
-	return api.WorkflowRecoveryAutomaticBlockedNotification{EventID: payload.EventID, Status: status, Reason: payload.Reason, CapturedAt: payload.ObservedAt, ReceiverWebhookIDs: receivers}
+	return api.WorkflowRecoveryAutomaticBlockedNotification{State: payload.State, EvidenceKind: payload.EvidenceKind, DiagnosisReason: payload.DiagnosisReason, EventID: payload.EventID, Status: status, Reason: payload.Reason, CapturedAt: payload.ObservedAt, ReceiverWebhookIDs: receivers}
 }

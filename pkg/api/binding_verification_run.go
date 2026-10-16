@@ -1,4 +1,4 @@
-// adr:1161 — durable receipts preserve reviewed verification plans.
+// adr:1354 — durable receipts preserve reviewed verification plans.
 package api
 
 import (

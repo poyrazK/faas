@@ -34,6 +34,7 @@ import (
 )
 
 func withIncomingCorrelation(ctx context.Context) context.Context {
+	ctx = withPreferredInstanceIncoming(ctx)
 	fields, ok := wire.CorrelationFromIncoming(ctx)
 	if !ok {
 		return ctx
@@ -1457,6 +1458,8 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 
 			EgressNewDestinationsLimitPerMin: row.GetEgressNewDestinationsLimitPerMin(),
 			EgressFloodDropsLimitPerMin:      row.GetEgressFloodDropsLimitPerMin(),
+			QuietPaused:                      row.GetQuietPaused(),
+			Frozen:                           row.GetFrozen(),
 		}
 		if value := row.GetEgressNewDestinationsPerMin(); value != nil {
 			v := value.GetValue()

@@ -45,7 +45,7 @@ groups:
           ) > 200
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: data_placement
         annotations:
@@ -108,7 +108,7 @@ groups:
           ) > 0.5
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: probe_outcome
         annotations:
@@ -136,7 +136,7 @@ groups:
           sum by (reason) (rate(apid_data_upstream_classifier_failures_total[10m])) > 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: data_placement
         annotations:

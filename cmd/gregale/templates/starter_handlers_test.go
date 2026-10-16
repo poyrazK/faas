@@ -113,8 +113,12 @@ for (const body of [envelope, JSON.stringify(envelope)]) {
   assert.equal(result.statusCode, 202);
   assert.deepEqual(logs[0][1], { event_id: "event-1", source: "billing.test", type: "invoice.paid" });
 }
-await assert.rejects(() => handler({ body: { data: {} } }, { log: { info() {} } }), /missing id, source, or type/);
-await assert.rejects(() => handler({ body: "not-json" }, { log: { info() {} } }), /not valid JSON/);
+// H10-3: a malformed envelope answered 500 handler_error; it is a 400.
+for (const [body, detail] of [[{ data: {} }, /missing id, source, or type/], ["not-json", /not valid JSON/], [undefined, /missing id/]]) {
+  const result = await handler({ body }, { log: { info() {} } });
+  assert.equal(result.statusCode, 400);
+  assert.match(JSON.parse(result.body).detail, detail);
+}
 `)
 }
 

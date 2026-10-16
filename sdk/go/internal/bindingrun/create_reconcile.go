@@ -1,4 +1,4 @@
-// adr:1174 — reconcile uncertain creation through bounded reads, never another POST.
+// adr:1367 — reconcile uncertain creation through bounded reads, never another POST.
 package bindingrun
 
 import (

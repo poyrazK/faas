@@ -72,7 +72,7 @@ snapshots; reviewed plans remain the guarded write path. See
 
 ## Reviewed service binding plans — 2026-10-16
 
-[ADR-1191](adr/1191-reviewed-service-binding-plans.md) adds private saved plans
+[ADR-1384](adr/1384-reviewed-service-binding-plans.md) adds private saved plans
 with app/account/endpoint identity and service-settings fingerprints. Apply
 checks its precondition under the app lock in both ordinary and activity-aware
 store transactions. Stale plans conflict before mutation, and unrelated manifest
@@ -81,7 +81,7 @@ unguarded behavior. See the [workflow](service-binding-configuration.md#save-and
 
 ## Service binding reliability and transport CLI — 2026-10-16
 
-[ADR-1190](adr/1190-service-binding-reliability-cli.md) extends the service policy
+[ADR-1383](adr/1383-service-binding-reliability-cli.md) extends the service policy
 file with dependency timeouts/retries and canonical URL transport. Validation
 uses the resulting target list before mutation; previews and saved receipts
 expose implicit reliability pruning when a target is removed. Omitted settings
@@ -90,7 +90,7 @@ opt-in, and URL selection does not certify running-guest adoption.
 
 ## Service binding CLI configuration — 2026-10-16
 
-[ADR-1189](adr/1189-service-binding-cli-configuration.md) adds policy-file
+[ADR-1382](adr/1382-service-binding-cli-configuration.md) adds policy-file
 configuration for standalone service targets, declared-only authorization,
 caller restrictions and method/path scopes. Read-only previews preserve the
 API's omitted/null/empty distinctions; apply uses one partial app update and
@@ -99,7 +99,7 @@ Runtime adoption and connectivity still require inspection and verification.
 
 ## Queue canary CLI setup — 2026-10-16
 
-[ADR-1188](adr/1188-queue-canary-cli-deployment-intent.md) adds bounded revision
+[ADR-1381](adr/1381-queue-canary-cli-deployment-intent.md) adds bounded revision
 pin lifetime updates and repeatable per-deployment queue canary declarations.
 Source archive validation precedes deployment mutations, previews expose the
 selected bindings, and redeployments require fresh opt-in. The queue worker
@@ -108,7 +108,7 @@ explicit consent. Native acceptance qualification remains pending below.
 
 ## Queue worker completion acceptance — 2026-10-15
 
-[ADR-1187](adr/1187-queue-worker-completion-acceptance.md) gives the shipped
+[ADR-1380](adr/1380-queue-worker-completion-acceptance.md) gives the shipped
 queue worker a safe reserved canary path with exact deployment opt-in and
 publication consent. The [native queue journey](ops/queue-bindings-native-acceptance.md)
 requires nine phases covering real parked delivery, exact handler completion,
@@ -128,7 +128,7 @@ provisioning or rollout gate is enabled.
 
 ## Python PostgreSQL native acceptance — 2026-10-15
 
-[ADR-1186](adr/1186-python-postgres-native-acceptance.md) extends the
+[ADR-1379](adr/1379-python-postgres-native-acceptance.md) extends the
 [PostgreSQL native journey](ops/managed-postgres-native-acceptance.md) to the
 unchanged Python starter. Nineteen phases now require the probe and both shipped
 starters, private-CA trust, release-only migration credentials, disconnected-pool
@@ -147,7 +147,7 @@ remain pending. No provisioning or rollout gate is enabled.
 
 ## PostgreSQL native acceptance repair — 2026-10-15
 
-[ADR-1185](adr/1185-postgres-native-acceptance-repair.md) repairs the existing
+[ADR-1378](adr/1378-postgres-native-acceptance-repair.md) repairs the existing
 thirteen-phase [PostgreSQL native harness](ops/managed-postgres-native-acceptance.md):
 the fixture CA is packaged under the shipped runtime COPY, provenance identifies
 actual OCI app layers/source archives and the minimal base, and the verdict
@@ -162,7 +162,7 @@ host leak qualification remain pending. No provisioning or rollout gate is enabl
 
 ## Native storage starter runtime matrix — 2026-10-15
 
-[ADR-1184](adr/1184-native-storage-starter-runtime-matrix.md) extends the
+[ADR-1377](adr/1377-native-storage-starter-runtime-matrix.md) extends the
 [deployed storage acceptance journey](ops/object-storage-native-acceptance.md) to
 both unchanged Node and Python starters. Each runs eight phases with isolated
 fixtures, strict TLS trust and its own source/build/app-layer evidence. The
@@ -178,7 +178,7 @@ starters. No feature or rollout gate is enabled.
 
 ## Python storage explicit TLS trust — 2026-10-15
 
-[ADR-1183](adr/1183-python-storage-explicit-tls-trust.md) makes the Python storage
+[ADR-1376](adr/1376-python-storage-explicit-tls-trust.md) makes the Python storage
 starter honor its explicit `AWS_CA_BUNDLE` while preserving certificate-chain and
 hostname verification. Default public CA trust remains enabled; invalid bundles
 and certificates fail adoption/readiness. New transports reread the configured
@@ -190,7 +190,7 @@ remain separate qualification work.
 
 ## Object-storage starter native acceptance harness — 2026-10-15
 
-[ADR-1182](adr/1182-native-object-storage-starter-acceptance.md) adds a strict
+[ADR-1375](adr/1375-native-object-storage-starter-acceptance.md) adds a strict
 [deployed storage acceptance journey](ops/object-storage-native-acceptance.md)
 for the unchanged Node starter, public credential rotation, real snapshot/restore,
 failed-hook cold fallback, independent byte/replay checks and credential cleanup.
@@ -199,6 +199,53 @@ lint is clean. These checks are separate from native execution. This
 implementation workspace has no `/dev/kvm`; supported native
 execution and host leak qualification remain pending. No feature or rollout gate
 is enabled. Python guest and live-provider qualification remain separate.
+
+## Containers: image runs, process identity and Compose build context — 2026-10-15
+
+- **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),
+  [ADR-1163](adr/1163-live-job-task-output.md) live output (#4694, edge routing
+  fixed in #4725) and [ADR-1330](adr/1330-interactive-image-runs.md)
+  `gregale run -it --image` (#4734) are merged.
+  - They stay operator-gated and off by default: `FAAS_IMAGE_RUNS`
+    (Ansible `faas_image_runs_enabled`) and `FAAS_INTERACTIVE_IMAGE_RUNS`.
+  - Unit, conformance and gateway tests pass. The metal tests
+    `TestImageRunsMetal`, `TestJobTaskLiveOutputMetal` and
+    `TestInteractiveImageRunMetal` are in the native `jobs` phase but have not
+    run. The `e2e-native` dispatch on 2026-10-14 failed because the acceptance
+    VM `faas-acceptance-1` no longer exists.
+- **Process identity.** [ADR-1239](adr/1239-docker-compatible-image-process-identity.md)
+  (#4704) keeps root-owned image files owned by root, runs images without
+  `USER` as root, and gives an unknown numeric UID GID 0, as Docker does.
+  - Unit tests pass.
+  - Native evidence must run imaged as its production service user. That
+    evidence is in open #4722, which also lets workloads serve port 80.
+- **Compose build context.** [ADR-1288](adr/1288-compose-declared-build-context.md)
+  (#4719): project apply stages a Compose-declared build service with its
+  declared context as the archive root. The release-gate e2e test pins both
+  that shape and the whole-repository shape.
+- **No native run recorded.** The `containers` native lane has no recorded
+  passing run; [container qualification](container-qualification.md) remains
+  the coverage plan.
+- No deployment setting changed. `faas_image_runs_enabled` defaults to
+  `false`.
+
+## Billing integrity: delivery finality, hard spend cap, plan history — 2026-10-13
+
+[ADR-1162](adr/1162-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
+billing gaps. The provider pusher delivers an hour only once every minute up to its end
+is recorded compute-complete or older than the catch-up bound, so late catch-up rows
+can no longer land in a delivered hour. The spend cap bills exactly up to the cap,
+settles capped hours without later back-billing, and schedd parks capped accounts:
+explicit-deployment admissions check the cap, the reaper parks via `appMustPark`, warm
+pools are reclaimed and queued job tasks deferred. App purge keeps `usage_minutes` and
+`usage_daily`. The month's allowance follows recorded plan activations (largest grant
+so far) in the pusher, `CurrentMonthOverageCents` and `OverageMBSecondsForRange`.
+`pkg/meter`, `pkg/billing`, `pkg/billing/reconciler` and `pkg/api` tests pass locally
+(one known timing-flaky loop health test aside), as do the new `pkg/state` plan-history
+tests, the MemStore conformance suite and the full `pkg/sched` suite including the new
+spend-cap tests. PG-backed tests, `make lint` and a live Polar sandbox delivery remain
+unrun.
+No deployment setting or provider configuration changed.
 
 ## Combined PostgreSQL rollout readiness — 2026-10-12
 
@@ -523,6 +570,15 @@ full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 
+Managed PostgreSQL drain plans (2026-10-13, [ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md))
+capture the app instance catalog and native member reservations atomically under
+an existing admission fence and ownership epoch. Restart recovery reuses the
+original receipts. Unsupported members, empty/oversized inventories and stale
+authority block the catalog verdict; terminal rows alone are never receipts.
+The `catalog_retired` observation remains separate from external SQL-session
+isolation, route convergence and customer activation. Production provisioning
+and customer activation remain disabled; native KVM acceptance is outstanding.
+
 Startup can now retire absent, fully checkpointed, unclaimed prepared-network
 reservations from a different kernel boot
 ([ADR-478](adr/478-managed-postgres-prior-boot-spare-retirement.md)). Current UID
@@ -754,6 +810,19 @@ The first attempt was cut at 29.5 s: on single-box installs schedd's stats
 poller read only the empty capacity-stream cache, so the idle reaper never
 saw the in-flight request. The poller now reads vmmd `Stats` directly when
 schedd has no owner node.
+Async, queue, cron and replay invocations run for the function's request
+timeout too, at least 30 s (ADR-1180). Their leases cover the run, and long
+ones are delivered off the drain tick and the cron loop. vmmd's stream
+bridge waits for the guest's response headers as long as
+`X-Faas-Deadline-Ms` allows; a fixed 30 s wait cut every response that
+started after 30 s with a 502. Evidence, 2026-10-13 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set, daemons at 74b9225c29 with the bridge, runner and test at
+6d2e493e3a): the Pro function with `request_timeout_s=120` streamed for
+36.0 s, answered a synchronous 40 s request once with HTTP 200 after 40.0 s,
+and completed a 40 s async invocation in 40.7 s on its first attempt. Both
+40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
+attempt of that async invocation got a 502 about 32 s in and was retried.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and
@@ -1735,9 +1804,12 @@ explicitly open issues that the doc otherwise implies are closed.
   traffic before the lateral-movement deny. Named TCP public multi-port routing
   now uses the `app--port-<name>` selector and the existing vmmd bridge
   (ADR-176); durable node-local host-port leasing now reserves declared TCP
-  and UDP listeners (ADR-177). Direct socket binding, UDP ingress, and custom
-  per-port TLS remain separate follow-ups. Loopback discovery within one task remains supported
-  (ADR-164 and ADR-165).
+  and UDP listeners (ADR-177). Opt-in raw TCP ingress with optional
+  per-listener TLS termination and opt-in UDP ingress (ADR-389) shipped with
+  the stateless container service (#4024, 2026-10-01). Both are disabled by
+  default, and their native acceptance is pending
+  ([container compatibility](container-compatibility.md)). Loopback discovery
+  within one task remains supported (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
   managed-PostgreSQL usage projection are present; runtime per-container
@@ -1747,8 +1819,10 @@ explicitly open issues that the doc otherwise implies are closed.
   64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
   16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
   policies (`low`, `standard`, `high`); omitted values preserve the inherited
-  defaults. Persistent volumes remain follow-up work; public named TCP listeners
-  are now covered by ADR-176 and host-port allocation by ADR-177.
+  defaults. Persistent volumes are out of scope for the stateless container
+  service ([container qualification](container-qualification.md)); public
+  named TCP listeners are now covered by ADR-176 and host-port allocation by
+  ADR-177.
 
 ### Open security & infrastructure issues
 

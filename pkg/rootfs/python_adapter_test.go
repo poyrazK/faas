@@ -256,3 +256,72 @@ async def handler(event, ctx):
 		t.Fatalf("adapter exit: %v; stderr=%s", err, stderr.String())
 	}
 }
+
+// H10-20: Python handlers reading event["headers"]["x-test"] missed the
+// envelope's canonical "X-Test".
+func TestPythonFunctionAdapterHeadersIgnoreCase(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	dir := t.TempDir()
+	impl := `def handler(event, ctx):
+    h = event["headers"]
+    return {"statusCode": 200, "body": {"lower": h["x-test"], "canonical": h.get("X-Test"), "has": "X-FAAS-DEADLINE-MS" in h, "keys": sorted(h.keys())}}
+`
+	if err := os.WriteFile(filepath.Join(dir, ".faas-handler.py"), []byte(impl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(dir, "handler.py")
+	if err := os.WriteFile(adapter, []byte(pythonFunctionAdapter), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, python, adapter)
+	cmd.Env = append(os.Environ(), "FAAS_PERSISTENT_WORKER=1")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close(); _ = cmd.Wait() }()
+	scan := bufio.NewScanner(stdout)
+	scan.Buffer(make([]byte, 1<<20), 1<<20)
+	if !scan.Scan() || !strings.Contains(scan.Text(), `"__faas_ready": true`) {
+		t.Fatalf("ready frame = %q, error = %v", scan.Text(), scan.Err())
+	}
+	envelope, _ := json.Marshal(map[string]any{"method": "GET", "path": "/", "body_b64": "",
+		"headers": map[string]string{"X-Test": "one, two", "X-Faas-Deadline-Ms": "59999"}})
+	if _, err := stdin.Write(append(envelope, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if !scan.Scan() {
+		t.Fatalf("no response: %v", scan.Err())
+	}
+	var resp struct {
+		BodyB64 string `json:"body_b64"`
+	}
+	if err := json.Unmarshal(scan.Bytes(), &resp); err != nil {
+		t.Fatalf("decode %q: %v", scan.Text(), err)
+	}
+	body, _ := base64.StdEncoding.DecodeString(resp.BodyB64)
+	var got struct {
+		Lower, Canonical string
+		Has              bool
+		Keys             []string
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("handler body %q: %v", body, err)
+	}
+	if got.Lower != "one, two" || got.Canonical != "one, two" || !got.Has ||
+		strings.Join(got.Keys, ",") != "x-faas-deadline-ms,x-test" {
+		t.Fatalf("event headers = %+v, want lowercase keys with case-insensitive reads", got)
+	}
+}

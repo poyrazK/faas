@@ -36,7 +36,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -84,7 +84,27 @@ var Names = []string{
 	"customer-operation-workflow-export",
 	"data-api",
 	"data-api-starter",
+	"data-api-teams",
+	"data-api-support-console",
 	"durable-entity-node",
+	"auth",
+}
+
+// unlisted templates stay embedded and materializable by name but are left
+// out of customer discovery: `gregale init --list`, completions and
+// unknown-template hints. durable-entity-node scaffolds the operator-only
+// durable entity preview (ADR-712).
+var unlisted = map[string]bool{"durable-entity-node": true}
+
+// ListedNames returns Names without unlisted templates, in catalog order.
+func ListedNames() []string {
+	names := make([]string, 0, len(Names))
+	for _, name := range Names {
+		if !unlisted[name] {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
@@ -98,6 +118,11 @@ var generatedDotfiles = map[string]map[string]string{
 	"rest-api-postgres-python": {
 		".gitignore":     "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
 		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
+	"data-api-support-console": {".gitignore": "node_modules/\n.gregale/\n.env\n.env.*\n", ".gregaleignore": "/test/\n/demo.mjs\n/.env\n/.env.*\n"},
+	"data-api-teams": {
+		".gitignore":     "node_modules/\nclient/dist/\nclient/client.js\nclient/vendor/\n.gregale/\n.gregale-tools/\n.env\n.env.*\n",
+		".gregaleignore": "/client/\n/tools/\n/workers/\n/ci/\n/.github/\n/.gregale/\n/.gregale-tools/\n/seed.sql\n/data-api.dev.json\n/data-api.requests.json\n/data-api-artifacts.json\n",
 	},
 	"object-storage-node": {
 		".gitignore":     "node_modules/\n.gregale/\n.env\n.env.*\n*.secrets\n",
@@ -169,6 +194,7 @@ func goModuleContent(name string) []byte {
 // Workflow sources remain visible to go:embed. Scaffold their conventional
 // hidden destinations when init materializes the project.
 var generatedTemplateCopies = map[string]map[string]string{
+	"data-api-teams": {".github/workflows/data-api-client.yml": "ci/client.yml"},
 	"data-api-starter": {
 		".github/workflows/data-api-client.yml":  "ci/client.yml",
 		".github/workflows/data-api-preview.yml": "ci/preview.yml",
@@ -177,6 +203,21 @@ var generatedTemplateCopies = map[string]map[string]string{
 
 // Share the runtime catalog implementation with the owner-side permission tool.
 var sharedTemplateCopies = map[string]map[string]string{
+	"data-api-support-console": {"public/csv.mjs": "data-api/csv-export.mjs"},
+	"data-api-teams": {
+		"Dockerfile":                             "data-api-starter/Dockerfile",
+		"Procfile":                               "data-api-starter/Procfile",
+		"gregale.yaml":                           "data-api-starter/gregale.yaml",
+		"server.mjs":                             "data-api-starter/server.mjs",
+		"migrations/migrate.mjs":                 "data-api-starter/migrations/migrate.mjs",
+		"migrations/release.mjs":                 "data-api-starter/migrations/release.mjs",
+		"migrations/rpc-permissions.mjs":         "data-api-starter/migrations/rpc-permissions.mjs",
+		"migrations/rpc-runtime/types.mjs":       "data-api/types.mjs",
+		"migrations/rpc-runtime/type-render.mjs": "data-api/type-render.mjs",
+		"migrations/rpc-runtime/config.mjs":      "data-api/config.mjs",
+		"tools/artifacts.mjs":                    "data-api-starter/tools/artifacts.mjs",
+		"tools/artifact-lib.mjs":                 "data-api-starter/tools/artifact-lib.mjs",
+	},
 	"data-api-starter": {
 		"migrations/rpc-runtime/types.mjs":       "data-api/types.mjs",
 		"migrations/rpc-runtime/type-render.mjs": "data-api/type-render.mjs",
@@ -433,7 +474,7 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "object-storage-node", "object-storage-python", "slack-bot", "rest-api-postgres", "rest-api-postgres-python", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
+	case "s3-uploader", "object-storage-node", "object-storage-python", "slack-bot", "rest-api-postgres", "rest-api-postgres-python", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter", "data-api-teams", "data-api-support-console", "auth":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"

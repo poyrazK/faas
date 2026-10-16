@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One settled AI call's metadata (ADR-991). No request or response content is kept.
+ * One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
  */
 export type OutboundAIRequestLogEntry = {
   id: string;
@@ -28,5 +28,9 @@ export type OutboundAIRequestLogEntry = {
    * The call's X-Gregale-AI-User value (ADR-994).
    */
   end_user: string | null;
+  /**
+   * Whether the call's bodies can be read from its content endpoint (ADR-996).
+   */
+  content_captured: boolean;
 };
 

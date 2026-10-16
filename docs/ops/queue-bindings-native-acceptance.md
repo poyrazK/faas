@@ -85,7 +85,7 @@ delivery. Completed work cannot enter dead-letter replay; portable authority
 regressions separately reject evidence after an actual replay-generation change.
 Public/provider networking, other runtimes and project graph qualification are
 separate work. This runner changes no rollout or provisioning policy. See
-[ADR-1187](../adr/1187-queue-worker-completion-acceptance.md).
+[ADR-1380](../adr/1380-queue-worker-completion-acceptance.md).
 
 Portable checks, also wired into CI:
 

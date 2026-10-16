@@ -1,4 +1,4 @@
-// adr:1168 — create from an explicit review; reconcile without admitting work.
+// adr:1361 — create from an explicit review; reconcile without admitting work.
 package bindingrun
 
 import (

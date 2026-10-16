@@ -12,12 +12,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type tcpAllocationStore struct {
-	*state.MemStore
-	creates int
-	race    bool
+	MemStore *state.MemStore
+	creates  int
+	race     bool
 }
 
 func (s *tcpAllocationStore) CreateTCPListener(ctx context.Context, listener state.TCPListener) (state.TCPListener, error) {
@@ -54,7 +55,7 @@ func TestTCPListenerAllocationConflicts(t *testing.T) {
 				}
 			}
 			store := &tcpAllocationStore{MemStore: memory, race: scenario.race}
-			server := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+			server := apidserver.NewServer(statetest.NewMem(store), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 			request := httptest.NewRequest(http.MethodPost, "/v1/apps/tcp-allocation/tcp-listeners", strings.NewReader(`{"name":"echo","guest_port":9000}`))
 			request.Header.Set("Authorization", "Bearer "+key)
 			request.Header.Set("Content-Type", "application/json")

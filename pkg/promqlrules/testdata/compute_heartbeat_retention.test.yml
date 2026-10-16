@@ -14,7 +14,7 @@ tests:
         alertname: FaasComputeHeartbeatRetentionStalled
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: schedd
               family: compute_heartbeat_retention
               public_status: internal

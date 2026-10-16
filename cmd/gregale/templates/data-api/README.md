@@ -23,7 +23,7 @@ fields and arrays. Approved invoker RPCs can use these objects as inputs/results
 single composite results are objects and SETOF results are arrays. Composite
 fields remain nullable, including domain attributes. Hidden dependencies become
 `unknown` and exclude dependent RPCs. Upgrade the CLI before reading new
-normalized version 3 snapshots; the current CLI also accepts version 1 and 2 baselines.
+normalized version 4 snapshots; the current CLI also accepts version 1, 2 and 3 baselines.
 
 Ordinary views can inherit typed joins when they directly project every column
 of a readable declared key. Renamed columns and view chains work within the

@@ -6,6 +6,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/netip"
 	"time"
@@ -87,7 +88,12 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
 	}
+	interactive, problem := jobInteractiveFromProto(req)
+	if problem != nil {
+		return fcvm.JobBootRequest{}, problem
+	}
 	return fcvm.JobBootRequest{
+		Interactive:      interactive,
 		Instance:         req.GetInstance(),
 		AccountID:        req.GetAccountId(),
 		NodeID:           req.GetNodeId(),
@@ -105,6 +111,33 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 		TaskTimeoutSec:   int(req.GetTaskTimeoutSec()),
 		LeaseToken:       req.GetLeaseToken(),
 	}, nil
+}
+
+// jobInteractiveFromProto validates ADR-1330's attach contract. The token
+// digest stays in vmmd's rendezvous; only the TTY flag and the attach window
+// reach the guest.
+func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteractive, *api.Problem) {
+	in := req.GetInteractive()
+	if in == nil {
+		return nil, nil
+	}
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid interactive job", detail)
+	}
+	if len(in.GetAttachTokenSha256()) != sha256.Size {
+		return nil, invalid("attach_token_sha256 must be a SHA-256 digest")
+	}
+	if req.GetTaskTimeoutSec() > fcvm.JobInteractiveMaxTaskTimeoutSec {
+		return nil, invalid("task_timeout_sec exceeds the interactive session limit")
+	}
+	window := fcvm.JobInteractiveDefaultAttachTimeout
+	switch seconds := in.GetAttachTimeoutSeconds(); {
+	case seconds < 0:
+		return nil, invalid("attach_timeout_seconds must not be negative")
+	case seconds > 0:
+		window = min(time.Duration(seconds)*time.Second, fcvm.JobInteractiveMaxAttachTimeout)
+	}
+	return &fcvm.JobInteractive{TTY: in.GetTty(), AttachTimeoutSec: int(window / time.Second)}, nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -955,7 +988,7 @@ func egressPortsFromWire(ports []uint32) []uint16 {
 // one is pointless: the reaper parks an idle function long before it.
 const maxQuietPauseAfter = time.Hour
 
-// quietPauseAfterFromWire converts AppSpec.quiet_pause_after_ms (ADR-957).
+// quietPauseAfterFromWire converts AppSpec.quiet_pause_after_ms (ADR-1151).
 // Zero, negative and out-of-range values keep the instance running between
 // requests rather than failing the wake.
 func quietPauseAfterFromWire(ms int64) time.Duration {

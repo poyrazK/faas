@@ -71,9 +71,16 @@ type BuildManifest struct {
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
-	KeepWarm     bool `json:"keep_warm,omitempty"`
-	TimeoutSec   int  `json:"timeout_sec"`
-	LogTailBytes int  `json:"log_tail_bytes"` // default 64 KiB
+	KeepWarm bool `json:"keep_warm,omitempty"`
+	// DevWatchCommand, when set, builds a watch-mode developer image
+	// (ADR-1170): no build step, source shipped unchanged, this command as the
+	// start command. Only builderd sets it, and only for developer apps.
+	DevWatchCommand string `json:"dev_watch_command,omitempty"`
+	// DevWatchHost is the developer app's public hostname, set with
+	// DevWatchCommand; the image exposes it as DevWatchHostEnv.
+	DevWatchHost string `json:"dev_watch_host,omitempty"`
+	TimeoutSec   int    `json:"timeout_sec"`
+	LogTailBytes int    `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init
@@ -114,4 +121,8 @@ type BuildDone struct {
 	// DevPatch records, for a successful build, whether its source reached
 	// the image unchanged (ADR-740). Older guests omit it.
 	DevPatch *DevPatchSourceMap `json:"dev_patch,omitempty"`
+	// DependencyCacheUnchanged reports that the build kept the imported
+	// dependency cache instead of exporting it: its plan and install inputs
+	// matched the ones that produced it. builderd keeps the stored cache.
+	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
 }

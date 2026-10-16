@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointObjectWithdrawalLostReplyStore struct {
@@ -107,7 +108,7 @@ func assertCheckpointObjectWithdrawalState(t *testing.T, f *cloneCoordinatorFixt
 func TestPGCloneCheckpointObjectWithdrawalRecovery(t *testing.T) {
 	f, base, plan := checkpointObjectWithdrawalFixture(t)
 	lost := &checkpointObjectWithdrawalLostReplyStore{checkpointObjectVerificationTestStore: base, lose: true}
-	f.srv.store = lost
+	f.srv.store = statetest.NewPg(lost)
 	app := plan.Buckets[0].AppID
 	if _, err := f.pool.Exec(t.Context(), "insert into app_secrets(account_id,app_id,scope,key,ciphertext) values($1,$2,$3,'UNRELATED',$4)", plan.AccountID, app, plan.TargetEnvironment, []byte("unrelated")); err != nil {
 		t.Fatal(err)
@@ -124,7 +125,7 @@ func TestPGCloneCheckpointObjectWithdrawalRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal("withdrawal handoff", err)
 	}
-	if err = base.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), old); !errors.Is(err, state.ErrConflict) {
+	if err = base.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), old); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("stale withdrawal", err)
 	}
 	var ciphertext []byte
@@ -141,17 +142,17 @@ func TestPGCloneCheckpointObjectWithdrawalRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err = base.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = base.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal("replay after target deletion", err)
 	}
 	for _, b := range plan.Buckets {
 		for _, p := range b.Preparations {
-			if _, _, err = base.ResolveObjectS3Credential(t.Context(), p.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+			if _, _, err = base.PgStore.ResolveObjectS3Credential(t.Context(), p.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatal("retired credential resolved", err)
 			}
 		}
 	}
-	if out, err := base.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, state.ProjectEnvironmentCloneCheckpointReleaseObservation{}); !errors.Is(err, state.ErrConflict) || out.State != "" {
+	if out, err := base.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, state.ProjectEnvironmentCloneCheckpointReleaseObservation{}); !errors.Is(err, state.ErrConflict) || out.State != "" {
 		t.Fatal("withdrawn publication revived", err)
 	}
 }
@@ -197,7 +198,7 @@ func TestPGCloneCheckpointObjectWithdrawalOwnership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+			if err = store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("foreign matrix withdrawn", err)
 			}
 			var retired int
@@ -216,14 +217,14 @@ func TestPGCloneCheckpointObjectWithdrawalRollbackAndFences(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `create function expire_object_withdrawal_worker() returns trigger language plpgsql as $$ begin update project_environment_clone_operations set lease_until=clock_timestamp()-interval '1 second' where id=NEW.operation_id; return NEW; end $$; create trigger expire_object_withdrawal_worker after update on project_environment_clone_checkpoint_object_publications for each row when(NEW.state='withdrawn') execute function expire_object_withdrawal_worker()`); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("late withdrawal expiry", err)
 	}
 	assertCheckpointObjectWithdrawalState(t, f, plan, false)
 	if _, err := f.pool.Exec(t.Context(), "drop trigger expire_object_withdrawal_worker on project_environment_clone_checkpoint_object_publications;drop function expire_object_withdrawal_worker()"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal("withdrawal retry", err)
 	}
 	assertCheckpointObjectWithdrawalState(t, f, plan, true)
@@ -232,7 +233,7 @@ func TestPGCloneCheckpointObjectWithdrawalRollbackAndFences(t *testing.T) {
 			if _, err := f.pool.Exec(t.Context(), "update object_storage_s3_credentials set status='active',revoked_at=null where id=$1", p.Credential.ID); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+			if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("revived row accepted", err)
 			}
 			return
@@ -242,11 +243,11 @@ func TestPGCloneCheckpointObjectWithdrawalRollbackAndFences(t *testing.T) {
 }
 func TestPGCloneCheckpointObjectWithdrawalAbsentAndStateFence(t *testing.T) {
 	f, store, _, _, _ := checkpointObjectPublicationFixture(t)
-	if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+	if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("capture allowed withdrawal", err)
 	}
 	compensateCheckpointObjectFixture(t, f)
-	if err := store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err := store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal("absent publication", err)
 	}
 	assertCheckpointObjectPublicationAbsent(t, f)
@@ -268,7 +269,7 @@ func TestPGCloneCheckpointObjectWithdrawalMigration(t *testing.T) {
 		}
 	}
 	_ = tx.Rollback(t.Context())
-	if err = store.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
+	if err = store.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease); err != nil {
 		t.Fatal(err)
 	}
 	assertCheckpointObjectWithdrawalState(t, f, plan, true)

@@ -1,3 +1,4 @@
+// adr: 595
 package sched
 
 // Tests for the deletion subscriber (ADR-026). MemStore-backed, no
@@ -72,14 +73,14 @@ func silenceLog() *slog.Logger {
 func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 	store := state.NewMemStore()
 	acctA, appA, depA := seedOneAccount(t, store, "owner-a@example.com")
-	if err := store.MarkAccountDeletionPending(context.Background(), acctA.ID); err != nil {
-		t.Fatalf("mark account A pending: %v", err)
-	}
 	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "running", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance A1: %v", err)
 	}
 	if _, err := store.CreateInstance(context.Background(), appA.ID, depA.ID, "waking", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance A2: %v", err)
+	}
+	if err := store.MarkAccountDeletionPending(context.Background(), acctA.ID); err != nil {
+		t.Fatalf("mark account A pending: %v", err)
 	}
 	// Distant account — MUST NOT be touched.
 	acctB, appB, depB := seedOneAccount(t, store, "owner-b@example.com")
@@ -124,11 +125,11 @@ func TestDeletionSubscriber_ParkOnMessage(t *testing.T) {
 func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "dup@example.com")
-	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
-		t.Fatalf("mark account pending: %v", err)
-	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance: %v", err)
+	}
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("mark account pending: %v", err)
 	}
 
 	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
@@ -173,11 +174,11 @@ func TestDeletionSubscriber_DuplicateMessageIsNoOp(t *testing.T) {
 func TestDeletionSubscriber_BadPayloadSkipped(t *testing.T) {
 	store := state.NewMemStore()
 	acct, app, dep := seedOneAccount(t, store, "bad@example.com")
-	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
-		t.Fatalf("mark account pending: %v", err)
-	}
 	if _, err := store.CreateInstance(context.Background(), app.ID, dep.ID, "running", 128, state.DefaultLocalNodeName, ""); err != nil {
 		t.Fatalf("instance: %v", err)
+	}
+	if err := store.MarkAccountDeletionPending(context.Background(), acct.ID); err != nil {
+		t.Fatalf("mark account pending: %v", err)
 	}
 	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "")
 	feed := newFakeNotify(4)

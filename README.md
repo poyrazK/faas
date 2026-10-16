@@ -282,19 +282,19 @@ explicit. See [historical evaluation](docs/automation-authoring.md#historical-re
 
 Recovery policy evaluation now includes separately timed `later_eligibility` checks for unreviewed failures. The bounded background observer runs even without a recovery policy, checking retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and expire for qualification after 15 minutes. These observations do not change historical preparation totals or authorize retries; missing or stale evidence remains unknown. See [ADR-1026](docs/adr/1026-workflow-failure-eligibility-observer.md).
 
-See [reviewed verification creation helpers](docs/adr/1168-reviewed-verification-creation-helpers.md) for recoverable SDK receipt creation.
+See [reviewed verification creation helpers](docs/adr/1361-reviewed-verification-creation-helpers.md) for recoverable SDK receipt creation.
 
-See [bounded verification status read retries](docs/adr/1169-bounded-verification-status-read-retries.md) for resilient durable observation.
+See [bounded verification status read retries](docs/adr/1362-bounded-verification-status-read-retries.md) for resilient durable observation.
 
-See [verification run discovery](docs/adr/1170-verification-run-discovery.md) for paginated receipt listings and recovery by retained identity.
+See [verification run discovery](docs/adr/1363-verification-run-discovery.md) for paginated receipt listings and recovery by retained identity.
 
-See [verification qualification waiting](docs/adr/1171-verification-qualification-waiting.md) for bounded completion after probes succeed.
+See [verification qualification waiting](docs/adr/1364-verification-qualification-waiting.md) for bounded completion after probes succeed.
 
-See [verification write reconciliation](docs/adr/1172-verification-write-reconciliation.md) for recovery after lost admission or completion responses.
+See [verification write reconciliation](docs/adr/1365-verification-write-reconciliation.md) for recovery after lost admission or completion responses.
 
-See [binding CLI progress](docs/adr/1173-binding-cli-progress.md) for live verification events and retained recovery context.
+See [binding CLI progress](docs/adr/1366-binding-cli-progress.md) for live verification events and retained recovery context.
 
-See [verification creation reconciliation](docs/adr/1174-verification-creation-reconciliation.md) for bounded recovery of the original UUID after an uncertain creation response.
+See [verification creation reconciliation](docs/adr/1367-verification-creation-reconciliation.md) for bounded recovery of the original UUID after an uncertain creation response.
 
 PostgreSQL credential rotation can use the driver-independent SDK
 [pool runtime bindings](docs/postgres-pool-runtime.md), with validated adoption and

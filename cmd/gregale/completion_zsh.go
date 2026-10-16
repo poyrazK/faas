@@ -129,6 +129,11 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  fi")
 	_, _ = fmt.Fprintln(w)
 
+	_, _ = io.WriteString(w, `  local local_names
+  if local_names=$(gregale "${__gregale_profile_args[@]}" completion local-names -- "${words[@]:1:$((CURRENT-1))}" 2>/dev/null); then
+    local -a names; names=( "${(@f)local_names}" ); [[ -n "$local_names" ]] && compadd -- "${names[@]}"; return 0
+  fi
+`)
 	_, _ = io.WriteString(w, `  if [[ "${words[2]}" == secrets ]]; then
     local secret_names
     if secret_names=$(gregale "${__gregale_profile_args[@]}" completion secret-keys -- "${words[@]:1:$((CURRENT-1))}" 2>/dev/null); then

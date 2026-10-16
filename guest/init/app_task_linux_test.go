@@ -108,7 +108,7 @@ func TestServeAppTaskOnceHandlesOneCommand(t *testing.T) {
 			_, _ = stdout.Write([]byte("ok"))
 			exit := 0
 			return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit}, nil
-		})
+		}, nil)
 	}()
 	protoClient, _ := apptaskproto.NewClient(client)
 	result, err := protoClient.Execute(ctx, apptaskproto.Request{
@@ -144,7 +144,7 @@ func TestServeAppTaskOnceKeepsGuestAliveUntilHostConsumesResult(t *testing.T) {
 			defer close(executed)
 			exit := 0
 			return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit}, nil
-		})
+		}, nil)
 	}()
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
@@ -222,6 +222,29 @@ func TestAppTaskHostCloseWaitIsBounded(t *testing.T) {
 		if !errors.As(err, &timeout) || !timeout.Timeout() {
 			t.Fatalf("host-close wait: %v", err)
 		}
+	}
+}
+
+// adr: 1037 — stdin still in flight from an interactive host must not cut the
+// result-delivery wait short.
+func TestAppTaskHostCloseWaitDiscardsTrailingInput(t *testing.T) {
+	host, guest := net.Pipe()
+	defer guest.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- awaitAppTaskHostClose(ctx, guest) }()
+	if _, err := host.Write([]byte("late stdin")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("guest stopped waiting on trailing input: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	_ = host.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("host-close wait: %v", err)
 	}
 }
 

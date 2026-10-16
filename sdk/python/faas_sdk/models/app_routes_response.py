@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
 
@@ -41,6 +42,13 @@ class AppRoutesResponse:
     (50) or a collector reports `__route_other__`. False on
     `source: unavailable`, where cap state is unknown.
     """
+    scope: str | Unset = UNSET
+    project_id: str | Unset = UNSET
+    environment_id: str | Unset = UNSET
+    coverage: str | Unset = UNSET
+    """Explicit scopes use deployment_attributed_history over the supplied observation window."""
+    window_start: datetime.datetime | Unset = UNSET
+    window_end: datetime.datetime | Unset = UNSET
     app_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -57,6 +65,22 @@ class AppRoutesResponse:
 
         cap_hit = self.cap_hit
 
+        scope = self.scope
+
+        project_id = self.project_id
+
+        environment_id = self.environment_id
+
+        coverage = self.coverage
+
+        window_start: str | Unset = UNSET
+        if not isinstance(self.window_start, Unset):
+            window_start = self.window_start.isoformat()
+
+        window_end: str | Unset = UNSET
+        if not isinstance(self.window_end, Unset):
+            window_end = self.window_end.isoformat()
+
         app_id = self.app_id
 
         field_dict: dict[str, Any] = {}
@@ -71,6 +95,18 @@ class AppRoutesResponse:
                 "cap_hit": cap_hit,
             }
         )
+        if scope is not UNSET:
+            field_dict["scope"] = scope
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
+        if coverage is not UNSET:
+            field_dict["coverage"] = coverage
+        if window_start is not UNSET:
+            field_dict["window_start"] = window_start
+        if window_end is not UNSET:
+            field_dict["window_end"] = window_end
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
 
@@ -91,6 +127,28 @@ class AppRoutesResponse:
 
         cap_hit = d.pop("cap_hit")
 
+        scope = d.pop("scope", UNSET)
+
+        project_id = d.pop("project_id", UNSET)
+
+        environment_id = d.pop("environment_id", UNSET)
+
+        coverage = d.pop("coverage", UNSET)
+
+        _window_start = d.pop("window_start", UNSET)
+        window_start: datetime.datetime | Unset
+        if isinstance(_window_start, Unset):
+            window_start = UNSET
+        else:
+            window_start = datetime.datetime.fromisoformat(_window_start)
+
+        _window_end = d.pop("window_end", UNSET)
+        window_end: datetime.datetime | Unset
+        if isinstance(_window_end, Unset):
+            window_end = UNSET
+        else:
+            window_end = datetime.datetime.fromisoformat(_window_end)
+
         app_id = d.pop("app_id", UNSET)
 
         app_routes_response = cls(
@@ -100,6 +158,12 @@ class AppRoutesResponse:
             collectors_expected=collectors_expected,
             collectors_healthy=collectors_healthy,
             cap_hit=cap_hit,
+            scope=scope,
+            project_id=project_id,
+            environment_id=environment_id,
+            coverage=coverage,
+            window_start=window_start,
+            window_end=window_end,
             app_id=app_id,
         )
 

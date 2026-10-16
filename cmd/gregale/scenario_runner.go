@@ -32,9 +32,10 @@ import (
 // Scenario files may declare HTTP checks or run application-owned commands.
 // Gregale owns the expiring environment and lifecycle evidence.
 type testManifest struct {
-	Version   int                     `yaml:"version"`
-	Scenarios map[string]testScenario `yaml:"scenarios"`
-	Suites    map[string]testSuite    `yaml:"suites,omitempty"`
+	AssertionProfiles map[string]testAssertionProfile `yaml:"assertion_profiles,omitempty"`
+	Version           int                             `yaml:"version"`
+	Scenarios         map[string]testScenario         `yaml:"scenarios"`
+	Suites            map[string]testSuite            `yaml:"suites,omitempty"`
 }
 
 type testScenario struct {
@@ -67,6 +68,7 @@ type testScenarioStep struct {
 	Name       string            `yaml:"name"`
 	Chaos      *testChaosSpec    `yaml:"chaos,omitempty"`
 	ClearChaos bool              `yaml:"clear_chaos,omitempty"`
+	Restart    *testRestartSpec  `yaml:"restart,omitempty"`
 	Command    []string          `yaml:"command,omitempty"`
 	Requests   []testHTTPRequest `yaml:"requests,omitempty"`
 	Checks     []testHTTPRequest `yaml:"checks,omitempty"`
@@ -182,11 +184,12 @@ type testServiceWakeEvidence struct {
 }
 
 type testServiceHotEvidence struct {
-	RequestID  string `json:"request_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	Status     int    `json:"status,omitempty"`
-	Transport  string `json:"transport,omitempty"`
-	NoNewWake  bool   `json:"no_new_wake,omitempty"`
+	RequestID       string   `json:"request_id,omitempty"`
+	InstanceID      string   `json:"instance_id,omitempty"`
+	Status          int      `json:"status,omitempty"`
+	Transport       string   `json:"transport,omitempty"`
+	NoNewWake       bool     `json:"no_new_wake,omitempty"`
+	PlannedRestarts []string `json:"planned_restarts,omitempty"`
 }
 
 type testRunReceipt struct {
@@ -216,6 +219,7 @@ type testRunReceipt struct {
 	DeploymentID           string                             `json:"deployment_id,omitempty"`
 	SourceSHA256           string                             `json:"source_sha256,omitempty"`
 	Services               map[string]string                  `json:"services,omitempty"`
+	WorkloadAppIDs         map[string]string                  `json:"workload_app_ids,omitempty"`
 	AsyncRoutes            map[string][]string                `json:"async_routes,omitempty"`
 	ServiceWake            map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
 	ServiceHot             map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
@@ -246,6 +250,7 @@ type testScenarioStepEvidence struct {
 	Status       string                            `json:"status"`
 	Chaos        *testChaosEvidence                `json:"chaos,omitempty"`
 	FaultCleared bool                              `json:"fault_cleared,omitempty"`
+	Restart      *testRestartEvidence              `json:"restart,omitempty"`
 	Requests     []testHTTPRequestEvidence         `json:"requests,omitempty"`
 	Load         *testLoadEvidence                 `json:"load,omitempty"`
 	Relative     *testStagedLoadComparisonEvidence `json:"relative,omitempty"`
@@ -289,11 +294,12 @@ type testStagedLoadComparisonCheck struct {
 }
 
 type testChaosEvidence struct {
-	ExpiresAt      time.Time               `json:"expires_at"`
-	RulesInstalled int                     `json:"rules_installed"`
-	Generation     string                  `json:"-"`
-	Rules          []chaos.Rule            `json:"rules"`
-	Matches        []testChaosRuleEvidence `json:"matches,omitempty"`
+	CorrelationCounts map[string]int64        `json:"-"`
+	ExpiresAt         time.Time               `json:"expires_at"`
+	RulesInstalled    int                     `json:"rules_installed"`
+	Generation        string                  `json:"-"`
+	Rules             []chaos.Rule            `json:"rules"`
+	Matches           []testChaosRuleEvidence `json:"matches,omitempty"`
 }
 
 type testChaosRuleEvidence struct {
@@ -648,7 +654,14 @@ func readTestManifestDocument(path string, fieldsForScenario func(string, testSc
 	if err := validateTestSuites(manifest); err != nil {
 		return testManifest{}, "", err
 	}
+	if err := validateTestAssertionProfiles(manifest.AssertionProfiles); err != nil {
+		return testManifest{}, "", err
+	}
 	for name, scenario := range manifest.Scenarios {
+		scenario, err = expandTestAssertionProfiles(scenario, manifest.AssertionProfiles)
+		if err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
 		scenario = resolveTestCampaignGuidancePath(scenario, filepath.Dir(absolute))
 		scenario, err = expandTestOutageCycles(scenario)
 		if err != nil {
@@ -860,7 +873,7 @@ func validateTestSecrets(workload string, secrets map[string]string, scenario te
 		if api.ValidateSecretKey(key) != nil {
 			return fmt.Errorf("workload %q has invalid secret key %q", workload, key)
 		}
-		if _, err := expandTestSecretValue(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret", tcpPorts); err != nil {
+		if _, err := expandTestSecretValueUsingEnv(value, serviceURLs, serviceSlugs, buckets, "0123456789abcdef0123456789abcdef", "example-run-secret", func(string) (string, bool) { return "example-environment-value", true }, tcpPorts); err != nil {
 			return fmt.Errorf("workload %q secret %q: %w", workload, key, err)
 		}
 	}
@@ -881,7 +894,13 @@ func scenarioInternalServiceURLs(workloads map[string]string) map[string]string 
 	return out
 }
 
+var testSecretEnvironmentPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
 func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string, tcpPorts ...map[string][]int) (string, error) {
+	return expandTestSecretValueUsingEnv(value, serviceURLs, serviceSlugs, buckets, runID, runSecret, os.LookupEnv, tcpPorts...)
+}
+
+func expandTestSecretValueUsingEnv(value string, serviceURLs, serviceSlugs map[string]string, buckets map[string]testBucketRef, runID, runSecret string, lookup func(string) (string, bool), tcpPorts ...map[string][]int) (string, error) {
 	var expansionErr error
 	expanded := testSecretReferencePattern.ReplaceAllStringFunc(value, func(match string) string {
 		if expansionErr != nil {
@@ -891,6 +910,9 @@ func expandTestSecretValue(value string, serviceURLs, serviceSlugs map[string]st
 		var replacement string
 		var ok bool
 		switch {
+		case len(parts) == 2 && parts[0] == "env" && testSecretEnvironmentPattern.MatchString(parts[1]):
+			replacement, ok = lookup(parts[1])
+			ok = ok && replacement != ""
 		case len(parts) == 2 && parts[0] == "run" && parts[1] == "id":
 			replacement, ok = runID, true
 		case len(parts) == 2 && parts[0] == "run" && parts[1] == "secret":
@@ -1081,12 +1103,13 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		receipt.Error = fmt.Sprintf("detect app shape: %v", err)
 		return
 	}
-	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0))
+	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create isolated test environment: %v", err)
 		return
 	}
 	receipt.AppSlug = session.App.Slug
+	receipt.WorkloadAppIDs = map[string]string{scenario.Project: session.App.ID}
 	type deployedTestService struct {
 		name, project, sourceDir string
 		config                   devSourceConfig
@@ -1162,12 +1185,13 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			return
 		}
 		projectName := scenario.Project + "-" + serviceName
-		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0))
+		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
 		if err != nil {
 			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
 			return
 		}
 		workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, sourceDir: serviceDir, config: serviceConfig, session: serviceSession})
+		receipt.WorkloadAppIDs[serviceName] = serviceSession.App.ID
 	}
 	members := make([]api.ScenarioTestWorkload, 0, len(workloads))
 	for _, workload := range workloads {
@@ -1588,7 +1612,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	if profile != "warm" {
 		receipt.ServiceWake = make(map[string]testServiceWakeEvidence, len(workloads)-1)
 		for _, workload := range workloads[1:] {
-			evidence, err := verifyTestServiceWake(ctx, client, workload.session.App.Slug, profile, serviceWakeBaseline[workload.name])
+			wakeBaseline, _ := testServiceRestartBaseline(serviceWakeBaseline[workload.name], receipt.Steps, workload.name)
+			evidence, err := verifyTestServiceWake(ctx, client, workload.session.App.Slug, profile, wakeBaseline)
 			if err != nil {
 				if receipt.Error != "" {
 					receipt.Error += "; "
@@ -1604,11 +1629,16 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		for _, workload := range workloads[1:] {
 			var evidence testServiceHotEvidence
 			var err error
+			wakeBaseline, plannedRestarts := testServiceRestartBaseline(serviceWakeBaseline[workload.name], receipt.Steps, workload.name)
 			if len(scenario.Services[workload.name].TCPPorts) > 0 {
-				evidence, err = verifyTestServiceTCPHot(ctx, client, workload.session.App.Slug, serviceWakeBaseline[workload.name])
+				evidence, err = verifyTestServiceTCPHot(ctx, client, workload.session.App.Slug, wakeBaseline)
 			} else {
 				evidence, err = verifyTestServiceHot(ctx, client, workload.session.App.Slug,
-					serviceWakeBaseline[workload.name], serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
+					wakeBaseline, serviceRequestBaseline[workload.name], serviceRequestCutoff[workload.name])
+			}
+			evidence.PlannedRestarts = plannedRestarts
+			if len(plannedRestarts) > 0 {
+				evidence.NoNewWake = false
 			}
 			if err != nil {
 				if receipt.Error != "" {
@@ -1616,7 +1646,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				}
 				receipt.Error += fmt.Sprintf("service %s hot evidence: %v", workload.name, err)
 			}
-			if evidence.RequestID != "" || evidence.NoNewWake {
+			if evidence.RequestID != "" || evidence.NoNewWake || len(evidence.PlannedRestarts) > 0 {
 				receipt.ServiceHot[workload.name] = evidence
 			}
 		}
@@ -1653,6 +1683,11 @@ func runTestScenarioSteps(ctx context.Context, client *Client, sourceDir, baseUR
 	for i, step := range steps {
 		evidence := testScenarioStepEvidence{Name: step.Name, StartedAt: time.Now().UTC(), Status: "failed"}
 		stepErr := func() error {
+			if step.Restart != nil {
+				var err error
+				evidence.Restart, err = runTestRestart(ctx, client, baseURL, env, consumerEnv, runID, *step.Restart, captures)
+				return err
+			}
 			if step.Chaos != nil {
 				plan, err := step.Chaos.plan()
 				if err != nil {
@@ -1736,9 +1771,22 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 	if client == nil {
 		return nil, errors.New("load.chaos_schedule requires the real-vm engine")
 	}
+	var correlationErr error
+	load, correlationErr = withTestRequestCorrelation(load)
+	if correlationErr != nil {
+		return nil, correlationErr
+	}
 	loadWithSchedule := *load
 	clock := newTestLoadPhaseClock(len(load.ChaosSchedule))
 	loadWithSchedule.ChaosPhaseClock = clock
+	for _, phase := range load.ChaosSchedule {
+		if (phase.RetryAmplification != nil && phase.RetryAmplification.PerRequest) || len(phase.RequestDeadlines) > 0 {
+			clock.correlationGate = &sync.RWMutex{}
+			clock.correlationGate.Lock()
+			loadWithSchedule.CorrelationGate = clock.correlationGate
+			break
+		}
+	}
 	started := make(chan time.Time, 1)
 	loadWithSchedule.OnStart = func(at time.Time) {
 		clock.start(at)
@@ -1747,6 +1795,14 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 	monitorCtx, cancelMonitor := context.WithCancel(ctx)
 	defer cancelMonitor()
 	monitorDone := make(chan []testCircuitObservation, 1)
+	poolDone := make(chan []testPoolSample, 1)
+	go func() {
+		poolDone <- monitorTestPoolExhaustion(monitorCtx, baseURL, consumerEnv, load.PoolExhaustion, clock)
+	}()
+	leakDone := make(chan []testConnectionSample, 1)
+	go func() {
+		leakDone <- monitorTestConnectionLeaks(monitorCtx, baseURL, consumerEnv, load.ConnectionLeaks, clock)
+	}()
 	scheduleCtx, cancelSchedule := context.WithCancel(ctx)
 	type scheduleOutcome struct {
 		result testChaosScheduleResult
@@ -1758,6 +1814,9 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 		select {
 		case at = <-started:
 		case <-scheduleCtx.Done():
+			if clock.correlationGate != nil {
+				clock.correlationGate.Unlock()
+			}
 			monitorDone <- nil
 			scheduleDone <- scheduleOutcome{err: scheduleCtx.Err()}
 			return
@@ -1778,6 +1837,8 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 	cancelSchedule()
 	cancelMonitor()
 	observations := <-monitorDone
+	leakSamples := <-leakDone
+	poolSamples := <-poolDone
 	if report != nil {
 		for i, fault := range outcome.result.Phases {
 			if i < len(report.ChaosPhases) {
@@ -1792,7 +1853,9 @@ func runTestScenarioLoadOnce(ctx context.Context, client *Client, baseURL, runID
 		}
 	}
 	if report != nil {
-		loadErr = errors.Join(loadErr, applyTestRetryAmplification(report, load, outcome.err), applyTestConnectionAttempts(report, load, outcome.err), applyTestCircuitBreakers(report, load, clock, observations, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestRequestDeadlines(report, load), applyTestRetryAmplification(report, load, outcome.err), applyTestConnectionAttempts(report, load, outcome.err), applyTestCircuitBreakers(report, load, clock, observations, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestConnectionLeaks(ctx, baseURL, consumerEnv, report, load, clock, leakSamples, outcome.err))
+		loadErr = errors.Join(loadErr, applyTestPoolExhaustion(ctx, baseURL, consumerEnv, report, load, clock, poolSamples, outcome.err))
 		loadErr = errors.Join(loadErr, applyTestOutageCycles(report, load, outcome.err))
 	}
 	if outcome.err != nil && !errors.Is(outcome.err, context.Canceled) {
@@ -2204,6 +2267,9 @@ func runTestCommand(ctx context.Context, dir string, env, argv []string) error {
 	}
 	cmd.Stderr = osStderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %w", argv[0], ctx.Err())
+		}
 		return fmt.Errorf("%s: %w", argv[0], err)
 	}
 	return nil

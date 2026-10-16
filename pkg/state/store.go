@@ -1003,6 +1003,7 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	OperatorObservabilityReader
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
 	FinishMCPTaskPromotionRecovery(context.Context, string, int64, string) (bool, error)
@@ -2576,7 +2577,9 @@ type Store interface {
 	// UpsertGitHubInstall persists the OAuth handshake state for one
 	// account's GitHub App install (PR-C). Idempotent on
 	// (AccountID, InstallationID) so a retry of the OAuth
-	// flow doesn't crash on the unique-PK constraint. The account row
+	// flow doesn't crash on the unique-PK constraint.
+	// Returns ErrConflict if another account owns the installation;
+	// reconnecting must never transfer ownership implicitly. The account row
 	// itself must exist (the FK enforces this); pre-CASCADE deletes
 	// of an account surface as ErrNotFound here so the caller can
 	// distinguish "account doesn't exist" from a transient write
@@ -6526,6 +6529,11 @@ type Store interface {
 	// sqlc v1.31's "ambiguous column" parser; PR-B documents the
 	// Go-side composition in pkg/state/pgstore.go).
 	RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error)
+
+	// RequestTelemetryErrorsByRoute backs the regression detector's
+	// error-rate signal: per-route represented requests and HTTP 5xx counts
+	// for one deployment and window.
+	RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error)
 
 	// RequestTelemetryAnalyticsSummary and RequestTelemetryAnalyticsByRoute
 	// back the customer-facing aggregated request analytics endpoint. Both

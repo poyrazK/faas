@@ -83,7 +83,7 @@ func TestQueueReleasePolicyPGConstraintHistoryAndRollback(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT policy->'queue_requirements'->>'orders' FROM app_binding_release_policy_history WHERE app_id=$1 AND revision=1", app.ID).Scan(&saved); err != nil || saved != api.QueueEvidenceConsumerReadiness {
 		t.Fatalf("queue policy history missing: %q %v", saved, err)
 	}
-	data, err := migrations.FS.ReadFile("20261013140000001_queue_release_requirements.sql")
+	data, err := migrations.FS.ReadFile("20261016150020001_queue_release_requirements.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,10 +20,6 @@ import type { WorkerScaling } from './WorkerScaling.js';
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
-  /**
-   * Apply only if the locked app service settings still match this fingerprint. Supported only for app-level service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior.
-   */
-  expected_service_binding_fingerprint?: string;
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
   /**
@@ -81,6 +77,10 @@ export type UpdateAppRequest = {
    * Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it.
    */
   before_checkpoint?: BeforeCheckpointHook;
+  /**
+   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never. Omit to preserve; an empty string restores the default.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never' | '';
   /**
    * Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default.
    */
@@ -264,5 +264,9 @@ export type UpdateAppRequest = {
   overflow_node?: string | null;
   cors_default_enabled?: boolean | null;
   cors_default_origins?: Array<string>;
+  /**
+   * Apply only if the locked app service settings still match this fingerprint. Supported only for app-level service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior.
+   */
+  expected_service_binding_fingerprint?: string;
 };
 

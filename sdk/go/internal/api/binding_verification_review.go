@@ -1,4 +1,4 @@
-// adr:1163 — server-issued, side-effect-free verification reviews.
+// adr:1356 — server-issued, side-effect-free verification reviews.
 package api
 
 import (

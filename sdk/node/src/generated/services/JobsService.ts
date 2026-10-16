@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateImageRunRequest } from '../models/CreateImageRunRequest.js';
 import type { CreateJobRequest } from '../models/CreateJobRequest.js';
 import type { CreateJobRunRequest } from '../models/CreateJobRunRequest.js';
 import type { ExclusiveJobOperationRequest } from '../models/ExclusiveJobOperationRequest.js';
 import type { ExclusiveOperationAccepted } from '../models/ExclusiveOperationAccepted.js';
+import type { ImageRunResponse } from '../models/ImageRunResponse.js';
 import type { JobArtifactDownloadResponse } from '../models/JobArtifactDownloadResponse.js';
 import type { JobRegistryCredentialListResponse } from '../models/JobRegistryCredentialListResponse.js';
 import type { JobRegistryCredentialResponse } from '../models/JobRegistryCredentialResponse.js';
@@ -25,6 +27,63 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class JobsService {
+  /**
+   * Run one command from an OCI image (ADR-1161).
+   * `docker run`-shaped entry point. apid keeps one platform-managed
+   * runner job (kind `image_run`) per account and normalized image, so
+   * the image is pulled once and later runs start from the cached
+   * artifact. While the image is being pulled the call returns 202
+   * `pulling`; call again once `GET /v1/jobs/{job}` reports
+   * `image_materialization_status: ready` to create a one-task run
+   * (201 `queued`). The command follows Docker's rules: `entrypoint`
+   * replaces the image ENTRYPOINT (and drops its CMD unless `args` is
+   * set) and `args` replaces the image CMD. Runs, logs and cancellation
+   * use `/v1/jobs/{job}/runs`. Free accounts get 402
+   * `jobs_not_allowed`; the route returns 404 until the operator sets
+   * `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+   * response carries a one-time `attach` credential for
+   * `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
+   * for Idempotency-Key replay.
+   *
+   * @returns ImageRunResponse A one-task run was queued.
+   * @throws ApiError
+   */
+  public static createImageRun({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: CreateImageRunRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ImageRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/image-runs',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Image runs need a plan with Jobs (not Free).`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `Interactive image runs are not enabled on this control-plane host.`,
+      },
+    });
+  }
   /**
    * List jobs on the account.
    * Page-based pagination via ?limit / ?offset. NextOffset=-1
@@ -743,6 +802,137 @@ export class JobsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Stream a task's output live (SSE).
+   * ADR-1163. Served by the compute gateway, not apid. Waits while the
+   * task is queued, then relays the task VM's console output as it is
+   * written, including each retry attempt in turn. Frames match the app
+   * log stream: `event: log` (seq, instance, stream, line, written_at),
+   * `event: gap` when the VM already dropped older lines, heartbeat
+   * comments, and one final `event: end` whose `reason` is
+   * `task_finished` (all output relayed), `stored_output` (the task ended
+   * before its last VM's output could be streamed; read `GET .../logs`),
+   * `timeout`, `node_unreachable` or `not_found`. Read the task for its
+   * outcome; the stored output from `GET .../logs` remains available.
+   *
+   * @returns any A text/event-stream of the task's output lines, ending with one `end` frame.
+   * @throws ApiError
+   */
+  public static streamJobTaskLogs({
+    name,
+    id,
+    idx,
+    sinceSeq,
+  }: {
+    /**
+     * Job whose task output is streamed.
+     */
+    name: string,
+    /**
+     * Job-run identifier (UUIDv4) owning the task.
+     */
+    id: string,
+    /**
+     * Zero-based index of the task within the run.
+     */
+    idx: number,
+    /**
+     * Resume the current attempt after this line sequence; 0 replays the attempt from its first line.
+     */
+    sinceSeq?: number,
+  }): CancelablePromise<any> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      query: {
+        'since_seq': sinceSeq,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Live task output needs a plan with Jobs (not Free).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Attach to an interactive image run's task (WebSocket).
+   * ADR-1330. Served by the compute gateway, not apid. The session uses
+   * the interactive app-task wire contract (ADR-1037): the account
+   * credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
+   * image run's create response, and the `gregale-app-task-attach-v1`
+   * WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
+   * size. The run's VM holds the command until the first successful
+   * attach, which consumes the token.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static attachJobTask({
+    name,
+    id,
+    idx,
+    rows,
+    cols,
+  }: {
+    /**
+     * Runner job of the interactive image run.
+     */
+    name: string,
+    /**
+     * Job-run identifier (UUIDv4) of the interactive image run.
+     */
+    id: string,
+    /**
+     * Zero-based index of the task; an interactive run has only task 0.
+     */
+    idx: number,
+    /**
+     * Initial height of the run's terminal when tty was requested; defaults to 24.
+     */
+    rows?: number,
+    /**
+     * Initial width of the run's terminal when tty was requested; defaults to 80.
+     */
+    cols?: number,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/runs/{id}/tasks/{idx}/attach',
+      path: {
+        'name': name,
+        'id': id,
+        'idx': idx,
+      },
+      query: {
+        'rows': rows,
+        'cols': cols,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `Interactive image runs need a plan with Jobs (not Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The task VM is still queued or starting; retry after the Retry-After interval.`,
+        410: `The task finished, already has a client, or its attach window closed.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

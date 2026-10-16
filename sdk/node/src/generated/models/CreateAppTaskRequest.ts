@@ -24,6 +24,11 @@
  * Gregale HTTPS service-binding canary and is handled by guest-init.
  * `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
  * configured outbound probe; the server supplies immutable gateway routing metadata.
+ * `interactive=true` admits an ADR-1037 session (operator-gated): the
+ * command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
+ * and bounds the session, no output is retained, and the create
+ * response carries a one-time `attach` credential for
+ * GET /v1/apps/{slug}/tasks/{id}/attach. `tty` allocates a terminal.
  *
  */
 export type CreateAppTaskRequest = {
@@ -35,15 +40,23 @@ export type CreateAppTaskRequest = {
    * Exact caller deployment for a reserved service smoke GET; mutually exclusive with verification_deployment_id. Omit for automatic caller selection.
    */
   smoke_deployment_id?: string;
-  command: Array<string>;
+  command?: Array<string>;
   command_shell?: boolean;
   /**
    * Zero uses the 600-second default.
    */
   timeout_seconds?: number;
   /**
-   * Zero uses the 1 MiB default; non-zero values must be at least 1024.
+   * Zero uses the 1 MiB default; non-zero values must be at least 1024. Must be omitted for interactive sessions.
    */
   max_output_bytes?: number;
+  /**
+   * Admit an interactive session (ADR-1037). The command is required unless interactive.
+   */
+  interactive?: boolean;
+  /**
+   * Allocate a pseudo-terminal; requires interactive.
+   */
+  tty?: boolean;
 };
 

@@ -1,6 +1,7 @@
 import json
 
 import httpx
+
 from faas_sdk.api.apps import update_app
 from faas_sdk.client import AuthenticatedClient
 from faas_sdk.models.problem import Problem

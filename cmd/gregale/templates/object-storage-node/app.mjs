@@ -111,10 +111,10 @@ async function upload(request, response, pair, key, signal, spoolRoot) {
       await pair.client.send(new PutObjectCommand({Bucket: pair.bucket, Key: key, Body: body,
         ContentLength: size, ContentType: request.headers['content-type'] || 'application/octet-stream'}), {abortSignal: signal});
     } finally {await closeBody(body);}
-    signal.throwIfAborted(); // A late/uncertain PUT must never publish success or be replayed.
-    response.writeHead(201, {'content-type': 'application/json', 'cache-control': 'no-store'});
-    response.end(JSON.stringify({ok: true, key}));
   } finally {await rm(directory, {recursive: true, force: true});}
+  signal.throwIfAborted(); // A late/uncertain PUT must never publish success or be replayed.
+  response.writeHead(201, {'content-type': 'application/json', 'cache-control': 'no-store'});
+  response.end(JSON.stringify({ok: true, key}));
 }
 
 async function download(response, pair, key, signal) {

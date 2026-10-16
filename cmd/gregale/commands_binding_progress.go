@@ -1,4 +1,4 @@
-// adr:1173 — progress is best-effort stderr output, never execution authority.
+// adr:1366 — progress is best-effort stderr output, never execution authority.
 package main
 
 import (

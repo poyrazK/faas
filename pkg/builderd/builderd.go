@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -149,6 +150,7 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	buildPublisher buildpublisher.Signer
 	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
 	notif          Notifier
@@ -831,6 +833,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
+	watch, watchErr := devWatch(ctx, b.store, app)
+	if watchErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "load developer watch mode: "+watchErr.Error(), buildStart)
+		return BuildResult{}, watchErr
+	}
+	if watch.Command != "" {
+		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watch.Command+"\n")
+	}
 
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
@@ -842,7 +852,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
-		Function: app.Type == state.AppTypeFunction,
+		Function:        app.Type == state.AppTypeFunction,
+		DevWatchCommand: watch.Command,
+		DevWatchHost:    watch.Host,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -942,6 +954,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
 		Function:           app.Type == state.AppTypeFunction,
+		DevWatchCommand:    watch.Command,
+		DevWatchHost:       watch.Host,
 		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,
@@ -1115,6 +1129,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if out.DependencyCacheStoreError != "" {
 		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
+	} else if out.DependencyCacheUnchanged {
+		b.emitBuildLog(ctx, build.ID, "dependencies unchanged — kept the dependency cache for the next build\n")
 	} else if out.DependencyCacheStored {
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 	}
@@ -1514,6 +1530,13 @@ func (b *Builderd) recordBuilderUsage(ctx context.Context, buildID string, build
 // completeBuild commits the claim, artifact and provenance before publishing
 // any success signal. imaged polls the committed records if NOTIFY is lost.
 func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep state.Deployment, app state.App, acct state.Account, srcSHA, frameworkVer string, result BuildResult, buildStart time.Time) (BuildResult, error) {
+	if err := b.publishBuildExport(ctx, build, dep, app, srcSHA, result); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return BuildResult{}, nil
+		}
+		b.markFailed(ctx, build, state.FailureInfra, "approved build publication unavailable", buildStart)
+		return BuildResult{}, fmt.Errorf("builderd: approved build publication: %w", err)
+	}
 	prov := state.BuildProvenance{
 		BuildID: build.ID, SourceSHA256: srcSHA, SourceURL: dep.SourceURL,
 		CommitSHA: dep.CommitSHA, Plan: string(acct.Plan), BuilderNodeID: b.builderNodeID,

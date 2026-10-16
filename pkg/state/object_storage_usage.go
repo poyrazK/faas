@@ -45,6 +45,24 @@ type ObjectUsageSnapshot struct {
 	Buckets        []ObjectBucketUsage
 	Reports        []api.ObjectStorageUsageReport
 	Authorizations int64
+	// PlanLimits are the object-storage limits of the account's plan when
+	// the snapshot was read. Admission and gateway checks tighten the
+	// operator policy by their ceilings (ADR-1320); zero, as for an unknown
+	// plan, keeps the operator policy.
+	PlanLimits api.ObjectStoragePlanLimits
+}
+
+// objectStoragePlanLimits returns the plan's object-storage limits, or none
+// for an unknown plan.
+func objectStoragePlanLimits(plan api.Plan) api.ObjectStoragePlanLimits {
+	limits, _ := api.LimitsFor(plan)
+	return limits.ObjectStorage
+}
+
+// planPolicy is the policy every admission and gateway check enforces: the
+// operator safety policy tightened by the account plan's ceilings (ADR-1320).
+func (s ObjectUsageSnapshot) planPolicy(p api.ObjectStoragePolicy) api.ObjectStoragePolicy {
+	return s.PlanLimits.Policy(p)
 }
 
 type ObjectStorageAccountingStore interface {
@@ -216,6 +234,7 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 }
 
 func checkObjectAdmission(s ObjectUsageSnapshot, bucketID string, size, oldSize int64, exists, put bool, p api.ObjectStoragePolicy, now time.Time) (int64, int64, error) {
+	p = s.planPolicy(p)
 	u := SummarizeObjectUsage(s, p, now)
 	if !u.Fresh {
 		return 0, 0, ErrObjectUsageStale

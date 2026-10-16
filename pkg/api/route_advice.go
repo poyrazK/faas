@@ -5,7 +5,17 @@ const (
 	RouteAdviceKindCache    = "cache"
 	RouteAdviceKindAsync    = "async"
 	RouteAdviceKindThrottle = "throttle"
+	// App-level setting suggestions (ADR-1152); they carry Setting, not Rules.
+	RouteAdviceKindWakeAhead = "wake_ahead"
+	RouteAdviceKindPriority  = "priority"
 )
+
+// RouteAdviceSetting is the app setting a wake_ahead or priority suggestion
+// proposes. Applying it goes through the setting's own API.
+type RouteAdviceSetting struct {
+	WakeAhead       *bool               `json:"wake_ahead,omitempty"`
+	RoutePriorities []RoutePriorityRule `json:"route_priorities,omitempty"`
+}
 
 // RouteAdviceResponse is GET /v1/apps/{slug}/routes/advice: edge-rule
 // suggestions derived from retained request telemetry. Nothing is applied;
@@ -34,6 +44,7 @@ type RouteAdviceSuggestion struct {
 	Impact    RouteAdviceImpact       `json:"impact"`
 	Cautions  []string                `json:"cautions,omitempty"`
 	Rules     []CreateEdgeRuleRequest `json:"rules"`
+	Setting   *RouteAdviceSetting     `json:"setting,omitempty"`
 }
 
 // RouteAdviceEvidence is the observed traffic a suggestion rests on.
@@ -49,6 +60,15 @@ type RouteAdviceEvidence struct {
 	TopConsumerRequests      int64  `json:"top_consumer_requests,omitempty"`
 	TopConsumerPeakPerMinute int64  `json:"top_consumer_peak_per_minute,omitempty"`
 	NextConsumerPeakPerMin   int64  `json:"next_consumer_peak_per_minute,omitempty"`
+	// Learned cacheability (ADR-1188): observed anonymous GET responses, how
+	// many repeated or changed within the longest content window, how many
+	// the edge cache could not store, and the longest max-age at which the
+	// repeats would have served at most RouteContentMaxStaleShare stale bodies.
+	ContentObserved    int64 `json:"content_observed,omitempty"`
+	ContentRepeats     int64 `json:"content_repeats,omitempty"`
+	ContentChanges     int64 `json:"content_changes,omitempty"`
+	ContentUncacheable int64 `json:"content_uncacheable,omitempty"`
+	SafeMaxAgeSeconds  int   `json:"safe_max_age_seconds,omitempty"`
 }
 
 // RouteAdviceImpact is the what-if estimate over the same window. Estimates

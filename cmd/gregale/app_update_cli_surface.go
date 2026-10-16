@@ -80,4 +80,5 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"cors_default_enabled":                 {KnownGap: "no customer CLI setter; API-only today"},
 	"cors_default_origins":                 {KnownGap: "no customer CLI setter; API-only today"},
 	"scaling_policy":                       {Path: "gregale app <slug> --min / --autoscale-target-rps / --autoscale-target-cpu-pct", AppFlags: []string{"min", "autoscale-target-rps", "autoscale-target-cpu-pct"}},
+	"pause":                                {Path: "gregale.yaml lifecycle.pause"},
 }

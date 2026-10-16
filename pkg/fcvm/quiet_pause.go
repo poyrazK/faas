@@ -1,6 +1,6 @@
 package fcvm
 
-// Quiet pause (ADR-957). vmmd pauses an eligible running instance's vCPUs
+// Quiet pause (ADR-1151). vmmd pauses an eligible running instance's vCPUs
 // once it has had no forwarded request, stream or tail task for its
 // QuietPauseAfter, and resumes it when the next request arrives. The
 // instance stays live and RUNNING in schedd's view: nothing is
@@ -106,9 +106,10 @@ func quietPauseAfterFor(req WakeRequest, qualificationOnly bool) time.Duration {
 }
 
 // quietEligibleLocked reports whether a live instance may be quiet-paused
-// now. The caller holds m.mu.
+// now. A frozen instance (ADR-1151) is already paused, and its pause belongs
+// to Freeze and Thaw. The caller holds m.mu.
 func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
-	if inst == nil || inst.QuietPauseAfter <= 0 || inst.Paused || inst.IsJob ||
+	if inst == nil || inst.QuietPauseAfter <= 0 || inst.Paused || inst.Frozen || inst.IsJob ||
 		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
 		return false
 	}
@@ -273,10 +274,11 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 }
 
 // QuietResume resumes a quiet-paused instance and returns once its vCPUs
-// run. It is a no-op for an instance that is not paused. Callers mark
-// activity (or register their instance flight) before calling it. The
-// resume outlives the caller's cancellation: a half-done resume would
-// leave the next request to find the guest still paused.
+// run. It is a no-op for an instance that is not paused, and for a frozen
+// one (ADR-1151): only Thaw resumes a frozen guest, after schedd admits it.
+// Callers mark activity (or register their instance flight) before calling
+// it. The resume outlives the caller's cancellation: a half-done resume
+// would leave the next request to find the guest still paused.
 func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	st := m.quietStateIfAny(instance)
 	if st == nil || !st.paused.Load() {
@@ -290,14 +292,18 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	m.mu.Lock()
 	inst := m.live[instance]
 	var lease Lease
+	frozen := false
 	if inst != nil {
-		lease = inst.Lease
+		lease, frozen = inst.Lease, inst.Frozen
 	}
 	m.mu.Unlock()
 	if inst == nil || inst != st.inst {
 		// Gone, or replaced by a new VM that was never paused: teardown owns
 		// the old process.
 		st.paused.Store(false)
+		return nil
+	}
+	if frozen {
 		return nil
 	}
 	started := time.Now()
@@ -351,7 +357,7 @@ func (m *Manager) QuietGate(instance string) (paused bool, epoch uint64) {
 	return st.paused.Load(), st.epoch.Load()
 }
 
-// QuietPauseMetrics owns the ADR-957 quiet pause series.
+// QuietPauseMetrics owns the ADR-1151 quiet pause series.
 type QuietPauseMetrics struct {
 	pauses  *prometheus.CounterVec
 	resumes prometheus.Histogram
@@ -365,22 +371,22 @@ type QuietPauseMetrics struct {
 func NewQuietPauseMetrics(reg prometheus.Registerer) *QuietPauseMetrics {
 	resumes := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vmmd_quiet_resume_seconds",
-		Help:    "Time to resume a quiet-paused instance when a request arrives (ADR-957).",
+		Help:    "Time to resume a quiet-paused instance when a request arrives (ADR-1151).",
 		Buckets: []float64{0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.5},
 	})
 	m := &QuietPauseMetrics{
 		pauses: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "vmmd_quiet_pause_total",
-			Help: "Quiet pause attempts by outcome (paused, error) (ADR-957).",
+			Help: "Quiet pause attempts by outcome (paused, error) (ADR-1151).",
 		}, []string{"outcome"}),
 		resumes: resumes,
 		errors: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "vmmd_quiet_resume_errors_total",
-			Help: "Quiet resumes that failed; the request that triggered one fails or retries (ADR-957).",
+			Help: "Quiet resumes that failed; the request that triggered one fails or retries (ADR-1151).",
 		}),
 		paused: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "vmmd_quiet_paused_instances",
-			Help: "Instances held quiet-paused between requests on this node (ADR-957).",
+			Help: "Instances held quiet-paused between requests on this node (ADR-1151).",
 		}),
 	}
 	reg.MustRegister(m.pauses, resumes, m.errors, m.paused)

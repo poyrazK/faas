@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { DevBucketRequest } from './DevBucketRequest.js';
 import type { DevPostgresRequest } from './DevPostgresRequest.js';
+import type { DevWatch } from './DevWatch.js';
 /**
  * Application shape and opaque local identity for a CLI-managed developer environment.
  */
@@ -23,5 +24,6 @@ export type UpsertDevSessionRequest = {
    * How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
    */
   lease_seconds?: number;
+  watch?: DevWatch;
 };
 

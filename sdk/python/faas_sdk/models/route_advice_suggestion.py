@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.create_edge_rule_request import CreateEdgeRuleRequest
     from ..models.route_advice_evidence import RouteAdviceEvidence
     from ..models.route_advice_impact import RouteAdviceImpact
+    from ..models.route_advice_setting import RouteAdviceSetting
 
 
 T = TypeVar("T", bound="RouteAdviceSuggestion")
@@ -21,7 +22,8 @@ T = TypeVar("T", bound="RouteAdviceSuggestion")
 @_attrs_define
 class RouteAdviceSuggestion:
     """One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per
-    hostname).
+    hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is
+    empty and setting carries the proposal.
 
     """
 
@@ -39,6 +41,9 @@ class RouteAdviceSuggestion:
     """What-if estimate replayed from aggregated telemetry over the same window; observed_only, not a guarantee."""
     rules: list[CreateEdgeRuleRequest]
     cautions: list[str] | Unset = UNSET
+    setting: RouteAdviceSetting | Unset = UNSET
+    """The app setting a wake_ahead or priority suggestion proposes; apply it through PUT /v1/apps/{slug}/service-
+    wake-ahead or PUT /v1/apps/{slug}/route-priorities."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +72,10 @@ class RouteAdviceSuggestion:
         if not isinstance(self.cautions, Unset):
             cautions = self.cautions
 
+        setting: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.setting, Unset):
+            setting = self.setting.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -84,6 +93,8 @@ class RouteAdviceSuggestion:
         )
         if cautions is not UNSET:
             field_dict["cautions"] = cautions
+        if setting is not UNSET:
+            field_dict["setting"] = setting
 
         return field_dict
 
@@ -92,6 +103,7 @@ class RouteAdviceSuggestion:
         from ..models.create_edge_rule_request import CreateEdgeRuleRequest
         from ..models.route_advice_evidence import RouteAdviceEvidence
         from ..models.route_advice_impact import RouteAdviceImpact
+        from ..models.route_advice_setting import RouteAdviceSetting
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -119,6 +131,13 @@ class RouteAdviceSuggestion:
 
         cautions = cast(list[str], d.pop("cautions", UNSET))
 
+        _setting = d.pop("setting", UNSET)
+        setting: RouteAdviceSetting | Unset
+        if isinstance(_setting, Unset):
+            setting = UNSET
+        else:
+            setting = RouteAdviceSetting.from_dict(_setting)
+
         route_advice_suggestion = cls(
             id=id,
             kind=kind,
@@ -130,6 +149,7 @@ class RouteAdviceSuggestion:
             impact=impact,
             rules=rules,
             cautions=cautions,
+            setting=setting,
         )
 
         route_advice_suggestion.additional_properties = d

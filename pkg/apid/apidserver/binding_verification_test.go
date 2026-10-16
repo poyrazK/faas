@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func readyVerificationBinding(t *testing.T, e testEnv, app state.App) (*managedpostgres.MemoryStore, managedpostgres.Binding) {
@@ -253,9 +254,9 @@ func TestBindingVerificationServiceTargetPolicyChange(t *testing.T) {
 }
 
 type verificationReadStore struct {
-	*state.MemStore
-	kinds []string
-	err   error
+	MemStore *state.MemStore
+	kinds    []string
+	err      error
 }
 
 func (s *verificationReadStore) ListBindingVerificationTasks(ctx context.Context, accountID, appID string, kinds []string, selections ...state.BindingVerificationSelection) ([]state.BindingVerificationTask, error) {
@@ -275,7 +276,7 @@ func TestBindingVerificationReadPermissionAndFailure(t *testing.T) {
 			if fail {
 				reads.err = errors.New("PRIVATE_ERROR postgres://user:password@host/db")
 			}
-			e.s.store = reads
+			e.s.store = statetest.NewMem(reads)
 			response := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil)
 			inventory := decodeBindingInventory(t, response)
 			if len(reads.kinds) != 2 || reads.kinds[0] != api.BindingTypeService || reads.kinds[1] != api.BindingTypeOutbound {
@@ -292,7 +293,7 @@ func TestBindingVerificationReadPermissionAndFailure(t *testing.T) {
 	}
 }
 
-type serviceDependencyFailureStore struct{ *state.MemStore }
+type serviceDependencyFailureStore struct{ MemStore *state.MemStore }
 
 func (s serviceDependencyFailureStore) ReadServiceBindingRevision(context.Context, string, string) (string, error) {
 	return "", errors.New("PRIVATE_DEPENDENCY postgres://user:password@host/db")
@@ -306,7 +307,7 @@ func TestBindingVerificationServiceDependencyReadFailsClosed(t *testing.T) {
 	if _, err := e.store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.store = serviceDependencyFailureStore{e.store}
+	e.s.store = statetest.NewMem(serviceDependencyFailureStore{e.store})
 	response := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil)
 	inventory := decodeBindingInventory(t, response)
 	found := false

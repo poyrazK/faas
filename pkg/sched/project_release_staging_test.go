@@ -1,4 +1,4 @@
-// adr: 1157 — exact candidate service allocation, expiry and routing preservation.
+// adr: 1350 — exact candidate service allocation, expiry and routing preservation.
 package sched
 
 import (

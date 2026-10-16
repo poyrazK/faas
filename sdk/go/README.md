@@ -38,6 +38,11 @@ The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for raw-body handling and delivery-ID deduplication guidance.
 
+`github.com/poyrazK/faas/sdk/go/auth` verifies application Auth access tokens
+and checks permissions in your backend: `auth.New`, `Verify`, `Require`
+middleware and `Authorize`. See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 Managed Go workloads can use the runtime Flags client, request middleware, and
 service transport. See [the Go Flags guide](../../docs/flags.md#use-flags-in-a-go-http-application)
 for customer targeting, decision evidence, and propagation examples.
@@ -111,6 +116,12 @@ Call `Flush(ctx)` or `Close(ctx)` during graceful shutdown, and inspect
 `Stats()` for queued, accepted, and dropped events. Delivery is best effort and
 an ungraceful process exit can lose queued events. See
 [`docs/issues.md`](../../docs/issues.md) for the full privacy and token guidance.
+
+Set `IssueReporterOptions.GroupingStrategy` to `"failure-site-v1"` to group by
+the nearest application reporting frame and a normalized message, or a stable
+`IssueContext.ErrorCode`. `FingerprintOverride` takes precedence. The default
+remains legacy grouping. Opting in creates version 2 groups without migrating
+existing issue history; see the grouping transition guidance in `docs/issues.md`.
 
 ## Disposable agent executions
 
@@ -464,6 +475,26 @@ home for the wire DTOs.
 - ADR-038 (issue #266): documents the split contract between the SDK and the daemon.
 - PR plan: `/.claude/plans/lets-create-imp-plan-bubbly-engelbart.md` (the 14-PR sequence).
 
+
+### Application standards
+
+`PreviewApplicationStandardAssignment` saves affected applications, effective
+settings and blockers without activating a change. `GetApplicationStandardReview`
+reads that saved preview; its expiry and hash do not replace fresh approval
+validation. `GetApplicationStandardOperation` returns queued/persisted/observed
+progress. `GetApplicationStandardEnrollment` separates desired, persisted and
+observed revisions and includes the installed exception deadline when present.
+`ListApplicationStandardExceptions` returns UUID-ordered approval, revocation
+and expiry history, including the server's `AsOf` time and an exclusive cursor.
+
+Request and response types are exported from the SDK package, including
+`ApplicationStandardReviewRequest`, `ApplicationStandardReview`,
+`ApplicationStandardOperation`, and `ApplicationStandardExceptionList`.
+`ApplicationStandardSettings` stores normalized `json.RawMessage` values by
+field; `ApplicationStandardDefinition` stores typed rules with a JSON value.
+Read routes require read scope and active organization membership; preview
+requires write scope and owner/admin authority. Activation and exception
+mutation APIs remain gated pending runtime acceptance.
 ## Object lifecycle
 
 The public client exposes `GetObjectBucketLifecycle`,
@@ -1245,6 +1276,17 @@ Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted n
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
 
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.
+
 Managed compute storage client loading and rotation are described in the
 [object storage compute guide](../../docs/object-storage-compute.md).
 Use `NewSecretReloadCoordinator` with `storage.SecretConsumer()` to adopt atomic
@@ -1351,11 +1393,11 @@ Durable runner status GETs now retry temporary connection failures and HTTP 502/
 
 Use `ListBindingVerificationRuns(ctx, app, BindingVerificationRunListOptions{Limit: 20})` and `ListProjectBindingVerificationRuns(ctx, project, environment, options)`. Options include `Cursor`, `DeploymentID`, `Status`, and app-only `Scope`/`IncludeMembers`. Follow `NextCursor` with the same filters. Results contain `Runs` and `ObservedAt`; summaries omit protected snapshots and resource output. Listed stored/expired states do not assert current qualification. App lists default to standalone receipts; included members identify `GraphRunID`. Project lists contain roots only. Receipt retention remains unchanged.
 
-Durable runners wait for recognized final `qualification` conditions after successful probes. Progress reports `waiting_for_qualification` with typed public conditions; polling stays within the original receipt expiry and caller deadline/stop controls. Unknown conditions or review drift stop observation. Waiting does not admit new work or renew receipts. See [ADR-1171](../../docs/adr/1171-verification-qualification-waiting.md).
+Durable runners wait for recognized final `qualification` conditions after successful probes. Progress reports `waiting_for_qualification` with typed public conditions; polling stays within the original receipt expiry and caller deadline/stop controls. Unknown conditions or review drift stop observation. Waiting does not admit new work or renew receipts. See [ADR-1364](../../docs/adr/1364-verification-qualification-waiting.md).
 
-After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1172](../../docs/adr/1172-verification-write-reconciliation.md).
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1365](../../docs/adr/1365-verification-write-reconciliation.md).
 
-Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `StatusReadRetries` and `OnProgress`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1174](../../docs/adr/1174-verification-creation-reconciliation.md).
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `StatusReadRetries` and `OnProgress`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1367](../../docs/adr/1367-verification-creation-reconciliation.md).
 
 ### Go PostgreSQL pools
 

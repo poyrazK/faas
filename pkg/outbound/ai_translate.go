@@ -129,7 +129,48 @@ type openAITool struct {
 		Name        string          `json:"name"`
 		Description string          `json:"description,omitempty"`
 		Parameters  json.RawMessage `json:"parameters,omitempty"`
+		// Strict asks for schema-valid arguments; Anthropic and Bedrock
+		// honor it per tool (ADR-996).
+		Strict *bool `json:"strict,omitempty"`
 	} `json:"function"`
+}
+
+// claudeModelsWithoutForcedToolChoice are the Claude models that refuse
+// tool_choice "any" and "tool" with a 400 (ADR-996). Older and other Claude
+// models accept forced tool use.
+var claudeModelsWithoutForcedToolChoice = []string{"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-sonnet-5-5"}
+
+// claudeRejectsForcedToolChoice reports whether a target model, as an
+// Anthropic, Vertex or Bedrock ID (with an "anthropic." prefix, a regional
+// inference-profile prefix, an ARN, a version suffix or an @date), is one of
+// claudeModelsWithoutForcedToolChoice.
+func claudeRejectsForcedToolChoice(model string) bool {
+	name := strings.ToLower(model)
+	if index := strings.LastIndex(name, "/"); index >= 0 {
+		name = name[index+1:]
+	}
+	if index := strings.Index(name, "anthropic."); index >= 0 {
+		name = name[index+len("anthropic."):]
+	}
+	for _, family := range claudeModelsWithoutForcedToolChoice {
+		if name == family {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(name, family); ok && (rest[0] == '-' || rest[0] == '@' || rest[0] == ':') {
+			return true
+		}
+	}
+	return false
+}
+
+// forcedToolInstruction is the system-prompt sentence that stands in for a
+// forced tool choice on models that refuse one; it steers, it does not
+// guarantee a call.
+func forcedToolInstruction(mode, name string) string {
+	if mode == "function" {
+		return fmt.Sprintf("Answer by calling the %s tool.", name)
+	}
+	return "Answer by calling one of the provided tools."
 }
 
 type openAIPart struct {
@@ -150,11 +191,14 @@ type routeTranslation struct {
 }
 
 // translateRouteRequest rewrites an openai-format route's request for one
-// target: chat completions (ADR-991) or embeddings (ADR-995). providerPath
-// and the returned path are escaped paths.
+// target: chat completions (ADR-991), embeddings (ADR-995) or Responses API
+// requests (ADR-996). providerPath and the returned path are escaped paths.
 func translateRouteRequest(integration Integration, providerPath, rawQuery string, body []byte, model string) (routeTranslation, error) {
-	if strings.HasSuffix(providerPath, "/embeddings") {
+	switch {
+	case strings.HasSuffix(providerPath, "/embeddings"):
 		return translateEmbeddingsRequest(integration, providerPath, rawQuery, body, model)
+	case strings.HasSuffix(providerPath, "/responses"):
+		return translateResponsesRequest(integration, providerPath, rawQuery, body, model)
 	}
 	provider := integration.AIProvider
 	switch provider {
@@ -175,7 +219,17 @@ func translateRouteRequest(integration Integration, providerPath, rawQuery strin
 		return routeTranslation{path: "/openai/v1/chat/completions", body: rewritten}, nil
 	}
 	var request openAIChatRequest
-	if json.Unmarshal(body, &request) != nil || len(request.Messages) == 0 || model == "" {
+	if json.Unmarshal(body, &request) != nil {
+		return routeTranslation{}, errTranslationUnsupported
+	}
+	return translateChatRequest(integration, request, model)
+}
+
+// translateChatRequest translates a parsed chat-completions request for a
+// non-OpenAI target.
+func translateChatRequest(integration Integration, request openAIChatRequest, model string) (routeTranslation, error) {
+	provider := integration.AIProvider
+	if len(request.Messages) == 0 || model == "" {
 		return routeTranslation{}, errTranslationUnsupported
 	}
 	if request.N != nil && *request.N > 1 {
@@ -423,6 +477,10 @@ func openAIToAnthropic(request openAIChatRequest, model string, format openAIRes
 		}
 	}
 	out := map[string]any{"model": model, "messages": messages, "max_tokens": openAIOutputCeiling(request)}
+	choice, instruction := anthropicToolChoice(request, model)
+	if instruction != "" {
+		system = append(system, instruction)
+	}
 	if len(system) > 0 {
 		out["system"] = strings.Join(system, "\n\n")
 	}
@@ -452,11 +510,14 @@ func openAIToAnthropic(request openAIChatRequest, model string, format openAIRes
 			if tool.Function.Description != "" {
 				entry["description"] = tool.Function.Description
 			}
+			if tool.Function.Strict != nil && *tool.Function.Strict {
+				entry["strict"] = true
+			}
 			tools = append(tools, entry)
 		}
 		out["tools"] = tools
 	}
-	if choice := anthropicToolChoice(request); choice != nil {
+	if choice != nil {
 		out["tool_choice"] = choice
 	}
 	// ADR-995: structured output always takes a schema.
@@ -499,8 +560,15 @@ func anthropicContentBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 	return blocks, nil
 }
 
-func anthropicToolChoice(request openAIChatRequest) map[string]any {
+// anthropicToolChoice maps tool_choice. For a model that refuses forced
+// tool use (ADR-996) a forced choice becomes "auto" plus an instruction for
+// the system prompt.
+func anthropicToolChoice(request openAIChatRequest, model string) (map[string]any, string) {
 	mode, name := openAIToolChoice(request.ToolChoice)
+	instruction := ""
+	if (mode == "required" || mode == "function") && claudeRejectsForcedToolChoice(model) {
+		instruction, mode = forcedToolInstruction(mode, name), "auto"
+	}
 	var choice map[string]any
 	switch mode {
 	case "auto":
@@ -520,7 +588,7 @@ func anthropicToolChoice(request openAIChatRequest) map[string]any {
 			choice["disable_parallel_tool_use"] = true
 		}
 	}
-	return choice
+	return choice, instruction
 }
 
 type geminiPart = map[string]any

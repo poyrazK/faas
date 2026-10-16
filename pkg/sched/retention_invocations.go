@@ -179,9 +179,35 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 			return retentionDeleted, 0, err
 		}
 	}
+	if jobs, ok := r.store.(state.EventExecutionLineageRetryJobsStore); ok {
+		if _, err := jobs.AdvanceEventExecutionLineageRetryJobs(ctx, api.EventExecutionLineageRetryJobBatch); err != nil {
+			return retentionDeleted, 0, err
+		}
+	}
+	if backfill, ok := r.store.(state.EventExecutionLineageCaseBackfillStore); ok {
+		if _, err := backfill.AdvanceEventExecutionLineageCaseBackfills(ctx, api.EventExecutionLineageCaseBackfillBatch); err != nil {
+			return retentionDeleted, 0, err
+		}
+	}
+	if reconciliation, ok := r.store.(state.EventExecutionReconciliationStore); ok {
+		if _, err := reconciliation.AdvanceEventExecutionReconciliations(ctx, api.EventExecutionReconciliationBatch); err != nil {
+			return retentionDeleted, 0, err
+		}
+	}
 	deadlineForced, err := r.SweepDeadlineBreached(ctx, 500)
 	if err != nil {
 		return retentionDeleted, 0, err
+	}
+	// ADR-1196: workflow Operations carry no invocation deadline, so their
+	// own deadline is swept here; HTTP executions settled just above.
+	if operations, ok := r.store.(state.OperationDeadlineStore); ok {
+		settled, err := operations.SettleOperationDeadlines(ctx, r.now(), api.OperationDeadlineSweepBatch)
+		if err != nil {
+			return retentionDeleted, deadlineForced, err
+		}
+		if settled > 0 {
+			r.log.Info("operation deadline sweep", "settled", settled)
+		}
 	}
 	return retentionDeleted, deadlineForced, nil
 }

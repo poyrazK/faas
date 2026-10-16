@@ -1,0 +1,81 @@
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+func TestParkedLogsSelectionPicksNewestInstance(t *testing.T) {
+	instances := []api.InstanceResponse{
+		{ID: "old", StartedAt: "2026-10-13T23:50:00Z", LastRequestAt: "2026-10-13T23:55:00Z"},
+		{ID: "new", StartedAt: "2026-10-14T17:04:34Z", LastRequestAt: "2026-10-14T17:04:40Z"},
+		{ID: "unknown-start"},
+	}
+	ins, sel, ok := parkedLogsSelection(instances, time.Time{})
+	if !ok || ins.ID != "new" || sel.InstanceID != "new" || sel.Date != "2026-10-14" {
+		t.Fatalf("selection = %+v %+v %v, want the newest instance on 2026-10-14", ins, sel, ok)
+	}
+	if _, _, ok := parkedLogsSelection(instances, time.Date(2026, 10, 14, 18, 0, 0, 0, time.UTC)); ok {
+		t.Fatal("an instance idle since before --since was selected")
+	}
+	if _, _, ok := parkedLogsSelection(nil, time.Time{}); ok {
+		t.Fatal("selected an instance from an empty list")
+	}
+}
+
+// A parked app's logs show the newest instance's retained lines, filtered by
+// --grep, instead of only naming the archive flags (H10-72).
+func TestCmdLogsParkedAppShowsRetainedLogs(t *testing.T) {
+	resetJSONOut(t)
+	var archiveQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/instances"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[{"id":"inst-new","state":"sleeping","started_at":"2026-10-14T17:04:34Z"},{"id":"inst-old","state":"stopped","started_at":"2026-10-13T09:00:00Z"}]`)
+		case r.URL.Query().Get("archive_instance") != "" || r.URL.Query().Get("instance") != "" || strings.Contains(r.URL.Path, "archive"):
+			archiveQuery = r.URL.String()
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: ready on :8080\n\ndata: ERROR boom\n\nevent: end\ndata: {\"reason\":\"archive_complete\"}\n\n")
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\"}\n\n")
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stdout, restoreOut := captureStdout(t)
+	stderr, restoreErr := captureStderr(t)
+	code := cmdLogs([]string{"myapp", "--grep", "boom"})
+	restoreErr()
+	restoreOut()
+	if code != 0 {
+		t.Fatalf("exit=%d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(archiveQuery, "inst-new") || !strings.Contains(archiveQuery, "2026-10-14") {
+		t.Fatalf("archive request = %q, want the newest instance and its UTC day", archiveQuery)
+	}
+	if !strings.Contains(stderr.String(), "myapp is parked; showing the retained logs of its most recent instance inst-new") {
+		t.Fatalf("stderr = %q, want the parked header", stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "boom") || strings.Contains(out, "ready on") {
+		t.Fatalf("stdout = %q, want only the --grep match", out)
+	}
+}
+
+func TestNormalizeLogsSinceRejectsFutureRuntimeTimestamp(t *testing.T) {
+	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
+	if _, err := normalizeLogsSince("2030-01-01T00:00:00Z", "runtime", now); err == nil || !strings.Contains(err.Error(), "in the past") {
+		t.Fatalf("future runtime --since err = %v, want in-the-past error", err)
+	}
+	if got, err := normalizeLogsSince("2026-10-14T18:00:00Z", "runtime", now); err != nil || got == "" {
+		t.Fatalf("past runtime --since = %q, %v", got, err)
+	}
+}

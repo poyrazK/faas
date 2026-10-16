@@ -18,6 +18,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"workflow_initial_recovery_reviews":       CloneSchemaOperational,
 		"profile_deployment_policies":             CloneSchemaConfiguration,
 		"profile_investigations":                  CloneSchemaOperational,
 		"profile_deployment_checks":               CloneSchemaOperational,
@@ -57,8 +58,11 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"object_version_protection":                          CloneSchemaConfiguration,
 		"managed_postgres_usage_imports":                     CloneSchemaIdentity,
 		"managed_postgres_creation_receipts":                 CloneSchemaIdentity,
+		"managed_postgres_restore_verifications":             CloneSchemaOperational,
 		"managed_postgres_accounting_reconciliations":        CloneSchemaIdentity,
 		"managed_postgres_resizes":                           CloneSchemaOperational,
+		"managed_postgres_cutover_drain_plans":               CloneSchemaOperational,
+		"managed_postgres_cutover_drain_plan_members":        CloneSchemaOperational,
 		"managed_postgres_cutover_drains":                    CloneSchemaOperational,
 		"object_bucket_versioning":                           CloneSchemaConfiguration,
 		"object_s3_copy_source_grants":                       CloneSchemaConfiguration,
@@ -106,6 +110,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"customer_operation_milestones":             CloneSchemaOperational,
 		"customer_operation_events":                 CloneSchemaOperational,
 		"customer_operation_delivery_retries":       CloneSchemaOperational,
+		"customer_operation_attempt_instances":      CloneSchemaOperational,
+		"customer_operation_webhook_bindings":       CloneSchemaConfiguration,
+		"customer_operation_webhook_receipts":       CloneSchemaOperational,
 		"customer_operation_executions":             CloneSchemaOperational,
 		"customer_operation_idempotency":            CloneSchemaOperational,
 		"customer_operation_job_executions":         CloneSchemaOperational,
@@ -159,6 +166,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"dev_bridge_sessions":             CloneSchemaOperational,
 		"execution_artifact_grants":       CloneSchemaOperational,
 		"execution_outbound_integrations": CloneSchemaOperational,
+		"mcp_catalog_monitors":            CloneSchemaOperational,
+		"mcp_oauth_retirements":           CloneSchemaOperational,
 		"service_recovery":                CloneSchemaOperational,
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,

@@ -26,8 +26,8 @@ python scripts/ci/test_service_binding_sdk_contract.py
 When OpenAPI changes, review the SDK types and add cases for the new behavior,
 then explicitly refresh the schema with
 `python scripts/ci/check-service-binding-sdk-contract.py --write-schema` and run
-all three SDK tests. The Python CI job checks the schema; each SDK's normal unit
-job runs its fixture tests. Declared-field checks catch missing typed fields even
+all three SDK tests. The PR CI contract job checks the schema and all three SDKs;
+each SDK's normal unit job also runs its fixture tests. Declared-field checks catch missing typed fields even
 when a client preserves unknown JSON properties.
 
 The schema snapshot detects API drift; it does not add runtime request validation

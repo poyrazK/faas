@@ -1,4 +1,4 @@
-// adr:1162 — review every member before persisting or admitting graph work.
+// adr:1355 — review every member before persisting or admitting graph work.
 package bindings
 
 import (

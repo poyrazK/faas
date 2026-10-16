@@ -1,4 +1,4 @@
-// adr:1159 — bounded parallel qualification preserves frozen plans and freshness.
+// adr:1352 — bounded parallel qualification preserves frozen plans and freshness.
 package main
 
 import (

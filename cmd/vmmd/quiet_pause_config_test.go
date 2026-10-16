@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// adr: 957 — quiet pause is off by default; vmmd.toml can turn it on and
+// adr: 1151 — quiet pause is off by default; vmmd.toml can turn it on and
 // FAAS_QUIET_PAUSE overrides TOML in either direction.
 func TestLoadConfig_QuietPauseSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))

@@ -91,7 +91,7 @@ func TestPGCloneCheckpointCaptureRetirementPostgresDependencies(t *testing.T) {
 				t.Fatal("terminal replay called provider", err)
 			}
 			if phase != "absent" {
-				in, err := store.ProjectEnvironmentCloneCheckpointPostgresTargetCompensationForLease(t.Context(), f.lease, id)
+				in, err := store.PgStore.ProjectEnvironmentCloneCheckpointPostgresTargetCompensationForLease(t.Context(), f.lease, id)
 				if err != nil || in.State != "compensated" {
 					t.Fatal("target proof replay after capture retirement", err)
 				}

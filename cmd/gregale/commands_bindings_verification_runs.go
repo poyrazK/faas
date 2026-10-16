@@ -1,4 +1,4 @@
-// adr:1161 — durable receipts survive CLI/process and HTTP response loss.
+// adr:1354 — durable receipts survive CLI/process and HTTP response loss.
 package main
 
 import (

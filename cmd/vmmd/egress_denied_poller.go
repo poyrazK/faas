@@ -73,6 +73,7 @@ type egressNetnsPoller struct {
 	lastSeen map[string]map[string]uint64
 	fanout   map[string][]fanoutSample
 	flood    map[string][]fanoutSample
+	failures pollFailureLog
 }
 
 func newEgressNetnsPoller(sink egressFanoutSink, ops *wire.OpsMetrics, pop popInstanceCountersFunc, log *slog.Logger) *egressNetnsPoller {
@@ -118,8 +119,13 @@ func (p *egressNetnsPoller) tick(ctx context.Context, now time.Time, live map[st
 		}
 		values, err := p.pop(ctx, meta.Netns)
 		if err != nil {
-			p.log.Warn("per-instance egress poll failed", "instance", instance, "netns", meta.Netns, "err", err)
+			if p.failures.failed(instance, err.Error()) {
+				p.log.Warn("per-instance egress poll failed", "instance", instance, "netns", meta.Netns, "err", err)
+			}
 			continue
+		}
+		if p.failures.succeeded(instance) {
+			p.log.Info("per-instance egress poll recovered", "instance", instance, "netns", meta.Netns)
 		}
 		prev, ok := p.lastSeen[instance]
 		if !ok {
@@ -157,6 +163,10 @@ func (p *egressNetnsPoller) tick(ctx context.Context, now time.Time, live map[st
 			delete(p.flood, instance)
 		}
 	}
+	p.failures.retain(func(instance string) bool {
+		_, ok := live[instance]
+		return ok
+	})
 }
 
 func (p *egressNetnsPoller) baseline(values map[string]uint64) map[string]uint64 {

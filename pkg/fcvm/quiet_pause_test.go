@@ -1,4 +1,4 @@
-// adr: 957 — vmmd pauses an eligible instance between requests and resumes it
+// adr: 1151 — vmmd pauses an eligible instance between requests and resumes it
 // before the next one reaches the guest; a racing request never meets a
 // paused guest.
 package fcvm

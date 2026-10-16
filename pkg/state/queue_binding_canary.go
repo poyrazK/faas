@@ -1,4 +1,4 @@
-// adr:1158 — queue evidence comes from exact, fenced handler completion.
+// adr:1351 — queue evidence comes from exact, fenced handler completion.
 package state
 
 import (

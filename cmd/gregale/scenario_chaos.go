@@ -19,12 +19,14 @@ type testChaosSpec struct {
 }
 
 type testChaosRule struct {
+	CorrelationScope string `yaml:"-" json:"-"`
 	From             string `yaml:"from,omitempty"`
 	To               string `yaml:"to"`
 	Kind             string `yaml:"kind"`
 	Percent          int    `yaml:"percent"`
 	Latency          string `yaml:"latency,omitempty"`
 	StatusCode       int    `yaml:"status_code,omitempty"`
+	RetryAfter       string `yaml:"retry_after,omitempty"`
 	Seed             uint64 `yaml:"seed,omitempty"`
 	Port             int    `yaml:"port,omitempty"`
 	Direction        string `yaml:"direction,omitempty"`
@@ -47,9 +49,17 @@ func (spec *testChaosSpec) plan() (chaos.Plan, error) {
 			return chaos.Plan{}, fmt.Errorf("chaos rule %d min_matches must be zero or greater", i+1)
 		}
 		converted := chaos.Rule{
-			From: rule.From, To: rule.To, Kind: rule.Kind, Percent: rule.Percent,
+			CorrelationScope: rule.CorrelationScope,
+			From:             rule.From, To: rule.To, Kind: rule.Kind, Percent: rule.Percent,
 			StatusCode: rule.StatusCode, Seed: rule.Seed, Port: rule.Port,
 			Direction: rule.Direction, RateKiBPerSecond: rule.RateKiBPerSecond,
+		}
+		if rule.RetryAfter != "" {
+			wait, parseErr := time.ParseDuration(rule.RetryAfter)
+			if parseErr != nil || wait < time.Second || wait%time.Second != 0 {
+				return chaos.Plan{}, fmt.Errorf("chaos rule %d retry_after must be a positive whole-second duration", i+1)
+			}
+			converted.RetryAfterSeconds = int64(wait / time.Second)
 		}
 		if rule.Latency != "" {
 			latency, parseErr := time.ParseDuration(rule.Latency)
@@ -111,7 +121,7 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 		return nil
 	}
 	if len(scenario.Steps) < 3 || len(scenario.Steps) > 32 {
-		return errors.New("staged scenarios need between 3 and 32 steps, including baseline, fault, and recovery")
+		return errors.New("staged scenarios need between 3 and 32 steps, including baseline, disruption, and recovery")
 	}
 	if scenario.Chaos != nil || len(scenario.Trigger) != 0 || len(scenario.Command) != 0 || len(scenario.Requests) != 0 || len(scenario.Checks) != 0 ||
 		scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) != 0 || len(scenario.WaitFor.Objects) != 0 || len(scenario.WaitFor.Deliveries) != 0 ||
@@ -124,9 +134,12 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 	seenHTTPNames := make(map[string]bool)
 	seenCaptures := make(map[string]bool)
 	faultActive, sawFault, sawClear := false, false, false
-	lastClear := -1
+	lastClear, lastRestart := -1, -1
 	var totalLoadDuration time.Duration
 	for i, step := range scenario.Steps {
+		if err := validateTestRestart(scenario, i, step, dataFields); err != nil {
+			return fmt.Errorf("step %q: %w", step.Name, err)
+		}
 		if !testHTTPNamePattern.MatchString(step.Name) || seenSteps[step.Name] {
 			return fmt.Errorf("step %d has invalid or duplicate name %q", i+1, step.Name)
 		}
@@ -150,10 +163,21 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 			faultActive, sawClear, lastClear = false, true, i
 		}
 		currentHTTPNames := make(map[string]bool, len(step.Requests)+len(step.Checks))
-		for _, request := range append(append([]testHTTPRequest{}, step.Requests...), step.Checks...) {
+		registeredRequests := append(append([]testHTTPRequest{}, step.Requests...), step.Checks...)
+		if step.Restart != nil {
+			registeredRequests = append(registeredRequests, step.Restart.Readiness)
+			registeredRequests = append(registeredRequests, step.Restart.StorageChecks...)
+			if f := step.Restart.InFlight; f != nil {
+				registeredRequests = append(registeredRequests, f.Request)
+				for _, checkpoint := range f.Checkpoints {
+					registeredRequests = append(registeredRequests, checkpoint.Request)
+				}
+			}
+		}
+		for _, request := range registeredRequests {
 			currentHTTPNames[request.Name] = true
 		}
-		if len(step.Command) == 0 && len(step.Requests) == 0 && len(step.Checks) == 0 && !step.ClearChaos {
+		if len(step.Command) == 0 && len(step.Requests) == 0 && len(step.Checks) == 0 && !step.ClearChaos && step.Restart == nil {
 			return fmt.Errorf("step %q needs a command, requests, checks, or clear_chaos", step.Name)
 		}
 		if len(step.Command) > 0 && step.Command[0] == "" {
@@ -164,6 +188,18 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 			return fmt.Errorf("step %q: %w", step.Name, err)
 		}
 		if step.Load != nil {
+			if spec := step.Load.PoolExhaustion; spec != nil {
+				observer := testScenario{Consumers: scenario.Consumers, Requests: []testHTTPRequest{{Name: "pool-observation", Method: "GET", Path: spec.Path, As: spec.As, Expect: testHTTPExpect{Status: 200}}}}
+				if err := validateTestHTTPRequestsWithData(observer, dataFields); err != nil {
+					return fmt.Errorf("step %q pool_exhaustion: %w", step.Name, err)
+				}
+			}
+			if spec := step.Load.ConnectionLeaks; spec != nil {
+				observer := testScenario{Consumers: scenario.Consumers, Requests: []testHTTPRequest{{Name: "connection-observation", Method: "GET", Path: spec.Path, As: spec.As, Expect: testHTTPExpect{Status: 200}}}}
+				if err := validateTestHTTPRequestsWithData(observer, dataFields); err != nil {
+					return fmt.Errorf("step %q connection_leaks: %w", step.Name, err)
+				}
+			}
 			if len(step.Requests)+len(step.Checks) == 0 {
 				return fmt.Errorf("step %q load needs requests or checks to repeat", step.Name)
 			}
@@ -230,7 +266,12 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 			previousLoadSteps[step.Name] = true
 			previousLoadHTTPNames[step.Name] = currentHTTPNames
 		}
-		for _, request := range append(append([]testHTTPRequest{}, step.Requests...), step.Checks...) {
+		if step.Restart != nil {
+			lastRestart = i
+			d, _ := time.ParseDuration(step.Restart.Timeout)
+			totalLoadDuration += d
+		}
+		for _, request := range registeredRequests {
 			if seenHTTPNames[request.Name] {
 				return fmt.Errorf("step %q has duplicate HTTP step name %q", step.Name, request.Name)
 			}
@@ -246,11 +287,14 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 	if scenario.Timeout != "" {
 		timeout, _ := time.ParseDuration(scenario.Timeout)
 		if totalLoadDuration > timeout {
-			return fmt.Errorf("staged load scheduling windows total %s, exceeding scenario timeout %s", totalLoadDuration, timeout)
+			return fmt.Errorf("staged load and restart budgets total %s, exceeding scenario timeout %s", totalLoadDuration, timeout)
 		}
 	}
-	if !sawFault || !sawClear || faultActive {
-		return errors.New("staged scenarios must install a fault plan and explicitly clear it before the run ends")
+	if faultActive || (sawFault && !sawClear) || (!sawFault && lastRestart < 0) {
+		return errors.New("staged scenarios must restart a workload or install and explicitly clear a fault plan")
+	}
+	if lastRestart == len(scenario.Steps)-1 {
+		return errors.New("a recovery step must run after the last restart")
 	}
 	if lastClear == len(scenario.Steps)-1 {
 		return errors.New("a recovery step must run after clear_chaos")
@@ -303,6 +347,7 @@ func captureTestChaosMatches(ctx context.Context, client *Client, runID string, 
 			for _, match := range matches.Matches {
 				current[match.RuleID] = match.Count
 			}
+			evidence.CorrelationCounts = current
 			for i := range evidence.Matches {
 				evidence.Matches[i].Matches = current[chaos.RuleID(evidence.Matches[i].Rule)]
 				if count, ok := current[chaos.TCPAttemptID(evidence.Matches[i].Rule)]; ok && evidence.Matches[i].Rule.IsTCP() {
@@ -364,7 +409,7 @@ func validateTestChaosMinimums(evidence *testChaosEvidence) error {
 
 func cmdChaos(args []string) int {
 	if len(args) == 0 || args[0] != "inject" {
-		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
+		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain|--malformed-json|--truncated-body|--response-lost) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
 		return 1
 	}
 	fs := newFlagSet("chaos inject", flag.ContinueOnError)
@@ -373,7 +418,8 @@ func cmdChaos(args []string) int {
 	target := fs.String("target", "", "scenario service workload to affect")
 	from := fs.String("from", "", "only affect calls from this workload")
 	latency := fs.String("latency", "", "add this delay to selected requests, such as 1500ms")
-	errorCode := fs.Int("error", 0, "return this synthetic HTTP 5xx status, such as 503")
+	errorCode := fs.Int("error", 0, "return synthetic HTTP 429 or 5xx, such as 503")
+	retryAfter := fs.String("retry-after", "", "Retry-After delay for HTTP 429 or 503, whole seconds from 1s to 30s")
 	tcpPort := fs.Int("tcp-port", 0, "TCP target port; selects TCP latency rather than HTTP latency")
 	direction := fs.String("direction", "", "TCP direction: upstream, downstream, or both")
 	bandwidth := fs.Int64("bandwidth", 0, "TCP bandwidth in KiB/s")
@@ -382,6 +428,9 @@ func cmdChaos(args []string) int {
 	resetAfter := fs.String("reset-after", "", "delay before a TCP reset, such as 1s")
 	connectTimeout := fs.Bool("connect-timeout", false, "hold new service connections until timeout or fault clear")
 	connectRefused := fs.Bool("connect-refused", false, "reset new service connections before reaching the target")
+	malformedJSON := fs.Bool("malformed-json", false, "return HTTP 200 with malformed JSON from the scenario dependency")
+	responseLost := fs.Bool("response-lost", false, "forward to the dependency, then lose a successful HTTP response body")
+	truncatedBody := fs.Bool("truncated-body", false, "return HTTP 200 with an incomplete Content-Length body")
 	dnsLatency := fs.String("dns-latency", "", "delay private service-name DNS responses, such as 250ms")
 	dnsTimeout := fs.Bool("dns-timeout", false, "drop matching private service-name DNS queries")
 	dnsServFail := fs.Bool("dns-servfail", false, "return SERVFAIL for matching private service-name DNS queries")
@@ -394,20 +443,20 @@ func cmdChaos(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
+		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain|--malformed-json|--truncated-body|--response-lost) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
 		return 1
 	}
 	if *scenario == "" || *target == "" {
 		return printErr("Scenario and target required", errors.New("--scenario and --target are required"))
 	}
 	faults := 0
-	for _, chosen := range []bool{*latency != "", *errorCode != 0, *bandwidth != 0, *stall, *reset, *connectTimeout, *connectRefused, *dnsLatency != "", *dnsTimeout, *dnsServFail, *dnsNXDomain} {
+	for _, chosen := range []bool{*latency != "", *errorCode != 0, *bandwidth != 0, *stall, *reset, *connectTimeout, *connectRefused, *dnsLatency != "", *dnsTimeout, *dnsServFail, *dnsNXDomain, *malformedJSON, *truncatedBody, *responseLost} {
 		if chosen {
 			faults++
 		}
 	}
 	if faults != 1 {
-		return printErr("Choose one chaos fault", errors.New("provide exactly one of --latency, --error, --bandwidth, --timeout, --reset, --connect-timeout, --connect-refused, --dns-latency, --dns-timeout, --dns-servfail, or --dns-nxdomain"))
+		return printErr("Choose one chaos fault", errors.New("provide exactly one of --latency, --error, --bandwidth, --timeout, --reset, --connect-timeout, --connect-refused, --dns-latency, --dns-timeout, --dns-servfail, --dns-nxdomain, --malformed-json, --truncated-body, or --response-lost"))
 	}
 	kind := chaos.KindLatency
 	statusCode := 0
@@ -447,9 +496,18 @@ func cmdChaos(args []string) int {
 	if *dnsNXDomain {
 		kind = chaos.KindDNSNXDomain
 	}
+	if *malformedJSON {
+		kind = chaos.KindHTTPMalformedJSON
+	}
+	if *responseLost {
+		kind = chaos.KindHTTPResponseLost
+	}
+	if *truncatedBody {
+		kind = chaos.KindHTTPTruncatedBody
+	}
 	spec := &testChaosSpec{Duration: *duration, Rules: []testChaosRule{{
 		From: *from, To: *target, Kind: kind, Percent: *percent,
-		Latency: selectedLatency, StatusCode: statusCode, Seed: *seed, Port: *tcpPort,
+		Latency: selectedLatency, StatusCode: statusCode, RetryAfter: *retryAfter, Seed: *seed, Port: *tcpPort,
 		Direction: *direction, RateKiBPerSecond: *bandwidth, ResetAfter: *resetAfter,
 	}}}
 	if _, err := spec.plan(); err != nil {

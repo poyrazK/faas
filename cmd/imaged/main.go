@@ -370,6 +370,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// imaged_layer_entry_skipped_total surface on /metrics. The
 	// setter is idempotent — call once at boot.
 	rootfs.SetOpsMetrics(ops)
+	// ADR-1239: publish root-owned image files as root. The production unit
+	// runs as faas-imaged with CAP_CHOWN; without it (an unprivileged dev
+	// daemon) extraction keeps the previous ownership instead of failing.
+	canChown := canChownToRoot()
+	rootfs.SetPreserveRootOwnership(canChown)
+	if !canChown {
+		log.Warn("imaged: no CAP_CHOWN; root-owned image files keep the daemon's uid")
+	}
 	// ADR-054 acceptance: wire the LocalCacheBackend observer onto the
 	// daemon's *wire.OpsMetrics so stale-fallback serves emit
 	// `imaged_storage_cache_stale_fallback_total`. Uses
@@ -491,6 +499,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// "scan-critical" failure rather than the supply-chain
 		// installation gap it actually is.
 		WithGrypeRun(makeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
+		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
 		// PR-A: layer-side secret-scan walker. Wired
 		// unconditionally so the default in
@@ -650,6 +659,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
 	}
+	h.WithLegacyParentDeferral(prestageOnlyFromEnv(getenv))
 	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
 	if err != nil {
 		return err
@@ -666,6 +676,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
+			"deferred_to_serving_imaged", assignedBases.Deferred,
 		)
 		return nil
 	}
@@ -1030,6 +1041,15 @@ func makeGrypeRunner(bin string) func(ctx context.Context, dir string) (*imaged.
 			return imaged.RunGrypeAt(ctx, bin, dir)
 		}
 		return imaged.RunGrype(ctx, dir)
+	}
+}
+
+func makeRuntimeGrypeRunner(bin string) func(context.Context, string) (*imaged.ScanResult, error) {
+	if bin == "" {
+		bin = "grype"
+	}
+	return func(ctx context.Context, dir string) (*imaged.ScanResult, error) {
+		return imaged.RunRuntimeGrypeAt(ctx, bin, dir)
 	}
 }
 

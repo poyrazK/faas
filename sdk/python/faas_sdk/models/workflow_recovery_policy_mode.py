@@ -1,8 +1,9 @@
 from typing import Literal
 
-WorkflowRecoveryPolicyMode = Literal["automatic_retry", "preview"]
+WorkflowRecoveryPolicyMode = Literal["automatic_initial", "automatic_retry", "preview"]
 
 WORKFLOW_RECOVERY_POLICY_MODE_VALUES: set[WorkflowRecoveryPolicyMode] = {
+    "automatic_initial",
     "automatic_retry",
     "preview",
 }

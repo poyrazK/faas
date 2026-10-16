@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyroles"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type membershipWorkerFailureStore struct {
@@ -43,7 +44,7 @@ func cloneMembershipWorkerFixture(t *testing.T) (*roleWorkerFixture, *membership
 		}
 	})
 	s := &membershipWorkerFailureStore{roleWorkerFailureStore: x.store}
-	x.f.srv.store = s
+	x.f.srv.store = statetest.NewPg(s)
 	return x, s
 }
 
@@ -71,7 +72,7 @@ func TestPGClonePostgresMembershipWorkerRetainsBeforeGrantsAndRecoversOriginalGr
 	if got, err := x.f.srv.projectEnvironmentClonePostgresMemberships(t.Context(), x.f.lease, x.source); !errors.Is(err, managedpostgres.ErrUnavailable) || !got.AppliedAt().IsZero() || x.p.targetSQLCalls != 3 || !x.roleExists(t) || workerMembershipCount(t, x) != 0 {
 		t.Fatalf("lost graph record authorized grants: %v (calls=%d)", err, x.p.targetSQLCalls)
 	}
-	original, err := s.ProjectEnvironmentClonePostgresMembershipPlanForLease(t.Context(), x.f.lease, x.source.source.ID)
+	original, err := s.PgStore.ProjectEnvironmentClonePostgresMembershipPlanForLease(t.Context(), x.f.lease, x.source.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +87,10 @@ func TestPGClonePostgresMembershipWorkerRetainsBeforeGrantsAndRecoversOriginalGr
 	}
 	x.f.srv.managedPostgres = service
 	old := x.f.lease
-	if err = s.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
+	if err = s.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), old, 0); err != nil {
 		t.Fatal(err)
 	}
-	x.f.lease, err = s.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	x.f.lease, err = s.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestPGClonePostgresMembershipWorkerRetainsBeforeGrantsAndRecoversOriginalGr
 	if err != nil || !retry.AppliedAt().Equal(r.AppliedAt()) || x.p.targetSQLCalls != 5 {
 		t.Fatalf("membership retry replaced target journal: %v", err)
 	}
-	retained, err := s.ProjectEnvironmentClonePostgresMembershipPlanForLease(t.Context(), x.f.lease, x.source.source.ID)
+	retained, err := s.PgStore.ProjectEnvironmentClonePostgresMembershipPlanForLease(t.Context(), x.f.lease, x.source.source.ID)
 	if err != nil || !sameClonePostgresMembershipPlan(retained, original) {
 		t.Fatalf("membership worker rebased graph ownership: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestPGClonePostgresMembershipWorkerRejectsUnreadableParentsAndAuthorityOrTa
 			case "stale", "phase", "owner":
 				x.beforeSQL = func(ctx context.Context) error {
 					if fault == "stale" {
-						return x.store.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0)
+						return x.store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0)
 					}
 					query, id := "UPDATE project_environment_clone_operations SET status='compensating' WHERE id=$1", x.f.lease.Operation.ID
 					if fault == "owner" {
@@ -244,7 +245,7 @@ func TestPGClonePostgresMembershipWorkerChecksRecipientsAndPostchecksBeforeGraph
 			if err == nil || !got.AppliedAt().IsZero() || x.p.targetSQLCalls != calls || workerMembershipCount(t, x) != 0 {
 				t.Fatalf("unqualified membership capture: %v (calls=%d)", err, x.p.targetSQLCalls)
 			}
-			if _, err := s.ProjectEnvironmentClonePostgresMembershipPlanForLease(t.Context(), x.f.lease, x.source.source.ID); !errors.Is(err, state.ErrNotFound) {
+			if _, err := s.PgStore.ProjectEnvironmentClonePostgresMembershipPlanForLease(t.Context(), x.f.lease, x.source.source.ID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("failed graph capture retained ownership: %v", err)
 			}
 			x.assertPrivate(t)

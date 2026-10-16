@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -78,7 +79,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|recipes|recipe|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -96,6 +97,10 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesEvents(args[1:])
 	case "trace":
 		return cmdEdgeRulesTrace(args[1:])
+	case "recipes":
+		return cmdEdgeRulesRecipes(args[1:])
+	case "recipe":
+		return cmdEdgeRulesRecipe(args[1:])
 	case subCreate:
 		return cmdEdgeRulesCreate(args[1:])
 	case subGet:
@@ -203,7 +208,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf (required)")
-	matchHost := fs.String("match-host", "", "host to match (required)")
+	matchHost := fs.String("match-host", "", "host to match (required; @app covers every host the app serves)")
 	matchPath := fs.String("match-path", "/", "path glob to match (default / covers only the root; /** covers every path)")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")
@@ -270,6 +275,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
 	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtAuth := fs.String("jwt-auth", "", "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)")
 
 	// ip
 	var ipAllow, ipDeny multiFlag
@@ -419,6 +425,23 @@ func cmdEdgeRulesCreate(args []string) int {
 	matchHeaderMap, err := parseEdgeRuleMatchHeaders(matchHeaders)
 	if err != nil {
 		return printErr("Invalid --match-header", err)
+	}
+	if *jwtAuth != "" {
+		if *kind != "jwt" || *jwtIssuer != "" || *jwtJWKS != "" || len(jwtAudience) > 0 {
+			return printErr("Invalid flags", errors.New("--jwt-auth requires --kind=jwt and replaces --jwt-issuer, --jwt-jwks-url and --jwt-audience"))
+		}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		resolved, err := resolveAuthIssuer(context.Background(), client, *jwtAuth)
+		if err != nil {
+			return printErr("Could not resolve the Auth app", err)
+		}
+		*jwtIssuer, *jwtJWKS, jwtAudience, *jwtRequireExp = resolved.Issuer, resolved.JWKSURL, multiFlag{resolved.Audience}, true
+		if len(jwtAlgorithms) == 0 {
+			jwtAlgorithms = multiFlag{"ES256"}
+		}
 	}
 	actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
 		RouteTarget:                       *routeTarget,

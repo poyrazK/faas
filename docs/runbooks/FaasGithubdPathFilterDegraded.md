@@ -14,8 +14,8 @@ from a healthy one; post-flip `paths` is the default posture and
 API and failed (or tripped the breaker after 3 consecutive
 failures).
 
-Severity: `warn` after 5m, `page` after 10m. The 5m head-start
-gives the operator time to triage before the page lands.
+Severity: `warn` after 5m and again after 10m. ADR-1236 demoted the
+10m page: deliveries are durable and wait for business hours.
 
 ## Symptom
 

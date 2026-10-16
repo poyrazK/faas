@@ -1,4 +1,4 @@
-// adr:1166 — one frozen admission budget for every driver of a receipt.
+// adr:1359 — one frozen admission budget for every driver of a receipt.
 package state
 
 import (

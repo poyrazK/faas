@@ -20,7 +20,9 @@ func BadgeFor(s state.State) (cls, glyph, label string) {
 	switch s {
 	case state.StateRunning:
 		return "running", "●", "running"
-	case state.StateParked:
+	case state.StateParked, state.StateFrozen:
+		// A frozen instance (ADR-1151) is idle and unbilled like a parked
+		// one; it only wakes faster.
 		return badgeSleeping, "◌", badgeSleeping
 	case state.StateWaking, state.StateColdBooting, state.StateSnapshotting:
 		return "waking", "⟳", "waking"
