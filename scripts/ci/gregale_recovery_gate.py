@@ -20,6 +20,7 @@ FILTER = (
 )
 REQUIRED = {
     "TestCampaignFaultConsumerIntentRecovery",
+    "TestCampaignFaultConsumerCancellationProof",
     "TestCampaignFaultConsumerIntentPortableRecovery",
     "TestCampaignFaultHistoryCLIUsesActiveOwner",
     "TestCampaignFaultHistoryCleanupAcrossGenerations",

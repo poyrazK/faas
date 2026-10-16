@@ -135,6 +135,20 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 		for _, name := range names {
 			c := j.Faults.Consumers[name]
 			live, err := readTestCampaignConsumer(ctx, client, j.RunID, name, c)
+			if errors.Is(err, errTestConsumerCancelled) {
+				observation.Consumers[name] = "cancelled"
+				continue
+			}
+			if errors.Is(err, errTestConsumerPending) {
+				observation.Consumers[name] = "pending"
+				if execute && !registrationOnly {
+					if err := cancelTestCampaignConsumer(ctx, client, j.RunID, name, c); err != nil {
+						return observations, err
+					}
+					observation.Consumers[name] = "cancelled"
+				}
+				continue
+			}
 			if c.ID == "" && err == nil {
 				c.ID = live.ID
 			}
@@ -288,7 +302,7 @@ func applyTestCampaignFaultCompletion(ctx context.Context, completion *testCampa
 			completion.FaultResourcesAbsent = false
 		}
 		for _, state := range observation.Consumers {
-			if state != "absent" && state != "revoked" {
+			if state != "absent" && state != "revoked" && state != "cancelled" {
 				completion.FaultResourcesAbsent = false
 			}
 		}

@@ -23,8 +23,8 @@ type testScenarioConsumerRevoke interface {
 
 func verifiedTestConsumerReceipt(receipt api.ScenarioTestConsumerReceipt, run, name string, req api.ScenarioTestConsumerRequest, expected string) (api.APIConsumerResponse, error) {
 	intent, err := api.ScenarioTestConsumerIntent(run, name, req)
-	if err != nil || intent != expected || receipt.SchemaVersion != 1 || receipt.IntentSHA256 != intent ||
-		!receipt.ExpiresAt.Equal(req.ExpiresAt.UTC().Truncate(time.Microsecond)) || receipt.Consumer == nil {
+	if err != nil || intent != expected || (receipt.SchemaVersion != 1 && receipt.SchemaVersion != 2) || receipt.IntentSHA256 != intent ||
+		!receipt.ExpiresAt.Equal(req.ExpiresAt.UTC().Truncate(time.Microsecond)) || receipt.Consumer == nil || receipt.Cancelled {
 		return api.APIConsumerResponse{}, errors.New("consumer creation receipt is missing or differs from intent; inspect manually")
 	}
 	c := *receipt.Consumer
@@ -50,11 +50,17 @@ func readTestCampaignConsumer(ctx context.Context, client testCampaignFaultClien
 		// Unsupported routes (including 404) cannot become consumer absence.
 		return api.APIConsumerResponse{}, fmt.Errorf("consumer intent lookup failed: %v", err)
 	}
+	if validTestConsumerCancellation(receipt, c) {
+		return api.APIConsumerResponse{}, errTestConsumerCancelled
+	}
+	if receipt.SchemaVersion == 2 && !receipt.Cancelled && receipt.Consumer == nil && receipt.IntentSHA256 == c.CreationIntentSHA256 && receipt.ExpiresAt.Equal(c.ExpiresAt.UTC().Truncate(time.Microsecond)) && c.ID == "" {
+		return api.APIConsumerResponse{}, errTestConsumerPending
+	}
 	live, err := verifiedTestConsumerReceipt(receipt, run, name, req, c.CreationIntentSHA256)
 	if err != nil {
 		// A saved immutable ID permits a separate absence check. An unknown
 		// ID with no receipt remains uncertain.
-		if c.ID != "" && receipt.SchemaVersion == 1 && receipt.IntentSHA256 == c.CreationIntentSHA256 && receipt.Consumer == nil && receipt.ExpiresAt.Equal(c.ExpiresAt.UTC().Truncate(time.Microsecond)) {
+		if c.ID != "" && (receipt.SchemaVersion == 1 || receipt.SchemaVersion == 2) && receipt.IntentSHA256 == c.CreationIntentSHA256 && receipt.Consumer == nil && receipt.ExpiresAt.Equal(c.ExpiresAt.UTC().Truncate(time.Microsecond)) {
 			_, missing := client.GetAPIConsumer(ctx, c.AppSlug, c.ID)
 			if isNotFound(missing) {
 				return api.APIConsumerResponse{}, missing
@@ -89,4 +95,44 @@ func revokeTestCampaignConsumer(ctx context.Context, client testCampaignFaultCli
 		return api.APIConsumerResponse{}, errors.New("consumer revocation returned another identity")
 	}
 	return live, nil
+}
+
+var errTestConsumerCancelled = errors.New("consumer creation cancelled")
+var errTestConsumerPending = errors.New("consumer creation unresolved")
+
+type testScenarioConsumerCancel interface {
+	CancelScenarioTestConsumer(context.Context, string, string, api.ScenarioTestConsumerRequest) (api.ScenarioTestConsumerReceipt, error)
+}
+
+func validTestConsumerCancellation(r api.ScenarioTestConsumerReceipt, c testCampaignFaultConsumer) bool {
+	return r.SchemaVersion == 2 && r.Cancelled && r.IntentSHA256 == c.CreationIntentSHA256 && r.ExpiresAt.Equal(c.ExpiresAt.UTC().Truncate(time.Microsecond)) && r.Consumer == nil
+}
+
+func cancelTestCampaignConsumer(ctx context.Context, client testCampaignFaultClient, run, name string, c testCampaignFaultConsumer) error {
+	cancel, ok := client.(testScenarioConsumerCancel)
+	if !ok {
+		return errors.New("consumer intent cancellation capability unavailable")
+	}
+	req := api.ScenarioTestConsumerRequest{AppID: c.AppID, ExpiresAt: c.ExpiresAt}
+	receipt, err := cancel.CancelScenarioTestConsumer(ctx, run, name, req)
+	if err != nil {
+		return err
+	}
+	// When creation won the race, require the full receipt and revoked status.
+	if receipt.Consumer != nil {
+		if !receipt.Cancelled {
+			return errors.New("consumer cancellation fence missing")
+		}
+		consumer := *receipt.Consumer
+		receipt.Cancelled = false
+		if _, err := verifiedTestConsumerReceipt(receipt, run, name, req, c.CreationIntentSHA256); err != nil || consumer.Status != "revoked" {
+			return errors.New("cancelled consumer revocation unconfirmed")
+		}
+		receipt.Consumer = nil
+		receipt.Cancelled = true
+	}
+	if !validTestConsumerCancellation(receipt, c) {
+		return errors.New("consumer cancellation was not confirmed")
+	}
+	return nil
 }

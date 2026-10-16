@@ -3,6 +3,8 @@ package state_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,6 +113,7 @@ func scenarioConsumerIntentContract(t *testing.T, store state.Store) {
 	if _, err := store.RevokeScenarioTestConsumer(ctx, account.ID, run, "linked", req, linked.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("changed ownership revoked", err)
 	}
+	scenarioConsumerCancellationContract(t, store, account.ID, other.ID, run, req)
 	if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +128,9 @@ func scenarioConsumerIntentContract(t *testing.T, store state.Store) {
 		if err != nil || c.ID != id || c.Status != state.APIConsumerStatusRevoked {
 			t.Fatal("post-teardown revocation", c, err)
 		}
+	}
+	if _, err := store.LookupScenarioTestConsumer(ctx, account.ID, run, "race-0", req); !errors.Is(err, state.ErrScenarioConsumerCancelled) {
+		t.Fatal("fence lost after teardown", err)
 	}
 	c, err := store.LookupScenarioTestConsumer(ctx, account.ID, run, "customer", req)
 	if err != nil || c.ID != id || c.Status != state.APIConsumerStatusRevoked {
@@ -142,4 +148,71 @@ func scenarioConsumerIntentContract(t *testing.T, store state.Store) {
 func TestScenarioTestConsumerIntentMemory(t *testing.T) {
 	// adr: 984 — atomic intent receipts survive retries and forbid replacement ownership.
 	scenarioConsumerIntentContract(t, state.NewMemStore())
+}
+
+func scenarioConsumerCancellationContract(t *testing.T, store state.Store, account, other, run string, req api.ScenarioTestConsumerRequest) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := store.CancelScenarioTestConsumer(ctx, other, run, "missing", req); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("cross-account cancellation", err)
+	}
+	if _, err := store.CancelScenarioTestConsumer(ctx, account, run, "unowned", req); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("unreceipted cancellation", err)
+	}
+	if _, err := store.CancelScenarioTestConsumer(ctx, account, run, "linked", req); !errors.Is(err, state.ErrConflict) {
+		t.Fatal("linked cancellation", err)
+	}
+	for i := 0; i < 8; i++ {
+		name := fmt.Sprintf("race-%d", i)
+		start := make(chan struct{})
+		done := make(chan error, 2)
+		go func() {
+			<-start
+			_, err := store.EnsureScenarioTestConsumer(ctx, account, run, name, req)
+			if errors.Is(err, state.ErrConflict) {
+				err = nil
+			}
+			done <- err
+		}()
+		go func() {
+			<-start
+			c, err := store.CancelScenarioTestConsumer(ctx, account, run, name, req)
+			if err == nil && c.ID != "" && c.Status != state.APIConsumerStatusRevoked {
+				err = errors.New("active cancellation receipt")
+			}
+			done <- err
+		}()
+		close(start)
+		for j := 0; j < 2; j++ {
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := store.LookupScenarioTestConsumer(ctx, account, run, name, req); !errors.Is(err, state.ErrScenarioConsumerCancelled) {
+			t.Fatal("missing cancellation proof", err)
+		}
+		if _, err := store.EnsureScenarioTestConsumer(ctx, account, run, name, req); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("late creation accepted", err)
+		}
+		if _, err := store.CancelScenarioTestConsumer(ctx, account, run, name, req); err != nil {
+			t.Fatal("retry cancellation", err)
+		}
+		changed := req
+		changed.ExpiresAt = changed.ExpiresAt.Add(time.Hour)
+		if _, err := store.CancelScenarioTestConsumer(ctx, account, run, name, changed); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("changed cancellation accepted", err)
+		}
+		if _, err := store.LookupScenarioTestConsumer(ctx, account, run, name, changed); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("changed cancellation lookup", err)
+		}
+	}
+	rows, err := store.ListAPIConsumersForApp(ctx, account, req.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range rows {
+		if strings.Contains(c.ExternalRef, "-race-") && c.Status != state.APIConsumerStatusRevoked {
+			t.Fatal("race left active consumer", c.ID)
+		}
+	}
 }

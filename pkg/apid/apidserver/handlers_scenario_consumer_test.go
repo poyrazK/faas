@@ -47,6 +47,15 @@ func TestScenarioTestConsumerIntentHTTP(t *testing.T) {
 	if r := e.Do(t, "GET", path+"?"+query.Encode(), nil, nil); r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
 	}
+	missingPath := "/v1/dev/test-runs/" + run + "/consumers/missing"
+	cancelled := e.Do(t, "DELETE", missingPath+"?"+query.Encode(), nil, nil)
+	var proof api.ScenarioTestConsumerReceipt
+	if cancelled.Code != 200 || json.Unmarshal(cancelled.Body.Bytes(), &proof) != nil || proof.SchemaVersion != 2 || !proof.Cancelled || proof.Consumer != nil {
+		t.Fatal("cancellation route", cancelled.Code, cancelled.Body.String())
+	}
+	if late := e.Do(t, "PUT", missingPath, req, nil); late.Code != 409 {
+		t.Fatal("late creation", late.Code, late.Body.String())
+	}
 	changed := req
 	changed.ExpiresAt = changed.ExpiresAt.Add(time.Hour)
 	if r := e.Do(t, "PUT", path, changed, nil); r.Code != http.StatusConflict {

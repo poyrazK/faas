@@ -1687,6 +1687,7 @@ type Store interface {
 	EnsureScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest) (APIConsumer, error)
 	LookupScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest) (APIConsumer, error)
 	RevokeScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest, consumerID string) (APIConsumer, error)
+	CancelScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest) (APIConsumer, error)
 	GetAPIConsumerByID(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
 	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
 	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)

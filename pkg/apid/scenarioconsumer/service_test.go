@@ -67,7 +67,7 @@ func TestScenarioConsumerLostResponse(t *testing.T) {
 		t.Fatal("lost response was accepted")
 	}
 	receipt, err := client.LookupScenarioTestConsumer(ctx, run, "customer", req)
-	if err != nil || receipt.SchemaVersion != 1 || receipt.IntentSHA256 != intent || receipt.Consumer == nil {
+	if err != nil || receipt.SchemaVersion != 2 || receipt.IntentSHA256 != intent || receipt.Consumer == nil {
 		t.Fatal(receipt, err)
 	}
 	id := receipt.Consumer.ID
@@ -82,7 +82,7 @@ func TestScenarioConsumerLostResponse(t *testing.T) {
 		t.Fatal("duplicate creation", len(rows), puts, err)
 	}
 	absent, err := client.LookupScenarioTestConsumer(ctx, run, "missing", req)
-	if err != nil || absent.SchemaVersion != 1 || absent.Consumer != nil {
+	if err != nil || absent.SchemaVersion != 2 || absent.Consumer != nil {
 		t.Fatal("versioned lookup absence", absent, err)
 	}
 	changed := req
@@ -99,5 +99,72 @@ func TestScenarioConsumerLostResponse(t *testing.T) {
 	revoked, err := client.RevokeScenarioTestConsumer(ctx, run, "customer", req, id)
 	if err != nil || revoked.Consumer == nil || revoked.Consumer.ID != id || revoked.Consumer.Status != "revoked" {
 		t.Fatal("SDK revoke after soft deletion", revoked, err)
+	}
+}
+
+func TestScenarioConsumerCancellationLostResponse(t *testing.T) {
+	// adr: 984 — cancellation survives a lost response and blocks delayed creation.
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "cancel-http@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "cancel-http", RAMMB: 128, Status: state.AppActive, PreviewOfSlug: "cancel-http", PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := store.RegisterScenarioTestMembers(ctx, account.ID, run, []state.ScenarioTestMember{{Workload: "api", AppID: app.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	req := api.ScenarioTestConsumerRequest{AppID: app.ID, ExpiresAt: expiry}
+	mux := http.NewServeMux()
+	lose := true
+	mux.HandleFunc("/v1/dev/test-runs/{run_id}/consumers/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" && lose {
+			lose = false
+			recorder := httptest.NewRecorder()
+			scenarioconsumer.Serve(recorder, r, account, store)
+			if recorder.Code != 200 {
+				t.Errorf("cancel commit: %d", recorder.Code)
+			}
+			w.WriteHeader(503)
+			return
+		}
+		scenarioconsumer.Serve(w, r, account, store)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := api.NewClient(server.URL, "test-token")
+	if _, err := client.CancelScenarioTestConsumer(ctx, run, "missing", req); err == nil {
+		t.Fatal("lost cancellation response accepted")
+	}
+	for i := 0; i < 2; i++ {
+		receipt, err := client.CancelScenarioTestConsumer(ctx, run, "missing", req)
+		if err != nil || receipt.SchemaVersion != 2 || !receipt.Cancelled || receipt.Consumer != nil {
+			t.Fatal(receipt, err)
+		}
+	}
+	if _, err := client.EnsureScenarioTestConsumer(ctx, run, "missing", req); err == nil {
+		t.Fatal("late creation succeeded")
+	}
+	if _, err := client.EnsureScenarioTestConsumer(ctx, run, "committed", req); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := client.CancelScenarioTestConsumer(ctx, run, "committed", req)
+	if err != nil || !receipt.Cancelled || receipt.Consumer == nil || receipt.Consumer.Status != "revoked" {
+		t.Fatal("committed cancellation", receipt, err)
+	}
+	if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteScenarioTestMembers(ctx, account.ID, run); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err = client.LookupScenarioTestConsumer(ctx, run, "missing", req)
+	if err != nil || receipt.SchemaVersion != 2 || !receipt.Cancelled || receipt.Consumer != nil {
+		t.Fatal("post teardown proof", receipt, err)
 	}
 }

@@ -208,16 +208,23 @@ Intent-scoped revocation checks the same receipt and the expected consumer ID
 atomically. It remains available after app soft deletion, when the ordinary
 slug-based consumer route is unavailable. Linked or replaced ownership blocks it.
 
-A missing receipt, unavailable lookup route, changed intent, or legacy uncertain
-creation without an intent still requires manual inspection. Lookup never creates
+A schema-2 missing receipt is reported as pending. Executed cleanup durably
+cancels its intent, atomically revoking any consumer that won the creation race.
+Cancellation and creation share the run lock; a late creation request conflicts.
+Read-only inspection and completion accept only a bound schema-2 cancellation
+proof as cancelled. A lost cancellation response can be retried or resolved by
+lookup. Unavailable routes, older missing receipts, changed intents and legacy
+uncertain creation without an intent still require manual inspection. Lookup never creates
 a consumer, and expiry never proves that an uncertain creation is absent. Normal
 recovery never replays a fixture or mints a credential. An explicit provisioning
 retry retains its original expiry and cannot reactivate a revoked consumer.
 Standalone runs without campaign journaling retain their existing creation path.
 
-Apply the consumer-intent migration and deploy the updated API before running
+Apply the consumer-intent and consumer-cancellation migrations and deploy the updated API before running
 new campaign workers. Intent receipts remain with the consumer through revocation
 and soft deletion of its app, and disappear on the existing hard-delete cascade.
+Cancellation records survive namespace cleanup and app soft deletion and cascade
+with hard app/account deletion. Update workers with the API for schema 2 support.
 Raw keys are never saved in journals, receipts or observations.
 
 The new registration read API returns versioned membership even after its apps

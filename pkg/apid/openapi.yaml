@@ -15998,12 +15998,12 @@ paths:
     delete:
       tags: [dev]
       operationId: revokeScenarioTestConsumer
-      summary: Revoke the exact receipted consumer, including after session teardown.
-      description: Atomically verifies creation intent, expected consumer ID and unchanged ownership. Repeating revocation is safe. No credentials are returned.
+      summary: Revoke a receipted consumer or cancel its creation intent.
+      description: With consumer_id, atomically verifies the intent, expected ID and ownership before revocation. Without consumer_id, durably cancels creation and revokes any matching committed consumer under the creation lock. Repeating either operation is safe. No credentials are returned.
       parameters:
         - { name: app_id, in: query, required: true, schema: { type: string, format: uuid } }
         - { name: expires_at, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: consumer_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: consumer_id, in: query, required: false, schema: { type: string, format: uuid }, description: Omit to durably cancel creation. }
       responses:
         '200':
           description: Original consumer in revoked state.
@@ -16024,7 +16024,8 @@ paths:
         Account and immutable app scoped. Available after app soft deletion and
         consumer revocation. Null consumer means no matching committed receipt
         was observed; it does not prove an uncertain request cannot still commit.
-        Recovery must leave a missing receipt unresolved. An unsupported older
+        Schema 2 with cancelled=true proves creation is durably fenced; otherwise
+        a missing receipt remains unresolved until explicit cancellation. An unsupported older
         server route returns an error, not a versioned receipt.
       parameters:
         - { name: app_id, in: query, required: true, schema: { type: string, format: uuid } }
@@ -66802,7 +66803,8 @@ components:
       type: object
       required: [schema_version, intent_sha256, expires_at, consumer]
       properties:
-        schema_version: { type: integer, enum: [1] }
+        schema_version: { type: integer, enum: [2] }
+        cancelled: { type: boolean, default: false, description: Durable creation fence. A committed consumer included in a cancellation response is revoked. }
         intent_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
         expires_at: { type: string, format: date-time }
         consumer:

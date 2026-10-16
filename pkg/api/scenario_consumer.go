@@ -17,6 +17,7 @@ type ScenarioTestConsumerRequest struct {
 }
 
 type ScenarioTestConsumerReceipt struct {
+	Cancelled     bool                 `json:"cancelled,omitempty"`
 	SchemaVersion int                  `json:"schema_version"`
 	IntentSHA256  string               `json:"intent_sha256"`
 	ExpiresAt     time.Time            `json:"expires_at"`
@@ -68,6 +69,18 @@ func (c *Client) RevokeScenarioTestConsumer(ctx context.Context, run, name strin
 		return out, err
 	}
 	query := url.Values{"app_id": {req.AppID}, "expires_at": {req.ExpiresAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)}, "consumer_id": {consumerID}}
+	err = c.doWithIdempotencyKey(ctx, "DELETE", "/v1/dev/test-runs/"+run+"/consumers/"+url.PathEscape(name)+"?"+query.Encode(), nil, &out, intent)
+	return out, err
+}
+
+// CancelScenarioTestConsumer atomically fences creation and revokes any committed consumer.
+func (c *Client) CancelScenarioTestConsumer(ctx context.Context, run, name string, req ScenarioTestConsumerRequest) (ScenarioTestConsumerReceipt, error) {
+	var out ScenarioTestConsumerReceipt
+	intent, err := ScenarioTestConsumerIntent(run, name, req)
+	if err != nil {
+		return out, err
+	}
+	query := url.Values{"app_id": {req.AppID}, "expires_at": {req.ExpiresAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)}}
 	err = c.doWithIdempotencyKey(ctx, "DELETE", "/v1/dev/test-runs/"+run+"/consumers/"+url.PathEscape(name)+"?"+query.Encode(), nil, &out, intent)
 	return out, err
 }

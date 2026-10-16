@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,7 @@ type scenarioConsumerIntentFake struct {
 
 type portableConsumerIntentFake struct {
 	*campaignFaultHistoryAPI
+	cancels  int
 	receipts map[string]api.ScenarioTestConsumerReceipt
 }
 
@@ -42,10 +44,17 @@ func (f *portableConsumerIntentFake) LookupScenarioTestConsumer(_ context.Contex
 }
 
 func TestCampaignFaultConsumerIntentPortableRecovery(t *testing.T) {
+	// adr: 984 — both committed and uncommitted intents survive portable recovery.
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprint(pending), func(t *testing.T) { testPortableConsumerIntentRecovery(t, pending) })
+	}
+}
+
+func testPortableConsumerIntentRecovery(t *testing.T, pending bool) {
 	// adr: 984 — recipients resolve lost creation responses without changing frozen ancestor journals.
 	f := newCampaignFaultHistoryFixture(t)
 	client := &portableConsumerIntentFake{campaignFaultHistoryAPI: newCampaignFaultHistoryAPI(t, f), receipts: map[string]api.ScenarioTestConsumerReceipt{}}
-	for _, dir := range f.dirs {
+	for index, dir := range f.dirs {
 		journals, err := readTestCampaignFaultJournals(dir, "a", f.scenarios["checkout"])
 		if err != nil {
 			t.Fatal(err)
@@ -60,6 +69,13 @@ func TestCampaignFaultConsumerIntentPortableRecovery(t *testing.T) {
 		live := client.consumers[c.ID]
 		live.Name = "Scenario customer"
 		client.receipts[intent] = api.ScenarioTestConsumerReceipt{SchemaVersion: 1, IntentSHA256: intent, ExpiresAt: c.ExpiresAt.UTC().Truncate(time.Microsecond), Consumer: &live}
+		if pending && index == 0 {
+			delete(client.consumers, c.ID)
+			receipt := client.receipts[intent]
+			receipt.SchemaVersion = 2
+			receipt.Consumer = nil
+			client.receipts[intent] = receipt
+		}
 		c.ID = ""
 		c.CreationIntentSHA256 = intent
 		j.Faults.Consumers["customer"] = c
@@ -86,13 +102,16 @@ func TestCampaignFaultConsumerIntentPortableRecovery(t *testing.T) {
 	}
 	frozen := campaignFaultFrozenBytes(t, []string{filepath.Join(root, "artifacts")})
 	result, err := cleanupTestCampaignFaultHistory(context.Background(), client, f.plan, f.cp, f.scenarios, filepath.Join(root, "work"), resolver, true)
-	if err != nil || !result.Complete || client.revokes != 3 || client.deletes != 3 || client.namespaces != 3 {
+	if err != nil || !result.Complete || client.revokes != 3-client.cancels || client.deletes != 3 || client.namespaces != 3 {
 		t.Fatal("portable intent cleanup", result, err)
 	}
 	for _, observation := range result.Faults {
-		if observation.ConsumerIDs["customer"] == "" {
+		if observation.ConsumerIDs["customer"] == "" && observation.Consumers["customer"] != "cancelled" {
 			t.Fatal("resolved ID missing")
 		}
+	}
+	if pending && client.cancels != 1 {
+		t.Fatal("uncommitted intent not cancelled")
 	}
 	assertCampaignFaultFrozen(t, frozen, []string{filepath.Join(root, "artifacts")})
 }
@@ -235,4 +254,47 @@ func (f *portableConsumerIntentFake) RevokeScenarioTestConsumer(ctx context.Cont
 		return api.ScenarioTestConsumerReceipt{}, err
 	}
 	return f.LookupScenarioTestConsumer(ctx, run, name, req)
+}
+
+func (f *portableConsumerIntentFake) CancelScenarioTestConsumer(_ context.Context, run, name string, req api.ScenarioTestConsumerRequest) (api.ScenarioTestConsumerReceipt, error) {
+	intent, _ := api.ScenarioTestConsumerIntent(run, name, req)
+	out := f.receipts[intent]
+	out.SchemaVersion = 2
+	out.Cancelled = true
+	out.Consumer = nil
+	f.receipts[intent] = out
+	f.cancels++
+	return out, nil
+}
+
+func TestCampaignFaultConsumerCancellationProof(t *testing.T) {
+	// adr: 984 — missing receipts are pending, and only a bound cancellation proves safety.
+	run := strings.Repeat("a", 32)
+	expiry := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	req := api.ScenarioTestConsumerRequest{AppID: "owned", ExpiresAt: expiry}
+	digest, _ := api.ScenarioTestConsumerIntent(run, "customer", req)
+	c := testCampaignFaultConsumer{AppID: "owned", AppSlug: "preview", ExternalRef: "gregale-test-" + run + "-customer", ExpiresAt: expiry, CreationIntentSHA256: digest}
+	client := &scenarioConsumerIntentFake{receipt: api.ScenarioTestConsumerReceipt{SchemaVersion: 2, IntentSHA256: digest, ExpiresAt: expiry}}
+	if _, err := readTestCampaignConsumer(context.Background(), client, run, "customer", c); !errors.Is(err, errTestConsumerPending) {
+		t.Fatal("pending became absence", err)
+	}
+	client.receipt.Cancelled = true
+	if _, err := readTestCampaignConsumer(context.Background(), client, run, "customer", c); !errors.Is(err, errTestConsumerCancelled) {
+		t.Fatal("valid cancellation refused", err)
+	}
+	for _, bad := range []string{"old-schema", "digest", "expiry"} {
+		original := client.receipt
+		switch bad {
+		case "old-schema":
+			client.receipt.SchemaVersion = 1
+		case "digest":
+			client.receipt.IntentSHA256 = strings.Repeat("b", 64)
+		case "expiry":
+			client.receipt.ExpiresAt = expiry.Add(time.Hour)
+		}
+		if _, err := readTestCampaignConsumer(context.Background(), client, run, "customer", c); errors.Is(err, errTestConsumerCancelled) || errors.Is(err, errTestConsumerPending) || err == nil {
+			t.Fatal("untrusted proof", bad, err)
+		}
+		client.receipt = original
+	}
 }

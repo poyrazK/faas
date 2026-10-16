@@ -239,7 +239,12 @@ Workers persist the intent before the request. A separate read-only, account-
 scoped lookup lets recovery resolve a lost creation response without creating
 resources or minting keys. Recovery verifies the complete receipt and records
 recovered IDs only in observations, preserving frozen journals across handoffs.
-Missing receipts remain uncertain; they do not establish absence. Existing
+Missing receipts remain uncertain; they do not establish absence. Schema-2
+cleanup can cancel the exact intent using a durable tombstone. Cancellation and
+creation serialize on the same run lock; cancellation revokes an already committed
+consumer or prevents a delayed creation. Read-only completion requires a bound
+cancellation proof, and old server missing receipts still require inspection.
+Tombstones survive namespace cleanup and app soft deletion. Existing
 consumers with known journaled IDs retain their original cleanup semantics.
 
 Intent-scoped revocation compares the receipt and expected consumer ID under a

@@ -32,6 +32,9 @@ func (m *MemStore) EnsureScenarioTestConsumer(_ context.Context, account, run, n
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ref, label := scenarioConsumerIdentity(run, name)
+	if _, ok := m.scenarioConsumerCancellations[account+"/"+req.AppID+"/"+ref]; ok {
+		return APIConsumer{}, ErrConflict
+	}
 	for _, c := range m.apiConsumers {
 		if c.AppID == req.AppID && c.ExternalRef == ref {
 			if c.AccountID != account {
@@ -62,6 +65,13 @@ func (m *MemStore) LookupScenarioTestConsumer(_ context.Context, account, run, n
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ref, _ := scenarioConsumerIdentity(run, name)
+	if digest, ok := m.scenarioConsumerCancellations[account+"/"+req.AppID+"/"+ref]; ok {
+		want, _ := api.ScenarioTestConsumerIntent(run, name, req)
+		if digest != want {
+			return APIConsumer{}, ErrConflict
+		}
+		return APIConsumer{}, ErrScenarioConsumerCancelled
+	}
 	for _, c := range m.apiConsumers {
 		if c.AccountID == account && c.AppID == req.AppID && c.ExternalRef == ref {
 			return c, validScenarioConsumerReceipt(c, run, name, req)
@@ -87,6 +97,12 @@ func (s *PgStore) EnsureScenarioTestConsumer(ctx context.Context, account, run, 
 		return APIConsumer{}, err
 	}
 	ref, label := scenarioConsumerIdentity(run, name)
+	if err := scenarioConsumerCancellation(ctx, tx, account, run, name, req); !errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrScenarioConsumerCancelled) {
+			return APIConsumer{}, ErrConflict
+		}
+		return APIConsumer{}, err
+	}
 	c, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+` from api_consumers where account_id=$1 and app_id=$2 and external_ref=$3 for update`, account, req.AppID, ref))
 	if err == nil {
 		if err := validScenarioConsumerReceipt(c, run, name, req); err != nil {
@@ -126,6 +142,9 @@ func (s *PgStore) LookupScenarioTestConsumer(ctx context.Context, account, run, 
 		return APIConsumer{}, ErrNotFound
 	}
 	ref, _ := scenarioConsumerIdentity(run, name)
+	if err := scenarioConsumerCancellation(ctx, s.pool, account, run, name, req); !errors.Is(err, ErrNotFound) {
+		return APIConsumer{}, err
+	}
 	c, err := scanAPIConsumerRow(s.pool.QueryRow(ctx, `select `+apiConsumerSelectCols+` from api_consumers where account_id=$1 and app_id=$2 and external_ref=$3`, account, req.AppID, ref))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumer{}, ErrNotFound
@@ -194,7 +213,7 @@ func (s *PgStore) RevokeScenarioTestConsumer(ctx context.Context, account, run, 
 	if c.ID != expected {
 		return APIConsumer{}, ErrConflict
 	}
-	c, err = scanAPIConsumerRow(tx.QueryRow(ctx, `update api_consumers set status='revoked',revoked_at=coalesce(revoked_at,now()),updated_at=now() where id=$1 returning `+apiConsumerSelectCols, c.ID))
+	c, err = scanAPIConsumerRow(tx.QueryRow(ctx, `update api_consumers set status='revoked',revoked_at=coalesce(revoked_at,greatest(created_at,clock_timestamp())),updated_at=greatest(created_at,clock_timestamp()) where id=$1 returning `+apiConsumerSelectCols, c.ID))
 	if err != nil {
 		return APIConsumer{}, err
 	}

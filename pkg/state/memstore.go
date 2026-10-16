@@ -390,6 +390,7 @@ type MemStore struct {
 	consumerKeys map[string]ConsumerKey
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
+	scenarioConsumerCancellations        map[string]string
 	apiConsumers                         map[string]APIConsumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
@@ -1511,6 +1512,7 @@ func NewMemStore() *MemStore {
 		// keyed by ConsumerKey.ID; cross-tenant IDOR guards are
 		// enforced at the read methods (same as the pg path).
 		consumerKeys:                         map[string]ConsumerKey{},
+		scenarioConsumerCancellations:        map[string]string{},
 		apiConsumers:                         map[string]APIConsumer{},
 		platformTenants:                      map[string]PlatformTenant{},
 		platformTenantReconciliationReceipts: map[string]api.PlatformTenantReconciliationReceiptResponse{},
@@ -22119,6 +22121,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if token.AccountID == id {
 			delete(m.deployTokens, tid)
 			delete(m.deployTokenByHash, string(token.Hash))
+		}
+	}
+	for key := range m.scenarioConsumerCancellations {
+		if strings.HasPrefix(key, id+"/") {
+			delete(m.scenarioConsumerCancellations, key)
 		}
 	}
 	for cid, c := range m.apiConsumers {
