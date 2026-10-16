@@ -128,9 +128,10 @@ customer write ──> Postgres (database VM) ──WAL──> liveq engine (sam
   publication, executes maintenance queries, and keeps per-query lineage
   indexes and result versions. It never sees client connections.
   `max_slot_wal_keep_size` bounds WAL held for a stalled engine.
-- **livequeryd (new, one per database node).** Compiles queries (libpg_query
-  parse, catalog-backed analysis, maintenance plan; cgo is acceptable on hosts,
-  not in the guest), registers plans with the VM's engine through vmmd's vsock
+- **livequeryd (new, one per database node).** Compiles queries (PostgreSQL's
+  own parser, libpg_query, through `github.com/wasilibs/go-pgquery`, which runs
+  it as WebAssembly on wazero, so binaries stay static with `CGO_ENABLED=0`;
+  catalog-backed analysis; maintenance plan), registers plans with the VM's engine through vmmd's vsock
   relay as pgproxyd does, wakes parked databases through schedd, and serves
   delta streams to realtimed. It deduplicates identical subscriptions by plan
   fingerprint so a query is maintained once per database however many clients
@@ -152,14 +153,21 @@ customer write ──> Postgres (database VM) ──WAL──> liveq engine (sam
 
 The engine maintains results in rounds. Each round is a consistent snapshot:
 
-1. Open a `REPEATABLE READ` transaction and take its snapshot S
-   (`pg_current_snapshot()`); then read `pg_current_wal_insert_lsn()` as L.
-2. Drain decoded WAL until the decoded position reaches L. Every transaction
-   visible in S inserted its commit record before L, so all of them are now
-   decoded; waiting for the flush to reach L also covers transactions committed
-   with `synchronous_commit=off`, which become visible before their commit
-   record is flushed. Decoded transactions not visible in S
-   (`pg_visible_in_snapshot`) are held for the next round.
+1. Open a `REPEATABLE READ` transaction and take `ACCESS SHARE` locks on every
+   table a live query reads, before any statement takes the snapshot (`LOCK`
+   does not). TRUNCATE and table rewrites are not MVCC-safe: one that commits
+   while a round reads would make a table look empty to a snapshot that
+   predates it. The locks keep them waiting until the round commits; ordinary
+   writes take weaker locks and proceed. A round whose locks time out or lose a
+   deadlock retries before it has emitted anything. Then take the snapshot S
+   (`pg_current_snapshot()`).
+2. Emit a non-transactional logical message (`pg_logical_emit_message`) as a
+   round marker, reading `pg_snapshot_xmax(pg_current_snapshot())` with it as
+   the reference for extending decoded xids. Every transaction visible in S
+   inserted its commit record before the marker, so draining the slot up to
+   the marker decodes all of them; the walsender sends WAL only once flushed,
+   so this also covers `synchronous_commit=off`. Decoded transactions not
+   visible in S are held for the next round.
 3. Maintain every affected query using only S-visible changes, executing all
    maintenance SQL inside the round's transaction, so every row read reflects S.
 4. Emit, per query, one delta tagged with the S-visible `xid8`s, then commit
@@ -198,6 +206,20 @@ key, so `REPLICA IDENTITY FULL` is not required):
 - replacements come from the query re-evaluated with `T.pk = ANY($keys)`,
   which the database answers through its indexes;
 - the delta is the difference.
+
+**Outer joins.** A change to a relation on the nullable side of an outer join
+can create or remove NULL-extended rows of the preserved side, and a WHERE
+clause can hide the pairs that explain it. Queries with outer joins therefore
+also maintain the lineage of the FROM clause alone, before WHERE: one key tuple
+per join row. A change expands to the preserved-side keys that matched the
+changed rows before (from that join lineage) or match them now (re-read at the
+snapshot), and both the join lineage and the result are re-read for the
+expanded keys. The join lineage costs memory proportional to the unfiltered
+join, so it counts against the result limits.
+
+**Parameters.** Every derived query carries each query parameter as a hidden,
+explicitly typed column, so parameter numbers and types stay fixed even where
+the clause that used a parameter (WHERE, the select list) is dropped.
 
 **Maintenance strategy by construct:**
 
@@ -373,8 +395,43 @@ is a later step.
     so it must connect only while Neon reports the compute active);
   - bring-your-own Postgres.
 
+### Phase 0 result (2026-10-16)
+
+The prototype lives in `pkg/livequery`. It covers capture, the compiler, the
+engine and the differential oracle.
+
+- **What runs incrementally:**
+  - lineage maintenance for inner and outer joins (including self-joins and
+    composite keys);
+  - group-keyed maintenance with HAVING;
+  - every other construct falls back to recompute.
+- **Oracle workload:**
+  - concurrent writers with multi-row and primary-key-changing statements,
+    join-key updates, rollbacks, `synchronous_commit=off` and TRUNCATE;
+  - after every round, each result and each internal cache is compared with
+    PostgreSQL at the round snapshot, and every decoded transaction's
+    visibility verdict is checked against `pg_visible_in_snapshot`.
+- **Soak:** 25 seeds, 42,281 transactions, 1,107 rounds and 15,498 comparisons,
+  with 549 transactions held across round boundaries. Zero divergences.
+- **What the oracle found** (each fixed before the soak):
+  - TRUNCATE is not MVCC-safe, hence the round locks in step 1;
+  - parameters vanished from derived queries, hence the hidden parameter
+    columns.
+
+Phase 0 did not cover:
+
+- **Algebraic aggregates:** maintained by group re-aggregation, not yet
+  incrementally.
+- **Top-k, window functions, subqueries and DISTINCT:** still recompute.
+- **Durability and schema changes:** checkpoints, DDL handling and
+  per-subscription settings.
+- **Performance:** not measured. That is the first Phase 1 work, together with
+  the operator preview.
+
 ## Consequences
 
+- **TRUNCATE waits.** TRUNCATE and table rewrites on live tables wait for the
+  round in progress, which is bounded by round duration.
 - **Database settings.** Native databases with live queries run
   `wal_level=logical` and hold one logical slot. WAL volume rises slightly, and
   a stalled engine can hold WAL up to `max_slot_wal_keep_size`.
