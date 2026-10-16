@@ -16,9 +16,11 @@ from ._event_deadline_policy import (
     QUEUE_MAX,
     EventDeadlinePolicyOptions,
     EventDeadlineTarget,
+    deadline_boundaries,
     deadline_evidence,
     duration,
     policy_dict,
+    ratio_value,
     target_dict,
     timestamp,
 )
@@ -70,7 +72,7 @@ class _Proof:
 def _confirmation(
     c: dict[str, Any], p: _Proof, now: float, policy: dict[str, Any], reason: str, blocked: bool = False
 ) -> dict[str, Any]:
-    recovering = "incident_id" in c and "value" in c and c["value"] <= c["recovery_threshold"]
+    recovering = "incident_id" in c and deadline_boundaries(c)[1]
     required = policy["recovery_sustain_ms"] if recovering else policy["sustain_ms"]
     elapsed = 0 if p.first is None else max(0, now - p.first)
     phase = "resume_pending" if p.resume else c["state"]
@@ -107,7 +109,7 @@ class _Watch:
             if options.resume is not None
             else {
                 "kind": KIND,
-                "version": 1,
+                "version": 2 if any("minimum_recipients" in rule for rule in self.policy["rules"]) else 1,
                 "target": self.target,
                 "policy": self.policy,
                 "session": str(uuid4()),
@@ -152,12 +154,14 @@ class _Watch:
             "threshold": c["threshold"],
             "recovery_threshold": c["recovery_threshold"],
         }
+        if "ratio_sample" in c:
+            alert["ratio_sample"] = dict(c["ratio_sample"])
         self.checkpoint["pending"].append(alert)
         self.result["alerts"].append(alert)
 
     def apply(self, c: dict[str, Any], p: _Proof, now: float) -> tuple[str, bool]:
         active = "incident_id" in c
-        breached, recovered = c["value"] >= c["threshold"], c["value"] <= c["recovery_threshold"]
+        breached, recovered = deadline_boundaries(c)
         candidate = (breached or recovered if p.resume else recovered) if active else breached
         if not candidate:
             p.reset()
@@ -228,6 +232,12 @@ class _Watch:
                 loss = "repeated_observation" if observed == p.last_observed else "out_of_order_observation"
             if not loss and p.last_local is not None and now - p.last_local > self.max_age:
                 loss = "sample_gap"
+            if (
+                not loss
+                and "minimum_recipients" in c
+                and evidence["summary"]["deadline_recipients"] < c["minimum_recipients"]
+            ):
+                loss = "insufficient_deadline_recipients"
             if (not loss or loss == "sample_gap") and observed is not None:
                 p.last_observed, p.last_local = observed, now
             if loss:
@@ -235,7 +245,13 @@ class _Watch:
                 c["state"], p.resume = "unknown", "incident_id" in c
                 self.result["confirmations"].append(_confirmation(c, p, now, self.policy, loss))
                 continue
-            if "reason" in c:
+            if "minimum_recipients" in c:
+                c["ratio_sample"] = {
+                    "expired_recipients": evidence["summary"]["already_expired_count"],
+                    "deadline_recipients": evidence["summary"]["deadline_recipients"],
+                }
+                c["value"] = ratio_value(c["ratio_sample"])
+            elif "reason" in c:
                 c["value"] = evidence[c["cohort"] + "_waiting_reasons"][c["reason"]]
             else:
                 c["value"] = (

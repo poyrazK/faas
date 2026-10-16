@@ -62,7 +62,7 @@ Supply the application slug plus expected stable application and subscription UU
 as strings. UUIDs are canonicalized to lowercase, and every response must match.
 `within_ms` is mandatory: integer milliseconds 100..86400000. The horizon applies
 only to upcoming deadlines; expired counts cover all deadlines at or before the
-observation. At least one positive total or reason warning is required.
+observation. At least one positive count or expired-ratio warning is required.
 
 `upcoming` and `expired` configure total warnings. `upcoming_reasons` and
 `expired_reasons` select independent warnings for known labels, listed in
@@ -138,8 +138,9 @@ because `on_progress` returned.
 
 ## Checkpoints and alert acknowledgment
 
-Python uses kind `gregale.python.event-deadline-watch`, version 1. It is a distinct
-format: **Go/CLI and Node checkpoints are not accepted**. Checkpoints contain JSON
+Python uses kind `gregale.python.event-deadline-watch`. Count-only selections use
+version 1; selections containing an expired ratio use version 2, as described below.
+Both are distinct formats: **Go/CLI and Node checkpoints are not accepted**. Checkpoints contain JSON
 primitives, effective target/policy, historical condition values, session/sequence,
 incident identities, and pending/acknowledged notifications. Timer/sample proof is
 excluded. Validate loaded JSON with `validate_event_deadline_checkpoint`.
@@ -175,3 +176,96 @@ checkpoints.
 These are rolling aggregate counts. Reason changes, expiry, retention, overrides
 or successful completion can lower them. Resolution does not certify business
 completion. See [deadline coverage and triage](event-subscription-deadline-window.md).
+
+## Expired backlog ratio conditions
+
+```python
+from faas_sdk import EventDeadlineRatioOptions, EventDeadlineWatchOptions
+
+options = EventDeadlineWatchOptions(
+    within_ms=300000,
+    expired_ratio=EventDeadlineRatioOptions(
+        warning_basis_points=1000,  # >=10%
+        recovery_basis_points=500,  # <=5%
+        minimum_recipients=100,
+    ),
+    sustain_ms=60000,
+    recovery_sustain_ms=120000,
+)
+result = await awatch_event_subscription_deadlines(client.inner, target, options)
+```
+
+`expired_ratio` is an optional keyword-only policy setting, preserving existing
+positional argument order. Its denominator is all retained captured pending
+application recipients with effective delivery-age deadlines, and its numerator
+is those already expired. Both come from one complete snapshot, independently of
+the upcoming horizon. It is a backlog ratio, not a historical expiry percentage or
+delivery success SLO. Ratio-only and combined count/ratio watches are supported.
+
+`warning_basis_points` requires an integer 1..10000, where 100 basis points = 1%.
+`recovery_basis_points` must be a nonnegative integer below warning. Omission/None
+defaults to warning minus one basis point; explicit zero requires a zero numerator
+in a qualifying cohort. `minimum_recipients` is required and must be an integer
+1..9007199254740991. Boolean, float, negative and oversized option/sample counts
+are rejected. `EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX` represents 100%.
+
+Rules are copied before the first await, and the ratio is appended after the
+existing count conditions. Up to 31 conditions can be selected. All share existing
+warning/recovery durations, complete partition validation, timestamp freshness and
+one window read. No extra request, endpoint, generated API or migration is added.
+
+A zero or below-minimum denominator resets ratio proof and reports
+`insufficient_deadline_recipients`; other eligible count conditions continue
+independently. Python retains an active incident identity while its evidence is
+unknown and requires fresh warning or recovery confirmation when the cohort
+qualifies again. An empty or small cohort never fabricates successful recovery.
+This preserves Python/Node lifecycle behavior rather than adopting Go's closing
+`confirmation_lost` notification. No timers or sample counts survive resume as live
+proof.
+
+### Exact comparisons and stored samples
+
+Python integer cross-products decide the warning and recovery boundaries:
+
+```
+expired_recipients * 10000 >= warning_basis_points * deadline_recipients
+expired_recipients * 10000 <= recovery_basis_points * deadline_recipients
+```
+
+Counts are bounded safe integers, but the products use Python's exact integers.
+Ratio conditions and alerts retain JSON-safe
+`ratio_sample = {"expired_recipients": N, "deadline_recipients": D}`. Their `value`
+is an approximate basis-point display projection, which may be fractional or round
+onto a policy boundary. Never use that projection for alert decisions near a boundary.
+Use the source sample and integer policy instead.
+
+Checkpoint and acknowledgment validation require a complete qualifying sample,
+verify its display projection, and check historical opening/resolution boundaries
+with the same exact arithmetic. Missing, inconsistent or below-minimum ratio samples
+and samples attached to count conditions are rejected. Samples on unknown conditions
+are historical; current raw snapshot counts can be inspected in eligible `evidence`.
+
+### Version compatibility
+
+Count-only selections remain version 1 with their existing policy order, metric
+identities, JSON shape, integer values and acknowledgment receipts. Version 2 is
+required only for selections containing the one supported expired-ratio rule,
+optionally alongside up to 30 count conditions. Version 2 without a ratio and
+version 1 with ratio rules/samples are rejected.
+
+The ratio metric is
+`deadline_window.expired_ratio_basis_points.<within_ms>.minimum_recipients.<minimum>`.
+Resume binds to the same horizon, minimum cohort, warning/recovery basis points and
+shared sustain durations. Explicit default recovery and omitted recovery are
+equivalent. Adding/removing the ratio changes selection and requires a separate
+checkpoint; manage existing pending notifications explicitly. Duplicate ratio rules,
+unknown versions, altered metric identities and inconsistent sample state are rejected.
+Older Python SDKs reject version 2, so upgrade readers first. Node and Go/CLI
+checkpoint kinds remain incompatible.
+
+Existing outbox capacity, closing reservations, exact acknowledgment batches,
+cancellation/result snapshots, callbacks and downstream deduplication apply to
+ratio alerts too. A low cohort can leave an incident unknown after the backlog
+drains; combine an absolute expired-count condition when tracking zero remaining
+expired work matters. New work, retention and deadline overrides can change a
+ratio without successful processing. Resolution is not proof of business completion.

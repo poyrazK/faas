@@ -592,3 +592,7 @@ __all__ += (
     "EventDeadlineWatchOptions", "EventDeadlineWatchCallbackError", "EventDeadlineWatchCancelled",
     "awatch_event_subscription_deadlines", "validate_event_deadline_checkpoint", "acknowledge_event_deadline_alerts",
 )
+
+from ._event_deadline_policy import EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, EventDeadlineRatioOptions
+
+__all__ += ("EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX", "EventDeadlineRatioOptions")

@@ -9,6 +9,7 @@ from typing import Any
 
 MAX_COUNT = 9007199254740991
 QUEUE_MAX = 1024
+EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX = 10000
 EVENT_DEADLINE_REASONS = (
     "circuit_open",
     "circuit_probe_wait",
@@ -35,6 +36,13 @@ class EventDeadlineTarget:
 
 
 @dataclass(frozen=True)
+class EventDeadlineRatioOptions:
+    warning_basis_points: int
+    minimum_recipients: int
+    recovery_basis_points: int | None = None
+
+
+@dataclass(frozen=True)
 class EventDeadlinePolicyOptions:
     within_ms: int
     upcoming: int = 0
@@ -47,6 +55,7 @@ class EventDeadlinePolicyOptions:
     expired_reasons_recovery: dict[str, int] = field(default_factory=dict)
     sustain_ms: int = 60000
     recovery_sustain_ms: int = 60000
+    expired_ratio: EventDeadlineRatioOptions | None = field(default=None, kw_only=True)
 
 
 def count(value: Any) -> bool:
@@ -115,14 +124,89 @@ def policy_dict(options: EventDeadlinePolicyOptions) -> dict[str, Any]:
                 raise ValueError("deadline reason counts require known labels and safe nonnegative integers")
         for reason in sorted(warnings.keys() | recoveries.keys()):
             add(cohort, warnings.get(reason, 0), recoveries.get(reason), reason)
+    if options.expired_ratio is not None:
+        rules.append(ratio_rule(options.expired_ratio, options.within_ms))
     if not rules:
-        raise ValueError("enable at least one deadline warning count")
+        raise ValueError("enable at least one deadline count or expired ratio warning")
     return {
         "within_ms": options.within_ms,
         "sustain_ms": options.sustain_ms,
         "recovery_sustain_ms": options.recovery_sustain_ms,
         "rules": rules,
     }
+
+
+def ratio_rule(options: EventDeadlineRatioOptions, within: int) -> dict[str, Any]:
+    if (
+        not isinstance(options, EventDeadlineRatioOptions)
+        or not count(options.warning_basis_points)
+        or not 1 <= options.warning_basis_points <= EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX
+        or not count(options.minimum_recipients)
+        or options.minimum_recipients < 1
+        or (
+            options.recovery_basis_points is not None
+            and (
+                not count(options.recovery_basis_points)
+                or options.recovery_basis_points >= options.warning_basis_points
+            )
+        )
+    ):
+        raise ValueError(
+            "ratio requires warning basis points 1..10000, lower nonnegative recovery and a positive safe-integer minimum cohort"
+        )
+    return {
+        "metric": f"deadline_window.expired_ratio_basis_points.{within}.minimum_recipients.{options.minimum_recipients}",
+        "cohort": "expired",
+        "threshold": options.warning_basis_points,
+        "recovery_threshold": options.warning_basis_points - 1
+        if options.recovery_basis_points is None
+        else options.recovery_basis_points,
+        "minimum_recipients": options.minimum_recipients,
+    }
+
+
+def valid_ratio_sample(rule: dict[str, Any], sample: Any) -> bool:
+    return (
+        isinstance(sample, dict)
+        and count(rule.get("minimum_recipients"))
+        and rule["minimum_recipients"] > 0
+        and count(sample.get("expired_recipients"))
+        and count(sample.get("deadline_recipients"))
+        and sample["deadline_recipients"] >= rule["minimum_recipients"]
+        and sample["expired_recipients"] <= sample["deadline_recipients"]
+    )
+
+
+def ratio_value(sample: dict[str, int]) -> float:
+    """Approximate basis points for display; decisions always use integer products."""
+    whole, remainder = divmod(
+        sample["expired_recipients"] * EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, sample["deadline_recipients"]
+    )
+    return whole + remainder / sample["deadline_recipients"]
+
+
+def valid_deadline_value(rule: dict[str, Any], value: Any, sample: Any) -> bool:
+    if "minimum_recipients" not in rule:
+        return count(value) and sample is None
+    return (
+        valid_ratio_sample(rule, sample)
+        and type(value) in (int, float)
+        and 0 <= value <= EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX
+        and value == ratio_value(sample)
+    )
+
+
+def deadline_boundaries(condition: dict[str, Any]) -> tuple[bool, bool]:
+    if "value" not in condition:
+        return False, False
+    if "minimum_recipients" not in condition:
+        return condition["value"] >= condition["threshold"], condition["value"] <= condition["recovery_threshold"]
+    sample = condition.get("ratio_sample")
+    if not valid_ratio_sample(condition, sample):
+        return False, False
+    scaled = sample["expired_recipients"] * EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX
+    total = sample["deadline_recipients"]
+    return scaled >= condition["threshold"] * total, scaled <= condition["recovery_threshold"] * total
 
 
 def timestamp(raw: Any) -> int | None:

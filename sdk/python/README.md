@@ -2520,3 +2520,9 @@ with `validate_event_deadline_checkpoint` and apply offline acknowledgments with
 Python uses its own deadline-only checkpoint format; Go/CLI and Node checkpoints
 are rejected. Applications own persistence and notification delivery. Persist before
 publishing and deduplicate replayed alerts. See [configuration and cancellation](../../docs/event-deadline-python-watch.md).
+
+`expired_ratio=EventDeadlineRatioOptions(warning_basis_points=1000,
+recovery_basis_points=500, minimum_recipients=100)` adds an expired backlog ratio
+condition with exact integer comparisons and retained source samples. Ratio watches
+use version 2 Python checkpoints; count-only checkpoints remain version 1. See
+[ratio policy and compatibility](../../docs/event-deadline-python-watch.md#expired-backlog-ratio-conditions).

@@ -106,7 +106,7 @@ without this option keep their request behavior and checkpoint policy.
 Older clients reject the new metric; upgrade the resuming client before loading a
 checkpoint containing it. The CLI exposes these options as documented below;
 Node watches also support exact ratio conditions with version 2 Node checkpoints;
-Python watches currently expose count conditions only. No server endpoints,
+Python watches support them with exact integer comparisons and version 2 Python checkpoints too. No server endpoints,
 migrations or notification destinations are added. The existing complete
 window read supplies all count and ratio conditions, so no extra request is added
 per ratio. Existing read budgets and unknown-on-timeout behavior apply.
@@ -180,3 +180,10 @@ Node's `expiredRatio` option selects the same backlog numerator/denominator and
 integer basis-point policies. It uses exact BigInt comparisons, JSON-safe source
 samples and its own version 2 checkpoint format. See
 [Node ratio configuration and compatibility](event-deadline-node-watch.md#expired-backlog-ratios).
+
+## Python ratio watch
+
+Python's keyword-only `expired_ratio` option selects the same backlog ratio with
+integer basis-point boundaries and an explicit minimum cohort. It retains source
+samples, uses exact integer comparisons and version 2 Python checkpoints. See
+[async Python ratio configuration and compatibility](event-deadline-python-watch.md#expired-backlog-ratio-conditions).

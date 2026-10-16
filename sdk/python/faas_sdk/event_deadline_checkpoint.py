@@ -9,12 +9,15 @@ from ._event_deadline_policy import (
     MAX_COUNT,
     QUEUE_MAX,
     EventDeadlinePolicyOptions,
+    EventDeadlineRatioOptions,
     EventDeadlineTarget,
     count,
+    deadline_boundaries,
     policy_dict,
     target_dict,
     timestamp,
     uuid,
+    valid_deadline_value,
 )
 
 KIND = "gregale.python.event-deadline-watch"
@@ -42,7 +45,7 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
         not isinstance(value, dict)
         or value.get("kind") != KIND
         or type(value.get("version")) is not int
-        or value["version"] != 1
+        or value["version"] not in (1, 2)
         or not uuid(value.get("session"))
         or not count(value.get("sequence"))
         or not isinstance(value.get("target"), dict)
@@ -51,7 +54,7 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
         _invalid()
     t, p = value["target"], value["policy"]
     target = target_dict(EventDeadlineTarget(t.get("app"), t.get("app_id"), t.get("subscription_id")))
-    if not isinstance(p.get("rules"), list) or not 1 <= len(p["rules"]) <= 30:
+    if not isinstance(p.get("rules"), list) or not 1 <= len(p["rules"]) <= (30 if value["version"] == 1 else 31):
         _invalid()
     settings: dict[str, Any] = {
         "within_ms": p.get("within_ms"),
@@ -69,7 +72,22 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
         ):
             _invalid()
         cohort, reason = rule["cohort"], rule.get("reason")
-        if reason is None:
+        if "minimum_recipients" in rule:
+            if (
+                value["version"] != 2
+                or cohort != "expired"
+                or "reason" in rule
+                or "expired_ratio" in settings
+                or not count(rule["minimum_recipients"])
+                or rule["minimum_recipients"] < 1
+            ):
+                _invalid()
+            settings["expired_ratio"] = EventDeadlineRatioOptions(
+                warning_basis_points=rule["threshold"],
+                recovery_basis_points=rule["recovery_threshold"],
+                minimum_recipients=rule["minimum_recipients"],
+            )
+        elif reason is None:
             if "reason" in rule or cohort in settings:
                 _invalid()
             settings[cohort], settings[cohort + "_recovery"] = rule["threshold"], rule["recovery_threshold"]
@@ -82,7 +100,9 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
                 _invalid()
             warnings[reason], recoveries[reason] = rule["threshold"], rule["recovery_threshold"]
     policy = policy_dict(EventDeadlinePolicyOptions(**settings))
-    fields = ("metric", "cohort", "reason", "threshold", "recovery_threshold")
+    if (value["version"] == 2) != any("minimum_recipients" in r for r in policy["rules"]):
+        _invalid()
+    fields = ("metric", "cohort", "reason", "threshold", "recovery_threshold", "minimum_recipients")
     if any(any(a.get(k) != b.get(k) for k in fields) for a, b in zip(p["rules"], policy["rules"], strict=True)):
         _invalid()
     conditions, pending, acknowledged = value.get("conditions"), value.get("pending"), value.get("acknowledged")
@@ -102,7 +122,10 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
             not isinstance(c, dict)
             or any(c.get(k) != rule.get(k) for k in fields)
             or c.get("state") not in ("unknown", "clear", "firing")
-            or ("value" in c and not count(c["value"]))
+            or (("minimum_recipients" in c) != ("minimum_recipients" in rule))
+            or ("minimum_recipients" in c and not count(c["minimum_recipients"]))
+            or ("ratio_sample" in c and ("minimum_recipients" not in rule or "value" not in c))
+            or ("value" in c and not valid_deadline_value(rule, c["value"], c.get("ratio_sample")))
             or ("observed_at" in c and timestamp(c["observed_at"]) is None)
             or ("value" in c) != ("observed_at" in c)
         ):
@@ -118,9 +141,12 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
             active[c["incident_id"]] = c["metric"]
         elif c["state"] == "firing":
             _invalid()
-        normalized_conditions.append(
-            {**rule, **{k: c[k] for k in ("state", "value", "observed_at", "incident_id") if k in c}}
-        )
+        normalized = {**rule, **{k: c[k] for k in ("state", "value", "observed_at", "incident_id") if k in c}}
+        if "ratio_sample" in c:
+            normalized["ratio_sample"] = {
+                k: c["ratio_sample"][k] for k in ("expired_recipients", "deadline_recipients")
+            }
+        normalized_conditions.append(normalized)
     if len(pending) + len(active) > QUEUE_MAX or value["sequence"] > MAX_COUNT - len(active):
         _invalid()
     seen: set[int] = set()
@@ -136,7 +162,6 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
                 or not last < a["sequence"] <= value["sequence"]
                 or a["sequence"] in seen
                 or timestamp(a.get("at")) is None
-                or not count(a.get("value"))
                 or a.get("transition") not in ("opened", "resolved")
                 or not isinstance(a.get("metric"), str)
             ):
@@ -144,6 +169,8 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
             rule, opening = rules.get(a["metric"]), _opening(a.get("incident_id"), value["session"])
             if (
                 rule is None
+                or ("ratio_sample" in a and "minimum_recipients" not in rule)
+                or not valid_deadline_value(rule, a.get("value"), a.get("ratio_sample"))
                 or not count(a.get("threshold"))
                 or not count(a.get("recovery_threshold"))
                 or a["threshold"] != rule["threshold"]
@@ -151,8 +178,11 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
                 or opening > a["sequence"]
             ):
                 _invalid()
-            if (a["transition"] == "opened" and (opening != a["sequence"] or a["value"] < rule["threshold"])) or (
-                a["transition"] == "resolved" and (opening == a["sequence"] or a["value"] > rule["recovery_threshold"])
+            breached, recovered = deadline_boundaries(
+                {**rule, "value": a["value"], **({"ratio_sample": a["ratio_sample"]} if "ratio_sample" in a else {})}
+            )
+            if (a["transition"] == "opened" and (opening != a["sequence"] or not breached)) or (
+                a["transition"] == "resolved" and (opening == a["sequence"] or not recovered)
             ):
                 _invalid()
             row = lineage.setdefault(a["incident_id"], {"metric": a["metric"]})
@@ -176,6 +206,10 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
                     )
                 }
             )
+            if "ratio_sample" in a:
+                normalized[-1]["ratio_sample"] = {
+                    k: a["ratio_sample"][k] for k in ("expired_recipients", "deadline_recipients")
+                }
         normalized_alerts.append(normalized)
     for incident, row in lineage.items():
         if (
@@ -192,7 +226,7 @@ def validate_event_deadline_checkpoint(value: Any) -> dict[str, Any]:
     return deepcopy(
         {
             "kind": KIND,
-            "version": 1,
+            "version": value["version"],
             "target": target,
             "policy": policy,
             "session": value["session"],
