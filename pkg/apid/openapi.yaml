@@ -44995,6 +44995,35 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/incidents/platform_alert/summary:
+    get:
+      tags: [admin]
+      operationId: getObsAlertWorkloadSummary
+      summary: Summarize retained platform alert workload and observation freshness.
+      description: |
+        Requires operator read authorization, MFA and the operator allowlist.
+        Counts all physically retained platform alert episodes in one database
+        snapshot, including expired rows awaiting retention cleanup. There is
+        no look-back window, pagination or query filter. Groups are exact
+        intersections of status, severity, acknowledgment, ownership and snooze.
+        Needs-attention includes unsnoozed unresolved episodes that are either
+        unacknowledged or unowned, including unknown observations. Collection
+        failure, stale rules and disabled collection cannot resolve an alert.
+        Counts are null before the first successful collection. Age is elapsed
+        time since episode activation, not time since assignment or acknowledgment.
+        SQL failure returns unavailable rather than an empty workload.
+      responses:
+        '200':
+          description: Exact retained-alert workload with bounded dimension groups and oldest evidence links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertWorkloadSummary' }
+        '400': { description: Query parameters are unsupported for this fixed scope. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'Summary read denied by operator scope, MFA or allowlist.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Workload storage could not be read within the summary budget. }
+
   /v1/admin/obs/incidents/platform_alert/{id}/triage-history:
     get:
       tags: [admin]
@@ -64206,6 +64235,71 @@ components:
       properties:
         incident_id: { type: string }
         triage: { $ref: '#/components/schemas/ObsAlertTriage' }
+    ObsAlertWorkloadSummary:
+      type: object
+      description: Atomic retained-alert workload snapshot with explicit collection and cleanup coverage.
+      required: [as_of, scope, age_basis, collection, retention, counts, groups, oldest_unacknowledged, oldest_unowned]
+      properties:
+        as_of: { type: string, format: date-time }
+        scope: { type: string, enum: [retained_platform_alert_episodes] }
+        age_basis: { type: string, enum: [episode_started_at] }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        retention: { $ref: '#/components/schemas/ObsAlertRetentionHealth' }
+        counts:
+          description: Null until a successful collection has established a retained observation scope.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertWorkloadCounts' }
+            - { type: 'null' }
+        groups:
+          type: array
+          maxItems: 72
+          items: { $ref: '#/components/schemas/ObsAlertWorkloadGroup' }
+        oldest_unacknowledged:
+          description: Oldest unsnoozed unresolved unacknowledged episode; null when absent or scope is unknown.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertWorkloadOldest' }
+            - { type: 'null' }
+        oldest_unowned:
+          description: Oldest unsnoozed unresolved unowned episode; null when absent or scope is unknown.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertWorkloadOldest' }
+            - { type: 'null' }
+    ObsAlertWorkloadCounts:
+      type: object
+      description: Whole-retention episode totals and an attention union that counts each episode once.
+      required: [total, firing, unknown, resolved, needs_attention]
+      properties:
+        total: { type: integer, format: int64, minimum: 0 }
+        firing: { type: integer, format: int64, minimum: 0 }
+        unknown: { type: integer, format: int64, minimum: 0 }
+        resolved: { type: integer, format: int64, minimum: 0 }
+        needs_attention:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unsnoozed unresolved episodes that are unacknowledged or unowned; unknown status is included.
+    ObsAlertWorkloadGroup:
+      type: object
+      description: Nonempty retained-alert bucket for one exact status and workflow combination.
+      required: [status, severity, acknowledged, owned, snoozed, count]
+      properties:
+        status: { type: string, enum: [firing, resolved, unknown] }
+        severity: { type: string, enum: [critical, error, warning] }
+        acknowledged: { type: boolean }
+        owned: { type: boolean }
+        snoozed: { type: boolean }
+        count: { type: integer, format: int64, minimum: 1 }
+    ObsAlertWorkloadOldest:
+      type: object
+      description: Sanitized oldest eligible episode reference ordered by activation time then immutable ID.
+      required: [incident_id, status, severity, started_at, age_seconds, evidence_path]
+      properties:
+        incident_id: { type: string }
+        status: { type: string, enum: [firing, unknown] }
+        severity: { type: string, enum: [critical, error, warning] }
+        started_at: { type: string, format: date-time }
+        age_seconds: { type: integer, format: int64, minimum: 0 }
+        evidence_path: { type: string }
     ObsAlertTriageHistory:
       type: object
       description: One episode-bound page of workflow receipts with a fixed upper revision and explicit retention gaps.

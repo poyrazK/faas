@@ -368,3 +368,22 @@ FROM receipts
 WHERE revision <= sqlc.arg(snapshot_revision)::bigint
  AND (sqlc.arg(before_revision)::bigint = 0 OR revision < sqlc.arg(before_revision)::bigint)
 ORDER BY revision DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: OperatorAlertWorkloadBuckets :many
+WITH projected AS (
+ SELECT e.id,e.started_at,e.severity,e.triage_acknowledged AS acknowledged,
+  (e.triage_owner_id IS NOT NULL)::boolean AS owned,
+  coalesce(e.triage_snoozed_until > sqlc.arg(now_at)::timestamptz,false)::boolean AS snoozed,
+  CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+   WHEN sqlc.arg(collection_enabled)::boolean AND c.last_success_at IS NOT NULL AND c.last_attempt_at=c.last_success_at
+    AND c.last_success_at >= sqlc.arg(fresh_since)::timestamptz AND c.last_success_at <= sqlc.arg(future_before)::timestamptz
+    AND e.last_checked_at=c.last_success_at AND e.last_evaluated_at >= sqlc.arg(fresh_since)::timestamptz
+    AND e.last_evaluated_at <= sqlc.arg(future_before)::timestamptz THEN 'firing' ELSE 'unknown' END::text AS status
+ FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+)
+SELECT DISTINCT ON (status,severity,acknowledged,owned,snoozed)
+ status,severity,acknowledged,owned,snoozed,
+ (count(*) OVER (PARTITION BY status,severity,acknowledged,owned,snoozed))::bigint AS count,
+ id AS oldest_id,started_at AS oldest_started_at
+FROM projected
+ORDER BY status,severity,acknowledged,owned,snoozed,started_at,id;

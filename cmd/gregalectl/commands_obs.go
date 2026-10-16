@@ -57,6 +57,7 @@ const dispatchObs = "obs"
 // rather than cli_meta.go so the dispatcher's switch is the
 // single source of truth for subcommand routing.
 const subObsHealth = "health"
+const subObsSummary = "summary"
 
 const subObsIncidents = "incidents"
 const subObsTriage = "triage"
@@ -87,10 +88,12 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|evidence|context|bundle|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|summary|incidents|triage|triage-history|evidence|context|bundle|overview|capacity")
 		return 2
 	}
 	switch args[0] {
+	case subObsSummary:
+		return cmdObsSummary(args[1:])
 	case subObsHealth:
 		return cmdObsHealth(args[1:])
 	case subObsTriageHistory:

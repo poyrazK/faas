@@ -2832,6 +2832,7 @@ type Querier interface {
 	OperatorAlertTriageLock(ctx context.Context, db DBTX, id string) (OperatorAlertTriageLockRow, error)
 	OperatorAlertTriageUpdate(ctx context.Context, db DBTX, arg OperatorAlertTriageUpdateParams) (int64, error)
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
+	OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg OperatorAlertWorkloadBucketsParams) ([]OperatorAlertWorkloadBucketsRow, error)
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
 	// The API catalog is the single source of named shapes. Unmatched shapes
 	// share one custom bucket, keeping the result bounded as the fleet grows.

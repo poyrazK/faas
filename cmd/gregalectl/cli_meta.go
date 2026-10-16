@@ -989,6 +989,11 @@ var cliCommands = []cliCommand{
 			},
 
 			{
+				Name:  subObsSummary,
+				Short: "Summarize all retained platform alert workload and freshness",
+				Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
 				Name:  subObsTriageHistory,
 				Short: "Read retained episode triage actions and receipt coverage",
 				Flags: []cliFlag{

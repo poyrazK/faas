@@ -35,6 +35,10 @@ func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	if err != nil || history.SnapshotRevision != 1 || history.Coverage.State != "complete" || len(history.Items) != 1 || history.Items[0].Action != "acknowledge" {
 		t.Fatalf("triage history: %+v %v", history, err)
 	}
+	workload, err := fx.Store.OperatorAlertWorkload(fx.Ctx, state.OperatorAlertWorkloadFilter{Now: now, CollectionEnabled: true})
+	if err != nil || len(workload.Buckets) != 1 || workload.Buckets[0].Count != 1 || !workload.Buckets[0].Acknowledged || workload.Buckets[0].Status != "firing" {
+		t.Fatalf("workload: %+v %v", workload, err)
+	}
 	if err := fx.Store.RecordOperatorAlertFailure(fx.Ctx, now.Add(100*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}

@@ -102,6 +102,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
+	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
 	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
 	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context
 	"POST /v1/admin/obs/incidents/platform_alert/{id}/triage":        true, // operator cookie session + recent MFA; outside tenant SDK // operator-only bounded incident evidence

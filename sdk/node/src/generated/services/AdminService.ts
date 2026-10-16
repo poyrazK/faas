@@ -22,6 +22,7 @@ import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatu
 import type { ObsAlertTriageHistory } from '../models/ObsAlertTriageHistory.js';
 import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
 import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js';
+import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
@@ -1057,6 +1058,40 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Summarize retained platform alert workload and observation freshness.
+   * Requires operator read authorization, MFA and the operator allowlist.
+   * Counts all physically retained platform alert episodes in one database
+   * snapshot, including expired rows awaiting retention cleanup. There is
+   * no look-back window, pagination or query filter. Groups are exact
+   * intersections of status, severity, acknowledgment, ownership and snooze.
+   * Needs-attention includes unsnoozed unresolved episodes that are either
+   * unacknowledged or unowned, including unknown observations. Collection
+   * failure, stale rules and disabled collection cannot resolve an alert.
+   * Counts are null before the first successful collection. Age is elapsed
+   * time since episode activation, not time since assignment or acknowledgment.
+   * SQL failure returns unavailable rather than an empty workload.
+   *
+   * @returns ObsAlertWorkloadSummary Exact retained-alert workload with bounded dimension groups and oldest evidence links.
+   * @throws ApiError
+   */
+  public static getObsAlertWorkloadSummary(): CancelablePromise<ObsAlertWorkloadSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/incidents/platform_alert/summary',
+      errors: {
+        400: `Query parameters are unsupported for this fixed scope.`,
+        401: `code: unauthorized`,
+        403: `Summary read denied by operator scope, MFA or allowlist.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Workload storage could not be read within the summary budget.`,
       },
     });
   }

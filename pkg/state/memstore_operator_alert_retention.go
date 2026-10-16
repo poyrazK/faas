@@ -33,6 +33,10 @@ func (m *MemStore) OperatorAlertRetentionStatus(ctx context.Context, now time.Ti
 	now = now.UTC().Truncate(time.Microsecond)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.operatorAlertRetentionStatusLocked(now), nil
+}
+
+func (m *MemStore) operatorAlertRetentionStatusLocked(now time.Time) OperatorAlertRetention {
 	out := m.operatorAlertRetention
 	out.ExpiredEpisodes, out.OldestExpiredAt = 0, time.Time{}
 	cutoff := now.Add(-api.ObsAlertHistoryRetention)
@@ -48,5 +52,5 @@ func (m *MemStore) OperatorAlertRetentionStatus(ctx context.Context, now time.Ti
 			}
 		}
 	}
-	return out, nil
+	return out
 }

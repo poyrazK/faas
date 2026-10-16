@@ -1143,6 +1143,10 @@ export type { ObsAlertTriageHistoryCoverage } from './models/ObsAlertTriageHisto
 export type { ObsAlertTriageHistoryEntry } from './models/ObsAlertTriageHistoryEntry.js';
 export type { ObsAlertTriageRequest } from './models/ObsAlertTriageRequest.js';
 export type { ObsAlertTriageResponse } from './models/ObsAlertTriageResponse.js';
+export type { ObsAlertWorkloadCounts } from './models/ObsAlertWorkloadCounts.js';
+export type { ObsAlertWorkloadGroup } from './models/ObsAlertWorkloadGroup.js';
+export type { ObsAlertWorkloadOldest } from './models/ObsAlertWorkloadOldest.js';
+export type { ObsAlertWorkloadSummary } from './models/ObsAlertWorkloadSummary.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { ObsHealthSignal } from './models/ObsHealthSignal.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';

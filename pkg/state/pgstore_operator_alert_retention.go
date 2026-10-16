@@ -29,6 +29,10 @@ func (s *PgStore) OperatorAlertRetentionStatus(ctx context.Context, now time.Tim
 	if err != nil {
 		return OperatorAlertRetention{}, fmt.Errorf("alert retention status: %w", err)
 	}
+	return pgAlertRetention(row), nil
+}
+
+func pgAlertRetention(row sqlc.OperatorAlertRetentionStatusRow) OperatorAlertRetention {
 	out := OperatorAlertRetention{LastPrunedEpisodes: row.LastPrunedEpisodes, ExpiredEpisodes: row.ExpiredEpisodes}
 	if row.LastAttemptAt.Valid {
 		out.LastAttemptAt = row.LastAttemptAt.Time.UTC()
@@ -39,5 +43,5 @@ func (s *PgStore) OperatorAlertRetentionStatus(ctx context.Context, now time.Tim
 	if row.OldestExpiredAt.Valid {
 		out.OldestExpiredAt = row.OldestExpiredAt.Time.UTC()
 	}
-	return out, nil
+	return out
 }

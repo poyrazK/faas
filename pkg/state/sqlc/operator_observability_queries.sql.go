@@ -577,6 +577,78 @@ func (q *Queries) OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg 
 	return err
 }
 
+const operatorAlertWorkloadBuckets = `-- name: OperatorAlertWorkloadBuckets :many
+WITH projected AS (
+ SELECT e.id,e.started_at,e.severity,e.triage_acknowledged AS acknowledged,
+  (e.triage_owner_id IS NOT NULL)::boolean AS owned,
+  coalesce(e.triage_snoozed_until > $1::timestamptz,false)::boolean AS snoozed,
+  CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+   WHEN $2::boolean AND c.last_success_at IS NOT NULL AND c.last_attempt_at=c.last_success_at
+    AND c.last_success_at >= $3::timestamptz AND c.last_success_at <= $4::timestamptz
+    AND e.last_checked_at=c.last_success_at AND e.last_evaluated_at >= $3::timestamptz
+    AND e.last_evaluated_at <= $4::timestamptz THEN 'firing' ELSE 'unknown' END::text AS status
+ FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+)
+SELECT DISTINCT ON (status,severity,acknowledged,owned,snoozed)
+ status,severity,acknowledged,owned,snoozed,
+ (count(*) OVER (PARTITION BY status,severity,acknowledged,owned,snoozed))::bigint AS count,
+ id AS oldest_id,started_at AS oldest_started_at
+FROM projected
+ORDER BY status,severity,acknowledged,owned,snoozed,started_at,id
+`
+
+type OperatorAlertWorkloadBucketsParams struct {
+	NowAt             pgtype.Timestamptz
+	CollectionEnabled bool
+	FreshSince        pgtype.Timestamptz
+	FutureBefore      pgtype.Timestamptz
+}
+
+type OperatorAlertWorkloadBucketsRow struct {
+	Status          string
+	Severity        string
+	Acknowledged    bool
+	Owned           bool
+	Snoozed         bool
+	Count           int64
+	OldestID        string
+	OldestStartedAt pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg OperatorAlertWorkloadBucketsParams) ([]OperatorAlertWorkloadBucketsRow, error) {
+	rows, err := db.Query(ctx, operatorAlertWorkloadBuckets,
+		arg.NowAt,
+		arg.CollectionEnabled,
+		arg.FreshSince,
+		arg.FutureBefore,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertWorkloadBucketsRow{}
+	for rows.Next() {
+		var i OperatorAlertWorkloadBucketsRow
+		if err := rows.Scan(
+			&i.Status,
+			&i.Severity,
+			&i.Acknowledged,
+			&i.Owned,
+			&i.Snoozed,
+			&i.Count,
+			&i.OldestID,
+			&i.OldestStartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAuditTraceCoverage = `-- name: OperatorAuditTraceCoverage :one
 SELECT coalesce(count(*) FILTER (WHERE data->>'trace_id' ~ '^[0-9a-f]{32}$')::double precision / nullif(count(*), 0), 1.0)::double precision AS ratio
 FROM audit_log WHERE received_at >= $1
