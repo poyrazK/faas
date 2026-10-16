@@ -121,3 +121,57 @@ deadlines/routing change. `HasMore` reflects lookahead in that page's snapshot a
 does not guarantee a nonempty next page. An empty final page does not prove delivery
 success. No cursor decoding, payload reads or automatic multi-page accumulation
 are performed. See [triage coverage and retention semantics](event-subscription-deadline-triage.md).
+
+## CLI investigation
+
+```sh
+gregale events deadline-alert-investigate orders \\
+  --alert-file ./deadline-alert.json --limit 25
+
+gregale --json events deadline-alert-investigate orders \\
+  --alert-file ./deadline-alert.json --limit 25
+```
+
+The file must contain **one Go/CLI lifecycle alert JSON object**, for example one
+separately saved `--alerts-json` line or one entry extracted from a Go checkpoint's
+`pending`/acknowledged alerts. A complete checkpoint, JSON array, entire JSON-lines
+stream, investigation result or Node/Python alert is not accepted. No automatic
+selection among several incidents occurs.
+
+`--alert-file` is required and must name a regular local file of at most 64 KiB.
+Input uses the CLI's existing protected file opener; symlinks and non-regular inputs
+are rejected. Duplicate or case-colliding keys, unknown/case-aliased/null fields,
+missing reference fields, malformed JSON and multiple JSON values are rejected.
+Recognized Go alert fields are decoded without modifying the file. Required reference
+fields are `metric`, `app_id`, `subscription_id`, `incident_id`, `sequence`,
+`transition` and `at`. The SDK validates supported metrics, identity and transition
+sequence before making the triage request. This does not authenticate the original
+alert or reprove its watch timing.
+
+`--limit` defaults to 50 and accepts 1..100. `--cursor` accepts the previous page's
+opaque `next_cursor`, with the existing 4096-byte bound. Each command performs one
+logical page read with the Go helper's five-second budget; Ctrl-C cancels it.
+Authentication, scope and MFA remain the existing endpoint's responsibility.
+A bad or expired cursor produces an error; the command does not restart pagination.
+
+Text output separates alert notification time, traversal classification window and
+current page observation. It lists event source/ID, acceptance and deadline times,
+current expiry flag, waiting reason, next attempt and lease timestamp. Sources and
+IDs are printed in full as quoted strings so control characters cannot change the
+table layout. An empty page explicitly does not certify delivery success. The text
+labels membership as current, rather than reconstructing the original incident.
+
+When `Has more` is true, text output prints the **full quoted cursor**, without
+abbreviation. Continue with the same app, file and limit:
+
+```sh
+gregale events deadline-alert-investigate orders \\
+  --alert-file ./deadline-alert.json --limit 25 --cursor 'OPAQUE_NEXT_CURSOR'
+```
+
+Global `--json` returns the full Go investigation result. Use `page.next_cursor`
+for continuation, `page.has_more` for lookahead, `alert.alert_at` for notification
+time, and `page.window_at` / `page.observed_at` for the independent triage clocks.
+No input alert, acknowledgment inbox or checkpoint is changed. The command neither
+accumulates all pages nor performs recovery actions. Existing live membership,
+ratio-numerator-only and later-page expiry semantics above continue to apply.

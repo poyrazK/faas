@@ -3419,3 +3419,16 @@ and confirms recovery at <=5%. Insufficient cohorts stay unknown. Text progress
 shows the observed percentage and raw cohort; JSON retains basis-point units and
 raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
 [ratio validation and lifecycle semantics](event-deadline-ratio-alerts.md#cli-ratio-watch).
+
+### Investigate a saved deadline alert
+
+```sh
+gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
+gregale --json events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --cursor 'NEXT_CURSOR'
+```
+
+Supply one saved Go/CLI lifecycle alert object. The command selects the current
+matching cohort, lists delivery identities/deadlines/waiting reasons and keeps alert
+notification time separate from current triage observation. It is read-only, bounded
+to one page and does not acknowledge or replay anything. See
+[file format, pagination and observation semantics](event-deadline-alert-investigation.md#cli-investigation).

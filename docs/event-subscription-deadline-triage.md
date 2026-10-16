@@ -121,3 +121,8 @@ and optional waiting reason from a Go/CLI deadline count or ratio alert. It perf
 one bounded page read and validates scope/cohort metadata. The original notification
 reference is separate from triage observation clocks; historical membership is not
 reconstructed. See [usage, pagination and limits](event-deadline-alert-investigation.md).
+
+The CLI command `events deadline-alert-investigate APP --alert-file PATH` exposes
+this helper with `--limit`, `--cursor`, a human table and global `--json` output.
+It accepts one saved Go/CLI alert object and preserves full continuation tokens.
+See [CLI investigation](event-deadline-alert-investigation.md#cli-investigation).
