@@ -32,6 +32,8 @@ func edgeRuleKindQuota(kind EdgeRuleKind, limits api.Limits) (int, bool) {
 		return limits.EdgeRulesCircuitBreakerPerApp, true
 	case EdgeRuleKindWAF:
 		return limits.EdgeRulesWAFPerApp, true
+	case EdgeRuleKindChallenge:
+		return limits.EdgeRulesChallengePerApp, true
 	default:
 		return 0, false
 	}

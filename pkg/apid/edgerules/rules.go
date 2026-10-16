@@ -284,6 +284,14 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 			return api.ErrValidation(fmt.Sprintf("waf action: %v", err))
 		}
 		return a.Validate()
+	case state.EdgeRuleKindChallenge:
+		// Per-plan availability (Free 0) is enforced in
+		// CreateEdgeRuleIfUnderQuota via Limits.EdgeRulesChallengePerApp.
+		var a api.EdgeRuleChallengeAction
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return api.ErrValidation(fmt.Sprintf("challenge action: %v", err))
+		}
+		return a.Validate()
 	}
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
 }
@@ -847,6 +855,14 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				AnomalyThreshold: a.AnomalyThreshold,
 				ExcludeRuleIDs:   a.ExcludeRuleIDs,
 				InspectBodyBytes: a.InspectBodyBytes,
+			}
+		}
+	case state.EdgeRuleKindChallenge:
+		var a api.EdgeRuleChallengeAction
+		if err := json.Unmarshal(raw, &a); err == nil && a.Validate() == nil {
+			out.Challenge = &state.EdgeRuleChallengeAction{
+				Difficulty:     a.Difficulty,
+				PassTTLSeconds: a.PassTTLSeconds,
 			}
 		}
 	}
