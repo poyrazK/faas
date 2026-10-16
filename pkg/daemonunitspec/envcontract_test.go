@@ -85,7 +85,7 @@ func scanLiterals(t *testing.T, root string, dirs []string) map[string]map[strin
 // imports them, so their env reads belong to apid, not "shared". List a
 // package here only if no other daemon imports it (pkg/apid/apidsource is
 // also used by githubd and stays shared).
-var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/"}
+var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/", "pkg/apid/release/"}
 
 func ownerOf(rel string) string {
 	for _, prefix := range apidOwnedPkgs {

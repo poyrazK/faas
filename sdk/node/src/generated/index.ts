@@ -475,6 +475,7 @@ export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhoo
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
+export type { DeploymentRelease } from './models/DeploymentRelease.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentRoutePolicySnapshotResponse } from './models/DeploymentRoutePolicySnapshotResponse.js';
 export type { DeploymentRuntimeResponse } from './models/DeploymentRuntimeResponse.js';
@@ -1946,6 +1947,8 @@ export type { RegisterEventSchemaRequest } from './models/RegisterEventSchemaReq
 export type { RegisterEventSchemaResponse } from './models/RegisterEventSchemaResponse.js';
 export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestRequest.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
+export type { ReleaseDatabaseRef } from './models/ReleaseDatabaseRef.js';
+export type { ReleaseRestorePoint } from './models/ReleaseRestorePoint.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './models/RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
@@ -1983,6 +1986,7 @@ export type { RetryPolicyDTO } from './models/RetryPolicyDTO.js';
 export type { RevokeApplicationStandardExceptionRequest } from './models/RevokeApplicationStandardExceptionRequest.js';
 export type { RevokeExecutionArtifactGrantResponse } from './models/RevokeExecutionArtifactGrantResponse.js';
 export type { RevokePlatformTenantSelfConsumersRequest } from './models/RevokePlatformTenantSelfConsumersRequest.js';
+export type { RollbackCrossedRelease } from './models/RollbackCrossedRelease.js';
 export type { RollbackEdgeRulesRequest } from './models/RollbackEdgeRulesRequest.js';
 export type { RollbackFeatureFlagsRequest } from './models/RollbackFeatureFlagsRequest.js';
 export type { RollbackOperation } from './models/RollbackOperation.js';
@@ -1990,6 +1994,9 @@ export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOper
 export type { RollbackRequest } from './models/RollbackRequest.js';
 export type { RolloutAbortedWebhookPayload } from './models/RolloutAbortedWebhookPayload.js';
 export type { RolloutCompletedWebhookPayload } from './models/RolloutCompletedWebhookPayload.js';
+export type { RolloutDecision } from './models/RolloutDecision.js';
+export type { RolloutDecisionSample } from './models/RolloutDecisionSample.js';
+export type { RolloutDecisionSignals } from './models/RolloutDecisionSignals.js';
 export type { RolloutRecoveryReceipt } from './models/RolloutRecoveryReceipt.js';
 export type { RolloutTransitionResponse } from './models/RolloutTransitionResponse.js';
 export type { RotateAlertRuleSecretRequest } from './models/RotateAlertRuleSecretRequest.js';

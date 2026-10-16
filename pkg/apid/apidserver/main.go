@@ -745,6 +745,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runCheckedRollbackWorker(ctx)
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runRollbackOn5xxWorker(ctx)
+		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)

@@ -114,6 +114,9 @@ type server struct {
 	notif          Notifier
 	// routeProbes sends ADR-847 synthetic route probes; nil disables them.
 	routeProbes routeProbeSender
+	// routeProbePrunedAt is the last probe data prune; only the route
+	// probe worker goroutine reads or writes it.
+	routeProbePrunedAt time.Time
 	// edgeRules is the edge rules surface (ADR-977); Host wired in newServer.
 	edgeRules edgerules.Service
 	// queueLeases is the pull-lease surface (ADR-1140); Host wired in newServer.

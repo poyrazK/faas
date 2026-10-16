@@ -7,6 +7,63 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Releases that change the database — 2026-10-15
+
+[ADR-1331](adr/1331-releases-that-change-the-database.md): a rollback whose
+target has not served since a later release command ran is refused with
+`rollback_crosses_release` unless acknowledged (`--acknowledge-releases`, a
+typed confirmation at a terminal, or `acknowledge_releases` in the API). The
+refusal lists the crossed releases and, for managed PostgreSQL databases the
+release commands can migrate, the `gregale postgres restore` command for the
+moment before the earliest of them. The usual rollback to the previous release
+crosses nothing; automated rollbacks never acknowledge. Deployment reads report
+the release run as `release`. Verified on the n2 node: apidserver rollback,
+state, CLI and spec tests pass, and the full safe-release drill passed with
+leakcheck clean.
+
+## Evidence-paced default rollouts — 2026-10-15
+
+[ADR-1321](adr/1321-evidence-paced-default-rollouts.md) makes the default
+production rollout `adaptive`: the balanced 1% → 10% → 50% → 100% ladder, but
+each stage advances as soon as the circuit breaker has conclusive, clean
+evidence against the serving predecessor, after at least one minute, instead
+of always waiting for its 2-minute timer. `gregale deploy --safe` uses it;
+explicit presets keep their timers. The default probe now sends 20 probes per
+revision per round, and each minute's round starts within about 15 s. On the
+n2 node a flag-free release of a quiet app reached 100% in 248 s, down from
+about 9 minutes; all six safe-release drill cases passed, leakcheck clean.
+
+## Explained rollout decisions — 2026-10-14
+
+[ADR-1237](adr/1237-explained-rollout-decisions.md) records the evidence behind
+every decision the safe-release circuit breaker makes: why a canary stage
+advanced, is held, or was aborted, with the request, 5xx, probe, latency, OOM
+and restart counts for both revisions. It is stored with the transition
+(`deployments.rollout_decision` and the deployment audit row), holds are
+deduplicated `deploy.rollout_held` audit rows, and the API, `gregale deployment
+wait --rollout`, `deployment summary`, and the `rollout.completed` /
+`rollout.aborted` webhooks show it. The safe-release drill passed on the n2
+node with the new assertions: the quiet canary completed on an
+`advance_probe_evidence` record (20 probes each side at the decision), the
+late-failing release aborted on `abort_5xx` with `probes_included` (candidate
+probe 5xx 20/20), the bad release on `abort_5xx` and the crash loop on
+`abort_crash_loop`; leakcheck clean. The Postgres state tests, conformance,
+spec parity, and the apidserver Safe Deploy tests pass on the node.
+
+## Safe releases by default — 2026-10-13
+
+[ADR-1160](adr/1160-safe-releases-by-default.md) makes the balanced health-gated
+canary with first-wake 5xx rollback the default for production releases,
+bounds low-traffic canary holds, judges quiet canaries on ADR-847 probes of
+`/`, adds a crash-loop gate, and fixes plain rollback of image, GitHub, and
+preview deployments, which the latest-revision promotion fence had silently
+superseded. The metal drill suite (`cmd/e2e/safe_release_drill_metal_test.go`)
+passed on the n2 node on 2026-10-13: safe default, low-traffic advance on
+probe evidence (132–182 s), probe-backed abort of a quiet release that fails
+after its smoke (72–176 s), 5xx abort, crash-loop abort, canary-worker
+fallback, and rollback recovery in 6.8–13.5 s with a verified `complete`
+rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
+are `beta` in the product registry.
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
 - **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),

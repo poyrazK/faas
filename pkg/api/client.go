@@ -2289,6 +2289,13 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", body, &out, "")
 }
 
+// RollbackWithRequest sends a full rollback request, for fields such as
+// AcknowledgeReleases (ADR-1331) that the narrower helpers do not carry.
+func (c *Client) RollbackWithRequest(ctx context.Context, slug string, req RollbackRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", req, &out, "")
+}
+
 // RollbackToWithRule (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
 // is the variant of RollbackTo that ALSO stamps the
 // deployment_audit row's alert_rule_id column with the supplied

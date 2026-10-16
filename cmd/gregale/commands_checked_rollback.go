@@ -40,6 +40,9 @@ func pollRollbackOperation(ctx context.Context, client rollbackOperationClient, 
 		}
 		last = got
 		if got.Status == "failed" {
+			if got.Error != "" {
+				return last, fmt.Errorf("rollback failed: %s: %s", got.Code, got.Error)
+			}
 			return last, fmt.Errorf("rollback failed: %s", got.Code)
 		}
 		if got.Status == "complete" {
@@ -60,7 +63,7 @@ func pollRollbackOperation(ctx context.Context, client rollbackOperationClient, 
 		}
 	}
 }
-func cmdCheckedRollback(slug, target, current, reason string, wait bool, timeout, interval time.Duration) int {
+func cmdCheckedRollback(slug, target, current, reason string, acknowledgeReleases, wait bool, timeout, interval time.Duration) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -84,7 +87,13 @@ func cmdCheckedRollback(slug, target, current, reason string, wait bool, timeout
 	if sameBindingDeployment(targetID, currentID) {
 		return printErr("Invalid rollback", fmt.Errorf("target and expected current deployment must differ"))
 	}
-	response, err := client.CheckedRollback(ctx, slug, api.RollbackRequest{TargetDeploymentID: &targetID, ExpectedCurrentDeploymentID: &currentID, Reason: reason})
+	request := api.RollbackRequest{TargetDeploymentID: &targetID, ExpectedCurrentDeploymentID: &currentID, Reason: reason}
+	response, err := sendRollbackOverReleases(slug, request, acknowledgeReleases, func(req api.RollbackRequest) (api.DeploymentResponse, error) {
+		return client.CheckedRollback(ctx, slug, req)
+	})
+	if errors.Is(err, errRollbackDeclined) {
+		return 1
+	}
 	if err != nil {
 		return checkedRollbackCLIError(signalCtx, "Rollback request failed", err)
 	}

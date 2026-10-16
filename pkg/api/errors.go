@@ -85,6 +85,10 @@ type Problem struct {
 	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
 	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
 	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
+	// CrossedReleases and RestorePoints explain rollback_crosses_release
+	// (ADR-1331).
+	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
+	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -869,6 +873,11 @@ const (
 	// state, but its immutable cold-boot artifact or attestation cannot be
 	// verified. The current serving deployment is left untouched.
 	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
+	// CodeRollbackCrossesRelease means release commands ran after the
+	// rollback target last served (ADR-1331). Rollback does not undo them,
+	// so the caller must acknowledge them; the problem lists them with
+	// restore points for managed PostgreSQL databases.
+	CodeRollbackCrossesRelease = "rollback_crosses_release"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three

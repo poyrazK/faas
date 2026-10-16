@@ -7025,7 +7025,8 @@ BEGIN
             'rollout_state', 'complete',
             'traffic_percent', NEW.traffic_percent,
             'completed_at', COALESCE(NEW.rollout_completed_at, now())
-        );
+        ) || jsonb_strip_nulls(jsonb_build_object('decision',
+            CASE WHEN NEW.rollout_decision->>'kind' = 'advance' THEN NEW.rollout_decision END));
     ELSIF NEW.rollout_state = 'aborted' AND OLD.status = 'live'
           AND NEW.status IN ('live', 'superseded') THEN
         event_name := 'rollout.aborted';
@@ -7036,7 +7037,8 @@ BEGIN
             'traffic_percent', NEW.traffic_percent,
             'reason', COALESCE(NULLIF(NEW.rollout_aborted_reason, ''), 'rollout aborted'),
             'aborted_at', COALESCE(NEW.rollout_aborted_at, now())
-        );
+        ) || jsonb_strip_nulls(jsonb_build_object('decision',
+            CASE WHEN NEW.rollout_decision->>'kind' = 'abort' THEN NEW.rollout_decision END));
     ELSE
         RETURN NEW;
     END IF;
@@ -24705,6 +24707,36 @@ CREATE TABLE public.deployment_rollback_operations (
     CONSTRAINT deployment_rollback_operations_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 16384))),
     CONSTRAINT deployment_rollback_operations_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_rollback_operations_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'ready'::text, 'blocked'::text, 'routing'::text, 'complete'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: deployment_rollbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_rollbacks (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    target_deployment_id uuid NOT NULL,
+    from_deployment_id uuid,
+    trigger text NOT NULL,
+    status text NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    recovery_ms bigint,
+    audit_id bigint,
+    error_code text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT deployment_rollbacks_check CHECK (((status = 'preparing'::text) = (finished_at IS NULL))),
+    CONSTRAINT deployment_rollbacks_check1 CHECK (((status <> 'complete'::text) OR ((recovery_ms IS NOT NULL) AND (audit_id IS NOT NULL)))),
+    CONSTRAINT deployment_rollbacks_error_check CHECK ((octet_length(error) <= 1024)),
+    CONSTRAINT deployment_rollbacks_error_code_check CHECK ((octet_length(error_code) <= 64)),
+    CONSTRAINT deployment_rollbacks_recovery_ms_check CHECK (((recovery_ms IS NULL) OR (recovery_ms >= 0))),
+    CONSTRAINT deployment_rollbacks_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT deployment_rollbacks_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'complete'::text, 'failed'::text]))),
+    CONSTRAINT deployment_rollbacks_trigger_check CHECK ((trigger = ANY (ARRAY['manual'::text, 'auto_5xx'::text, 'alert'::text])))
 );
 
 

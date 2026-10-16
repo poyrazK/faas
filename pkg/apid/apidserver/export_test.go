@@ -242,6 +242,7 @@ var PlanCacheRoot = &planCacheRoot
 var PlanCacheRootErr = &planCacheRootErr
 var PlanCacheRootOnce = &planCacheRootOnce
 var PlanSourceCache = &planSourceCache
+var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
@@ -566,6 +567,7 @@ var SeedSharedOrgWithOwner = seedSharedOrgWithOwner
 var SeedTenantSurface = seedTenantSurface
 var SelectDebugReplayMirrorRule = selectDebugReplayMirrorRule
 var SetS3Flag = setS3Flag
+var SeedCanaryFixture = seedCanaryFixture
 var Setup = setup
 var SetupAlerts = setupAlerts
 var SetupChangePlan = setupChangePlan
@@ -850,7 +852,10 @@ func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 func (r *server) ManagedPostgresCutovers() **managedpostgres.CutoverService {
 	return &r.managedPostgresCutovers
 }
-func (r *server) Notif() *Notifier                        { return &r.notif }
+func (r *server) Notif() *Notifier { return &r.notif }
+func (r *server) DrainRouteProbes(ctx context.Context) error {
+	return r.drainRouteProbes(ctx)
+}
 func (r *server) Object() *object.Service                 { return &r.object }
 func (r *server) ObjectStorage() **objectstorage.Registry { return &r.objectStorage }
 func (r *server) Operation() *operation.Service           { return &r.operation }

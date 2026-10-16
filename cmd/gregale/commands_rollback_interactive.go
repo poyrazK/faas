@@ -109,5 +109,5 @@ func cmdRollbackInteractive(slug string, timeout, interval time.Duration) int {
 	}
 	// UUIDs pin both releases even if a new deployment starts while the user
 	// reviews the summary. The checked endpoint rejects a changed current pair.
-	return cmdCheckedRollback(slug, target.ID, current.ID, reason, true, timeout, interval)
+	return cmdCheckedRollback(slug, target.ID, current.ID, reason, false, true, timeout, interval)
 }
