@@ -465,6 +465,19 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
+.PHONY: test-function-background-native
+test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-1347)
+	@test "$$(id -u)" = 0 || (echo "requires root on the isolated native KVM acceptance host" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm missing; native qualification cannot skip" >&2; exit 1)
+	@test -r /etc/faas/builder-acceptance-host || (echo "requires the designated isolated acceptance host" >&2; exit 1)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/guest-init" ./guest/init; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node22-runner" ./guest/runners/node22; \
+	  FAAS_GUEST_INIT="$$helper_dir/guest-init" FAAS_E2E_FUNCTION_RUNNER_NODE22="$$helper_dir/node22-runner" \
+	  FAAS_REQUIRE_FUNCTION_BACKGROUND_METAL=1 $(GO) test -tags metal,function_background_native \
+	  -race -count=1 -v -run '^TestFunctionBackgroundMetal$$' -timeout 45m ./cmd/e2e
+	$(MAKE) leakcheck
+
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
 	@test -c /dev/kvm || (echo "/dev/kvm missing; run on the native KVM acceptance host" >&2; exit 1)

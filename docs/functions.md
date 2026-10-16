@@ -303,20 +303,24 @@ Configured function lifecycle endpoints can inspect `ctx.lifecycle_hook`,
 which is `before_checkpoint`, `after_restore` or an empty string. The runner
 derives it from guest-init's loopback socket and marker; event headers and
 request bodies cannot set it. Match both this context and your configured
-hook path before calling a resource hook. A hook runs in one worker, so it
-cannot prove that pools in every worker have drained. The single HTTP-process
-PostgreSQL starter remains the reference for checkpoint pool ownership.
+hook path before calling a resource hook. Production function hooks run in one
+worker, so they cannot prove that pools in every worker have drained. The
+single HTTP-process PostgreSQL starter remains the reference for checkpoint
+pool ownership. A dedicated native acceptance build now broadcasts callbacks
+to every loaded Node interpreter; its VM/SQL qualification remains pending.
 
 The production completion fence covers the handler and its response stream.
 Await work that must finish with the invocation. A negotiated Node background
 completion protocol now has portable coverage for real `ctx.waitUntil()`
 promises, early HTTP response completion, task limits and cancellation cleanup.
-Production runners keep that protocol disabled until acknowledged VM lifetime
-registration and VM-wide checkpoint protection are implemented and qualified.
+Acknowledged VM registration and VM-wide checkpoint admission are implemented
+behind a native acceptance build gate. Production runners keep the protocol
+disabled until native lifecycle, failure recovery and SQL pool draining are qualified.
 The default Node `waitUntil` scaffold therefore still provides no instance
 lifetime guarantee. Use a durable queue for work that must survive worker or
 VM replacement; bounded post-response work does not provide durable execution.
 
 See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md),
-[ADR-1346](adr/1346-function-background-completion-protocol.md)
+[ADR-1346](adr/1346-function-background-completion-protocol.md),
+[ADR-1347](adr/1347-function-vm-execution-lifetime.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

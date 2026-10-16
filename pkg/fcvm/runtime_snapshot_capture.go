@@ -32,6 +32,27 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 	if err != nil {
 		return nil, nil, SnapshotSpec{}, nil, err
 	}
+	m.mu.Lock()
+	busy := functionExecutionBusy(inst)
+	if !busy {
+		flight.functionHookAdmission = spec.BeforeCheckpoint
+	}
+	m.mu.Unlock()
+	if busy {
+		m.finishInstanceFlight(instance, flight)
+		return nil, nil, SnapshotSpec{}, nil, ErrInstanceBusy
+	}
+	// A qualified idle park first freezes the VM to close admission before
+	// schedd changes its state or chooses a reuse/destroy shortcut. Resume
+	// only after this capture flight owns the gate; no ordinary Begin can
+	// enter between the freeze and the final capture pause.
+	if m.functionActivity != nil && (inst.Runtime == "node22" || inst.Runtime == "node24") && m.isFrozen(inst) {
+		if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+			m.finishInstanceFlight(instance, flight)
+			return nil, nil, SnapshotSpec{}, nil, err
+		}
+		m.clearFrozen(inst)
+	}
 	if err = m.checkLiveAdmission(ctx, inst); err == nil {
 		var captured *Instance
 		captured, spec, err = m.snapshotInstance(instance, spec)

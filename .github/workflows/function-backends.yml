@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - 'guest/runners/**'
+      - 'guest/init/**'
+      - 'pkg/functionlifetime/**'
+      - 'pkg/fcvm/**'
+      - 'pkg/sched/**'
+      - 'pkg/api/limits.go'
+      - 'cmd/vmmd/**'
       - 'pkg/rootfs/**'
       - 'sdk/node/src/postgres-pool-runtime.ts'
       - 'sdk/node/test/postgres-pool*'
@@ -101,6 +107,15 @@ jobs:
         run: |
           umask 022
           go test -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
+      - name: execution ownership and checkpoint admission race checks
+        env:
+          DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/function-sql/ca.pem
+          FAAS_TEST_FUNCTION_POSTGRES: '1'
+        run: |
+          umask 022
+          go test -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
+          go test -race ./pkg/fcvm ./pkg/sched -run '^TestFunctionExecution' -count=1 -timeout=3m
       - name: remove fixture private key
         if: always()
         run: rm -f "$RUNNER_TEMP/function-sql/server.key"

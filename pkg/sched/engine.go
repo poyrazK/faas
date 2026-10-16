@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -7554,7 +7555,7 @@ func (e *Engine) snapshotAndParkPrime(ctx context.Context, ins state.Instance) e
 	return e.snapshotAndParkMode(ctx, ins, false)
 }
 
-func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) error {
+func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) (retErr error) {
 	if barrier, ok := e.store.(state.ExclusiveSnapshotStore); ok {
 		if err := barrier.BeginExclusiveSnapshot(ctx, ins.ID); err != nil {
 			return fmt.Errorf("sched: park: exclusive operation owns or is capturing this instance: %w", err)
@@ -7671,6 +7672,18 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	if err != nil {
 		return fmt.Errorf("sched: park: load deployment app shape: %w", err)
 	}
+	frozenFunction := functionlifetime.NativeQualificationBuild && app.Type == "function" && (app.Runtime == "node22" || app.Runtime == "node24")
+	if frozenFunction {
+		undoFreeze, err := e.freezeFunctionForPark(ctx, ins)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if retErr != nil {
+				undoFreeze()
+			}
+		}()
+	}
 	if app.RAMMB != ins.RAMMB {
 		e.log.Info("sched: park: discard instance after RAM change",
 			"instance", ins.ID,
@@ -7741,7 +7754,11 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// already Destroyed the VM and transitioned the row to STOPPED
 	// (the state machine forbids PARKED→STOPPED, so the warm
 	// failure must land BEFORE the PARKED transition).
-	warmInfo, warmErr := e.captureWarmSnapshotLocked(ctx, ins, app)
+	var warmInfo SnapshotBytes
+	var warmErr error
+	if !frozenFunction {
+		warmInfo, warmErr = e.captureWarmSnapshotLocked(ctx, ins, app)
+	}
 	if warmErr != nil {
 		// Init blob on disk is orphaned — the next wake cold-boots
 		// (ADR-005) and PR C's GC sweep evicts the orphaned init row.
@@ -8036,6 +8053,9 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	b, err := e.captureSnapshotWithStandards(warmCtx, ins, "", warmMemKey, warmVMStateStorageKey, false, "warm")
 	warmCancel()
 	if err != nil {
+		if functionExecutionBusyProblem(err) {
+			return SnapshotBytes{}, err
+		}
 		// Warm capture failed. The VM may be in a wedged state
 		// (paused — vmmd did the pause but the snapshot RPC
 		// failed before resume). Destroy + release + STOPPED so

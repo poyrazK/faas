@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 )
 
 // TestDaemonBuildTagsMatchesTestBinary — the harness must build its daemons
@@ -25,5 +27,8 @@ func TestDaemonBuildTagsMatchesTestBinary(t *testing.T) {
 		t.Fatalf("metal build tag = %v but daemonBuildTags = %q; the daemons "+
 			"would be built with different capabilities than the tests",
 			metalBuild, daemonBuildTags)
+	}
+	if functionlifetime.NativeQualificationBuild != slices.Contains(strings.Split(daemonBuildTags, ","), "function_background_native") {
+		t.Fatalf("function lifetime build tag differs from daemonBuildTags=%q", daemonBuildTags)
 	}
 }

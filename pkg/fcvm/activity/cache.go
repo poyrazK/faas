@@ -13,8 +13,9 @@ import (
 // ActivityTracker. Stamped on every Begin; never reset by End
 // (only Forget does that).
 type instanceState struct {
-	inflight int64
-	lastAt   time.Time
+	inflight   int64
+	executions int64
+	lastAt     time.Time
 	// total is the monotonic number of ForwardHTTP requests observed
 	// for this instance since the tracker was created. Keeping this
 	// beside inflight makes the scheduler's scale signal local to the
@@ -86,7 +87,7 @@ func (a *ActivityTracker) End(instanceID string) {
 	}
 	if s.inflight > 0 {
 		s.inflight--
-		if s.inflight == 0 {
+		if s.inflight == 0 && s.executions == 0 {
 			s.quietAt = a.now()
 		}
 	}
@@ -104,7 +105,7 @@ func (a *ActivityTracker) Quiet(instanceID string) (inflight int64, since time.T
 	if !ok {
 		return 0, time.Time{}, false
 	}
-	return s.inflight, s.quietAt, true
+	return max(s.inflight, s.executions), s.quietAt, true
 }
 
 // Inflight returns the current in-flight count and a
@@ -117,7 +118,36 @@ func (a *ActivityTracker) Inflight(instanceID string) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return s.inflight, true
+	return max(s.inflight, s.executions), true
+}
+
+// BeginExecution pins execution independently of its HTTP transport. Every
+// qualified function request owns a lease, so max(forwards, executions) avoids
+// double-counting foreground overlap while retaining post-response activity.
+// It never increments the HTTP request counter used by scaling.
+func (a *ActivityTracker) BeginExecution(instance string) {
+	if instance == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s := a.state[instance]
+	if s == nil {
+		s = &instanceState{}
+		a.state[instance] = s
+	}
+	s.executions++
+}
+
+func (a *ActivityTracker) EndExecution(instance string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if s := a.state[instance]; s != nil && s.executions > 0 {
+		s.executions--
+		if s.executions == 0 && s.inflight == 0 {
+			s.quietAt = a.now()
+		}
+	}
 }
 
 // LastAt returns the most-recent Begin moment and a

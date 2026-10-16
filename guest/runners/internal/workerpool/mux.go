@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // A shared worker serves several requests at once (ADR-1342). Its ready
@@ -32,7 +34,7 @@ const (
 )
 
 // cancelAckGrace is how long a shared worker has to acknowledge a cancel.
-var cancelAckGrace = 5 * time.Second
+var cancelAckGrace = api.FunctionCancellationGrace
 
 // requestLineMax bounds one request line sent to a shared worker. The Python
 // adapter's line reader stops at 1 GiB, so a longer line could never be read;

@@ -1,7 +1,8 @@
 # Function backend concurrency acceptance
 
 This guide covers shared-worker cancellation and PostgreSQL integration
-(ADR-1345), plus the Node background-completion foundation (ADR-1346).
+(ADR-1345), the Node background-completion foundation (ADR-1346), and the
+acknowledged VM execution lifetime/checkpoint barrier (ADR-1347).
 Shared-worker concurrency is opt-in and takes effect after redeployment.
 The new background-completion contract is disabled in production runners.
 This guide does not enable production traffic or certify Vercel performance parity.
@@ -12,6 +13,8 @@ Install Go 1.26.9, Node 22+ and Python 3.12+. Run:
 
 ```sh
 go test -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
+go test -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
+go test -race ./pkg/fcvm ./pkg/sched -run '^TestFunctionExecution' -count=1 -timeout=3m
 ```
 
 The cleanup barrier tests drive the generated adapters in real interpreters.
@@ -40,6 +43,8 @@ logs or a committed configuration file. Then run:
 ```sh
 FAAS_TEST_FUNCTION_POSTGRES=1 go test -race ./guest/runners/internal \
   -run '^TestConcurrentFunctionPostgres$' -count=1 -v -timeout=2m
+FAAS_TEST_FUNCTION_POSTGRES=1 go test -race ./pkg/fcvm \
+  -run '^TestFunctionExecutionPostgres$' -count=1 -v -timeout=2m
 ```
 
 The test creates a private database and a restricted SELECT/INSERT role, installs
@@ -67,6 +72,15 @@ server-side disconnected sessions can persist until the statement timeout.
 The lifecycle callbacks in this process test are simulated guest-init calls.
 It does not exercise real snapshot capture, frozen thaw, credential delivery or
 hook broadcast across multiple interpreter processes.
+
+The second SQL test separately combines the real generated adapter with the
+host Manager's execution ledger and a replaced VM boundary. A restricted
+SCRAM role attempts an INSERT over verified TLS behind an independently held
+table lock. Its HTTP response frame must arrive while SQL remains blocked;
+park/freeze must refuse, and Stats must remain occupied. Releasing the lock
+must produce one row, a successful task settlement and execution completion.
+Duplicate completion must not decrement twice. This test does not exercise
+native Firecracker, credential delivery or an actual native SQL restore.
 
 ## Supported native acceptance
 
@@ -111,11 +125,42 @@ excludes guest/kernel/runner overhead and p95 is the largest of eight samples.
 
 Run the [PostgreSQL native gate](managed-postgres-native-acceptance.md)
 separately for the shipped HTTP starter's real checkpoint/restore/thaw evidence.
-It does not qualify function pools spread across several workers. VM-wide
-function pool draining and host-side post-response lifetime accounting remain
-separate targets. The process-local background-completion foundation does not
-satisfy either gate. Before activating it, add acknowledged owner-mediated VM
-registration and test the atomic quiescence boundary across all interpreter
-processes, lost acknowledgements, duplicate terminal events, runner/worker
-death, real capture/restore/thaw and deadline expiry. Native acceptance of this
-revision is pending; this workspace has no `/dev/kvm`.
+It does not qualify function pools spread across several workers. The new
+acknowledged execution lifetime/barrier implementation has portable evidence;
+its native acceptance remains pending.
+
+## Native function execution lifetime gate
+
+Use the same designated, isolated native host, clean reviewed checkout,
+acceptance lock, disposable catalog, kernel and builder base. Run:
+
+```sh
+make leakcheck
+make test-function-background-native
+make leakcheck
+```
+
+This target builds guest-init and the Node 22 runner from source with
+`metal,function_background_native`. The harness propagates that tag to its
+daemons and refuses a prebuilt daemon directory. The test fails on missing
+root, KVM, host designation, native-host detection, staged artifacts, build
+capabilities or enabled SQL; it cannot qualify through a skipped phase.
+Retain output and hashes of all kernel/base/guest/runner/daemon artifacts with
+the source revision, and run leakcheck after a failure too.
+
+`TestFunctionBackgroundMetal` holds work after HTTP completion in three
+different interpreters, verifies host occupancy, and requires freeze, warm
+capture and scheduler park/reuse refusal. A fourth interpreter releases the
+file witness. The gate then requires exactly one mutation per ID, idle freeze
+and thaw callbacks in all four interpreters, a forced terminal capture and a
+real restore with every loaded interpreter visited. File witnesses are not
+PostgreSQL pool-draining evidence.
+
+Before production activation, additionally qualify lost acknowledgements and
+duplicate/late events over real vsock, runner/worker death, watchdog deadlines,
+vmmd restart/recovery and uncertain cleanup on the native host, plus real SQL
+pool draining across interpreters. Portable fault injection covers these
+accounting cases but cannot replace native evidence. Private environment
+qualification restores do not yet expose the new lifetime port. Normal builds
+remain disabled; the special build is an acceptance instrument, not a rollout
+approval. This workspace has no `/dev/kvm` and cannot certify the native gate.

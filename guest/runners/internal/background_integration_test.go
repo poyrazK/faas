@@ -107,7 +107,7 @@ type backgroundFunction struct {
 	events  []BackgroundEvent
 }
 
-func startBackgroundFunction(t *testing.T, plan api.Plan, slots int, h2 bool, source string, timeout time.Duration) *backgroundFunction {
+func startBackgroundFunction(t *testing.T, plan api.Plan, slots int, h2 bool, source string, timeout time.Duration, configure ...func(*ServeConfig)) *backgroundFunction {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -142,6 +142,9 @@ func startBackgroundFunction(t *testing.T, plan api.Plan, slots int, h2 bool, so
 		Executable: node, Args: []string{adapter}, HandlerPath: adapter,
 		Env: []string{"PATH=" + os.Getenv("PATH"), "FAAS_FUNCTION_CONCURRENCY=" + strconv.Itoa(slots), "BACKGROUND_FIXTURE_RELEASE_FILE=" + f.release},
 	}}
+	for _, apply := range configure {
+		apply(&cfg)
+	}
 	f.cfg = cfg
 	srv, ln, err := ListenAndServeLoopback(H2CListenerConfig{Addr: "127.0.0.1:0", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { Serve(w, r, cfg) })})
 	if err != nil {

@@ -2,4 +2,4 @@
 
 package e2etest
 
-const daemonBuildTags = "metal,managed_postgres_native"
+const daemonBuildTags = "metal,managed_postgres_native" + functionLifetimeDaemonTags

@@ -241,7 +241,8 @@ type pool struct {
 	changed  chan struct{}
 	// generation advances on Recycle; a worker from an older generation is
 	// closed instead of being reused.
-	generation uint64
+	generation   uint64
+	broadcasting bool
 }
 
 func newPool(spec Spec) *pool { return &pool{spec: spec, changed: make(chan struct{})} }
@@ -286,6 +287,16 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 			return nil, err
 		}
 		p.mu.Lock()
+		if p.broadcasting {
+			changed := p.changed
+			p.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-changed:
+				continue
+			}
+		}
 		if w := p.sharedWithRoomLocked(); w != nil {
 			w.active++
 			p.mu.Unlock()

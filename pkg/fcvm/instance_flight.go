@@ -14,9 +14,11 @@ type instanceFlight struct {
 	// parking marks a Park flight: VMM.Snapshot kills Firecracker itself
 	// after the capture, before cleanup registers the teardown, so that
 	// exit is expected and must not be relayed as a liveness failure.
-	parking bool // guarded by Manager.mu
-	cancel  context.CancelFunc
-	done    chan struct{}
+	parking                    bool // guarded by Manager.mu
+	functionHookAdmission      bool // checkpoint-only hooks; sealed at final pause
+	functionExecutionAdmission bool // short registration/resume flight
+	cancel                     context.CancelFunc
+	done                       chan struct{}
 	// Recovery ignores an expired RPC but is cancelled by Destroy and finish.
 	recoveryCtx context.Context
 }
@@ -122,7 +124,7 @@ func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance strin
 	}
 	if _, ok := m.instanceFlights[instance]; ok {
 		flight.cancel()
-		return nil, nil, nil, fmt.Errorf("instance operation already in progress")
+		return nil, nil, nil, fmt.Errorf("instance operation already in progress: %w", ErrInstanceBusy)
 	}
 	if m.instanceFlights == nil {
 		m.instanceFlights = make(map[string]*instanceFlight)

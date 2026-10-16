@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 )
 
 // HandlerTimeout is the least time one invocation gets, a streamed response
@@ -45,8 +46,9 @@ type Envelope struct {
 	TailPipePath string `json:"tail_pipe_path,omitempty"`
 	// LifecycleHook is derived from the socket peer and guest-init's marker,
 	// never from the request body or a forwarded client address.
-	LifecycleHook string            `json:"lifecycle_hook,omitempty"`
-	Background    *BackgroundPolicy `json:"background,omitempty"`
+	LifecycleHook    string            `json:"lifecycle_hook,omitempty"`
+	Background       *BackgroundPolicy `json:"background,omitempty"`
+	ForbidBackground bool              `json:"forbid_background,omitempty"`
 }
 
 // RequiresCompletion participates in the worker-pool capability negotiation.
@@ -90,7 +92,9 @@ type ServeConfig struct {
 	Signal       *RunnerSignal
 	// Background is shared trusted wiring. Production runners leave it nil
 	// until VM registration and checkpoint protection are qualified.
-	Background *BackgroundRuntime
+	Background     *BackgroundRuntime
+	Execution      *ExecutionRuntime
+	executionLease *functionlifetime.Lease
 }
 
 // Serve runs one HTTP request through the handler. A complete response is
@@ -99,11 +103,15 @@ type ServeConfig struct {
 // status is sent, a failure can only abort the response, so the client sees a
 // truncated body rather than a clean end.
 func Serve(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
+	if cfg.Execution != nil {
+		cfg.Execution.serve(w, r, cfg)
+		return
+	}
 	env := requestEnvelope(r, cfg)
 	ctx, cancel := context.WithTimeout(r.Context(), invocationTimeout(r.Header))
 	defer cancel()
 	started := time.Now()
-	inv, err := invoke(ctx, cfg.Spec, env, cfg.Background)
+	inv, err := invokeWithLease(ctx, cfg, env)
 	if err != nil {
 		ObserveGuestExecution(r.Context(), cfg.Runtime, started, http.StatusInternalServerError, err).WithProcessUsage(inv.usage).ApplyResponseHeaders(w.Header())
 		log.Printf("%s runner: handler error: %v", cfg.Runtime, err)
@@ -195,6 +203,7 @@ type invocation struct {
 	background  *invocationBackground
 	next        func() ([]byte, error)
 	nextContext func(context.Context) ([]byte, error)
+	released    <-chan struct{}
 	close       func(healthy bool)
 }
 
@@ -206,7 +215,7 @@ func invoke(ctx context.Context, spec workerpool.Spec, env Envelope, background 
 		if err != nil {
 			return &invocation{}, err
 		}
-		inv := &invocation{next: lines.Next, nextContext: lines.NextContext, close: lines.Close}
+		inv := &invocation{next: lines.Next, nextContext: lines.NextContext, close: lines.Close, released: lines.Released()}
 		if background != nil {
 			inv.trackBackground(ctx, lines, background, env.Headers[api.InvocationIDHeader])
 		}
@@ -214,17 +223,17 @@ func invoke(ctx context.Context, spec workerpool.Spec, env Envelope, background 
 		if err != nil {
 			inv.close(false)
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return &invocation{}, ctxErr
+				return inv, ctxErr
 			}
-			return &invocation{}, fmt.Errorf("workerpool: read response: %w", err)
+			return inv, fmt.Errorf("workerpool: read response: %w", err)
 		}
 		if err := json.Unmarshal(line, &inv.first); err != nil {
 			inv.close(false)
-			return &invocation{}, fmt.Errorf("workerpool: decode response: %w", err)
+			return inv, fmt.Errorf("workerpool: decode response: %w", err)
 		}
 		if inv.first.Frame != "" && inv.first.Frame != FrameHead {
 			inv.close(false)
-			return &invocation{}, fmt.Errorf("workerpool: decode response: unexpected first frame %q", inv.first.Frame)
+			return inv, fmt.Errorf("workerpool: decode response: unexpected first frame %q", inv.first.Frame)
 		}
 		return inv, nil
 	}

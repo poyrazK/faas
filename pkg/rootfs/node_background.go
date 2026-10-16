@@ -5,6 +5,7 @@ package rootfs
 // invocation slot. Only actual settlement permits execution completion.
 const nodeFunctionBackground = `
 function setupBackground(env, out) {
+  out.forbidBackground = env.forbid_background === true;
   if (env.background === undefined) return;
   const { timeout_ms: timeout, max_tasks: maxTasks } = env.background || {};
   if (!Number.isSafeInteger(timeout) || timeout <= 0 ||
@@ -15,6 +16,10 @@ function setupBackground(env, out) {
 }
 
 function registerBackground(out, value) {
+  if (out.forbidBackground) {
+    Promise.resolve(value).catch(() => {});
+    throw new Error("waitUntil is unavailable in lifecycle hooks; await cleanup");
+  }
   // Preserve the legacy adapter surface when no completion contract was
   // negotiated. This scaffold still carries no post-response guarantee.
   if (!out.background) {

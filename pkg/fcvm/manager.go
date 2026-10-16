@@ -26,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/imagechain"
@@ -670,6 +671,9 @@ type Instance struct {
 	// so the Manager is the single owner of the in-memory
 	// copy.
 	TailCount int
+	// functionExecutions is incarnation-scoped ownership, guarded by Manager.mu.
+	// It is independent of legacy terminal-only tail counters and database rows.
+	functionExecutions *functionExecutionState
 	// tailSecondsAccum (issue #667 / ADR-078) is the in-memory
 	// accumulator of wall-clock seconds spent draining waitUntil
 	// tasks since the previous Sampler tick. Each call to
@@ -1207,8 +1211,10 @@ type Manager struct {
 
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
-	freezeActivity QuietActivity
-	freezeMetrics  *FreezeMetrics
+	freezeActivity   QuietActivity
+	freezeMetrics    *FreezeMetrics
+	functionActivity *activity.ActivityTracker
+	functionStarting map[string]*Instance
 }
 
 type appCPUPolicy struct {
@@ -4280,6 +4286,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	m.waking[req.Instance] = struct{}{}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
+	m.beginFunctionExecutionBoot(lease, req)
 	// Any failure from this point — Plan validation, wire-side
 	// allowlist checks, bringUp, cgroup write — must fully clean up.
 	// Registering the cleanup BEFORE the validation loop is
@@ -5007,6 +5014,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		delete(m.waking, req.Instance)
 		m.live[req.Instance] = inst
+		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
+			inst.functionExecutions = starting.functionExecutions
+			delete(m.functionStarting, req.Instance)
+		}
 		// Issue #470 / PR #470-FU-B: maintain the CID→instance
 		// reverse index so the framework_ready DGRAM receipt path
 		// can resolve the peer CID to a live Instance in O(1)
@@ -5240,6 +5251,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				return WakeColdBoot, fmt.Errorf("wake %s: cannot clean failed restore before cold boot: %w", req.Instance, errors.Join(rErr, killErr))
 			}
 			lease = m.beginProcessAttempt(lease)
+			m.beginFunctionExecutionBoot(lease, req)
 		}
 	}
 

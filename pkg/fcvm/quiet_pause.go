@@ -113,6 +113,9 @@ func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
 		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
 		return false
 	}
+	if functionExecutionBusy(inst) {
+		return false
+	}
 	if _, busy := m.instanceFlights[id]; busy {
 		return false
 	}

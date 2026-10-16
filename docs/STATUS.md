@@ -105,6 +105,28 @@ the [acceptance procedure](ops/function-backend-concurrency-acceptance.md).
 [Portable evidence](ops/evidence/20261016-function-background-completion/REPORT.md)
 records the disabled activation boundary and native prerequisite failures.
 
+## Node VM execution lifetime and checkpoint admission — 2026-10-16
+
+[ADR-1347](adr/1347-function-vm-execution-lifetime.md) adds host-acknowledged,
+incarnation-scoped execution reservations before handler dispatch. HTTP EOF
+does not release them; actual worker completion/cancellation does. Lost replies,
+late messages and runner generation changes retain ownership conservatively.
+Host Stats and idle/freeze/quiet-pause gates observe the reservations. Schedd
+establishes idle admission before snapshot reuse, and capture seals admission
+before pause. Qualified lifecycle callbacks visit every loaded Node interpreter
+and wait for all cleanup fences. Expired ownership retires the original VM
+through existing teardown and schedd notification; vmmd adds no instance-row
+writes. Portable race and TLS/SCRAM SQL evidence is recorded in the
+[report](ops/evidence/20261016-function-vm-lifetime/REPORT.md).
+
+Activation exists only in `metal,function_background_native` acceptance builds;
+normal production builds remain off. A strict native deployed-function gate is
+implemented, but this workspace lacks root/KVM and cannot qualify its execution
+or native leak checks. Native fault injection and SQL pool draining across all
+interpreters remain required before activation. Private environment-qualification
+restores, Python background execution, durable work and performance parity are
+not qualified by these portable checks. No deployment was performed.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -12,6 +13,7 @@ import (
 const (
 	guestReceiverEvents   = "events"
 	guestReceiverIdentity = "workload_identity"
+	guestReceiverFunction = "function_execution"
 )
 
 var guestReceiverFailureKinds = []string{"prepare", "accept", "read", "write", "protocol", "overload", "unknown"}
@@ -35,7 +37,11 @@ func newGuestVsockReceiverHealth(reg prometheus.Registerer) *guestVsockReceiverH
 			Help: "Guest receiver failures by receiver and bounded failure kind.",
 		}, []string{"receiver", "kind"}),
 	}
-	for _, receiver := range []string{guestReceiverEvents, guestReceiverIdentity} {
+	receivers := []string{guestReceiverEvents, guestReceiverIdentity}
+	if functionlifetime.NativeQualificationBuild {
+		receivers = append(receivers, guestReceiverFunction)
+	}
+	for _, receiver := range receivers {
 		sig := &wire.ReadySignal{}
 		sig.Set(false, receiver+" receiver not registered")
 		h.signals[receiver] = sig
@@ -89,6 +95,8 @@ func receiverForGuestVsockPort(port uint32) (string, bool) {
 		return guestReceiverEvents, true
 	case fcvm.VsockWorkloadIdentityHostPort:
 		return guestReceiverIdentity, true
+	case functionlifetime.HostPort:
+		return guestReceiverFunction, functionlifetime.NativeQualificationBuild
 	default:
 		return "", false
 	}

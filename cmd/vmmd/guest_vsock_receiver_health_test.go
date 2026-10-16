@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -65,5 +66,23 @@ func TestGuestVsockReceiverHealthReadinessAndBoundedMetrics(t *testing.T) {
 				t.Fatalf("metric %s has unbounded labels: %+v", family.GetName(), metric.Label)
 			}
 		}
+	}
+}
+
+func TestFunctionExecutionReceiverReadinessQualificationGate(t *testing.T) {
+	health := newGuestVsockReceiverHealth(prometheus.NewRegistry())
+	if !functionlifetime.NativeQualificationBuild {
+		if health.Signal(guestReceiverFunction) != nil {
+			t.Fatal("ordinary builds require an inactive function receiver")
+		}
+		return
+	}
+	health.Observe(functionlifetime.HostPort, "", nil)
+	if ready, _ := health.Signal(guestReceiverFunction).Report(); !ready {
+		t.Fatal("acknowledged receiver registration is not ready")
+	}
+	health.Observe(functionlifetime.HostPort, "prepare", errors.New("listener unavailable"))
+	if ready, _ := health.Signal(guestReceiverFunction).Report(); ready {
+		t.Fatal("missing ownership transport left native receiver ready")
 	}
 }

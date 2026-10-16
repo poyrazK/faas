@@ -202,6 +202,9 @@ func (m *Manager) announceFreeze(inst *Instance) (gate chan struct{}, frozen boo
 	if inst.Frozen {
 		return nil, true, nil
 	}
+	if functionExecutionBusy(inst) {
+		return nil, false, ErrInstanceBusy
+	}
 	if reason := freezeRefusal(inst); reason != "" {
 		return nil, false, fmt.Errorf("%w: %s", ErrNotFreezable, reason)
 	}
