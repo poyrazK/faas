@@ -221,18 +221,16 @@ func cmdTestCampaignControl(mode string, args []string) int {
 		}
 		return 0
 	}
-	release, err := acquireTestCampaignHandoff(resolver)
+	release, err := acquireTestCampaignHandoffFor(resolver, *directory, testCampaignJSONHash(plan), "cleanup", false)
 	if err != nil {
 		return printErr("Handoff unavailable", err)
 	}
 	defer release()
-	lockPath := filepath.Join(*directory, "runner.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	releaseRunner, err := acquireTestCampaignRunnerLock(*directory, testCampaignJSONHash(plan))
 	if err != nil {
 		return printErr("Campaign must be inactive before cleanup", err)
 	}
-	_ = lock.Close()
-	defer func() { _ = os.Remove(lockPath) }()
+	defer releaseRunner()
 	for _, name := range []string{testCampaignRecoverySealName, testCampaignHandoffName} {
 		if _, err := os.Lstat(filepath.Join(*directory, name)); !os.IsNotExist(err) {
 			return printErr("Campaign already sealed", errors.New("cleanup must precede reconciliation or handoff"))

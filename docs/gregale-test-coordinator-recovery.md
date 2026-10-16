@@ -44,3 +44,40 @@ The portable recovery gate includes coordinator SIGKILL acceptance cases with
 a surviving worker and with a killed worker. It verifies that a live process
 blocks recovery, read-only inspection preserves the lock, confirmed termination
 permits release, and uncertain work is never implicitly repeated.
+
+## Recovering shared handoff claim locks
+
+Imported runs, cleanup, reconciliation, re-export and runner-lock recovery now
+persist a claim-lock owner identity and operation target before mutation. To
+inspect a claim and every registered work directory together:
+
+```sh
+gregale test policy recover-claim --handoff recipient/bundle-index.json
+```
+
+Inspection is read-only. Add `--execute` to release exclusion only after the
+claim owner, all recorded runner owners and all their workers are verified
+terminated. A live, stopped, foreign-host, legacy or incomplete identity blocks
+release. The command uses the same Linux process-domain verifier as
+`recover-lock`; there is no force option.
+
+While the shared claim lock still excludes other recipients, recovery durably
+halts mutable checkpoints, marks running batches uncertain, and removes their
+verified stale runner locks. It removes the shared claim lock last. Checkpoints
+already sealed for reconciliation or frozen for transfer retain their exact
+bytes. Claim contents, recipient nonce, registered work, transfer status,
+receipts, journals and attempted cost reservations are preserved. Recovery
+cannot activate a second recipient or return execution authority to a
+transferred owner. A frozen export can be republished through the normal export
+command after lock recovery.
+
+A cleanup process can die after the platform has accepted a deletion. Lock
+recovery does not repeat deletion. The normal journal cleanup command rechecks
+session identity and absence before deciding whether another DELETE is needed.
+A run interrupted before its final report remains incomplete after cleanup;
+reconcile its evidence before creating a continuation.
+
+The recovery gate includes actual owner-kill cases during an imported run,
+cleanup blocked at the deletion API, and re-export blocked after publishing its
+frozen bundle. It also checks legacy/foreign owners, nonce mismatches, missing
+worker identities, and live runners in other registered work directories.

@@ -270,23 +270,21 @@ func cmdTestCampaignBundleExport(args []string) int {
 	} else if !os.IsNotExist(err) {
 		return printErr("Invalid imported source", err)
 	}
-	releaseHandoff, claimErr := acquireTestCampaignHandoff(resolver, true)
+	var plan testCampaignPolicyPlan
+	if err := readTestCampaignJSON(*planPath, &plan); err != nil {
+		return printErr("Invalid plan", err)
+	}
+	releaseHandoff, claimErr := acquireTestCampaignHandoffFor(resolver, *directory, testCampaignJSONHash(plan), "export", true)
 	if claimErr != nil {
 		return printErr("Handoff claim unavailable", claimErr)
 	}
 	defer releaseHandoff()
-	lockPath := filepath.Join(*directory, "runner.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	releaseRunner, err := acquireTestCampaignRunnerLock(*directory, testCampaignJSONHash(plan))
 	if err != nil {
 		return printErr("Campaign directory is locked", err)
 	}
-	_ = lock.Close()
-	defer func() { _ = os.Remove(lockPath) }()
-	var plan testCampaignPolicyPlan
+	defer releaseRunner()
 	var checkpoint testCampaignCheckpoint
-	if err := readTestCampaignJSON(*planPath, &plan); err != nil {
-		return printErr("Invalid plan", err)
-	}
 	if err := readTestCampaignJSON(filepath.Join(*directory, "checkpoint.json"), &checkpoint); err != nil {
 		return printErr("Invalid checkpoint", err)
 	}

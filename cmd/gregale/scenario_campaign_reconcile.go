@@ -81,18 +81,16 @@ func cmdTestCampaignReconcile(args []string) int {
 	if err := checkTestCampaignBundleWork(*directory, resolver, true); err != nil {
 		return printErr("Invalid campaign ownership", err)
 	}
-	releaseHandoff, claimErr := acquireTestCampaignHandoff(resolver)
+	releaseHandoff, claimErr := acquireTestCampaignHandoffFor(resolver, *directory, testCampaignJSONHash(plan), "reconcile", false)
 	if claimErr != nil {
 		return printErr("Handoff claim unavailable", claimErr)
 	}
 	defer releaseHandoff()
-	lockPath := filepath.Join(*directory, "runner.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	releaseRunner, err := acquireTestCampaignRunnerLock(*directory, testCampaignJSONHash(plan))
 	if err != nil {
 		return printErr("Campaign directory is locked", err)
 	}
-	_ = lock.Close()
-	defer func() { _ = os.Remove(lockPath) }()
+	defer releaseRunner()
 	var checkpoint testCampaignCheckpoint
 	if err := readTestCampaignJSON(filepath.Join(*directory, "checkpoint.json"), &checkpoint); err != nil {
 		return printErr("Invalid checkpoint", err)

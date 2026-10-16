@@ -23,6 +23,8 @@ type campaignRecoveryAcceptanceAPI struct {
 	sessions               map[string]string
 	reads, deletes         int
 	failLookup, failDelete bool
+	deleteStarted          chan struct{}
+	deleteContinue         chan struct{}
 }
 
 func newCampaignRecoveryAcceptanceAPI(t *testing.T) *campaignRecoveryAcceptanceAPI {
@@ -58,6 +60,11 @@ func newCampaignRecoveryAcceptanceAPI(t *testing.T) *campaignRecoveryAcceptanceA
 			response.App.ID = id
 			_ = json.NewEncoder(w).Encode(response)
 		case http.MethodDelete:
+			if stub.deleteStarted != nil {
+				close(stub.deleteStarted)
+				stub.deleteStarted = nil
+				<-stub.deleteContinue
+			}
 			stub.deletes++
 			if stub.failDelete {
 				w.WriteHeader(http.StatusServiceUnavailable)

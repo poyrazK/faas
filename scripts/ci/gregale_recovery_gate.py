@@ -25,6 +25,8 @@ REQUIRED = {
     "TestCampaignRecoveryProcessInterruption",
     "TestCampaignRecoveryCoordinatorCrash",
     "TestCampaignRecoveryProcessIdentityGuards",
+    "TestCampaignRecoveryClaimCrash",
+    "TestCampaignRecoveryClaimGuards",
 }
 GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
 

@@ -576,13 +576,7 @@ func acquireTestCampaignHandoff(resolver *testCampaignBundleResolver, allowTrans
 	if err := resolver.requireClaim(allow); err != nil {
 		return nil, err
 	}
-	lockPath := resolver.Index.ClaimPath + ".lock"
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, errors.New("handoff ownership is busy or its claim lock is stale")
-	}
-	_ = file.Close()
-	return func() { _ = os.Remove(lockPath) }, nil
+	return acquireTestCampaignHandoffFor(resolver, "", "", "inspection", allow)
 }
 func registerTestCampaignHandoffWork(resolver *testCampaignBundleResolver, planHash, directory, side, revision string) error {
 	if resolver == nil {

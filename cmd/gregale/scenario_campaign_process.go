@@ -195,19 +195,41 @@ func inspectTestCampaignRunnerLock(directory string, plan testCampaignPolicyPlan
 		result.Blockers = append(result.Blockers, "Runner lock does not contain identities bound to this plan.")
 		return result, nil
 	}
-	result.Coordinator.PID = lock.Coordinator.PID
-	result.Coordinator.Status, result.Coordinator.Reason = probeTestCampaignProcess(lock.Coordinator)
-	if result.Coordinator.Status != "terminated" {
-		result.Blockers = append(result.Blockers, "Coordinator termination is not verified.")
-	}
 	allowed := map[string]bool{}
 	for _, batch := range plan.Batches {
 		if batch.Side == cp.Side {
 			allowed[batch.ID] = true
 		}
 	}
-	for id, saved := range cp.Batches {
-		if !allowed[id] || (saved.Status != "running" && saved.Status != "uncertain" && saved.Status != "done") {
+	for id := range cp.Batches {
+		if !allowed[id] {
+			return result, errors.New("checkpoint contains unknown batch")
+		}
+	}
+	return inspectTestCampaignRunnerLockBound(directory, testCampaignJSONHash(plan), cp, false)
+}
+
+func inspectTestCampaignRunnerLockBound(directory, planHash string, cp testCampaignCheckpoint, allowFrozen bool) (testCampaignLockAssessment, error) {
+	result := testCampaignLockAssessment{SchemaVersion: 1, Workers: []testCampaignProcessStatus{}, Blockers: []string{}, Coordinator: testCampaignProcessStatus{Status: "unverifiable"}, Checkpoint: testCampaignJSONHash(cp)}
+	var lock testCampaignRunnerLock
+	if err := readTestCampaignJSON(filepath.Join(directory, "runner.lock"), &lock); err != nil {
+		return result, err
+	}
+	if err := validateTestCampaignRunnerLock(lock); err != nil || lock.PlanSHA256 != planHash {
+		return result, errors.New("runner binding changed")
+	}
+	result.LockSHA256 = testCampaignJSONHash(lock)
+	result.Coordinator.PID = lock.Coordinator.PID
+	result.Coordinator.Status, result.Coordinator.Reason = probeTestCampaignProcess(lock.Coordinator)
+	if result.Coordinator.Status != "terminated" {
+		result.Blockers = append(result.Blockers, "Coordinator termination is not verified.")
+	}
+	allowed := map[string]bool{}
+	for id := range cp.Batches {
+		allowed[id] = true
+	}
+	for _, saved := range cp.Batches {
+		if saved.Status != "running" && saved.Status != "uncertain" && saved.Status != "done" {
 			return result, errors.New("checkpoint contains unknown batch or state")
 		}
 	}
@@ -262,7 +284,7 @@ func inspectTestCampaignRunnerLock(directory string, plan testCampaignPolicyPlan
 		result.Workers = append(result.Workers, status)
 	}
 	for _, name := range []string{testCampaignRecoverySealName, testCampaignHandoffName} {
-		if _, err := os.Lstat(filepath.Join(directory, name)); !os.IsNotExist(err) {
+		if _, err := os.Lstat(filepath.Join(directory, name)); !allowFrozen && !os.IsNotExist(err) {
 			result.Blockers = append(result.Blockers, "Campaign is sealed, transferred, or its ownership cannot be inspected.")
 		}
 	}
@@ -378,7 +400,7 @@ func cmdTestCampaignRecoverLock(args []string) int {
 		if err := resolver.requireActive(); err != nil {
 			return printErr("Inactive handoff", err)
 		}
-		release, claimErr := acquireTestCampaignHandoff(resolver)
+		release, claimErr := acquireTestCampaignHandoffFor(resolver, *directory, testCampaignJSONHash(plan), "recover-runner", false)
 		if claimErr != nil {
 			return printErr("Handoff unavailable", claimErr)
 		}

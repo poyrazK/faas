@@ -293,7 +293,7 @@ func cmdTestCampaignRun(args []string) int {
 	if err := checkTestCampaignBundleWork(*directory, resolver, true); err != nil {
 		return printErr("Invalid campaign ownership", err)
 	}
-	releaseHandoff, claimErr := acquireTestCampaignHandoff(resolver)
+	releaseHandoff, claimErr := acquireTestCampaignHandoffFor(resolver, *directory, testCampaignJSONHash(plan), "run", false)
 	if claimErr != nil {
 		return printErr("Handoff claim unavailable", claimErr)
 	}
