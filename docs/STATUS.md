@@ -7,6 +7,25 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## One rollout flag and a live rollout view — 2026-10-16
+
+[ADR-1352](adr/1352-one-rollout-flag-and-live-rollout.md): `gregale deploy
+--rollout safe|fast|immediate` chooses how a release reaches traffic, and the
+app's `release_policy` accepts the same three words (`fast` fills the
+`aggressive` ladder). At a terminal, `gregale deploy` follows a canary rollout
+to 100% or abort; Ctrl-C detaches with exit 0 and the rollout keeps running.
+`--safe`, `--canary-preset` and `--canary-stages` still work and are marked
+deprecated. CLI tests cover the mapping, the conflicts and the detach exit; the
+`pkg/apid/release` default-policy test covers `fast`.
+
+## App-chosen rollout probe routes — 2026-10-16
+
+[ADR-1351](adr/1351-app-chosen-rollout-probe-routes.md): an app may name up to
+three `GET` paths (`release_probe_paths`, `gregale app --release-probe-paths`)
+that the default rollout probe checks instead of `/`; each round splits the 20
+probes per revision across them. The apidserver round trip and probe test and
+the Postgres and MemStore probe-target tests pass on the n2 node.
+
 ## Releases that change the database — 2026-10-15
 
 [ADR-1355](adr/1355-releases-that-change-the-database.md): a rollback whose
@@ -64,6 +83,7 @@ after its smoke (72–176 s), 5xx abort, crash-loop abort, canary-worker
 fallback, and rollback recovery in 6.8–13.5 s with a verified `complete`
 rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
 are `beta` in the product registry.
+
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
 - **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),
