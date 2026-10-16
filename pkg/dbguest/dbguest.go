@@ -178,6 +178,10 @@ type ImportStatus struct {
 	// MissingExtensions names the source extensions the target cannot
 	// create, for extension_unavailable (ReportableExtensions).
 	MissingExtensions []string `json:"missing_extensions,omitempty"`
+	// RequiredVolumeBytes is, for target_too_small, the volume size the
+	// import needs. Zero when free space ran out during the copy, which
+	// the estimate did not foresee.
+	RequiredVolumeBytes int64 `json:"required_volume_bytes,omitempty"`
 }
 
 // maxReportedExtensions bounds MissingExtensions.
@@ -207,6 +211,9 @@ const (
 	ErrCodeSourceDown     = "source_unreachable"
 	ErrCodeExtension      = "extension_unavailable"
 	ErrCodeTargetNotEmpty = "target_not_empty"
+	// ErrCodeTargetTooSmall: the target volume cannot hold the source's
+	// copy and its dump; RequiredVolumeBytes says how large it must be.
+	ErrCodeTargetTooSmall = "target_too_small"
 	// ErrCodeImportOperationMismatch: another import is running, or done,
 	// in this database.
 	ErrCodeImportOperationMismatch = "import_operation_mismatch"

@@ -51,6 +51,8 @@ type fakeScheduler struct {
 	imports       []*scheddpb.ImportDatabaseRequest
 	importState   string
 	importMissing []string
+	// importRequired is the volume size a target_too_small status reports.
+	importRequired int64
 	// snapshots are held snapshots by database/name.
 	snapshots map[string]*scheddpb.DatabaseSnapshot
 }
@@ -72,7 +74,7 @@ func (f *fakeScheduler) DatabaseImportStatus(_ context.Context, in *scheddpb.Dat
 	if _, ok := f.vms[in.GetDatabaseId()]; !ok {
 		return nil, status.Error(codes.NotFound, "no database")
 	}
-	return &scheddpb.DatabaseImportProgress{State: f.importState, SourceMajor: 16, MissingExtensions: f.importMissing}, nil
+	return &scheddpb.DatabaseImportProgress{State: f.importState, SourceMajor: 16, MissingExtensions: f.importMissing, RequiredVolumeBytes: f.importRequired}, nil
 }
 
 func newFakeScheduler() *fakeScheduler {
@@ -1048,7 +1050,14 @@ func TestImportCopiesIntoTheCustomerDatabaseAsItsOwner(t *testing.T) {
 	if got, err := p.ImportStatus(ctx, testDatabaseID); err != nil || got.State != managedpostgres.ImportFailed || !slices.Equal(got.MissingExtensions, []string{"timescaledb"}) {
 		t.Fatalf("failed status = %+v, %v", got, err)
 	}
-	sched.importState, sched.importMissing = "running", nil
+	// A target too small says how large it must be; nonsense is clamped.
+	for reported, want := range map[int64]int64{12 << 30: 12 << 30, -1: 0} {
+		sched.importState, sched.importRequired = "failed", reported
+		if got, err := p.ImportStatus(ctx, testDatabaseID); err != nil || got.RequiredVolumeBytes != want {
+			t.Fatalf("required volume of %d = %+v, %v; want %d", reported, got, err, want)
+		}
+	}
+	sched.importState, sched.importMissing, sched.importRequired = "running", nil, 0
 	if _, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, OperationID: operationID, Source: managedpostgres.ImportSource{Host: "h", Port: 0}}); !errors.Is(err, managedpostgres.ErrInvalid) {
 		t.Fatalf("no port = %v, want ErrInvalid", err)
 	}

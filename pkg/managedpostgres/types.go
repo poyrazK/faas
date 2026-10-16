@@ -262,6 +262,10 @@ type ImportStatus struct {
 	// extensions the target cannot create: plain identifiers only, never
 	// connection data.
 	MissingExtensions []string
+	// RequiredVolumeBytes is, for target_too_small, the storage size the
+	// target needs for the copy (zero when the estimate fell short during
+	// the copy).
+	RequiredVolumeBytes int64
 }
 
 // Importer is a provider that copies a database from another backend into

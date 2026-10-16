@@ -2821,6 +2821,9 @@ message DatabaseImportStatus {
   // For extension_unavailable: the source extensions the target cannot
   // create (plain identifiers, at most 16).
   repeated string missing_extensions = 7;
+  // For target_too_small: the volume size the copy needs, zero when free
+  // space ran out during the copy.
+  int64 required_volume_bytes = 8;
 }
 
 message DatabaseControlResponse {

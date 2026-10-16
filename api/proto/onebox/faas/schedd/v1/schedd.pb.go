@@ -3902,8 +3902,11 @@ type DatabaseImportProgress struct {
 	// For extension_unavailable: the source extensions the target cannot
 	// create (plain identifiers, at most 16).
 	MissingExtensions []string `protobuf:"bytes,7,rep,name=missing_extensions,json=missingExtensions,proto3" json:"missing_extensions,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// For target_too_small: the volume size the copy needs, zero when free
+	// space ran out during the copy.
+	RequiredVolumeBytes int64 `protobuf:"varint,8,opt,name=required_volume_bytes,json=requiredVolumeBytes,proto3" json:"required_volume_bytes,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *DatabaseImportProgress) Reset() {
@@ -3983,6 +3986,13 @@ func (x *DatabaseImportProgress) GetMissingExtensions() []string {
 		return x.MissingExtensions
 	}
 	return nil
+}
+
+func (x *DatabaseImportProgress) GetRequiredVolumeBytes() int64 {
+	if x != nil {
+		return x.RequiredVolumeBytes
+	}
+	return 0
 }
 
 type ResizeDatabaseRequest struct {
@@ -4737,7 +4747,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05owner\x18\b \x01(\tR\x05owner\x12'\n" +
 	"\x0fskip_extensions\x18\t \x03(\tR\x0eskipExtensions\x12!\n" +
 	"\foperation_id\x18\n" +
-	" \x01(\tR\voperationId\"\xba\x02\n" +
+	" \x01(\tR\voperationId\"\xee\x02\n" +
 	"\x16DatabaseImportProgress\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +
@@ -4748,7 +4758,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"finishedAt\x12!\n" +
 	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
 	"\foperation_id\x18\x06 \x01(\tR\voperationId\x12-\n" +
-	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\"\xc7\x01\n" +
+	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\x122\n" +
+	"\x15required_volume_bytes\x18\b \x01(\x03R\x13requiredVolumeBytes\"\xc7\x01\n" +
 	"\x15ResizeDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1d\n" +

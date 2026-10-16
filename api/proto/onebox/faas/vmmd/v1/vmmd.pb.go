@@ -12082,8 +12082,11 @@ type DatabaseImportStatus struct {
 	// For extension_unavailable: the source extensions the target cannot
 	// create (plain identifiers, at most 16).
 	MissingExtensions []string `protobuf:"bytes,7,rep,name=missing_extensions,json=missingExtensions,proto3" json:"missing_extensions,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// For target_too_small: the volume size the copy needs, zero when free
+	// space ran out during the copy.
+	RequiredVolumeBytes int64 `protobuf:"varint,8,opt,name=required_volume_bytes,json=requiredVolumeBytes,proto3" json:"required_volume_bytes,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *DatabaseImportStatus) Reset() {
@@ -12163,6 +12166,13 @@ func (x *DatabaseImportStatus) GetMissingExtensions() []string {
 		return x.MissingExtensions
 	}
 	return nil
+}
+
+func (x *DatabaseImportStatus) GetRequiredVolumeBytes() int64 {
+	if x != nil {
+		return x.RequiredVolumeBytes
+	}
+	return 0
 }
 
 type DatabaseControlResponse struct {
@@ -13320,7 +13330,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0ftarget_database\x18\x06 \x01(\tR\x0etargetDatabase\x12\x14\n" +
 	"\x05owner\x18\a \x01(\tR\x05owner\x12'\n" +
 	"\x0fskip_extensions\x18\b \x03(\tR\x0eskipExtensions\x12!\n" +
-	"\foperation_id\x18\t \x01(\tR\voperationId\"\xb8\x02\n" +
+	"\foperation_id\x18\t \x01(\tR\voperationId\"\xec\x02\n" +
 	"\x14DatabaseImportStatus\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +
@@ -13331,7 +13341,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"finishedAt\x12!\n" +
 	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
 	"\foperation_id\x18\x06 \x01(\tR\voperationId\x12-\n" +
-	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\"\xfd\x02\n" +
+	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\x122\n" +
+	"\x15required_volume_bytes\x18\b \x01(\x03R\x13requiredVolumeBytes\"\xfd\x02\n" +
 	"\x17DatabaseControlResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12%\n" +
 	"\x0epostgres_major\x18\x02 \x01(\x05R\rpostgresMajor\x12\x1d\n" +

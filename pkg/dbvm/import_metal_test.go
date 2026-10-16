@@ -176,6 +176,25 @@ CREATE MATERIALIZED VIEW restored_by AS SELECT session_user::text AS session_rol
 		!slices.Equal(status.MissingExtensions, []string{"pg_stat_statements"}) {
 		t.Fatalf("import with an untrusted extension = %+v; want extension_unavailable naming pg_stat_statements", status)
 	}
+	// A source that cannot fit beside its dump on the 1 GiB target is
+	// refused before anything is copied, with the volume size it needs.
+	admin(ctx, t, rt, source, `\connect gregale
+SET ROLE gregale_schema_owner;
+CREATE UNLOGGED TABLE bulk (b text);
+ALTER TABLE bulk ALTER b SET STORAGE PLAIN;
+INSERT INTO bulk SELECT repeat('x', 1800) FROM generate_series(1, 300000);`)
+	if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
+		t.Fatalf("import of a large source = %+v, %v", resp, err)
+	}
+	if status := awaitImport(ctx, t, rt, target); status.State != dbguest.ImportFailed || status.Error != dbguest.ErrCodeTargetTooSmall ||
+		status.RequiredVolumeBytes <= 1<<30 {
+		t.Fatalf("import of a source larger than the target = %+v; want target_too_small above 1 GiB", status)
+	} else {
+		t.Logf("a 586 MiB source needs a %d MiB volume", status.RequiredVolumeBytes>>20)
+	}
+	admin(ctx, t, rt, source, `\connect gregale
+DROP TABLE bulk;`)
+
 	started := time.Now()
 	if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Import == nil {
 		t.Fatalf("import = %+v, %v", resp, err)

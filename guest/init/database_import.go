@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
@@ -163,11 +166,55 @@ const (
 	importSourceMajorQuery = `SELECT current_setting('server_version_num')::int / 10000`
 	importExtensionsQuery  = `SELECT coalesce(string_agg(extname, ',' ORDER BY extname), '') FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql'`
 	importTrustedQuery     = `SELECT coalesce(string_agg(DISTINCT name, ','), '') FROM pg_catalog.pg_available_extension_versions WHERE trusted`
+	importSourceSizeQuery  = `SELECT pg_catalog.pg_database_size(pg_catalog.current_database())`
 	importTargetUsedQuery  = `SELECT (SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%')
  + (SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('public', 'pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg\_%')
  + (SELECT count(*) FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql')`
 )
+
+// The dump and the restored copy share the target volume, and a full
+// volume stops PostgreSQL itself. An import starts only when the source
+// fits beside the floor, and is stopped if free space falls to the floor
+// anyway.
+
+// importSpaceFloor is the free space an import always leaves on a volume
+// of total bytes, so the database can still write WAL and roll the
+// restore back: 5%, at least 128 MiB.
+func importSpaceFloor(total uint64) uint64 { return max(total/20, 128<<20) }
+
+// importSpaceNeeded is the free space importing a source of sourceBytes
+// needs over the floor: twice the source. Just before the restore commits
+// the volume holds the restored copy (about the source's size: the dump
+// has no bloat, and indexes are rebuilt), the dump beside it (compressed
+// table data, well under the source), and the restore's WAL and index
+// build files (WAL is recycled past max_wal_size once archived; a build
+// spills at most its table).
+func importSpaceNeeded(sourceBytes, floor uint64) uint64 {
+	return 2*sourceBytes + floor
+}
+
+// errImportVolumeFull stops a copy that brought free space to the floor.
+var errImportVolumeFull = errors.New("the target volume reached its free-space floor during the copy")
+
+// watchImportSpace stops the copy, with errImportVolumeFull, once free
+// reports no more than floor; it checks every interval until ctx ends. A
+// failed probe is retried on the next tick.
+func watchImportSpace(ctx context.Context, stop context.CancelCauseFunc, floor uint64, interval time.Duration, free func() (uint64, error)) {
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		if left, err := free(); err == nil && left <= floor {
+			stop(errImportVolumeFull)
+			return
+		}
+	}
+}
 
 // missingExtensions lists the source's extensions, less the skipped ones,
 // that the target cannot create as a non-superuser (not trusted, or not

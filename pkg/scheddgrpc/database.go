@@ -394,7 +394,7 @@ func (s *Server) DatabaseImportStatus(ctx context.Context, req *scheddpb.Databas
 
 func importProgress(in dbguest.ImportStatus) *scheddpb.DatabaseImportProgress {
 	out := &scheddpb.DatabaseImportProgress{State: string(in.State), ErrorCode: in.Error, SourceMajor: int32(in.SourceMajor), OperationId: in.OperationID, //nolint:gosec // a PostgreSQL major
-		MissingExtensions: in.MissingExtensions}
+		MissingExtensions: in.MissingExtensions, RequiredVolumeBytes: in.RequiredVolumeBytes}
 	if !in.StartedAt.IsZero() {
 		out.StartedAt = timestamppb.New(in.StartedAt)
 	}

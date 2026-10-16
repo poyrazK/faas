@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
@@ -133,5 +136,54 @@ func TestMissingExtensions(t *testing.T) {
 	}
 	if got := missingExtensions("", "pgcrypto", nil); len(got) != 0 {
 		t.Fatalf("no source extensions, missing %v", got)
+	}
+}
+
+// The import leaves the floor free on any volume and needs room for the
+// copy and its dump above it.
+func TestImportSpace(t *testing.T) {
+	const mib, gib = 1 << 20, 1 << 30
+	for total, want := range map[uint64]uint64{1 * gib: 128 * mib, 2 * gib: 128 * mib, 10 * gib: 512 * mib, 100 * gib: 5 * gib} {
+		if got := importSpaceFloor(total); got != want {
+			t.Errorf("floor of %d = %d, want %d", total, got, want)
+		}
+	}
+	if got := importSpaceNeeded(2*gib, 128*mib); got != 4*gib+128*mib {
+		t.Fatalf("needed for 2 GiB = %d", got)
+	}
+}
+
+// The watchdog stops the copy at the floor with its own cause, retries a
+// failed probe, and stays quiet while space remains.
+func TestWatchImportSpaceStopsAtTheFloor(t *testing.T) {
+	readings := make(chan uint64, 8)
+	for _, free := range []uint64{900, 0, 500, 100} {
+		readings <- free
+	}
+	probes := 0
+	ctx, stop := context.WithCancelCause(context.Background())
+	defer stop(nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchImportSpace(ctx, stop, 200, time.Millisecond, func() (uint64, error) {
+			probes++
+			free := <-readings
+			if free == 0 {
+				return 0, errors.New("statfs failed")
+			}
+			return free, nil
+		})
+	}()
+	<-done
+	if !errors.Is(context.Cause(ctx), errImportVolumeFull) || probes != 4 {
+		t.Fatalf("cause %v after %d probes; want errImportVolumeFull after 4", context.Cause(ctx), probes)
+	}
+
+	quiet, cancel := context.WithCancelCause(context.Background())
+	go func() { time.Sleep(20 * time.Millisecond); cancel(nil) }()
+	watchImportSpace(quiet, cancel, 200, time.Millisecond, func() (uint64, error) { return 900, nil })
+	if errors.Is(context.Cause(quiet), errImportVolumeFull) {
+		t.Fatal("stopped a copy with space left")
 	}
 }

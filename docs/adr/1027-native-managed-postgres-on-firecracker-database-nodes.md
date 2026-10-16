@@ -1445,11 +1445,24 @@ the control plane.
   reach it like anything a migration created. `OpImportStatus` reports
   none/running/done/failed with a stable code (`source_unreachable`,
   `source_newer`, `extension_unavailable`, `target_not_empty`,
-  `import_failed`). An `extension_unavailable` status also names the
+  `target_too_small`, `import_failed`). An `extension_unavailable` status also names the
   missing extensions (`MissingExtensions`): plain identifiers only, at
   most 16, filtered in the guest and again on the host, since the names
   come from the source. The source password reaches the tools only
   through `PGPASSWORD`.
+- **Space.** The dump and the restored copy share the target volume, and
+  a full volume stops PostgreSQL itself. Before copying, the guest asks
+  the source for `pg_database_size` and requires free space of twice that
+  over a floor (5% of the volume, at least 128 MiB). Just before the
+  commit, the volume holds the copy, the dump beside it, and the
+  restore's WAL and index-build files. Otherwise the import fails with
+  `target_too_small` and `RequiredVolumeBytes`, the volume size that would
+  fit, so the operator or customer can resize and retry. While copying, a
+  watchdog stops the copy at the floor (`target_too_small`, required size
+  zero), and the transaction rolls back. On metal, a 586 MiB source was
+  refused on a 1 GiB target with 1,378 MiB required, and the import
+  succeeded once the source shrank. The watchdog is unit-tested only;
+  the estimate kept metal from reaching it.
 - **The source writes the script, so the restore is not the superuser.**
   The source is whatever server the customer names, and a hostile one
   controls the SQL in its dump (definitions are its own catalog output).
@@ -1522,8 +1535,6 @@ Not yet done:
 - **Writes during the copy are not captured.** A consistent copy needs the
   app's writers drained first (the same cutover fence), or accepts the
   dump's snapshot. There is no logical-replication catch-up.
-- **Space.** The dump lands on the target volume, so the volume needs room
-  for the compressed dump beside the data.
 - **Grants.** Objects outside schema `public` get no runtime grants, as for
   any native schema.
 

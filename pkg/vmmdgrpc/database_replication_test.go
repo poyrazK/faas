@@ -351,11 +351,11 @@ func TestImportControlSplitsEndpointAndLogin(t *testing.T) {
 func TestImportStatusForwardsOnlyReportableExtensions(t *testing.T) {
 	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady,
 		Import: &dbguest.ImportStatus{State: dbguest.ImportFailed, Error: dbguest.ErrCodeExtension,
-			MissingExtensions: []string{"pg_stat_statements", "password=leaked"}}}}
+			MissingExtensions: []string{"pg_stat_statements", "password=leaked"}, RequiredVolumeBytes: 5 << 30}}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	resp, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "import_status"})
 	if err != nil || resp.GetImport().GetErrorCode() != dbguest.ErrCodeExtension ||
-		!slices.Equal(resp.GetImport().GetMissingExtensions(), []string{"pg_stat_statements"}) {
+		!slices.Equal(resp.GetImport().GetMissingExtensions(), []string{"pg_stat_statements"}) || resp.GetImport().GetRequiredVolumeBytes() != 5<<30 {
 		t.Fatalf("import status = %+v, %v", resp, err)
 	}
 }

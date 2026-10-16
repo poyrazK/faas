@@ -133,14 +133,35 @@ func (g *databaseGuest) finishImport(code string, sourceMajor int, err error) {
 	}
 	g.imp.status.FinishedAt = time.Now().UTC()
 	g.imp.status.SourceMajor = sourceMajor
-	g.imp.status.State, g.imp.status.Error, g.imp.status.MissingExtensions = dbguest.ImportDone, "", nil
+	g.imp.status.State, g.imp.status.Error, g.imp.status.MissingExtensions, g.imp.status.RequiredVolumeBytes = dbguest.ImportDone, "", nil, 0
 	if err != nil {
 		g.imp.status.State, g.imp.status.Error = dbguest.ImportFailed, code
 		var missing *missingExtensionsError
 		if errors.As(err, &missing) {
 			g.imp.status.MissingExtensions = dbguest.ReportableExtensions(missing.names)
 		}
+		var small *targetTooSmallError
+		if errors.As(err, &small) {
+			g.imp.status.RequiredVolumeBytes = int64(min(small.requiredVolume, 1<<62)) //nolint:gosec // bounded
+		}
 	}
+}
+
+// targetTooSmallError is a source that does not fit on the target volume.
+type targetTooSmallError struct{ source, free, requiredVolume uint64 }
+
+func (e *targetTooSmallError) Error() string {
+	return fmt.Sprintf("source of %d bytes needs a volume of %d bytes; %d bytes free", e.source, e.requiredVolume, e.free)
+}
+
+// importVolume reports the target volume's size and the space free to
+// the database user.
+func importVolume() (total, free uint64, err error) {
+	var fs unix.Statfs_t
+	if err := unix.Statfs(databaseMountPoint, &fs); err != nil {
+		return 0, 0, err
+	}
+	return fs.Blocks * uint64(fs.Bsize), fs.Bavail * uint64(fs.Bsize), nil //nolint:gosec // block size is positive
 }
 
 // missingExtensionsError names the source extensions the owner cannot
@@ -162,14 +183,45 @@ func (g *databaseGuest) runImport(src dbguest.ImportSource) {
 	}()
 	code, major, err := g.importChecks(ctx, src)
 	if err == nil {
-		code, err = dbguest.ErrCodeImportFailed, g.importCopy(ctx, src)
-		err = g.importCommitted(ctx, src, err)
+		code, err = g.importWithinSpace(ctx, src)
 	}
 	if err == nil {
 		// Fresh statistics: a restore leaves the planner without any.
 		_, err = g.queryIn(ctx, src.TargetDatabase, "ANALYZE")
 	}
 	g.finishImport(code, major, err)
+}
+
+// importWithinSpace copies src unless the target volume cannot hold it,
+// and stops the copy if free space falls to the floor anyway.
+func (g *databaseGuest) importWithinSpace(ctx context.Context, src dbguest.ImportSource) (string, error) {
+	total, free, err := importVolume()
+	if err != nil {
+		return dbguest.ErrCodeImportFailed, fmt.Errorf("target volume: %w", err)
+	}
+	out, err := g.sourceQuery(ctx, src, importSourceSizeQuery)
+	if err != nil {
+		return dbguest.ErrCodeSourceDown, err
+	}
+	size, err := strconv.ParseUint(out, 10, 64)
+	if err != nil {
+		return dbguest.ErrCodeImportFailed, fmt.Errorf("source size %q", out)
+	}
+	floor := importSpaceFloor(total)
+	if need := importSpaceNeeded(size, floor); free < need {
+		return dbguest.ErrCodeTargetTooSmall, &targetTooSmallError{source: size, free: free, requiredVolume: total - free + need}
+	}
+	copyCtx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	go watchImportSpace(copyCtx, stop, floor, time.Second, func() (uint64, error) {
+		_, free, err := importVolume()
+		return free, err
+	})
+	err = g.importCommitted(ctx, src, g.importCopy(copyCtx, src))
+	if err != nil && errors.Is(context.Cause(copyCtx), errImportVolumeFull) {
+		return dbguest.ErrCodeTargetTooSmall, errors.Join(errImportVolumeFull, err)
+	}
+	return dbguest.ErrCodeImportFailed, err
 }
 
 // importCommitted decides from the target's recorded lineage whether the
