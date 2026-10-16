@@ -19,8 +19,8 @@ type AuthAdminData struct {
 	Keys    []AuthKey
 	MaxKeys int
 	// EmailProviders are the HTTPS email services the Auth app sends
-	// through.
-	EmailProviders []string
+	// through; SMSProviders the services it texts sign-in codes through.
+	EmailProviders, SMSProviders []string
 }
 
 // AuthKey is a sealed signing key: Signer reports an AUTH_JWT_SIGNER_<ID>
