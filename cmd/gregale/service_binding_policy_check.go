@@ -64,6 +64,13 @@ func cmdBindingsServicePolicy(args []string, export bool) int {
 	if export {
 		name = "export"
 	}
+	usageError := func() int {
+		return fail("Invalid service policy command", fmt.Errorf("usage: gregale bindings service %s APP %s", name, map[bool]string{true: "[--out policy.json]", false: "--file policy.json"}[export]))
+	}
+	flags, pos := splitArgsForFlags(args)
+	if len(pos) != 1 || !api.ValidAppSlug(pos[0]) {
+		return usageError()
+	}
 	fs := newFlagSet("bindings service "+name, flag.ContinueOnError)
 	// Report parse errors through the same command-specific exit contract.
 	fs.SetOutput(io.Discard)
@@ -73,9 +80,8 @@ func cmdBindingsServicePolicy(args []string, export bool) int {
 	} else {
 		path = fs.String("file", "", "JSON service binding settings policy")
 	}
-	flags, pos := splitArgsForFlags(args)
-	if fs.Parse(flags) != nil || fs.NArg() != 0 || len(pos) != 1 || !api.ValidAppSlug(pos[0]) || (!export && *path == "") {
-		return fail("Invalid service policy command", fmt.Errorf("usage: gregale bindings service %s APP %s", name, map[bool]string{true: "[--out policy.json]", false: "--file policy.json"}[export]))
+	if fs.Parse(flags) != nil || fs.NArg() != 0 || (!export && *path == "") {
+		return usageError()
 	}
 	var desired serviceBindingConfiguration
 	if !export {

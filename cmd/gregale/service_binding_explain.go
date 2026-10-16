@@ -169,13 +169,19 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 }
 
 func cmdBindingsServiceExplain(args []string) int {
+	usageError := func() int {
+		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale bindings service explain CALLER TARGET [--method GET] [--path /path]"))
+	}
+	flags, pos := splitArgsForFlags(args)
+	if len(pos) != 2 || !api.ValidAppSlug(pos[0]) || !api.ValidAppSlug(pos[1]) {
+		return usageError()
+	}
 	fs := newFlagSet("bindings service explain", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	method := fs.String("method", "GET", "HTTP method to explain")
 	path := fs.String("path", "/", "origin-form request path to explain")
-	flags, pos := splitArgsForFlags(args)
-	if fs.Parse(flags) != nil || fs.NArg() != 0 || len(pos) != 2 || !api.ValidAppSlug(pos[0]) || !api.ValidAppSlug(pos[1]) {
-		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale bindings service explain CALLER TARGET [--method GET] [--path /path]"))
+	if fs.Parse(flags) != nil || fs.NArg() != 0 {
+		return usageError()
 	}
 	normalizedMethod, normalizedPath, err := serviceExplainRequest(*method, *path)
 	if err != nil {
