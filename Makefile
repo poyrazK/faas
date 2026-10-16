@@ -854,6 +854,10 @@ postgres-promote: ## ADR-1344 §8: promote the warm standby. PROMOTE_MODE=planne
 	@test -n "$(PROMOTE_MODE)" || (echo "PROMOTE_MODE=planned|failover is required" >&2; exit 2)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml -e faas_promote_mode=$(PROMOTE_MODE) -e faas_promote_fenced_primary=$(FENCED_PRIMARY)
 
+.PHONY: standby-takeover
+standby-takeover: ## ADR-1344 §8: install the staged control-plane files on the promoted standby, before bootstrapping it as the control plane.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml
+
 .PHONY: bootstrap-fleet-runner
 bootstrap-fleet-runner: ## Install the pinned trusted runner. Gets a short-lived registration token via gh or the controller environment.
 	@if [ -n "$${FAAS_RUNNER_REGISTRATION_TOKEN:-}" ]; then \
@@ -884,6 +888,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join_control_plane.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143

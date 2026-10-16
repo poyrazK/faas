@@ -49,3 +49,6 @@
     # every task that writes to the database (faas_postgres_standby_mode).
     - role: postgres
     - role: postgres_standby
+    # Stages the primary's control-plane files for a takeover; rerun after
+    # rotating any of them (docs/runbooks/ControlPlaneFailover.md).
+    - role: control_plane_standby

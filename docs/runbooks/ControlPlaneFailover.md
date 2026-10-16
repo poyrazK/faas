@@ -26,23 +26,27 @@ below must already be on the standby. Check it at every drill.
 
 1. **The replica streams.** `FaasPostgresStandby*` alerts are quiet, and
    `make bootstrap-postgres-standby` passes.
-2. **Shareable control-plane files are on the standby** with the same owner
-   and mode as on the primary:
+2. **The control plane's host files are staged on the standby.**
+   `make bootstrap-postgres-standby` copies the primary's current files into
+   `/var/lib/faas-standby` on every run (role `control_plane_standby`; root
+   only, base64 plus an index of owner, group and mode). Rerun it after
+   rotating any of these files. It stages:
    - `/etc/faas/sealed.env`, `compute-db.env`, `storage.env`, `otel.env`,
-     `profiling.env`
-   - `/etc/faas/secrets/session.key`, `host.hmac.key`, `fleet.age`,
-     `fleet.age.pub`, `sign-pub.pem`
-   - `/etc/faas/secrets/{schedd,meterd,githubd,gatewayd-internal,pg-basebackup-push,storage-box,object-storage}/…`
-     and `/etc/faas/object-storage.json`
-   - **`/var/lib/faas/audit-hmac.key` and `recovery-hmac.key`.** Bootstrap
-     silently generates new ones when they are missing, and new keys break
-     audit joins and every recovery code. Copy them before the first
-     control-plane converge on the standby.
+     `profiling.env` and `object-storage.json`;
+   - everything under `/etc/faas/secrets` except `host.age`, including
+     `session.key`, `host.hmac.key`, `fleet.age`, `sign-pub.pem`, the
+     per-daemon secret files and the off-host backup credentials;
    - **`/etc/faas/tls/`**, including `ca/ca.key`. Leaf certificates name
      services (`schedd.faas`, `apid.faas`), not hosts, so they stay valid.
-     A new CA would mean re-issuing every node's certificates.
-   - `/etc/caddy/tls/cloudflare-origin.{pem,key}`, the Alertmanager
-     receiver files, the Grafana admin password, and the Loki credentials.
+     A new CA would mean re-issuing every node's certificates;
+   - **`/var/lib/faas/audit-hmac.key` and `recovery-hmac.key`.** Bootstrap
+     silently generates new ones when they are missing, and new keys break
+     audit joins and every recovery code. The takeover step installs them
+     before the first bootstrap;
+   - `/etc/caddy/tls/cloudflare-origin.{pem,key}` and `/etc/grafana/secrets`.
+
+   Paths you chose yourself, such as the Alertmanager receiver files
+   (`am_*_file`), go in `faas_standby_sync_extra_files`.
 3. **The standby has its own `/etc/faas/secrets/host.age`** (from
    `gregalectl secrets init`). Never copy the primary's. Before it can take
    over, `gregalectl fleet-seal verify` must pass, so that no Postgres row
@@ -74,17 +78,24 @@ below must already be on the standby. Check it at every drill.
 
    Then on the standby, it waits until the standby has replayed the primary's
    shutdown checkpoint, promotes it, and confirms it accepts writes.
-3. **Update the manifest.** In the `control-plane` fleet entry, replace
+3. **Install the staged control-plane files:** `make … standby-takeover`.
+   Run it before you change the manifest, while the host is still the
+   inventory's `postgres_standby`. It refuses to run until the database is
+   promoted.
+4. **Update the manifest.** In the `control-plane` fleet entry, replace
    `name` with the standby's name and keep `address` unchanged. Every name
    the fleet uses (the address, `schedd.faas`, `apid.faas`, `githubd.faas`,
    `outboundd.faas`) and the `postgresql.dsn` then point at the new host
-   with no other edits. Remove `postgresql.standby`; step 8 re-adds it.
-4. **Repoint the address's public DNS record** to the new host, then
+   with no other edits. Remove `postgresql.standby`; step 10 re-adds it.
+5. **Repoint the address's public DNS record** to the new host, then
    re-render: `make manifest-ansible MANIFEST=…`.
-5. **Converge the new control plane:** `make … bootstrap-control-plane`.
+6. **Converge the new control plane:** `make … bootstrap-control-plane`.
    The `postgres` role removes the standby settings and restarts PostgreSQL
-   as a primary. The services then start on the release you staged there.
-6. **Repoint the compute nodes:**
+   as a primary.
+7. **Install the release.** Set `CP_HOST` to the new host and run the
+   control-plane deploy (`cd-controlplane`) for the release the old primary
+   ran. That starts the daemons.
+8. **Repoint the compute nodes:**
 
    ```bash
    make … bootstrap-compute
@@ -92,12 +103,12 @@ below must already be on the standby. Check it at every drill.
 
    The overlay role rewrites `/etc/hosts`. The compute daemons reconnect
    to the same names, now at the new address, and nothing restarts vmmd.
-7. **Move the public origin and CD.** Point the platform hosts' Cloudflare
-   origin at the new host, set `CP_HOST`, and resume CD. Then check:
+9. **Move the public origin and resume CD.** Point the platform hosts'
+   Cloudflare origin at the new host. Then check:
    - `make verify-fleet` passes;
    - the API answers;
    - a wake and a deploy succeed.
-8. **Rebuild the old primary as the new standby.** Add it back as
+10. **Rebuild the old primary as the new standby.** Add it back as
    `postgresql.standby`, converge the control plane, then run:
 
    ```bash
@@ -129,10 +140,11 @@ below must already be on the standby. Check it at every drill.
    make … postgres-promote PROMOTE_MODE=failover FENCED_PRIMARY=<old primary name>
    ```
 
-4. **Continue with planned steps 3–7.** In step 5, bootstrap must not need
-   anything from the old host. If it stops on a missing file, take it from
-   "Before you need it" above, and add that file to the list.
-5. **Rebuild the old host as the standby later**, with planned step 8, and
+4. **Continue with planned steps 3–9.** In step 6, bootstrap must not need
+   anything from the old host. If it stops on a missing file, find the file's
+   source, then add its path to `control_plane_standby`'s sync list so the
+   next failover has it.
+5. **Rebuild the old host as the standby later**, with planned step 10, and
    only after you've checked it: it holds writes the new primary never
    received. If those writes matter, extract them before wiping (export the
    affected rows from a copy of its data directory).

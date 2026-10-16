@@ -232,7 +232,7 @@ func TestPostgresStandbyPlaybook(t *testing.T) {
 			standbyRoles = append(standbyRoles, r.(map[string]any)["role"].(string))
 		}
 	}
-	want := []string{"host_hardening", "node_exporter", "postgres", "postgres_standby"}
+	want := []string{"host_hardening", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"}
 	if strings.Join(standbyRoles, ",") != strings.Join(want, ",") {
 		t.Errorf("standby play roles = %v, want %v (node_exporter before postgres for the textfile directory)", standbyRoles, want)
 	}
