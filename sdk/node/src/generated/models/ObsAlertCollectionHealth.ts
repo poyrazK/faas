@@ -6,6 +6,10 @@
  * Durable collection receipt and explicit producer configuration or health state.
  */
 export type ObsAlertCollectionHealth = {
+  /**
+   * Known private diagnostics route advertised as an optional bundle feature marker; reads do not establish past failure causation.
+   */
+  diagnostics_path?: string;
   state: 'current' | 'unknown';
   collection_state?: 'disabled' | 'never_collected' | 'current' | 'failed' | 'stale' | 'unknown';
   reason?: string;

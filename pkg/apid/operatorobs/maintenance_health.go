@@ -31,6 +31,7 @@ func MaintenanceHealth(ctx context.Context, store MaintenanceHealthStore, enable
 
 func collectionHealth(c state.OperatorAlertCollection, enabled bool, now time.Time) api.ObsAlertCollectionHealth {
 	out := c.Health(now)
+	out.DiagnosticsPath = RuleHealthPath
 	switch {
 	case !enabled:
 		out.CollectionState, out.State = "disabled", "unknown"

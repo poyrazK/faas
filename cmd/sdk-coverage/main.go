@@ -104,6 +104,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/incidents/platform_alert/summary":             true, // private retained-alert workload summary
 	"GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history": true, // private sanitized operator triage receipts
 	"GET /v1/admin/obs/incidents/{kind}/{id}/context":                true, // private operator incident context

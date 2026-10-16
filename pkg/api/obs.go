@@ -973,7 +973,8 @@ type ObsAlertEpisode struct {
 }
 
 type ObsAlertCollectionHealth struct {
-	State string `json:"state"`
+	DiagnosticsPath string `json:"diagnostics_path,omitempty"`
+	State           string `json:"state"`
 	// CollectionState distinguishes configuration and producer failure while
 	// State preserves the original current/unknown evidence contract.
 	CollectionState string     `json:"collection_state,omitempty"`

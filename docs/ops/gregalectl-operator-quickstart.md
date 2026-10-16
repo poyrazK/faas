@@ -666,6 +666,24 @@ follow-up ("operator-vs-customer split") is filed separately.
   [`docs/ops/secrets-rotation.md`](secrets-rotation.md).
 ## Incident evidence
 
+Use `gregalectl obs rule-health --json` to identify currently loaded alert rules
+whose evaluation is failed, stale, unavailable or invalid. It reports rule/group
+identity, safe source basename, evaluation age and bounded repository runbook
+links. Pending/firing counts are null for unhealthy rules; a freshly evaluated
+inactive rule has known zero counts. The API accepts no query parameters.
+
+Totals cover the complete bounded loaded-rule snapshot. The preview contains
+at most 200 items, unhealthy first; `truncated` and `total_items` expose omitted
+items. Empty or unavailable rule inventories cannot be healthy. Raw queries,
+labels, absolute source paths and evaluation errors remain private. This current
+read does not establish an expected deployed inventory or the cause of a past
+collection failure, and it does not alter collector recovery rules.
+
+Incident bundles include a fourth `rule_health` section when collection health
+advertises the known private route. Older servers retain explicit unknown
+rule-health coverage. All reads share the existing bundle deadline and size caps;
+rule-health state and preview truncation appear in bundle coverage.
+
 Inspect the platform notification pipeline with
 `gregalectl obs notification-health --json`. It reports ten-minute integration
 attempts/failures, notification drops, current queue pressure, target and config

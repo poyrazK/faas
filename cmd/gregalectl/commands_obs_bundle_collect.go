@@ -18,7 +18,7 @@ import (
 func collectObsBundle(ctx context.Context, base, token, incident string, limit, historyLimit int) (obsIncidentBundle, error) {
 	bundle := obsIncidentBundle{SchemaVersion: obsIncidentBundleSchema, StartedAt: time.Now().UTC(), RequestedIncidentID: incident}
 	// Refuse redirects, including same-origin redirects: every read must use an
-	// explicit admin route. The same context bounds all three response bodies.
+	// explicit admin route. The same context bounds all section bodies.
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if err := fetchObsBundleSection(ctx, client, base+"/v1/admin/obs/incidents/"+incident+"/evidence?limit="+strconv.Itoa(historyLimit), token, "evidence", &bundle.Evidence.Data); err != nil {
 		return bundle, err
@@ -46,6 +46,18 @@ func collectObsBundle(ctx context.Context, base, token, incident string, limit, 
 	bundle.Health.CollectedAt = time.Now().UTC()
 	if bundle.Health.Data.GeneratedAt.IsZero() {
 		return bundle, fmt.Errorf("invalid health snapshot metadata")
+	}
+	if h := bundle.Health.Data.AlertHistory; h != nil && h.DiagnosticsPath == operatorobs.RuleHealthPath {
+		section := &obsBundleSection[api.ObsRuleHealthResponse]{}
+		// An exact known route is a feature marker, never an arbitrary link to follow.
+		if err := fetchObsBundleSection(ctx, client, base+operatorobs.RuleHealthPath, token, subObsRuleHealth, &section.Data); err != nil {
+			return bundle, err
+		}
+		section.CollectedAt = time.Now().UTC()
+		if !validObsRuleHealth(section.Data) {
+			return bundle, fmt.Errorf("invalid rule health snapshot metadata")
+		}
+		bundle.RuleHealth = section
 	}
 	if err := ctx.Err(); err != nil {
 		return bundle, fmt.Errorf("collection deadline exceeded: %w", err)

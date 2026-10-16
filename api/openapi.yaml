@@ -44995,6 +44995,38 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/rule-health:
+    get:
+      tags: [admin]
+      operationId: getObsRuleHealth
+      summary: Diagnose current alert-rule evaluation health.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts no
+        query parameters. Assesses the complete bounded Prometheus alert-rule
+        snapshot under a three-second deadline and returns at most 200 metadata
+        items, unhealthy first. Totals cover all loaded rules before preview
+        truncation. An empty loaded-rule snapshot is unavailable, never healthy.
+        Failed, stale, unavailable, clock-invalid and structurally invalid rules
+        remain explicit; pending/firing counts are null for unhealthy rules.
+        Reported state is the last reported rule state, not proof of recovery.
+        Group names and file basenames are bounded safe text; absolute paths,
+        queries, raw evaluation errors, labels and annotations are omitted.
+        Invalid identity text is omitted and opaque hashes remain available.
+        No collection, history or triage writes occur. This current read does
+        not establish the cause of a past collection failure or completeness
+        of an expected deployed rule inventory. Source errors return HTTP 200
+        with unavailable state and null totals. Disabled configuration is explicit.
+      responses:
+        '200':
+          description: Loaded-rule assessment with complete totals and a bounded diagnostic preview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsRuleHealthResponse' }
+        '400': { description: Alert-rule diagnostics do not accept query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Rule assessment denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/notification-health:
     get:
       tags: [admin]
@@ -64217,6 +64249,72 @@ components:
       x-since: "2026-08"
       x-pr-cluster: "operator-obs-mega"
 
+    ObsRuleHealthResponse:
+      type: object
+      description: Point-in-time loaded-rule diagnostics with complete source totals and a bounded unhealthy-first preview.
+      required: [generated_at, scope, state, max_age_seconds, clock_skew_tolerance_seconds, totals, items, total_items, limit, truncated, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: currently_loaded_alert_rules }
+        state: { type: string, enum: [healthy, degraded, disabled, unavailable] }
+        reason: { type: string }
+        max_age_seconds: { type: integer, const: 120 }
+        clock_skew_tolerance_seconds: { type: integer, const: 30 }
+        totals:
+          description: Null for unconfigured or failed source reads; a complete empty source has known zero rules and unavailable state.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsRuleHealthTotals' }
+            - { type: 'null' }
+        items:
+          type: array
+          maxItems: 200
+          description: Invalid items precede invalid clocks then failures then stale then unavailable then healthy; group and rule hashes break ties.
+          items: { $ref: '#/components/schemas/ObsRuleHealthItem' }
+        total_items: { type: integer, minimum: 0 }
+        limit: { type: integer, const: 200 }
+        truncated: { type: boolean }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsRuleHealthTotals:
+      type: object
+      description: Complete bounded source counts. Rule health categories partition rules; invalid groups include empty groups with missing or duplicate identity.
+      required: [groups, rules, healthy, failed, stale, invalid_clock, unavailable, invalid, invalid_groups]
+      properties:
+        groups: { type: integer, minimum: 0, maximum: 4096 }
+        rules: { type: integer, minimum: 0, maximum: 4096 }
+        healthy: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        stale: { type: integer, minimum: 0 }
+        invalid_clock: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        invalid: { type: integer, minimum: 0 }
+        invalid_groups: { type: integer, minimum: 0 }
+    ObsRuleHealthItem:
+      type: object
+      description: Safe identity and closed diagnostics for a loaded rule or an invalid empty group. Counts are null unless healthy; age is null for absent or future evaluation clocks within the accepted skew tolerance.
+      required: [kind, id, group_id, state, issues, reported_state, evaluation_age_seconds, has_evaluation_error, pending, firing]
+      properties:
+        kind: { type: string, enum: [rule, group] }
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        group_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        group_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        file_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_.:-]+$' }
+        rule_name: { type: string, maxLength: 128, pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$' }
+        state: { type: string, enum: [healthy, failed, stale, invalid_clock, unavailable, invalid] }
+        issues:
+          type: array
+          items:
+            type: string
+            enum: [invalid_group_identity, duplicate_group_identity, duplicate_rule_identity, unexpected_rule_type, invalid_rule_definition, evaluation_failed, evaluation_unavailable, missing_evaluation, evaluation_clock_in_future, evaluation_stale, invalid_alert_observation, inconsistent_rule_state]
+        reported_state: { type: string, enum: [inactive, pending, firing, unknown] }
+        last_evaluated_at: { type: string, format: date-time }
+        evaluation_age_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        has_evaluation_error: { type: boolean }
+        pending: { type: [integer, 'null'], minimum: 0 }
+        firing: { type: [integer, 'null'], minimum: 0 }
+        runbook_url: { type: string, maxLength: 512 }
+
     ObsNotificationHealth:
       type: object
       description: Current pipeline evidence without per-episode delivery or human receipt claims.
@@ -64574,6 +64672,10 @@ components:
       description: Durable collection receipt and explicit producer configuration or health state.
       required: [state]
       properties:
+        diagnostics_path:
+          type: string
+          const: /v1/admin/obs/rule-health
+          description: Known private diagnostics route advertised as an optional bundle feature marker; reads do not establish past failure causation.
         state: { type: string, enum: [current, unknown] }
         collection_state: { type: string, enum: [disabled, never_collected, current, failed, stale, unknown] }
         reason: { type: string }

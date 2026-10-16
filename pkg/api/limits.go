@@ -8884,8 +8884,9 @@ const (
 	ObsIncidentContextCursorTTL     = 15 * time.Minute
 	ObsIncidentContextBudget        = 5 * time.Second
 
-	// A portable operator bundle captures three bounded responses under one
-	// deadline. It never follows resource pagination or diagnostic links.
+	// A portable operator bundle captures bounded sections under one deadline.
+	// Current servers advertise an optional fourth rule-diagnostics section.
+	// It never follows resource pagination or arbitrary diagnostic links.
 	ObsIncidentBundleTimeoutDefault   = 30 * time.Second
 	ObsIncidentBundleTimeoutMax       = time.Minute
 	ObsIncidentBundleResponseMaxBytes = 1 << 20
@@ -8907,6 +8908,13 @@ const (
 	ObsAlertmanagerResponseMaxBytes = 1 << 20
 	ObsAlertmanagerAlertsMax        = 4096
 	ObsNotificationIntegrationsMax  = 32
+
+	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
+	// expose only a bounded, unhealthy-first metadata preview.
+	ObsRuleHealthBudget           = 3 * time.Second
+	ObsRuleHealthItemsMax         = 200
+	ObsRuleHealthIdentityMaxBytes = 128
+	ObsRuleHealthRunbookMaxBytes  = 512
 
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared

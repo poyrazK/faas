@@ -26,6 +26,7 @@ import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
+import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
 import type { PublicStatusEvent } from '../models/PublicStatusEvent.js';
@@ -1055,6 +1056,43 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `getOperatorIntent 403: code: admin_required — caller is not in the FAAS_ADMIN_EMAILS allowlist.`,
         404: `code: operator_intent_not_found — no operator intent with the supplied id.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Diagnose current alert-rule evaluation health.
+   * Requires operator read scope, MFA and the operator allowlist. Accepts no
+   * query parameters. Assesses the complete bounded Prometheus alert-rule
+   * snapshot under a three-second deadline and returns at most 200 metadata
+   * items, unhealthy first. Totals cover all loaded rules before preview
+   * truncation. An empty loaded-rule snapshot is unavailable, never healthy.
+   * Failed, stale, unavailable, clock-invalid and structurally invalid rules
+   * remain explicit; pending/firing counts are null for unhealthy rules.
+   * Reported state is the last reported rule state, not proof of recovery.
+   * Group names and file basenames are bounded safe text; absolute paths,
+   * queries, raw evaluation errors, labels and annotations are omitted.
+   * Invalid identity text is omitted and opaque hashes remain available.
+   * No collection, history or triage writes occur. This current read does
+   * not establish the cause of a past collection failure or completeness
+   * of an expected deployed rule inventory. Source errors return HTTP 200
+   * with unavailable state and null totals. Disabled configuration is explicit.
+   *
+   * @returns ObsRuleHealthResponse Loaded-rule assessment with complete totals and a bounded diagnostic preview.
+   * @throws ApiError
+   */
+  public static getObsRuleHealth(): CancelablePromise<ObsRuleHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/rule-health',
+      errors: {
+        400: `Alert-rule diagnostics do not accept query parameters.`,
+        401: `code: unauthorized`,
+        403: `Rule assessment denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

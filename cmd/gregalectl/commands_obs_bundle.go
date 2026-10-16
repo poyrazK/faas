@@ -26,6 +26,7 @@ type obsIncidentBundle struct {
 	Evidence            obsBundleSection[api.ObsIncidentEvidenceResponse] `json:"evidence"`
 	Context             obsBundleSection[api.ObsIncidentContextResponse]  `json:"context"`
 	Health              obsBundleSection[api.ObsHealthResponse]           `json:"health"`
+	RuleHealth          *obsBundleSection[api.ObsRuleHealthResponse]      `json:"rule_health,omitempty"`
 	Coverage            obsBundleCoverage                                 `json:"coverage"`
 	Redaction           obsBundleRedaction                                `json:"redaction"`
 	Limitations         []string                                          `json:"limitations"`
@@ -37,6 +38,8 @@ type obsBundleSection[T any] struct {
 }
 
 type obsBundleCoverage struct {
+	RuleHealthState             string   `json:"rule_health_state"`
+	RuleHealthTruncated         bool     `json:"rule_health_truncated"`
 	SuppressionState            string   `json:"suppression_state"`
 	TriageHistoryState          string   `json:"triage_history_state"`
 	TriageHistoryTruncated      bool     `json:"triage_history_truncated"`
@@ -124,6 +127,11 @@ func cmdObsBundle(args []string) int {
 }
 
 func marshalObsBundle(bundle obsIncidentBundle) ([]byte, error) {
+	if h := bundle.Health.Data.AlertHistory; h != nil && h.DiagnosticsPath != "" && h.DiagnosticsPath != operatorobs.RuleHealthPath {
+		safe := *h
+		safe.DiagnosticsPath = ""
+		bundle.Health.Data.AlertHistory = &safe
+	}
 	if t := bundle.Evidence.Data.Incident.Triage; t != nil {
 		safe := *t
 		safe.OwnerAccountID = ""
@@ -178,6 +186,13 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 		coverage.ExpiredEpisodes = &n
 	}
 	coverage.TriageHistoryState = "not_applicable"
+	coverage.RuleHealthState = "unknown"
+	if bundle.RuleHealth != nil {
+		coverage.RuleHealthState = bundle.RuleHealth.Data.State
+		coverage.RuleHealthTruncated = bundle.RuleHealth.Data.Truncated
+	} else {
+		coverage.MissingHealthMetadata = append(coverage.MissingHealthMetadata, "rule_health")
+	}
 	coverage.SuppressionState = "not_applicable"
 	if evidence.Incident.Type == "platform_alert" {
 		coverage.SuppressionState = "unknown"
@@ -197,6 +212,7 @@ func summarizeObsBundle(bundle *obsIncidentBundle) {
 		"credentials", "local_configuration", "request_bodies_and_headers", "raw_logs", "raw_event_payloads", "actor_identities", "commands_and_environment", "raw_span_attributes", "raw_sql",
 	}}
 	bundle.Limitations = []string{
+		"rule_health_covers_current_loaded_rules_not_expected_inventory_or_past_failure_cause",
 		"suppression_is_current_only_and_does_not_prove_delivery",
 		"sections_are_separate_reads_not_one_atomic_snapshot",
 		"relationships_are_current_potential_exposure_not_historical_impact_or_causation",

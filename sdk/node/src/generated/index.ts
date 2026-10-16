@@ -1160,6 +1160,9 @@ export type { ObsNotificationAPIStatus } from './models/ObsNotificationAPIStatus
 export type { ObsNotificationHealth } from './models/ObsNotificationHealth.js';
 export type { ObsNotificationIntegration } from './models/ObsNotificationIntegration.js';
 export type { ObsNotificationSignal } from './models/ObsNotificationSignal.js';
+export type { ObsRuleHealthItem } from './models/ObsRuleHealthItem.js';
+export type { ObsRuleHealthResponse } from './models/ObsRuleHealthResponse.js';
+export type { ObsRuleHealthTotals } from './models/ObsRuleHealthTotals.js';
 export type { OCIHealthcheckTiming } from './models/OCIHealthcheckTiming.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';

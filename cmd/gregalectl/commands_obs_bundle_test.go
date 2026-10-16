@@ -172,7 +172,7 @@ func TestCmdObsBundleStdoutPreservesUnknownScopeAndHealthGaps(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Context.Data.Counts != nil || got.Coverage.RelationshipScope != "unknown" || !slices.Contains(got.Coverage.UnavailableSources, "context.incident_scope") || !slices.Contains(got.Coverage.UnhealthySignals, "alerts_firing") || got.Coverage.AlertCollectionState != wantCollection {
 				t.Fatalf("unknown evidence became healthy/zero: %s err=%v", out.String(), err)
 			}
-			if legacy && len(got.Coverage.MissingHealthMetadata) != 5 {
+			if legacy && (len(got.Coverage.MissingHealthMetadata) != 6 || got.Coverage.RuleHealthState != "unknown") {
 				t.Fatalf("legacy gaps hidden: %+v", got.Coverage)
 			}
 		})
