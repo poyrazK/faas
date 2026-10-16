@@ -22,6 +22,25 @@ type sourceRootfsTestStore interface {
 	DeploymentRuntimeProducerInputStore
 }
 
+func TestSourceBuildRootfsKindHonorsAppType(t *testing.T) {
+	for _, tc := range []struct {
+		name, runtime, handler, kind, wantRuntime string
+		typ                                       AppType
+	}{
+		{name: "container", typ: AppTypeApp, kind: "source-app-layer"},
+		{name: "legacy container runtime", typ: AppTypeApp, runtime: "go124", handler: "node22", kind: "source-app-layer"},
+		{name: "function", typ: AppTypeFunction, runtime: "go124", kind: "function-layer", wantRuntime: "go124"},
+		{name: "legacy function handler", typ: AppTypeFunction, handler: "node22", kind: "function-layer", wantRuntime: "node22"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, runtime := SourceBuildRootfsKind(App{Type: tc.typ, Runtime: tc.runtime}, Deployment{Handler: tc.handler})
+			if kind != tc.kind || runtime != tc.wantRuntime {
+				t.Fatalf("kind=%q runtime=%q; want %q %q", kind, runtime, tc.kind, tc.wantRuntime)
+			}
+		})
+	}
+}
+
 type sourceRootfsFixture struct {
 	Input  SourceBuildRootfsInput
 	App    App

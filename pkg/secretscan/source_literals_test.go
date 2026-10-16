@@ -53,9 +53,18 @@ func TestSourceEntropyScansCredentialTokens(t *testing.T) {
 		`// Mirrors cmd/gregale/templates/function-node/handler.js (node22).`,
 		`ctx.log.info("function invoked", { event, invocation_id: ctx.invocation_id, runtime: process.env.FAAS_RUNTIME });`,
 		`const result = JSON.stringify({ invocation_id: ctx.invocation_id });`,
+		`size=$(curl -s ${HDR[@]+"${HDR[@]}"} -o /dev/null -D - --data-binary @"$IMG" "$BASE/process/thumbnail?max=64" | grep -i x-image-size | tr -d '\r' | awk '{print $2}')`,
 	} {
 		if got := ScanFile("handler.js", []byte(line)); len(got) != 0 {
 			t.Errorf("code flagged: %+v", got)
 		}
+	}
+}
+
+func TestShellInterpolationStillScansProviderCredentials(t *testing.T) {
+	line := `GITHUB_TOKEN=$(curl "$BASE/api" -H "Authorization: Bearer ghp_` + "A7qDm9PzR3uK8vN2xL5cW0sY6hF4eB1jAbCd" + `")`
+	got := ScanFile("smoke.sh", []byte(line))
+	if len(got) != 1 || got[0].Provider != "github_pat" {
+		t.Fatalf("provider credential hidden by shell interpolation: %+v", got)
 	}
 }

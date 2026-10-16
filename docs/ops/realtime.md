@@ -2833,7 +2833,7 @@ endpoints do not support per-user revocation.
 ### Retained WebSocket channel authorization refresh
 
 Retained v2 WebSocket subscriptions reuse SSE's 30-second application channel
-grant lifetime ([ADR-1345](../adr/1345-retained-channel-authorization-refresh.md)).
+grant lifetime ([ADR-1385](../adr/1385-retained-channel-authorization-refresh.md)).
 The history pump checks idle subscriptions, and the writer rechecks expired
 grants before sending queued channel messages, presence, signals, read receipts
 or checkpoints. Channel commands also refresh an expired grant before executing.

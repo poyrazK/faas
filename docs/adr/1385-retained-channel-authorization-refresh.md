@@ -1,4 +1,4 @@
-# ADR-1345: Refresh authorization for retained WebSocket channels
+# ADR-1385: Refresh authorization for retained WebSocket channels
 
 - **Status:** accepted for implementation; deployed fleet qualification pending
 - **Date:** 2026-10-15
