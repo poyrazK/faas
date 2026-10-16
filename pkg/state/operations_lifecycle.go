@@ -18,6 +18,9 @@ func operationClaim(op *Operation, inv Invocation, now time.Time) (string, api.O
 	if op.CurrentInvocationID != inv.ID || (op.State != api.OperationAccepted && op.State != api.OperationRunning) {
 		return "", api.OperationEvent{}, ErrOperationStaleAttempt
 	}
+	if operationLimitExceeded(*op, now) != "" {
+		return "", api.OperationEvent{}, ErrOperationLimitExceeded
+	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return "", api.OperationEvent{}, err
@@ -147,10 +150,16 @@ func operationInvocationTransition(op *Operation, inv Invocation, def OperationD
 	}
 	limits.Operations = op.PlanLimits
 	limits.MaxSourceBytesPerInvocation = op.ValueMaxBytes
+	recordOperationAttemptUsage(op, inv, now)
 	kind := ""
 	switch inv.State {
 	case InvocationPending:
 		op.State, kind = api.OperationAccepted, "accepted"
+		// ADR-1196: a retry the limits no longer allow settles now; the
+		// store cancels the pending execution in the same transaction.
+		if code := operationRetryLimitExceeded(*op, inv, now); code != "" {
+			op.State, op.FailureCode, kind = api.OperationFailed, code, "failed"
+		}
 	case InvocationCompleted:
 		contract, err := operations.Compile(def.Spec, limits.Operations)
 		if err != nil {
@@ -169,6 +178,10 @@ func operationInvocationTransition(op *Operation, inv Invocation, def OperationD
 			op.State, op.FailureCode, kind = api.OperationCancelled, "", "cancelled"
 		} else {
 			op.State, op.FailureCode, kind = api.OperationFailed, "execution_failed", "failed"
+			// ADR-1196: the deadline reaper or a spent budget names its limit.
+			if code := operationLimitExceeded(*op, now); code != "" {
+				op.FailureCode = code
+			}
 		}
 	default:
 		return api.OperationEvent{}, ErrConflict

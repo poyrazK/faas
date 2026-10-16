@@ -808,6 +808,10 @@ const (
 	CodeInstanceBusy          = "instance_busy"
 	CodeFrozenInstanceRefused = "frozen_instance_refused"
 	CodeInstanceFrozen        = "instance_frozen"
+	// CodeFrozenCompressUnavailable refuses to compress a frozen instance on
+	// a host without memory-only swap (zswap with writeback disabled, ADR-906
+	// decision 6); schedd parks it instead.
+	CodeFrozenCompressUnavailable = "frozen_compress_unavailable"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1939,7 +1943,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeReleaseReviewChanged:
+	case CodeProfileGateBlocked, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
@@ -2029,7 +2033,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
-		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused:
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
 	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected

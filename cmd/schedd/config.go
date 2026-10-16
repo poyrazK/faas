@@ -196,6 +196,11 @@ type Config struct {
 	// turning it off drains the tier within FrozenTTL. FAAS_FROZEN_TIER
 	// overrides it.
 	FrozenTier bool `toml:"frozen_tier"`
+	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
+	// functions to request-mode apps whose declared pause is not never.
+	// Off by default and ignored unless frozen_tier is on.
+	// FAAS_FROZEN_TIER_APPS overrides it.
+	FrozenTierApps bool `toml:"frozen_tier_apps"`
 
 	// FrozenFastPath (ADR-1342) thaws a frozen VM from a ticket recorded
 	// when it froze: one runtime-values read beside the vmmd thaw and one
@@ -530,6 +535,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_FAST_PATH must be a boolean (got %q)", v)
 		}
 		c.FrozenFastPath = enabled
+	}
+	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
+		}
+		c.FrozenTierApps = enabled
 	}
 	applyRoutingEnv()
 	return c, nil

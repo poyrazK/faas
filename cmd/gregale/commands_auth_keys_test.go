@@ -198,6 +198,7 @@ func TestAuthKeysListReportsStatesAsJSON(t *testing.T) {
 	world.secrets[authSigningKeyPrefix+"FFFF0001"] = "{}"
 	out := captureAuthStdout(t)
 	jsonOutput = true
+	t.Cleanup(resetJSONOutput) // later tests expect text output
 	if code := cmdAuth([]string{"keys", "list", "shop-auth"}); code != 0 {
 		t.Fatalf("list = %d", code)
 	}

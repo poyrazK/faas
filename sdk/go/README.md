@@ -38,6 +38,11 @@ The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for raw-body handling and delivery-ID deduplication guidance.
 
+`github.com/poyrazK/faas/sdk/go/auth` verifies application Auth access tokens
+and checks permissions in your backend: `auth.New`, `Verify`, `Require`
+middleware and `Authorize`. See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 Managed Go workloads can use the runtime Flags client, request middleware, and
 service transport. See [the Go Flags guide](../../docs/flags.md#use-flags-in-a-go-http-application)
 for customer targeting, decision evidence, and propagation examples.

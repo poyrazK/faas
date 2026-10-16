@@ -99,9 +99,10 @@ type frozenCandidate struct {
 	nodeMissing bool
 }
 
-// frozenCandidates lists the deployment's frozen rows, newest first. Rows
-// whose shape no longer matches the app, or whose node is gone or stale, are
-// parked. Each node is read once however many candidates it holds.
+// frozenCandidates lists the deployment's frozen rows, newest first, with
+// the wake's preferred instance (WithPreferredInstance) ahead of the rest.
+// Rows whose shape no longer matches the app, or whose node is gone or
+// stale, are parked. Each node is read once however many candidates it holds.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -135,6 +136,16 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 		}
 		return out[i].ins.LastRequestAt.After(out[j].ins.LastRequestAt)
 	})
+	// A session pinned to one of these VMs thaws its own first.
+	if preferred := PreferredInstanceFromContext(ctx); preferred != "" {
+		for i, candidate := range out {
+			if candidate.ins.ID == preferred {
+				copy(out[1:i+1], out[:i])
+				out[0] = candidate
+				break
+			}
+		}
+	}
 	return out, nil
 }
 

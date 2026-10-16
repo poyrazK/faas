@@ -375,7 +375,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		"vmmd_socket", cfg.VMMDSocket,
 		"metrics_addr", cfg.MetricsAddr)
 
-	pool, err := deps.openDB(ctx, cfg.DBURL)
+	var bootWait db.BootWaitRecord
+	pool, err := deps.openDB(db.WithBootWaitRecord(ctx, &bootWait), cfg.DBURL)
 	if err != nil {
 		return err
 	}
@@ -621,6 +622,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The notifier and the store share this pool, so a wake's
 	// instance_changed can commit with its RUNNING publication.
 	engine.WithNotifyInPublication()
+	// ADR-1344 §5 rule 4: a schedd that waited for Postgres at boot holds
+	// its liveness verdicts for a full staleness window; every heartbeat is
+	// old because nobody could write.
+	storeOutageAtStartup := bootWait.Waited()
+	if storeOutageAtStartup {
+		log.Info("schedd: store was unavailable before startup; liveness verdicts wait for a full staleness window")
+	}
+	engine.WithStoreOutageAtStartup(storeOutageAtStartup)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
@@ -1537,6 +1546,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
 		WithStalePeerObserver(ownerNodeID != "").
+		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
 		WithReachableHook(engine.DestroyLostVMs)
@@ -1578,6 +1588,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	).WithTelemetry(engine.NodeTelemetryCache()).
 		WithNodeRegistry(nodeRegistry).
 		WithOwnerNodeID(ownerNodeID).
+		WithStatsRouter(vmmRouter).
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
 		}).
@@ -1600,7 +1611,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
-		log.Info("frozen tier enabled (ADR-1151)",
+		if cfg.FrozenTierApps {
+			engine.EnableFrozenTierApps()
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {

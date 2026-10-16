@@ -419,6 +419,55 @@ func (q *Queries) ActivateRetainedRollbackDeployment(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const activeCustomerOperationsForSubject = `-- name: ActiveCustomerOperationsForSubject :many
+SELECT id::text FROM customer_operations
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND record ? 'subject'
+  AND record #>> '{subject,type}' = $3::text AND record #>> '{subject,id}' = $4::text
+  AND record->>'scope' = $5::text AND record->>'name' = $6::text
+  AND state IN ('accepted','running','waiting')
+ORDER BY created_at,id LIMIT $7::integer
+`
+
+type ActiveCustomerOperationsForSubjectParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	SubjectType string
+	SubjectID   string
+	Scope       string
+	Name        string
+	PageLimit   int32
+}
+
+// ADR-1197: a subject signal reaches every active Operation of one name about
+// one business subject, oldest first, through the subject history index.
+func (q *Queries) ActiveCustomerOperationsForSubject(ctx context.Context, db DBTX, arg ActiveCustomerOperationsForSubjectParams) ([]string, error) {
+	rows, err := db.Query(ctx, activeCustomerOperationsForSubject,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.Scope,
+		arg.Name,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const activeEnvironmentWorkloadReleaseMembers = `-- name: ActiveEnvironmentWorkloadReleaseMembers :many
 SELECT rm.app_id::text AS app_id, rm.deployment_id::text AS deployment_id
 FROM environment_git_sources source
@@ -2805,12 +2854,17 @@ func (q *Queries) CancelCustomerOperationJobTask(ctx context.Context, db DBTX, r
 
 const cancelCustomerOperationWorkflow = `-- name: CancelCustomerOperationWorkflow :exec
 UPDATE workflow_runs SET status='failed',cancelled_at=clock_timestamp(),finished_at=clock_timestamp(),
- last_error='cancelled by operation owner',updated_at=clock_timestamp(),lease_until=NULL
-WHERE id=$1::uuid AND status IN ('pending','running','awaiting_event')
+ last_error=$1::text,updated_at=clock_timestamp(),lease_until=NULL
+WHERE id=$2::uuid AND status IN ('pending','running','awaiting_event')
 `
 
-func (q *Queries) CancelCustomerOperationWorkflow(ctx context.Context, db DBTX, runID pgtype.UUID) error {
-	_, err := db.Exec(ctx, cancelCustomerOperationWorkflow, runID)
+type CancelCustomerOperationWorkflowParams struct {
+	Reason string
+	RunID  pgtype.UUID
+}
+
+func (q *Queries) CancelCustomerOperationWorkflow(ctx context.Context, db DBTX, arg CancelCustomerOperationWorkflowParams) error {
+	_, err := db.Exec(ctx, cancelCustomerOperationWorkflow, arg.Reason, arg.RunID)
 	return err
 }
 
@@ -4314,7 +4368,7 @@ WITH candidate AS (
  AND (b.state = 'deleting' OR (b.state = 'staging' AND b.expires_at <= $3::timestamptz)
  OR (b.state = 'retained' AND NOT EXISTS (
   SELECT 1 FROM customer_operations o WHERE o.id = b.operation_id
-  AND (o.expires_at > $3::timestamptz OR o.state IN ('accepted','running'))
+  AND (o.expires_at > $3::timestamptz OR o.state IN ('accepted','running','waiting'))
   AND EXISTS (SELECT 1 FROM jsonb_each_text(COALESCE(o.record->'artifact_storage_keys','{}'::jsonb)) k WHERE k.value = b.storage_key)
  )))
  ORDER BY b.next_attempt_at,b.id FOR UPDATE OF b SKIP LOCKED LIMIT 1
@@ -6241,6 +6295,7 @@ const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
     WHERE candidate.trigger_id = $1
+ AND EXISTS(SELECT 1 FROM triggers t WHERE t.id=candidate.trigger_id AND NOT environment_workload_admission_retired(t.app_id,t.queue_binding_scope))
       AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
         OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
     ORDER BY candidate.next_fire_at, candidate.id
@@ -6324,6 +6379,7 @@ const claimTriggerRecordsByItems = `-- name: ClaimTriggerRecordsByItems :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
     WHERE candidate.trigger_id = $1
+ AND EXISTS(SELECT 1 FROM triggers t WHERE t.id=candidate.trigger_id AND NOT environment_workload_admission_retired(t.app_id,t.queue_binding_scope))
       AND candidate.item_identifier = ANY($2::text[])
       AND ((candidate.state IN ('pending','retry') AND candidate.next_fire_at <= now())
         OR (candidate.state = 'claimed' AND candidate.claim_expires_at <= now()))
@@ -6787,6 +6843,7 @@ SELECT
  OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_webhooks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_webhook_bindings p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_operation_workflow_states p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM customer_workflow_readiness_subscriptions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
@@ -8899,7 +8956,7 @@ func (q *Queries) CountOwnedActiveOperationJobTasksForPurge(ctx context.Context,
 
 const countPendingCustomerOperations = `-- name: CountPendingCustomerOperations :one
 SELECT count(*)::bigint FROM customer_operations WHERE account_id=$1::uuid
-AND state IN ('accepted','running','requires_reconciliation')
+AND state IN ('accepted','running','waiting','requires_reconciliation')
 `
 
 func (q *Queries) CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
@@ -11243,7 +11300,7 @@ func (q *Queries) CustomerOperationReleaseMemberCount(ctx context.Context, db DB
 
 const customerOperationStateMetrics = `-- name: CustomerOperationStateMetrics :many
 SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
-FROM customer_operations WHERE expires_at>$1::timestamptz OR state IN ('accepted','running')
+FROM customer_operations WHERE expires_at>$1::timestamptz OR state IN ('accepted','running','waiting')
 GROUP BY state ORDER BY state
 `
 
@@ -13579,7 +13636,8 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 
 const environmentGitOpsUnqualifiedWorkloads = `-- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
-WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_managed_fields f
+WHERE r.source_id=$1::uuid AND EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
+ WHERE s.id=r.source_id AND rev.definition->'workloads' ? substring(r.logical_name from 10)) AND EXISTS(SELECT 1 FROM environment_managed_fields f
 WHERE f.source_id=r.source_id AND f.resource=r.logical_name AND (f.field_path IN ('source','source_revision','schedule') OR starts_with(f.field_path,'runtime/') OR starts_with(f.field_path,'service_bindings/') OR starts_with(f.field_path,'queue_bindings/')))
 `
 
@@ -20075,7 +20133,7 @@ WHERE m.operation_id=$1::uuid
  AND o.app_id=$4::uuid
  AND o.platform_tenant_id=$5::uuid
  AND d.scope=$6::text
- AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
 `
 
 type GetCustomerOperationCompensationSourceParams struct {
@@ -20365,7 +20423,7 @@ func (q *Queries) GetCustomerOperationForWorkflow(ctx context.Context, db DBTX, 
 
 const getCustomerOperationIdempotency = `-- name: GetCustomerOperationIdempotency :one
 SELECT operation_id::text,fingerprint,expires_at,
- EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running')) AS active
+ EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running','waiting')) AS active
 FROM customer_operation_idempotency
 WHERE scope_digest=$1::text AND account_id=$2::uuid
 `
@@ -20507,7 +20565,7 @@ CROSS JOIN LATERAL (
 ) attention
 WHERE s.account_id=$3::uuid AND s.app_id=$4::uuid
  AND s.platform_tenant_id=$5::uuid AND s.scope=$6::text
- AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
 `
 
 type GetCustomerOperationRelatedWorkflowStatesParams struct {
@@ -20599,7 +20657,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
    AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$9::timestamptz
    AND COALESCE(value->>'verification_milestone_id','')<>''
-   AND (ro.state IN ('accepted','running') OR ro.expires_at>$10::timestamptz)
+   AND (ro.state IN ('accepted','running','waiting') OR ro.expires_at>$10::timestamptz)
   ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
  ) c
  LEFT JOIN LATERAL (
@@ -20616,7 +20674,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
     CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
    AND pm.created_at<=$9::timestamptz
-   AND (po.state IN ('accepted','running') OR po.expires_at>$10::timestamptz)
+   AND (po.state IN ('accepted','running','waiting') OR po.expires_at>$10::timestamptz)
   LIMIT 1
  ) proof ON true
 ) verifications
@@ -20681,7 +20739,7 @@ WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
  AND o.record #>> '{subject,type}'=$5::text AND o.record #>> '{subject,id}'=$6::text
  AND r.workflow=$7::text AND r.instance_id=$8::text
  AND r.created_at<=$9::timestamptz
- AND (o.state IN ('accepted','running') OR o.expires_at>$10::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$10::timestamptz)
 ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT $11::integer
 `
 
@@ -20798,7 +20856,7 @@ CROSS JOIN LATERAL (
 ) resolved
 WHERE s.account_id=$6::uuid AND s.app_id=$7::uuid
  AND s.platform_tenant_id=$8::uuid AND s.scope=$9::text
- AND (o.state IN ('accepted','running') OR o.expires_at>$10::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$10::timestamptz)
  AND jsonb_array_length(r.depends_on)>0 AND r.depends_on @> $11::jsonb
  AND jsonb_build_array(link.value) @> $11::jsonb
 ), totals AS (
@@ -20890,7 +20948,7 @@ WHERE r.operation_id=$1::uuid AND r.id=$2::uuid
  AND d.scope=$6::text AND o.record #>> '{subject,type}'=$7::text AND o.record #>> '{subject,id}'=$8::text
  AND r.workflow=$9::text AND r.instance_id=$10::text
  AND r.contract_version=$11::integer AND r.revision=$12::bigint
- AND (o.state IN ('accepted','running') OR o.expires_at>$13::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$13::timestamptz)
 `
 
 type GetCustomerOperationWorkflowResolutionSourceParams struct {
@@ -20938,7 +20996,7 @@ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o
 CROSS JOIN LATERAL jsonb_array_elements(COALESCE(d.spec->'workflow_steps','[]'::jsonb)) mappings(step)
 WHERE o.id=$2::uuid AND o.account_id=$3::uuid AND o.app_id=$4::uuid AND o.platform_tenant_id=$5::uuid AND d.scope=$6::text
 AND step->>'workflow'=$7::text AND COALESCE(NULLIF((step->>'version')::integer,0),1)=$8::integer
-AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
 `
 
 type GetCustomerOperationWorkflowSLABudgetParams struct {
@@ -25960,10 +26018,10 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 }
 
 const insertCustomerOperation = `-- name: InsertCustomerOperation :exec
-INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,workflow_run_id,job_run_id,state,record,expires_at,created_at)
+INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,workflow_run_id,job_run_id,state,record,expires_at,created_at,deadline_at)
 VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
        $5::uuid,$6::uuid,$7::uuid,$8::uuid,$9::text,
-       $10::jsonb,$11::timestamptz,$12::timestamptz)
+       $10::jsonb,$11::timestamptz,$12::timestamptz,$13::timestamptz)
 `
 
 type InsertCustomerOperationParams struct {
@@ -25979,6 +26037,7 @@ type InsertCustomerOperationParams struct {
 	Record        []byte
 	ExpiresAt     pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+	DeadlineAt    pgtype.Timestamptz
 }
 
 func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg InsertCustomerOperationParams) error {
@@ -25995,6 +26054,7 @@ func (q *Queries) InsertCustomerOperation(ctx context.Context, db DBTX, arg Inse
 		arg.Record,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.DeadlineAt,
 	)
 	return err
 }
@@ -34216,6 +34276,7 @@ SELECT EXISTS (
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM environment_workload_retirements r WHERE d.id=ANY(r.deployment_ids) AND r.phase IN ('planned','retiring','retired','recovering'))
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
       AND (d.rootfs_key = $1::text
@@ -34385,7 +34446,7 @@ JOIN customer_operation_milestones m ON m.operation_id=o.id
 WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
  AND ($3::text='' OR o.platform_tenant_id::text=$3::text) AND d.scope=$4::text
  AND o.id=$5::uuid
- AND (o.state IN ('accepted','running') OR o.expires_at>$6::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$6::timestamptz)
  AND ($7::timestamptz IS NULL OR
       (m.created_at,m.operation_id,m.id)<($7::timestamptz,$8::uuid,$9::uuid))
 ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT $10::integer
@@ -34467,7 +34528,7 @@ WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
      AND COALESCE(step->>'instance_id_from','')<>''
      AND m.payload #>> selected_path.pointer_parts=$8::text
  ))
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::timestamptz IS NULL OR
       (m.created_at,m.operation_id,m.id)<($10::timestamptz,$11::uuid,$12::uuid))
 ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT $13::integer
@@ -34537,7 +34598,7 @@ WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
  AND d.scope=$4::text AND o.record ? 'subject'
  AND o.record #>> '{subject,type}'=$5::text AND o.record #>> '{subject,id}'=$6::text
  AND r.workflow=$7::text AND r.instance_id=$8::text
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::bigint IS NULL OR
       (r.revision,r.created_at,r.operation_id,r.id)>
       ($10::bigint,$11::timestamptz,$12::uuid,$13::uuid))
@@ -34701,7 +34762,7 @@ WITH matching AS (
   AND COALESCE(declared.step->>'milestone','')=m.name
   AND COALESCE(declared.step->>'instance_id_from','')<>''
   AND m.payload #>> selected_path.pointer_parts=$8::text
-  AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+  AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
 ), selected_version AS (
  SELECT CASE WHEN $10::integer>0 THEN $10::integer
   ELSE COALESCE((SELECT contract_version FROM matching ORDER BY created_at DESC,operation_id DESC,id DESC LIMIT 1),0)
@@ -34816,7 +34877,7 @@ WHERE o.account_id=$1::uuid AND ($2::text='' OR o.platform_tenant_id::text=$2::t
  AND o.app_id=$3::uuid AND d.scope=$4::text
  AND ($5::text='' OR d.name=$5::text)
  AND ($6::text='' OR o.state=$6::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
  AND ($8::timestamptz IS NULL OR
       (o.created_at,o.id)<($8::timestamptz,$9::uuid))
 ORDER BY o.created_at DESC,o.id DESC LIMIT $10::integer
@@ -34900,7 +34961,7 @@ WHERE o.account_id=$1::uuid AND ($2::text='' OR o.platform_tenant_id::text=$2::t
  AND (o.record #>> '{subject,id}')=$6::text
  AND ($7::text='' OR d.name=$7::text)
  AND ($8::text='' OR o.state=$8::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::timestamptz IS NULL OR
       (o.created_at,o.id)<($10::timestamptz,$11::uuid))
 ORDER BY o.created_at DESC,o.id DESC LIMIT $12::integer
@@ -37492,7 +37553,7 @@ WHERE o.record #>> '{subject,type}'=$6::text
  AND COALESCE(declared.step->>'instance_id_from','')<>''
  AND m.payload #>> selected_path.pointer_parts=$10::text
  AND m.created_at<=$11::timestamptz
- AND (o.state IN ('accepted','running') OR o.expires_at>$11::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$11::timestamptz)
 ), ranked AS (
  SELECT matching.operation, matching.milestone, matching.id, matching.operation_id, matching.occurred_at, matching.created_at,
  row_number() OVER (PARTITION BY operation,milestone ORDER BY created_at DESC,operation_id DESC,id DESC) AS publication_rank,
@@ -37613,7 +37674,7 @@ CROSS JOIN LATERAL (
   AND ho.account_id=s.account_id AND ho.app_id=s.app_id AND ho.platform_tenant_id=s.platform_tenant_id AND hd.scope=s.scope
   AND ho.record #>> '{subject,type}'=s.subject_type AND ho.record #>> '{subject,id}'=s.subject_id
   AND hr.workflow=s.workflow AND hr.instance_id=s.instance_id AND hr.created_at<=$1::timestamptz
-  AND (ho.state IN ('accepted','running') OR ho.expires_at>$2::timestamptz)
+  AND (ho.state IN ('accepted','running','waiting') OR ho.expires_at>$2::timestamptz)
   ORDER BY hr.revision DESC,hr.operation_id DESC,hr.id DESC LIMIT $3::integer
  ) h
 ) sla_history
@@ -37694,7 +37755,7 @@ CROSS JOIN LATERAL (
   WHERE target.account_id=s.account_id AND target.app_id=s.app_id AND target.platform_tenant_id=s.platform_tenant_id AND target.scope=s.scope
    AND target.subject_type=link.value->>'subject_type' AND target.subject_id=link.value->>'subject_id'
    AND target.workflow=link.value->>'workflow' AND target.instance_id=link.value->>'instance_id'
-   AND (top.state IN ('accepted','running') OR top.expires_at>$2::timestamptz)
+   AND (top.state IN ('accepted','running','waiting') OR top.expires_at>$2::timestamptz)
  ) retained ON true
  CROSS JOIN LATERAL (
   SELECT CASE WHEN retained.terminal IS NULL THEN 'unknown' WHEN NOT retained.terminal THEN 'waiting'
@@ -37718,7 +37779,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
    AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$1::timestamptz
    AND COALESCE(value->>'verification_milestone_id','')<>''
-   AND (ro.state IN ('accepted','running') OR ro.expires_at>$2::timestamptz)
+   AND (ro.state IN ('accepted','running','waiting') OR ro.expires_at>$2::timestamptz)
   ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
  ) c
  LEFT JOIN LATERAL (
@@ -37735,7 +37796,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
     CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
    AND pm.created_at<=$1::timestamptz
-   AND (po.state IN ('accepted','running') OR po.expires_at>$2::timestamptz)
+   AND (po.state IN ('accepted','running','waiting') OR po.expires_at>$2::timestamptz)
   LIMIT 1
  ) proof ON true
 ) verifications
@@ -37744,7 +37805,7 @@ CROSS JOIN LATERAL (
 ) identity
 WHERE s.account_id=$4::uuid AND s.app_id=$5::uuid AND s.scope=$6::text
  AND ($7::text='' OR s.platform_tenant_id::text=$7::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$2::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$2::timestamptz)
  AND ($8::text='' OR s.workflow=$8::text)
  AND (((($9::text='' AND NOT $10::boolean AND $11::text='') OR EXISTS (
  SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE ($9::text='' OR COALESCE(b->>'owner','')=$9::text)
@@ -37945,7 +38006,7 @@ CROSS JOIN LATERAL (
 ) identity
 WHERE s.account_id=$2::uuid AND s.app_id=$3::uuid AND s.scope=$4::text
  AND ($5::text='' OR s.platform_tenant_id::text=$5::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$6::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$6::timestamptz)
  AND ($7::text='' OR s.workflow=$7::text)
  AND config.terminal AND r.outcome_code<>''
  AND ($8::text='' OR r.outcome_code=$8::text)
@@ -38013,7 +38074,7 @@ JOIN customer_operation_definitions d ON d.id=o.definition_id AND d.account_id=o
 WHERE o.account_id=$2::uuid AND o.app_id=$3::uuid
  AND d.scope=$4::text AND o.id=ANY($5::uuid[])
  AND ($6::text='' OR o.platform_tenant_id::text=$6::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
 `
 
 type ListCustomerOperationWorkflowProgressDefinitionsParams struct {
@@ -38087,7 +38148,7 @@ WITH candidates AS (
  AND ($5::text='' OR s.platform_tenant_id::text=$5::text)
  AND ($6::text='' OR s.workflow=$6::text)
  AND s.updated_at<=$7::timestamptz AND r.created_at<=$7::timestamptz
- AND (o.state IN ('accepted','running') OR o.expires_at>$8::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$8::timestamptz)
 
  AND NOT config.terminal
 )
@@ -38700,6 +38761,40 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueCustomerOperationDeadlines = `-- name: ListDueCustomerOperationDeadlines :many
+SELECT workflow_run_id::text AS run_id FROM customer_operations
+WHERE deadline_at IS NOT NULL AND deadline_at<=$1::timestamptz
+  AND state IN ('accepted','running','waiting') AND workflow_run_id IS NOT NULL
+ORDER BY deadline_at,id LIMIT $2::integer
+`
+
+type ListDueCustomerOperationDeadlinesParams struct {
+	Now       pgtype.Timestamptz
+	PageLimit int32
+}
+
+// ADR-1196: HTTP executions carry the deadline themselves; workflow runs
+// have none, so the sweeper stops them.
+func (q *Queries) ListDueCustomerOperationDeadlines(ctx context.Context, db DBTX, arg ListDueCustomerOperationDeadlinesParams) ([]string, error) {
+	rows, err := db.Query(ctx, listDueCustomerOperationDeadlines, arg.Now, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var run_id string
+		if err := rows.Scan(&run_id); err != nil {
+			return nil, err
+		}
+		items = append(items, run_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -39501,7 +39596,7 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
        created_at, updated_at
-from triggers where enabled = true
+from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 `
 
 type ListEnabledTriggersRow struct {
@@ -41854,7 +41949,7 @@ JOIN customer_operation_milestones m ON m.operation_id=o.id
 WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
  AND o.platform_tenant_id=$3::uuid AND d.scope=$4::text
  AND o.id=$5::uuid
- AND (o.state IN ('accepted','running') OR o.expires_at>$6::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$6::timestamptz)
  AND ($7::timestamptz IS NULL OR
       (m.created_at,m.operation_id,m.id)<($7::timestamptz,$8::uuid,$9::uuid))
 ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT $10::integer
@@ -41935,7 +42030,7 @@ WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
      AND COALESCE(step->>'instance_id_from','')<>''
      AND m.payload #>> selected_path.pointer_parts=$8::text
  ))
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::timestamptz IS NULL OR
       (m.created_at,m.operation_id,m.id)<($10::timestamptz,$11::uuid,$12::uuid))
 ORDER BY m.created_at DESC,m.operation_id DESC,m.id DESC LIMIT $13::integer
@@ -42005,7 +42100,7 @@ WHERE o.account_id=$1::uuid AND o.app_id=$2::uuid
  AND o.record ? 'subject' AND o.record #>> '{subject,type}'=$5::text
  AND o.record #>> '{subject,id}'=$6::text
  AND r.workflow=$7::text AND r.instance_id=$8::text
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::bigint IS NULL OR
       (r.revision,r.created_at,r.operation_id,r.id)>
       ($10::bigint,$11::timestamptz,$12::uuid,$13::uuid))
@@ -42167,7 +42262,7 @@ WITH matching AS (
   AND COALESCE(declared.step->>'milestone','')=m.name
   AND COALESCE(declared.step->>'instance_id_from','')<>''
   AND m.payload #>> selected_path.pointer_parts=$8::text
-  AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+  AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
 ), selected_version AS (
  SELECT CASE WHEN $10::integer>0 THEN $10::integer
   ELSE COALESCE((SELECT contract_version FROM matching ORDER BY created_at DESC,operation_id DESC,id DESC LIMIT 1),0)
@@ -42281,7 +42376,7 @@ WHERE o.account_id=$1::uuid AND o.platform_tenant_id=$2::uuid
  AND o.app_id=$3::uuid AND d.scope=$4::text
  AND ($5::text='' OR d.name=$5::text)
  AND ($6::text='' OR o.state=$6::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
  AND ($8::timestamptz IS NULL OR
       (o.created_at,o.id)<($8::timestamptz,$9::uuid))
 ORDER BY o.created_at DESC,o.id DESC LIMIT $10::integer
@@ -42364,7 +42459,7 @@ WHERE o.account_id=$1::uuid AND o.platform_tenant_id=$2::uuid
  AND (o.record #>> '{subject,id}')=$6::text
  AND ($7::text='' OR d.name=$7::text)
  AND ($8::text='' OR o.state=$8::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($10::timestamptz IS NULL OR
       (o.created_at,o.id)<($10::timestamptz,$11::uuid))
 ORDER BY o.created_at DESC,o.id DESC LIMIT $12::integer
@@ -45886,6 +45981,16 @@ SELECT lock_clone_deployment_cleanup_borrower_writers()
 
 func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneDeploymentCleanupBorrowerWriters)
+	return err
+}
+
+const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
+LOCK TABLE environment_workload_retirements IN SHARE MODE
+`
+
+// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+func (q *Queries) LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneDeploymentCleanupRetirementWriters)
 	return err
 }
 
@@ -51021,7 +51126,7 @@ JOIN customer_operation_executions e ON e.operation_id=o.id AND e.workflow_run_i
 JOIN apps a ON a.id=w.app_id AND a.account_id=o.account_id AND a.status<>'deleted'
 JOIN platform_tenants t ON t.id=o.platform_tenant_id AND t.account_id=o.account_id
 LEFT JOIN customer_operation_workflow_claims c ON c.workflow_run_id=w.id
-WHERE o.state IN ('accepted','running') AND (c.workflow_run_id IS NULL OR c.lease_until<=now())
+WHERE o.state IN ('accepted','running','waiting') AND (c.workflow_run_id IS NULL OR c.lease_until<=now())
 AND ((w.status IN ('pending','awaiting_event') AND w.scheduled_for<=now() AND t.status='active') OR w.status='running')
 ORDER BY CASE WHEN w.status='running' THEN coalesce(c.lease_until,w.updated_at) ELSE w.scheduled_for END,w.id
 FOR UPDATE OF w SKIP LOCKED LIMIT 1
@@ -59751,9 +59856,14 @@ SELECT jsonb_build_object(
         WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
     'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
         FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
+    'retirements', coalesce((SELECT jsonb_agg(to_jsonb(r)) FROM (SELECT DISTINCT ON(resource) id, source_id, account_id, project_id, environment_id, app_id, resource, revision_id, generation, plan_hash, phase, deployment_ids, queue_binding_ids, job_id, route_deployment_id, route_generation, expected_gateways, acknowledged_gateways, requested_at, retired_at, recovery_revision_id, recovery_generation, recovered_at FROM environment_workload_retirements WHERE source_id=s.id ORDER BY resource,generation DESC) r),'[]'::jsonb),
     'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', q.resource, 'path', q.field_path, 'binding_id', q.binding_id))
         FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
+         'pending_invocations',(SELECT count(*) FROM invocations i WHERE i.app_id=a.id AND (i.environment_id=e.id OR CASE WHEN coalesce(i.deployment_scope,'') IN ('','default') THEN 'production' ELSE i.deployment_scope END=e.slug) AND i.state='pending'),
+        'in_flight_invocations',(SELECT count(*) FROM invocations i WHERE i.app_id=a.id AND (i.environment_id=e.id OR CASE WHEN coalesce(i.deployment_scope,'') IN ('','default') THEN 'production' ELSE i.deployment_scope END=e.slug) AND i.state='dispatching'),
+        'queued_tasks',(SELECT count(*) FROM job_tasks t JOIN job_runs j ON j.id=t.run_id JOIN app_environment_workload_intents w ON w.job_id=j.job_id WHERE w.app_id=a.id AND w.environment_id=e.id AND t.status='queued'),
+        'in_flight_tasks',(SELECT count(*) FROM job_tasks t JOIN job_runs j ON j.id=t.run_id JOIN app_environment_workload_intents w ON w.job_id=j.job_id WHERE w.app_id=a.id AND w.environment_id=e.id AND t.status='claimed'),
         'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
         'manifest',a.manifest, 'start_command',coalesce(a.start_command,''), 'runtime_base',coalesce(a.runtime,''),
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
@@ -59809,7 +59919,9 @@ func (q *Queries) ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, a
 
 const observeEnvironmentGitOpsRuntime = `-- name: ObserveEnvironmentGitOpsRuntime :many
 SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots
-FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
+FROM environment_gitops_runtime_targets t WHERE source_id = $1::uuid
+AND EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
+ WHERE s.id=t.source_id AND rev.definition->'workloads' ? substring(t.resource from 10))
 AND account_id = $2::uuid ORDER BY app_id
 `
 
@@ -61060,7 +61172,7 @@ func (q *Queries) PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg
 
 const pruneCustomerOperationIdempotency = `-- name: PruneCustomerOperationIdempotency :execrows
 WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency i WHERE expires_at<=$1::timestamptz
- AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running'))
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running','waiting'))
  ORDER BY expires_at,scope_digest LIMIT $2::integer)
 DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest
 `
@@ -65335,6 +65447,7 @@ SELECT (jsonb_build_object(
     'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = $1::uuid)
 ) || jsonb_build_object(
     -- ADR-595 application-standard artifact evidence
+    'environment_workload_retirements_route_deployment_id_fkey', (SELECT count(*) FROM environment_workload_retirements WHERE route_deployment_id = $1::uuid),
     'application_standard_snapshot_captures_deployment_id_fkey', (SELECT count(*) FROM application_standard_snapshot_captures WHERE deployment_id = $1::uuid),
     'build_export_publications_deployment_id_fkey', (SELECT count(*) FROM build_export_publications WHERE deployment_id = $1::uuid),
     'deployment_artifact_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_artifact_scan_current WHERE deployment_id = $1::uuid),
@@ -65377,6 +65490,7 @@ func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, opera
 
 const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
 SELECT jsonb_build_object(
+ 'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE $1::uuid=ANY(deployment_ids)),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=$1::uuid::text),
  'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=$1::uuid::text),
@@ -65463,6 +65577,7 @@ SELECT
  (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=$1::uuid) AS environment_git_sources,
  (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=$1::uuid) AS environment_managed_fields,
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=$1::uuid) AS environment_workload_graphs,
+ (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=$1::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=$1::uuid) AS feature_flag_versions,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
@@ -65497,6 +65612,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	EnvironmentGitSources                int64
 	EnvironmentManagedFields             int64
 	EnvironmentWorkloadGraphs            int64
+	EnvironmentWorkloadRetirements       int64
 	FeatureFlagVersions                  int64
 	InvocationEnvironmentQueueAdmissions int64
 	InvocationWorkEnvironmentAdmissions  int64
@@ -65534,6 +65650,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.EnvironmentGitSources,
 		&i.EnvironmentManagedFields,
 		&i.EnvironmentWorkloadGraphs,
+		&i.EnvironmentWorkloadRetirements,
 		&i.FeatureFlagVersions,
 		&i.InvocationEnvironmentQueueAdmissions,
 		&i.InvocationWorkEnvironmentAdmissions,
@@ -81302,7 +81419,7 @@ func (q *Queries) SkipAbortedApplicationStandardTargets(ctx context.Context, db 
 
 const skipCancelledCustomerOperationWorkflowSteps = `-- name: SkipCancelledCustomerOperationWorkflowSteps :exec
 UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp()
-WHERE run_id=$1::uuid AND status='pending'
+WHERE run_id=$1::uuid AND status IN ('pending','awaiting_event')
 `
 
 func (q *Queries) SkipCancelledCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error {
@@ -81459,10 +81576,19 @@ func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) er
 }
 
 const stampCustomerOperationExecutionAttempt = `-- name: StampCustomerOperationExecutionAttempt :execrows
-UPDATE invocations SET instance_id=$1::uuid
-WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
-AND lease_expires_at>$4::timestamptz
-AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+WITH stamped AS (
+  UPDATE invocations SET instance_id=$1::uuid
+  WHERE id=$2::uuid AND state='dispatching' AND attempts=$3::integer
+  AND lease_expires_at>$4::timestamptz
+  AND EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
+  RETURNING id,attempts
+), placed AS (
+  INSERT INTO customer_operation_attempt_instances(operation_id,generation,attempt,instance_id)
+  SELECT e.operation_id,e.generation,s.attempts,$1::uuid
+  FROM stamped s JOIN customer_operation_executions e ON e.invocation_id=s.id
+  ON CONFLICT (operation_id,generation,attempt) DO NOTHING
+)
+SELECT 1 FROM stamped
 `
 
 type StampCustomerOperationExecutionAttemptParams struct {
@@ -81472,6 +81598,7 @@ type StampCustomerOperationExecutionAttemptParams struct {
 	Now        pgtype.Timestamptz
 }
 
+// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 func (q *Queries) StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error) {
 	result, err := db.Exec(ctx, stampCustomerOperationExecutionAttempt,
 		arg.InstanceID,
@@ -81743,7 +81870,7 @@ CROSS JOIN LATERAL (
   AND ho.account_id=s.account_id AND ho.app_id=s.app_id AND ho.platform_tenant_id=s.platform_tenant_id AND hd.scope=s.scope
   AND ho.record #>> '{subject,type}'=s.subject_type AND ho.record #>> '{subject,id}'=s.subject_id
   AND hr.workflow=s.workflow AND hr.instance_id=s.instance_id AND hr.created_at<=$2::timestamptz
-  AND (ho.state IN ('accepted','running') OR ho.expires_at>$9::timestamptz)
+  AND (ho.state IN ('accepted','running','waiting') OR ho.expires_at>$9::timestamptz)
   ORDER BY hr.revision DESC,hr.operation_id DESC,hr.id DESC LIMIT $10::integer
  ) h
 ) sla_history
@@ -81824,7 +81951,7 @@ CROSS JOIN LATERAL (
   WHERE target.account_id=s.account_id AND target.app_id=s.app_id AND target.platform_tenant_id=s.platform_tenant_id AND target.scope=s.scope
    AND target.subject_type=link.value->>'subject_type' AND target.subject_id=link.value->>'subject_id'
    AND target.workflow=link.value->>'workflow' AND target.instance_id=link.value->>'instance_id'
-   AND (top.state IN ('accepted','running') OR top.expires_at>$9::timestamptz)
+   AND (top.state IN ('accepted','running','waiting') OR top.expires_at>$9::timestamptz)
  ) retained ON true
  CROSS JOIN LATERAL (
   SELECT CASE WHEN retained.terminal IS NULL THEN 'unknown' WHEN NOT retained.terminal THEN 'waiting'
@@ -81848,7 +81975,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND ro.record #>> '{subject,type}'=s.subject_type AND ro.record #>> '{subject,id}'=s.subject_id
    AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$2::timestamptz
    AND COALESCE(value->>'verification_milestone_id','')<>''
-   AND (ro.state IN ('accepted','running') OR ro.expires_at>$9::timestamptz)
+   AND (ro.state IN ('accepted','running','waiting') OR ro.expires_at>$9::timestamptz)
   ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
  ) c
  LEFT JOIN LATERAL (
@@ -81865,7 +81992,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
     CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
    AND pm.created_at<=$2::timestamptz
-   AND (po.state IN ('accepted','running') OR po.expires_at>$9::timestamptz)
+   AND (po.state IN ('accepted','running','waiting') OR po.expires_at>$9::timestamptz)
   LIMIT 1
  ) proof ON true
 ) verifications
@@ -81874,7 +82001,7 @@ CROSS JOIN LATERAL (
 ) identity
 WHERE s.account_id=$11::uuid AND s.app_id=$12::uuid AND s.scope=$13::text
  AND ($14::text='' OR s.platform_tenant_id::text=$14::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$9::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$9::timestamptz)
  AND ($15::text='' OR s.workflow=$15::text)
  AND (((($5::text='' AND NOT $6::boolean AND $3::text='') OR EXISTS (
  SELECT 1 FROM jsonb_array_elements(r.blockers) b WHERE ($5::text='' OR COALESCE(b->>'owner','')=$5::text)
@@ -82108,7 +82235,7 @@ CROSS JOIN LATERAL (
 ) identity
 WHERE s.account_id=$3::uuid AND s.app_id=$4::uuid AND s.scope=$5::text
  AND ($6::text='' OR s.platform_tenant_id::text=$6::text)
- AND (o.state IN ('accepted','running') OR o.expires_at>$7::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$7::timestamptz)
  AND ($8::text='' OR s.workflow=$8::text)
  AND config.terminal AND r.outcome_code<>''
  AND ($9::text='' OR r.outcome_code=$9::text)
@@ -82190,7 +82317,7 @@ WITH candidates AS (
  AND ($7::text='' OR s.platform_tenant_id::text=$7::text)
  AND s.workflow=$8::text
  AND s.updated_at<=$1::timestamptz AND r.created_at<=$1::timestamptz
- AND (o.state IN ('accepted','running') OR o.expires_at>$2::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$2::timestamptz)
 ), ranked AS (
  SELECT candidates.account_id, candidates.app_id, candidates.platform_tenant_id, candidates.scope, candidates.subject_type, candidates.subject_id, candidates.workflow, candidates.instance_id, candidates.state, candidates.revision, candidates.operation_id, candidates.report_id, candidates.updated_at, candidates.terminal, candidates.sla_configured, candidates.sla_budget_seconds, candidates.sla_warning_percent, candidates.condition_steps, candidates.current_state, candidates.cursor_key, count(*) OVER (PARTITION BY terminal) AS cohort_total,
  row_number() OVER (PARTITION BY terminal ORDER BY updated_at DESC,cursor_key DESC) AS position
@@ -82232,7 +82359,7 @@ WHERE o.account_id=s.account_id AND o.app_id=s.app_id
  AND o.record #>> '{subject,type}'=s.subject_type AND o.record #>> '{subject,id}'=s.subject_id
  AND r.workflow=s.workflow AND r.instance_id=s.instance_id
  AND r.created_at<=$1::timestamptz
- AND (o.state IN ('accepted','running') OR o.expires_at>$2::timestamptz)
+ AND (o.state IN ('accepted','running','waiting') OR o.expires_at>$2::timestamptz)
 ORDER BY r.revision DESC,r.operation_id DESC,r.id DESC LIMIT $3::integer
  ) h
 ) history
@@ -82252,7 +82379,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND rr.workflow=s.workflow AND rr.instance_id=s.instance_id AND rr.created_at<=$1::timestamptz
    AND COALESCE(value->>'verification_milestone_id','')<>''
    AND jsonb_array_length(history.items)<$3::integer
-   AND (ro.state IN ('accepted','running') OR ro.expires_at>$2::timestamptz)
+   AND (ro.state IN ('accepted','running','waiting') OR ro.expires_at>$2::timestamptz)
   ORDER BY jsonb_build_array(value->>'blocker_operation_id',value->>'blocker_report_id',value->>'blocker_revision',value->>'operation',value->>'code',COALESCE(NULLIF(value->>'verification_operation_id',''),rr.operation_id::text),value->>'verification_milestone_id',value->>'verification_milestone_name'),rr.revision,rr.id,rr.operation_id
  ) c
  LEFT JOIN LATERAL (
@@ -82269,7 +82396,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object('resolution',c.resolution,'resoluti
    AND CASE WHEN COALESCE(step->>'instance_id_from','')='' THEN step->>'instance_id' ELSE pm.payload #>>
     CASE WHEN step->>'instance_id_from'='/' THEN ARRAY['']::text[] ELSE ARRAY(SELECT replace(replace(token,'~1','/'),'~0','~') FROM unnest(string_to_array(substr(step->>'instance_id_from',2),'/')) parts(token)) END END=s.instance_id
    AND pm.created_at<=$1::timestamptz
-   AND (po.state IN ('accepted','running') OR po.expires_at>$2::timestamptz)
+   AND (po.state IN ('accepted','running','waiting') OR po.expires_at>$2::timestamptz)
   LIMIT 1
  ) proof ON true
 ) verifications
@@ -85438,7 +85565,7 @@ func (q *Queries) WorkflowAlertSnapshot(ctx context.Context, db DBTX, arg Workfl
 }
 
 const workflowControlSteps = `-- name: WorkflowControlSteps :many
-SELECT step_name,status,attempt,input,output,when_matched,foreach_parent,foreach_index,foreach_count,next_retry_at,retry_base
+SELECT step_name,status,attempt,input,output,when_matched,foreach_parent,foreach_index,foreach_count,next_retry_at,retry_base,started_at,error
 FROM workflow_steps WHERE run_id=$1 ORDER BY foreach_index NULLS FIRST,step_name
 `
 
@@ -85454,6 +85581,8 @@ type WorkflowControlStepsRow struct {
 	ForeachCount  pgtype.Int4
 	NextRetryAt   pgtype.Timestamptz
 	RetryBase     int32
+	StartedAt     pgtype.Timestamptz
+	Error         pgtype.Text
 }
 
 func (q *Queries) WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowControlStepsRow, error) {
@@ -85477,6 +85606,8 @@ func (q *Queries) WorkflowControlSteps(ctx context.Context, db DBTX, runID pgtyp
 			&i.ForeachCount,
 			&i.NextRetryAt,
 			&i.RetryBase,
+			&i.StartedAt,
+			&i.Error,
 		); err != nil {
 			return nil, err
 		}

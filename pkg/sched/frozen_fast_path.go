@@ -63,10 +63,11 @@ func (t *frozenTickets) drop(instanceID string) {
 	}
 }
 
-// take removes and returns the app's most recently used ticket whose VM the
-// ledger still holds frozen. Tickets of VMs that left the frozen state some
-// other way are dropped on the way.
-func (t *frozenTickets) take(appID string, frozen func(instanceID string) bool) (frozenTicket, bool) {
+// take removes and returns the app's ticket for preferred when it has one,
+// else its most recently used, among VMs the ledger still holds frozen.
+// Tickets of VMs that left the frozen state some other way are dropped on
+// the way.
+func (t *frozenTickets) take(appID, preferred string, frozen func(instanceID string) bool) (frozenTicket, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var best frozenTicket
@@ -77,7 +78,8 @@ func (t *frozenTickets) take(appID string, frozen func(instanceID string) bool) 
 			continue
 		}
 		a, b := ticket.plan.frozen, best.plan.frozen
-		if !found || a.LastRequestAt.After(b.LastRequestAt) || a.LastRequestAt.Equal(b.LastRequestAt) && a.ID < b.ID {
+		if !found || b.ID != preferred && (a.ID == preferred || a.LastRequestAt.After(b.LastRequestAt) ||
+			a.LastRequestAt.Equal(b.LastRequestAt) && a.ID < b.ID) {
 			best, found = ticket, true
 		}
 	}
@@ -208,7 +210,7 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 	if !ok || !guardsOK {
 		return WakeResult{}, false
 	}
-	ticket, ok := e.thawTickets.take(appID, e.ledger.IsFrozen)
+	ticket, ok := e.thawTickets.take(appID, PreferredInstanceFromContext(ctx), e.ledger.IsFrozen)
 	if !ok {
 		return WakeResult{}, false
 	}

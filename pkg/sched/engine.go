@@ -585,6 +585,11 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
+	// deadNodeSettle holds the dead-node sweep back after this schedd saw
+	// the store unavailable, until it has read the store without
+	// interruption for the staleness window, so a store outage cannot fail
+	// every running instance at once (ADR-1344 §5 rule 4).
+	deadNodeSettle storeSettle
 	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
 	// single per-tick decision policy the migrator + deadnode
 	// reconciler consult before any per-instance work. Task #61
@@ -645,6 +650,9 @@ type Engine struct {
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
+	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
+	// from functions to request-mode apps.
+	frozenTierApps atomic.Bool
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
@@ -1201,6 +1209,18 @@ func (e *Engine) WithDeadNodeReconcilerStalenessSeconds(seconds int) *Engine {
 	return e
 }
 
+// WithStoreOutageAtStartup holds the dead-node sweep for a full staleness
+// window of store access when this process saw the store unavailable before
+// the engine existed (ADR-1344 §5 rule 4): it waited for the database at
+// boot, or waited for its lease through store errors. Every heartbeat is
+// then old because nobody could write one.
+func (e *Engine) WithStoreOutageAtStartup(outage bool) *Engine {
+	if outage {
+		e.deadNodeSettle.hold()
+	}
+	return e
+}
+
 // WithPressureConfig (Tier A9 / ADR-087) sets the per-engine
 // overrides for the capacity-pressure rebalancer tunables — the
 // aggregation threshold and the reassessment sweep cadence.
@@ -1748,6 +1768,9 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// e2e) keep byte-identical behaviour.
 	ctx = WithScope(ctx, scope)
 	scope = ScopeFrom(ctx)
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, scope); trigger != TriggerDeploymentSmoke && err != nil {
+		return WakeResult{}, err
+	}
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	wakeStarted := time.Now()
 	release := e.lockApp(appID)
@@ -2501,6 +2524,9 @@ func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 
 func (e *Engine) admitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	ctx = WithScope(ctx, scope)
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, ScopeFrom(ctx)); trigger != TriggerDeploymentSmoke && err != nil {
+		return WakeResult{}, err
+	}
 	if trigger == TriggerDeploymentSmoke && deploymentID == "" {
 		return WakeResult{}, errors.New("sched: deployment smoke requires deployment_id")
 	}
@@ -5957,6 +5983,13 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // schedd itself declares a node dead. Failing sooner than schedd's own
 // verdict would terminate instances on a node that is merely slow.
 //
+// After this schedd saw the store unavailable, the sweep also waits until it
+// has read the store without interruption for the same window (ADR-1344 §5
+// rule 4). After a store outage longer than 120 s every node's heartbeat is
+// old because nobody could write one; failing rows then would terminate
+// every running instance in the fleet, and vmmd would destroy the healthy
+// VMs behind them.
+//
 // Per-row safety comes from the conditional UPDATE in
 // FailRunningInstanceOnDeadNode: it rechecks state, owner, node liveness,
 // and whether the recovery controller owns the lifecycle. If the node
@@ -5979,14 +6012,23 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 	if e.deadNodeReconcilerStalenessSeconds > 0 {
 		staleness = time.Duration(e.deadNodeReconcilerStalenessSeconds) * time.Second
 	}
-	threshold := time.Now().UTC().Add(-staleness)
+	now := time.Now().UTC()
+	threshold := now.Add(-staleness)
 	maxPerTick := api.DeadNodeReconcilerTickLimit
 
 	rows, err := e.store.ListRunningInstancesOnDeadNodes(ctx, threshold, maxPerTick)
+	e.deadNodeSettle.observe(err, now)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile dead-node instances: list: %w", err)
 	}
 	if len(rows) == 0 {
+		return 0, nil
+	}
+	if ok, firstWait := e.deadNodeSettle.settled(now, staleness); !ok {
+		if firstWait {
+			e.log.Info("sched: reconcile dead-node instances: waiting for a full staleness window of store access",
+				"candidates", len(rows), "staleness", staleness.String())
+		}
 		return 0, nil
 	}
 	if len(rows) == maxPerTick {

@@ -305,8 +305,9 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		}
 	}
 	t.Logf("ticketed thaw: %v, %d sequential round trips", names, pf.tracer.sequentialRoundTrips(answered))
-	want := map[string]int{"AppRuntimeConfigChangedAtInScope": 1, "ReadRuntimeAppValuesForDeployment": 1,
-		"GetAppEnvironmentSecretIntent": 1, "ThawFrozenInstance": 1}
+	// Every wake first checks the GitOps workload-retirement gate.
+	want := map[string]int{"EnvironmentWorkloadAdmissionRetired": 1, "AppRuntimeConfigChangedAtInScope": 1,
+		"ReadRuntimeAppValuesForDeployment": 1, "GetAppEnvironmentSecretIntent": 1, "ThawFrozenInstance": 1}
 	got := map[string]int{}
 	for _, name := range names {
 		got[name]++

@@ -441,12 +441,19 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
-	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
-	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
-	"ListWorkflowScheduleOccurrencesOptions":          true, // client-only history query parameters; the occurrence response DTOs are in the public spec
-	"InboundWebhookEndpointRow":                       true,
-	"AppLogDrainRow":                                  true,
-	"QueueBindingRow":                                 true,
+	// ADR-1194: the decision payload delivered to the workflow, not an apid request or response.
+	"OperationApprovalPayload":  true,
+	"OperationApprovalDecision": true,
+	"OperationApprovalActor":    true,
+	// ADR-1193: the operation input delivered to the app, not an apid request or response.
+	"OperationWebhookInput":                  true,
+	"OperationWebhookEvent":                  true,
+	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                 true, // client-only history query parameters for the documented run list response
+	"ListWorkflowScheduleOccurrencesOptions": true, // client-only history query parameters; the occurrence response DTOs are in the public spec
+	"InboundWebhookEndpointRow":              true,
+	"AppLogDrainRow":                         true,
+	"QueueBindingRow":                        true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
@@ -1098,6 +1105,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
 		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
@@ -1335,6 +1343,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
+		filepath.Join(root, "pkg", "api", "operation_timeline.go"), // ADR-1195 timeline DTOs
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),   // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"),  // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),    // ADR-1194 operation wait and approval DTOs
+		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),
