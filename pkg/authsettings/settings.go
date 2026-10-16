@@ -8,6 +8,7 @@ package authsettings
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -105,6 +106,8 @@ type Change struct {
 	Captcha *Captcha
 	// ActivityRetentionDays prunes older activity; 0 keeps it forever.
 	ActivityRetentionDays *int
+	// Email sets the HTTPS email provider, or removes it (empty Provider).
+	Email *Email
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -184,6 +187,17 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 			return nil, nil, fmt.Errorf("activity retention must be 1 to %d days, or 0 to keep activity forever; got %d", api.AuthAuditRetentionMaxDays, days)
 		default:
 			set[secretAuditRetention] = strconv.Itoa(days)
+		}
+	}
+	if c.Email != nil {
+		if c.Email.Provider == "" {
+			unset = append(unset, EmailSecrets...)
+		} else {
+			email, err := c.Email.secrets()
+			if err != nil {
+				return nil, nil, err
+			}
+			maps.Copy(set, email)
 		}
 	}
 	if c.PasskeyRPID != nil {

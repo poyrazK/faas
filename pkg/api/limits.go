@@ -727,6 +727,11 @@ const (
 	OperationWorkflowLabelMaxBytes                           = 128
 	OperationPathMaxBytes                                    = 2048
 	OperationIdempotencyKeyMaxBytes                          = 128
+	OperationApprovalCommentMaxBytes                         = 1024 // ADR-1194 recorded with the decision
+	OperationApprovalBodyMaxBytes                            = 2048
+	OperationWebhookEventTypesMax                            = 32 // ADR-1193 event types one binding may admit
+	OperationWebhookReceiptCleanupBatch                      = 16 // expired receipts removed per admission
+	OperationWebhookBindingMaxBytes                          = 4096
 	OperationReportIDMaxBytes                                = 128
 	OperationRecoveryEvidenceMaxBytes                        = 4096
 	OperationEventsPageMax                                   = 100
@@ -736,6 +741,8 @@ const (
 	OperationHistoryPageDefault                              = 20
 	OperationHistoryPageMax                                  = 100
 	OperationHistoryCursorMaxBytes                           = 512
+	OperationTimelineLogDatesMax                             = 7   // archive days per attempt log window (ADR-1195)
+	OperationDeadlineSweepBatch                              = 100 // workflow Operations settled per deadline sweep (ADR-1196)
 	OperationRetentionPageMax                                = 500
 	OperationDefinitionBodyMaxBytes                          = 160000
 	OperationReportBodyMaxBytes                              = 16384
@@ -793,6 +800,11 @@ type OperationPlanLimits struct {
 	ArtifactTotalMaxBytes           int64
 	RetainedArtifactBytesPerAccount int64
 	RetainedArtifactsPerAccount     int
+	// ADR-1196 definition limits: deadline, HTTP attempts and summed
+	// attempt runtime. AttemptsMax never exceeds the plan's MaxQueueAttempts.
+	DeadlineSecondsMax  int
+	AttemptsMax         int
+	ExecutionSecondsMax int
 }
 
 // A restore hook is on the wake critical path. Keep its customer timeout
@@ -3612,7 +3624,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       5,
 		MaxSourceBytesPerInvocation: 64 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -4038,7 +4050,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       50,
 		MaxSourceBytesPerInvocation: 256 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -4429,7 +4441,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       1_000_000,
 		MaxSourceBytesPerInvocation: 1024 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad
@@ -4991,6 +5003,12 @@ const (
 	// The host receiver stays open longer than this window so a no-bind
 	// worker can use the entire observation budget before reporting.
 	CharacterizationDeadline = 10 * time.Second
+	// CharacterizationPreferredPortGrace is how long waitForBind waits for
+	// the app's expected port once it sees another listener first: an app
+	// may open a private TCP (ADR-576), metrics or admin port before its
+	// serving port. It delays only cold boots of apps that never bind the
+	// expected port; snapshot restores do not characterize.
+	CharacterizationPreferredPortGrace = 500 * time.Millisecond
 	// CharacterizationHostDeadline bounds the HOST receiver started during
 	// cold boot. It must outlive the guest's full observation window; otherwise
 	// a legitimate no-bind worker report is rejected before the guest is due to
@@ -9699,6 +9717,11 @@ const (
 	// through one node's proxy across all accounts, independent of the
 	// per-account plan cap.
 	ServiceTCPSessionsPerNodeMax = 8192
+	// ServiceProxyReplayBodyMaxBytes bounds the service-call bodies the node
+	// proxy buffers to make replayable (ADR-1133): only a declared
+	// Content-Length up to this size is read up front; larger, chunked and
+	// streaming bodies are forwarded unbuffered and are not replayed.
+	ServiceProxyReplayBodyMaxBytes = 1 << 20
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
@@ -9981,6 +10004,13 @@ const (
 	ServiceWakeAheadWakeTimeout = 30 * time.Second
 	// The opt-in setting and fleet residency are cached this long.
 	ServiceWakeAheadCacheTTL = 30 * time.Second
+	// Measured edge statistics survive a gateway restart through a node-local
+	// snapshot (ADR-1132): written at most this often when they changed and
+	// on shutdown, and restored at start unless older than the max age (an
+	// idle weekend must not erase what a caller's traffic taught).
+	ServiceWakeAheadSnapshotInterval = time.Minute
+	ServiceWakeAheadSnapshotMaxAge   = 7 * 24 * time.Hour
+	ServiceWakeAheadSnapshotMaxBytes = 16 << 20
 )
 
 // RouteEvidenceWindow is how far back apid reads gateway-measured route
@@ -11263,3 +11293,16 @@ const (
 	MCPConnectionHealthMaxOffset          = 10000
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
 )
+
+// ServiceMapMaxEdges caps the caller → target edges returned by
+// GET /v1/service-map (ADR-1131). Edges are ranked by call volume before the
+// cap, so the busiest dependencies always survive truncation.
+const ServiceMapMaxEdges = 500
+
+// ServiceMapDefaultRange is the window used when ?range= is omitted. A map
+// needs enough traffic to show quiet edges, so it is longer than the 5m
+// default of the per-app metrics endpoints.
+const ServiceMapDefaultRange = "1h"
+
+// ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
+const ServiceMapHighErrorRatePct = 5.0

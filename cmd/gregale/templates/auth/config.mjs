@@ -241,7 +241,7 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     // `--mfa off` stops enrolment only; enrolled users keep verifying.
     password: { min_length: Number(g.GOTRUE_PASSWORD_MIN_LENGTH ?? 6), required, leaked_password_check: flag(g.GOTRUE_PASSWORD_HIBP_ENABLED, false) },
     mfa: { totp: flag(g.GOTRUE_MFA_TOTP_ENROLL_ENABLED, true) },
-    email: { configured: email !== null },
+    email: { configured: email !== null, provider: email?.provider ?? null, from: email?.from ?? null },
     events: { lifecycle: lifecycleEvents },
     activity: { retention_days: auditRetentionDays },
     passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },

@@ -44,6 +44,9 @@ func TestAuthTemplateSettingsContract(t *testing.T) {
 	if !reflect.DeepEqual(captchaNames, authsettings.CaptchaProviders) {
 		t.Fatalf("template CAPTCHA providers %v, Go %v", captchaNames, authsettings.CaptchaProviders)
 	}
+	if !strings.Contains(string(config), "/"+authsettings.EmailFromPattern+"/.test(from)") {
+		t.Error("the email sender rule differs from the template's AUTH_EMAIL_FROM check")
+	}
 	for _, class := range authsettings.ClassOrder {
 		// The template writes the symbol class's single quote escaped.
 		literal := strings.ReplaceAll(authsettings.CharacterClasses[class], `'`, `\'`)
