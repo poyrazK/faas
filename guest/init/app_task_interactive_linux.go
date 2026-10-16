@@ -185,6 +185,10 @@ func superviseAppTaskProcess(ctx context.Context, cmd *exec.Cmd, hangup syscall.
 		defer timer.Stop()
 		select {
 		case <-waitCh:
+			// The leader exited within the grace period. Members that ignore
+			// the hangup, or have not acted on it yet, must not outlive the
+			// session either.
+			_ = signalJobProcessGroup(pgid, syscall.SIGKILL)
 		case <-timer.C:
 			_ = signalJobProcessGroup(pgid, syscall.SIGKILL)
 			<-waitCh
