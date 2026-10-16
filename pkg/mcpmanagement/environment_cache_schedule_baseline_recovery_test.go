@@ -185,7 +185,7 @@ func TestCacheScheduleBaselineRecoveryWithholdsOvertakenOrRevokedPage(t *testing
 					page := httptest.NewRecorder()
 					base.Config.Handler.ServeHTTP(page, r)
 					if mode == "retention" {
-						seedSchedule(t, f, time.Now().Add(2*time.Hour))
+						seedScheduleContext(r.Context(), t, f, time.Now().Add(2*time.Hour))
 						if err := f.store.PruneEnvironmentCacheScheduleActivity(r.Context(), time.Now().Add(time.Minute)); err != nil {
 							t.Error(err)
 						}
