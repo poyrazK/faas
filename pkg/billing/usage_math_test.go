@@ -31,7 +31,7 @@ func TestOverageMBSecondsForRangeFollowsPlanHistory(t *testing.T) {
 	}{{api.PlanHobby, month}, {api.PlanPro, upgrade}} {
 		if _, err := store.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{
 			AccountID: acct.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0),
-			Price: financial.Price{Version: "test-" + string(g.plan), Meter: "compute", Currency: "EUR", Unit: "mb_seconds",
+			Price: financial.Price{Version: "test-" + string(g.plan), Meter: "compute", Currency: "USD", Unit: "mb_seconds",
 				UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour,
 				IncludedQuantity: api.IncludedMBSeconds(g.plan)},
 			Plan: g.plan, EffectiveFrom: g.at, DeliveryMode: "live",
