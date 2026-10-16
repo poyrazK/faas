@@ -316,3 +316,39 @@ def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors(
         )
         assert isinstance(problem, Problem)
         assert problem.code == "financial_budget_activation_unavailable"
+
+
+def test_preview_stop_runtime_preserves_prior_period_and_failed_teardown():
+    from faas_sdk.models.financial_budget_runtime import FinancialBudgetRuntime
+
+    evaluation = {
+        "period_start": "2026-09-01T00:00:00Z",
+        "period_end": "2026-10-01T00:00:00Z",
+        "as_of": "2026-09-20T10:00:00Z",
+        "evaluated_at": "2026-09-20T10:00:00Z",
+        "evidence_through_id": 1,
+        "known_millicents": 1000000,
+        "coverage_complete": True,
+        "fresh": True,
+        "reasons": [],
+    }
+    runtime = FinancialBudgetRuntime.from_dict({
+        "alerts": [],
+        "stops": [{
+            "id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+            "policy_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+            "revision": 1,
+            "period_start": evaluation["period_start"],
+            "period_end": evaluation["period_end"],
+            "requested_at": evaluation["evaluated_at"],
+            "drain_deadline": evaluation["evaluated_at"],
+            "resume_rule": "manual",
+            "evaluation": evaluation,
+            "targets": [{"app_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+                         "state": "failed", "observed_at": "2026-10-16T10:00:00Z",
+                         "resident_count": 1, "last_error": "vm_teardown_failed"}],
+        }],
+    })
+    assert runtime.stops[0].targets[0].state == "failed"
+    assert runtime.to_dict()["stops"][0]["targets"][0]["resident_count"] == 1
+    assert "evaluation" not in runtime.to_dict()

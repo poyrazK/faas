@@ -781,6 +781,8 @@ export type { FinancialBudgetRevisionResponse } from './FinancialBudgetRevisionR
 export type { FinancialBudgetRuntime } from './FinancialBudgetRuntime.js';
 export type { FinancialBudgetScope } from './FinancialBudgetScope.js';
 export type { FinancialBudgetSpec } from './FinancialBudgetSpec.js';
+export type { FinancialBudgetStop } from './FinancialBudgetStop.js';
+export type { FinancialBudgetStopTarget } from './FinancialBudgetStopTarget.js';
 export type { FinancialBudgetTarget } from './FinancialBudgetTarget.js';
 export type { FinancialContractCosts } from './FinancialContractCosts.js';
 export type { FinancialCostsResponse } from './FinancialCostsResponse.js';

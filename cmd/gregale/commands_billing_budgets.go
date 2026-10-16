@@ -16,7 +16,7 @@ import (
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies for spending alerts. Stopping and strict policies remain drafts. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Other stopping actions and strict limits remain drafts. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
@@ -125,7 +125,11 @@ func printBillingBudgetResult(out any) error {
 			return err
 		}
 		if value.NotificationReady {
-			if _, err := fmt.Fprintln(osStdout, "Spending notifications are active; workloads continue running."); err != nil {
+			effect := "Spending notifications are active; workloads continue running."
+			if financial.PreviewStopping(value.Spec) {
+				effect = "Preview stopping is active; production can continue. Metering, drain and teardown delays can exceed the limit."
+			}
+			if _, err := fmt.Fprintln(osStdout, effect); err != nil {
 				return err
 			}
 			return printBillingBudgetRuntime(value.Runtime)
@@ -167,6 +171,23 @@ func printBillingBudgetResult(out any) error {
 }
 
 func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
+	if runtime != nil {
+		for _, stop := range runtime.Stops {
+			if _, err := fmt.Fprintf(osStdout, "Preview stop %s: requested %s; drain deadline %s; resume %s\n", stop.ID, stop.RequestedAt.Format(time.RFC3339), stop.DrainDeadline.Format(time.RFC3339), stop.ResumeRule); err != nil {
+				return err
+			}
+			if len(stop.Targets) == 0 {
+				if _, err := fmt.Fprintln(osStdout, "Awaiting scheduler acknowledgement; stopping is not yet confirmed."); err != nil {
+					return err
+				}
+			}
+			for _, target := range stop.Targets {
+				if _, err := fmt.Fprintf(osStdout, "  %s %s: %s; resident=%d; observed=%s; %s\n", target.AppID, target.EnvironmentID, target.State, target.ResidentCount, target.ObservedAt.Format(time.RFC3339), target.LastError); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if runtime == nil || runtime.Evaluation == nil {
 		_, err := fmt.Fprintln(osStdout, "Awaiting first evaluation.")
 		return err

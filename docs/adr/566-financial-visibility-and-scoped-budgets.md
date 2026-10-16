@@ -10,7 +10,8 @@
 
 The first release includes retained compute/interface-egress evidence, cost and
 forecast reads, budget drafts and active monitored notification policies.
-Only `mode=monitored`, `action=notify` can activate; other enabled responses are
+`mode=monitored` can activate `action=notify`, or compute-only
+`action=stop_previews`; other enabled responses are
 rejected with `financial_budget_activation_unavailable`. Notifications use
 atomic retained observations/outbox events, fenced claims, retries and stable
 mail IDs. Events deduplicate per policy revision, UTC month and threshold. A
@@ -18,8 +19,11 @@ new revision re-evaluates existing spending. Fresh partial subtotals may warn
 with explicit coverage; stale observations cannot generate events. Delivery
 is at least once because external mail acceptance and local settlement cannot
 commit atomically. Preview/runtime fields never claim workload stopping from
-notification readiness. Holds, strict reservations and the lifecycle changes
-described below remain future work. See [release scope](../financial-controls-implementation.md).
+notification readiness. Preview stopping uses independent latched decisions,
+authoritative preview identity, warm/cold admission guards, retained command VM
+ownership and per-target scheduler teardown acknowledgements. Publication and
+native lifecycle acceptance remain required; strict reservations and other
+stopping actions remain future work. See [release scope](../financial-controls-implementation.md).
 
 ## Accounting contract
 

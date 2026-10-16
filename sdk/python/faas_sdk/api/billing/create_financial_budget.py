@@ -110,8 +110,9 @@ def sync_detailed(
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies must use
-            monitored notify. Stopping and strict policies remain disabled drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
+            notify or compute-only stop_previews. Other actions and strict policies remain disabled
+            drafts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,8 +152,9 @@ def sync(
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies must use
-            monitored notify. Stopping and strict policies remain disabled drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
+            notify or compute-only stop_previews. Other actions and strict policies remain disabled
+            drafts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,8 +189,9 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies must use
-            monitored notify. Stopping and strict policies remain disabled drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
+            notify or compute-only stop_previews. Other actions and strict policies remain disabled
+            drafts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -226,8 +229,9 @@ async def asyncio(
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies must use
-            monitored notify. Stopping and strict policies remain disabled drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
+            notify or compute-only stop_previews. Other actions and strict policies remain disabled
+            drafts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

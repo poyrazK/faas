@@ -5,7 +5,7 @@
 import type { FinancialBudgetRuntime } from './FinancialBudgetRuntime.js';
 import type { FinancialBudgetSpec } from './FinancialBudgetSpec.js';
 /**
- * Saved policy intent with current-revision UTC-month monitoring and alert delivery state. Active notification policies do not stop workloads.
+ * Saved policy intent with current-revision monitoring, alert delivery and preview stop acknowledgements. Notifications alone never establish workload stopping.
  */
 export type FinancialBudgetResponse = {
   id: string;
@@ -17,11 +17,11 @@ export type FinancialBudgetResponse = {
   deleted_at?: string;
   status: 'draft' | 'unavailable' | 'active' | 'deleted';
   /**
-   * False until runtime integrations and acceptance are complete.
+   * True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. This is not a strict spending ceiling.
    */
   enforcement_ready: boolean;
   /**
-   * True for an enabled monitored notification policy; inspect runtime for evaluation freshness and delivery status.
+   * True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery status.
    */
   notification_ready?: boolean;
   runtime?: FinancialBudgetRuntime;

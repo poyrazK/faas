@@ -157,7 +157,7 @@ For example, this spec would select previews while production continues:
 The limit above is EUR 10.00. Available scopes are account, project,
 environment, application, and job; resource scopes use their stable UUID.
 Preview identity comes from Gregale's persisted preview metadata. Environment
-membership currently comes from live deployment scopes. Historical costs retain
+membership uses the deployment’s retained runtime environment identity. Historical costs retain
 older identities even when the current target list changes.
 
 Responses explain the difference between notifying, rejecting new traffic,
@@ -168,9 +168,10 @@ account allowance once; gross usage measures cost before that allowance.
 Strict resource scopes require gross compute, and a broad strict policy must
 stop every covered workload.
 
-Enforcement currently reports `enforcement_ready: false`. Notification-only
-activation is supported; independent holds, stopping acknowledgements and strict
-compute reservations are still under implementation. A successful preview does
+Notification-only policies report `enforcement_ready: false`. Monitored
+compute-only preview stopping reports integration readiness separately from
+actual per-target stopping acknowledgements. Other stopping actions and strict
+compute reservations remain unavailable. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
 compute controls.
@@ -209,7 +210,8 @@ deletion retains that history, accessible through
 `next_revision` as the next cursor. A final full page can be followed by an empty
 page. At most 128 nondeleted policies are allowed per account.
 
-Only `mode=monitored` with `action=notify` accepts `enabled=true`. Other enabled
+`mode=monitored` with `action=notify`, or compute-only `action=stop_previews`,
+accepts `enabled=true`. Other enabled
 responses return 422 `financial_budget_activation_unavailable` without changing
 policy intent. Save `enabled=false` to retain those drafts. A notification policy
 reports `status=active`, `notification_ready=true` and `enforcement_ready=false`.
@@ -220,8 +222,8 @@ they do not change payment/security/deletion status or resume its workloads.
 
 The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
-intent history; target stopping acknowledgements and action history are still
-under implementation.
+intent history; `runtime.stops` separately retains threshold decisions and
+current scheduler acknowledgements.
 
 ## Active spending notifications
 
@@ -475,3 +477,33 @@ The mapping is based on the official
 `make focus-contract-check` checks the pinned upstream columns, exact
 reconciliation, snapshot metadata, ownership, export/refresh bounds, provider
 reads, lifecycle concurrency, and CLI operations.
+
+## Monitored preview stopping
+
+Set `mode=monitored`, `action=stop_previews`, `meters=[compute]`, a drain interval
+from 0 to 300 seconds, and an explicit `manual` or `next_period` resume rule.
+Only persisted preview workloads are selected; production names, environment
+names and absence of protection do not establish preview identity.
+
+At a fresh recorded threshold, meterd latches the decision with its evidence and
+notification outbox. New warm/cold requests, mesh HTTP/TCP calls, queued request
+claims and command dispatch are blocked. Existing previews drain until the
+configured deadline; the owning scheduler then destroys their resident VMs via
+vmmd, retaining deployment snapshots/rootfs for the next allowed cold wake.
+Command VMs carry retained node/lease ownership and preparation deadlines too.
+
+Inspect `runtime.stops[].targets`: `draining` means resident resources remain;
+`enforced` requires confirmed teardown and durable settlement; `failed` requires
+retry/recovery. Stale scheduler observations become `unavailable`. A decision or
+email alone is not proof of shutdown. `gregale billing budgets get ID` and the
+console expose these states, including a manual hold from a previous month.
+
+Corrections and unavailable costs never automatically release a hold. Disabling,
+editing or deleting a policy releases that policy revision only; other budget,
+payment, security and user holds remain. An already-started teardown may finish.
+`next_period` releases at the next UTC month; `manual` persists until an explicit
+policy mutation. Re-enabling evaluates existing monthly spending again.
+
+This is a monitored response: usage ingestion, scheduler sweeps, draining and
+teardown can exceed the threshold. Production and uncovered meters can continue
+spending. It does not establish a strict compute or full-invoice ceiling.

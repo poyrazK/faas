@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { FinancialBudgetSpec } from './FinancialBudgetSpec.js';
 /**
- * New budget intent; enabled policies must use monitored notify. Stopping and strict policies remain disabled drafts.
+ * New budget intent; enabled policies support monitored notify or compute-only stop_previews. Other actions and strict policies remain disabled drafts.
  */
 export type CreateFinancialBudgetRequest = {
   spec: FinancialBudgetSpec;

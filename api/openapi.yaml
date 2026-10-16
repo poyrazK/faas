@@ -44021,8 +44021,8 @@ paths:
       summary: Replace a budget policy at its expected revision.
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
-        must match the current policy; stale edits return 409. Only monitored notify
-        policies can activate; stopping and strict policies must remain disabled.
+        must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
+        policies can activate; other actions and strict policies must remain disabled.
         Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
@@ -61379,7 +61379,7 @@ components:
         completed_at: { type: string, format: date-time }
     FinancialBudgetResponse:
       type: object
-      description: Saved policy intent with current-revision UTC-month monitoring and alert delivery state. Active notification policies do not stop workloads.
+      description: Saved policy intent with current-revision monitoring, alert delivery and preview stop acknowledgements. Notifications alone never establish workload stopping.
       required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
       properties:
         id: { type: string, format: uuid }
@@ -61390,8 +61390,8 @@ components:
         updated_at: { type: string, format: date-time }
         deleted_at: { type: string, format: date-time }
         status: { type: string, enum: [draft, unavailable, active, deleted] }
-        enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
-        notification_ready: { type: boolean, description: True for an enabled monitored notification policy; inspect runtime for evaluation freshness and delivery status. }
+        enforcement_ready: { type: boolean, description: True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. This is not a strict spending ceiling. }
+        notification_ready: { type: boolean, description: True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery status. }
         runtime: { $ref: '#/components/schemas/FinancialBudgetRuntime' }
         reasons: { type: array, items: { type: string } }
     FinancialBudgetEvaluation:
@@ -61422,13 +61422,40 @@ components:
         next_attempt_at: { type: string, format: date-time }
         delivered_at: { type: string, format: date-time }
         last_error: { type: string, enum: [mail_delivery_failed] }
+    FinancialBudgetStopTarget:
+      type: object
+      description: Scheduler observation for one preview target. Enforced means teardown was confirmed and no resident instance remains. Old observations are reported as unavailable.
+      required: [app_id, state, observed_at, resident_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        state: { type: string, enum: [requested, draining, enforced, failed, unavailable] }
+        observed_at: { type: string, format: date-time }
+        resident_count: { type: integer, minimum: 0, maximum: 2147483647 }
+        last_error: { type: string, enum: [runtime_identity_unavailable, vm_teardown_failed, instance_settlement_failed, scheduler_observation_stale] }
+    FinancialBudgetStop:
+      type: object
+      description: Latched monitored compute threshold decision. Corrections cannot resume work. Policy revisions release only their own hold; in-flight teardown may finish. New matching previews are held too. Metering, scheduler and teardown delay can exceed the limit.
+      required: [id, policy_id, revision, period_start, period_end, requested_at, drain_deadline, resume_rule, evaluation, targets]
+      properties:
+        id: { type: string, format: uuid }
+        policy_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1 }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        requested_at: { type: string, format: date-time }
+        drain_deadline: { type: string, format: date-time }
+        resume_rule: { type: string, enum: [manual, next_period] }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
     FinancialBudgetRuntime:
       type: object
-      description: Current policy revision and UTC month only; a missing evaluation means monitoring has not evaluated that revision in this period.
+      description: Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over from earlier months until a policy mutation releases that revision.
       required: [alerts]
       properties:
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object
       description: Nondeleted account-owned policy intents with separately reported readiness.
@@ -61437,7 +61464,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; enabled policies must use monitored notify. Stopping and strict policies remain disabled drafts.
+      description: New budget intent; enabled policies support monitored notify or compute-only stop_previews. Other actions and strict policies remain disabled drafts.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }

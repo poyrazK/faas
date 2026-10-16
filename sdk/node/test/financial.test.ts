@@ -117,3 +117,17 @@ test('budget policy clients preserve revision preconditions, retries, history an
     OpenAPI.BASE = originalBase;
   }
 });
+
+test('preview stop reads preserve prior-month holds and failed teardown acknowledgements', async () => {
+  const originalFetch = globalThis.fetch;
+  const id = '6dc4f678-5766-4a06-a061-845c2b133fdd';
+  const evaluation = { period_start: '2026-09-01T00:00:00Z', period_end: '2026-10-01T00:00:00Z', as_of: '2026-09-20T10:00:00Z', evaluated_at: '2026-09-20T10:00:00Z', evidence_through_id: 1, known_millicents: 1000000, coverage_complete: true, fresh: true, reasons: [] };
+  try {
+    globalThis.fetch = async () => Response.json({ id, runtime: { alerts: [], stops: [{ id, policy_id: id, revision: 1, period_start: evaluation.period_start, period_end: evaluation.period_end, requested_at: evaluation.evaluated_at, drain_deadline: evaluation.evaluated_at, resume_rule: 'manual', evaluation, targets: [{ app_id: id, state: 'failed', resident_count: 1, observed_at: '2026-10-16T10:01:00Z', last_error: 'vm_teardown_failed' }] }] } });
+    const result = await BillingService.getFinancialBudget({ id });
+    assert.equal(result.runtime?.evaluation, undefined);
+    assert.equal(result.runtime?.stops?.[0]?.resume_rule, 'manual');
+    assert.equal(result.runtime?.stops?.[0]?.targets[0]?.state, 'failed');
+    assert.equal(result.runtime?.stops?.[0]?.targets[0]?.resident_count, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});

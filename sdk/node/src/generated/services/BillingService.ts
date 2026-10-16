@@ -306,8 +306,8 @@ export class BillingService {
   /**
    * Replace a budget policy at its expected revision.
    * Requires admin scope, session MFA and Idempotency-Key. expected_revision
-   * must match the current policy; stale edits return 409. Only monitored notify
-   * policies can activate; stopping and strict policies must remain disabled.
+   * must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
+   * policies can activate; other actions and strict policies must remain disabled.
    * Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
    *
    * @returns FinancialBudgetResponse Updated draft and incremented revision.

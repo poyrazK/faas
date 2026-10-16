@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.financial_budget_alert import FinancialBudgetAlert
     from ..models.financial_budget_evaluation import FinancialBudgetEvaluation
+    from ..models.financial_budget_stop import FinancialBudgetStop
 
 
 T = TypeVar("T", bound="FinancialBudgetRuntime")
@@ -18,8 +19,8 @@ T = TypeVar("T", bound="FinancialBudgetRuntime")
 
 @_attrs_define
 class FinancialBudgetRuntime:
-    """Current policy revision and UTC month only; a missing evaluation means monitoring has not evaluated that revision in
-    this period.
+    """Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over from
+    earlier months until a policy mutation releases that revision.
 
     """
 
@@ -27,6 +28,7 @@ class FinancialBudgetRuntime:
     evaluation: FinancialBudgetEvaluation | Unset = UNSET
     """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
     known costs can trigger labelled notifications; stale observations cannot create new alerts."""
+    stops: list[FinancialBudgetStop] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +41,13 @@ class FinancialBudgetRuntime:
         if not isinstance(self.evaluation, Unset):
             evaluation = self.evaluation.to_dict()
 
+        stops: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.stops, Unset):
+            stops = []
+            for stops_item_data in self.stops:
+                stops_item = stops_item_data.to_dict()
+                stops.append(stops_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -48,6 +57,8 @@ class FinancialBudgetRuntime:
         )
         if evaluation is not UNSET:
             field_dict["evaluation"] = evaluation
+        if stops is not UNSET:
+            field_dict["stops"] = stops
 
         return field_dict
 
@@ -55,6 +66,7 @@ class FinancialBudgetRuntime:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.financial_budget_alert import FinancialBudgetAlert
         from ..models.financial_budget_evaluation import FinancialBudgetEvaluation
+        from ..models.financial_budget_stop import FinancialBudgetStop
 
         d = dict(src_dict)
         alerts = []
@@ -71,9 +83,19 @@ class FinancialBudgetRuntime:
         else:
             evaluation = FinancialBudgetEvaluation.from_dict(_evaluation)
 
+        _stops = d.pop("stops", UNSET)
+        stops: list[FinancialBudgetStop] | Unset = UNSET
+        if _stops is not UNSET:
+            stops = []
+            for stops_item_data in _stops:
+                stops_item = FinancialBudgetStop.from_dict(stops_item_data)
+
+                stops.append(stops_item)
+
         financial_budget_runtime = cls(
             alerts=alerts,
             evaluation=evaluation,
+            stops=stops,
         )
 
         financial_budget_runtime.additional_properties = d

@@ -4604,7 +4604,7 @@ gregale billing budget-preview --file budget.json --json
 
 ### billing budgets
 
-Manage monitored spending alerts and revisioned budget drafts
+Manage monitored alerts, preview stopping and budget drafts
 
 #### billing budgets list
 
@@ -4628,7 +4628,7 @@ Read a budget, including a deletion tombstone
 
 #### billing budgets create
 
-Save a draft or activate monitored spending alerts
+Save a draft or activate monitored alerts or preview stopping
 
 `gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
 

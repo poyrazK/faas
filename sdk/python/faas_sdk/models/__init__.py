@@ -1577,6 +1577,11 @@ from .financial_budget_spec_currency import FinancialBudgetSpecCurrency
 from .financial_budget_spec_meters_item import FinancialBudgetSpecMetersItem
 from .financial_budget_spec_mode import FinancialBudgetSpecMode
 from .financial_budget_spec_resume_rule import FinancialBudgetSpecResumeRule
+from .financial_budget_stop import FinancialBudgetStop
+from .financial_budget_stop_resume_rule import FinancialBudgetStopResumeRule
+from .financial_budget_stop_target import FinancialBudgetStopTarget
+from .financial_budget_stop_target_last_error import FinancialBudgetStopTargetLastError
+from .financial_budget_stop_target_state import FinancialBudgetStopTargetState
 from .financial_budget_target import FinancialBudgetTarget
 from .financial_budget_target_kind import FinancialBudgetTargetKind
 from .financial_contract_costs import FinancialContractCosts
@@ -6309,6 +6314,11 @@ __all__ = (
     "FinancialBudgetSpecMetersItem",
     "FinancialBudgetSpecMode",
     "FinancialBudgetSpecResumeRule",
+    "FinancialBudgetStop",
+    "FinancialBudgetStopResumeRule",
+    "FinancialBudgetStopTarget",
+    "FinancialBudgetStopTargetLastError",
+    "FinancialBudgetStopTargetState",
     "FinancialBudgetTarget",
     "FinancialBudgetTargetKind",
     "FinancialContractCosts",

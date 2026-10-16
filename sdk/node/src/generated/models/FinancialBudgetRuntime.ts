@@ -4,11 +4,13 @@
 /* eslint-disable */
 import type { FinancialBudgetAlert } from './FinancialBudgetAlert.js';
 import type { FinancialBudgetEvaluation } from './FinancialBudgetEvaluation.js';
+import type { FinancialBudgetStop } from './FinancialBudgetStop.js';
 /**
- * Current policy revision and UTC month only; a missing evaluation means monitoring has not evaluated that revision in this period.
+ * Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over from earlier months until a policy mutation releases that revision.
  */
 export type FinancialBudgetRuntime = {
   evaluation?: FinancialBudgetEvaluation;
   alerts: Array<FinancialBudgetAlert>;
+  stops?: Array<FinancialBudgetStop>;
 };
 
