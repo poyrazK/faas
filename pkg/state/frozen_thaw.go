@@ -2,8 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -15,46 +13,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// FrozenThawBasis is what a frozen VM's thaw guard compares with (ADR-1342),
-// read when the VM freezes.
+// FrozenThawBasis is what a frozen VM's thaw guard compares with (ADR-1342,
+// ADR-1345), read first when the VM freezes.
 type FrozenThawBasis struct {
-	// Selected reports whether ThawFrozenInstance's selection rule holds:
-	// the app's active production release pins the deployment, or no release
-	// pins the app and the deployment is its only live production-lane
-	// deployment with traffic. It also requires an active app without a
-	// database cutover barrier.
+	// Generation is the app's runtime generation. Any change the ordinary
+	// wake path would read moves it, so the guarded thaw requires it
+	// unchanged.
+	Generation int64
+	// Selected reports whether the thaw a ticket would allow is the one the
+	// ordinary wake path would choose: the app's active production release
+	// pins the deployment, or no release pins the app and the deployment is
+	// its only live production-lane deployment with traffic. It also
+	// requires an active app without a database cutover barrier.
 	Selected bool
-	// The app's runtime-config stamp rows: the app row and the scope rows
-	// for "default" and the deployment's scope. Nil is a row that does not
-	// exist.
-	AppStamp, DefaultScopeStamp, DeploymentScopeStamp *time.Time
-	// StandardsVersion identifies the app's application-standards
-	// enrollment row as read; empty when it has none. The enrollment rule
-	// itself is evaluated in Go when the ticket is issued.
-	StandardsVersion string
 }
 
 // FrozenThaw is a ticketed thaw's guarded publication (ADR-1342): the
-// instance, the app, account and deployment as the ticket recorded them, the
-// captured config fence and the basis read at freeze.
+// instance, the config fence its proof captured and the generation the
+// ticket read.
 type FrozenThaw struct {
 	AccountID, AppID, InstanceID, NodeID, WakeID string
-	OrgID                                        string
 	Fence                                        RuntimeAppConfigFence
-	AppType                                      AppType
-	RAMMB, CPUMillicores, MaxConcurrency         int
-	Plan                                         string
-	Basis                                        FrozenThawBasis
+	Generation                                   int64
 	Bookkeeping                                  *RuntimePublicationBookkeeping
 }
 
 // FrozenThawStore reads a thaw guard's basis at freeze and runs the guarded
 // thaw (ADR-1342).
 type FrozenThawStore interface {
-	FrozenThawBasis(ctx context.Context, accountID, appID, deploymentID string) (FrozenThawBasis, error)
-	// ThawFrozenInstance moves the instance FROZEN -> RUNNING when every
-	// guard holds, and returns ErrConflict, changing nothing, when one does
-	// not.
+	FrozenThawBasis(ctx context.Context, appID, deploymentID string) (FrozenThawBasis, error)
+	// ThawFrozenInstance moves the instance FROZEN -> RUNNING when the app's
+	// runtime generation is still t.Generation and the proof is unchanged,
+	// and returns ErrConflict, changing nothing, otherwise.
 	ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instance, error)
 }
 
@@ -69,31 +59,24 @@ func validateFrozenThaw(t FrozenThaw) error {
 			return ErrInvalidArgument
 		}
 	}
-	for _, optional := range []string{t.Fence.SecretFence.EnvironmentID, t.OrgID} {
-		if _, err := uuid.Parse(optional); optional != "" && err != nil {
-			return ErrInvalidArgument
-		}
-	}
 	if t.Fence.SecretFence.empty() || !validRuntimeAppSecretFence(t.Fence.SecretFence) || !validRuntimeAppConfigFence(t.Fence) ||
-		t.Plan == "" || !validPublicationBookkeeping(t.Bookkeeping) {
+		t.Generation <= 0 || !validPublicationBookkeeping(t.Bookkeeping) {
 		return ErrInvalidArgument
 	}
 	return nil
 }
 
-func (s *PgStore) FrozenThawBasis(ctx context.Context, accountID, appID, deploymentID string) (FrozenThawBasis, error) {
-	if err := validateRuntimeAppEnvIDs(accountID, appID, deploymentID); err != nil {
-		return FrozenThawBasis{}, err
+func (s *PgStore) FrozenThawBasis(ctx context.Context, appID, deploymentID string) (FrozenThawBasis, error) {
+	for _, value := range []string{appID, deploymentID} {
+		if _, err := uuid.Parse(value); err != nil {
+			return FrozenThawBasis{}, ErrInvalidArgument
+		}
 	}
-	row, err := sqlc.New().FrozenThawBasis(ctx, s.pool, sqlc.FrozenThawBasisParams{
-		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(deploymentID),
-	})
+	row, err := sqlc.New().FrozenThawBasis(ctx, s.pool, sqlc.FrozenThawBasisParams{AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(deploymentID)})
 	if err != nil {
 		return FrozenThawBasis{}, mapErr(err)
 	}
-	return FrozenThawBasis{Selected: row.Selected, AppStamp: timestampPtr(row.AppStamp),
-		DefaultScopeStamp: timestampPtr(row.DefaultScopeStamp), DeploymentScopeStamp: timestampPtr(row.DeploymentScopeStamp),
-		StandardsVersion: row.StandardsVersion}, nil
+	return FrozenThawBasis{Generation: row.Generation, Selected: row.Selected}, nil
 }
 
 func (s *PgStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instance, error) {
@@ -101,19 +84,8 @@ func (s *PgStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instanc
 		return Instance{}, err
 	}
 	params := sqlc.ThawFrozenInstanceParams{
-		AccountID: mustPgUUID(t.AccountID), AppID: mustPgUUID(t.AppID), InstanceID: mustPgUUID(t.InstanceID),
-		NodeID: mustPgUUID(t.NodeID), WakeID: mustPgUUID(t.WakeID), DeploymentID: mustPgUUID(t.Fence.SecretFence.DeploymentID),
-		Scope: t.Fence.SecretFence.Scope, AppType: string(t.AppType), RamMb: int32(t.RAMMB),
-		CpuMillicores: int32(t.CPUMillicores), MaxConcurrency: int32(t.MaxConcurrency), Plan: t.Plan,
-		ConfigFingerprint: t.Fence.Fingerprint,
-		AppStamp:          pgTimestamp(t.Basis.AppStamp), DefaultScopeStamp: pgTimestamp(t.Basis.DefaultScopeStamp),
-		DeploymentScopeStamp: pgTimestamp(t.Basis.DeploymentScopeStamp), StandardsVersion: t.Basis.StandardsVersion,
-	}
-	if t.OrgID != "" {
-		params.OrgID = mustPgUUID(t.OrgID)
-	}
-	if t.Fence.SecretFence.EnvironmentID != "" {
-		params.EnvironmentID = mustPgUUID(t.Fence.SecretFence.EnvironmentID)
+		AppID: mustPgUUID(t.AppID), InstanceID: mustPgUUID(t.InstanceID), NodeID: mustPgUUID(t.NodeID), WakeID: mustPgUUID(t.WakeID),
+		DeploymentID: mustPgUUID(t.Fence.SecretFence.DeploymentID), ConfigFingerprint: t.Fence.Fingerprint, Generation: t.Generation,
 	}
 	if b := t.Bookkeeping; b != nil {
 		if b.EventKind != "" {
@@ -140,55 +112,19 @@ func (s *PgStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instanc
 	}), nil
 }
 
-func timestampPtr(value pgtype.Timestamptz) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	at := value.Time
-	return &at
-}
-
-func pgTimestamp(at *time.Time) pgtype.Timestamptz {
-	if at == nil {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: *at, Valid: true}
-}
-
-func (m *MemStore) FrozenThawBasis(_ context.Context, accountID, appID, deploymentID string) (FrozenThawBasis, error) {
-	if err := validateRuntimeAppEnvIDs(accountID, appID, deploymentID); err != nil {
+func (m *MemStore) FrozenThawBasis(ctx context.Context, appID, deploymentID string) (FrozenThawBasis, error) {
+	generation, err := m.AppRuntimeGeneration(ctx, appID)
+	if err != nil {
 		return FrozenThawBasis{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[appID]
 	dep, depOK := m.deployments[deploymentID]
-	if !ok || app.AccountID != accountID || !depOK || dep.AppID != appID {
+	if !ok || !depOK || dep.AppID != appID {
 		return FrozenThawBasis{}, ErrNotFound
 	}
-	return m.frozenThawBasisLocked(app, dep), nil
-}
-
-// frozenThawBasisLocked mirrors FrozenThawBasis's SQL. MemStore has no
-// database cutover barrier; its enrollment version is a digest of the row.
-func (m *MemStore) frozenThawBasisLocked(app App, dep Deployment) FrozenThawBasis {
-	basis := FrozenThawBasis{Selected: app.Status == AppActive && m.frozenThawSelectedLocked(app, dep)}
-	for _, row := range m.applicationStandardEnrollments {
-		if app.OrgID != "" && sameStandardUUID(row.AppID, app.ID) && sameStandardUUID(row.OrgID, app.OrgID) {
-			raw, _ := json.Marshal(row)
-			basis.StandardsVersion = fmt.Sprintf("%x", sha256.Sum256(raw))
-		}
-	}
-	if at, ok := m.runtimeConfigChangedAt[app.ID]; ok {
-		basis.AppStamp = &at
-	}
-	if at, ok := m.environmentRuntimeConfigChangedAt[environmentRuntimeKey{AppID: app.ID, Scope: DefaultEnvScope}]; ok {
-		basis.DefaultScopeStamp = &at
-	}
-	if at, ok := m.environmentRuntimeConfigChangedAt[environmentRuntimeKey{AppID: app.ID, Scope: normalizedDeploymentScope(dep.Scope)}]; ok {
-		basis.DeploymentScopeStamp = &at
-	}
-	return basis
+	return FrozenThawBasis{Generation: generation, Selected: app.Status == AppActive && m.frozenThawSelectedLocked(app, dep)}, nil
 }
 
 func frozenThawProductionLane(scope string) bool {
@@ -226,6 +162,10 @@ func (m *MemStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instan
 	if t.Bookkeeping != nil && t.Bookkeeping.NotifyChannel != "" {
 		return Instance{}, ErrInvalidArgument
 	}
+	generation, err := m.AppRuntimeGeneration(ctx, t.AppID)
+	if err != nil || generation != t.Generation {
+		return Instance{}, ErrConflict
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.frozenThawGuardsHoldLocked(t) {
@@ -244,50 +184,25 @@ func (m *MemStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instan
 	return instance, nil
 }
 
+// frozenThawGuardsHoldLocked mirrors the guards ThawFrozenInstance keeps
+// beside the generation: the instance row, its proof and an unexpired
+// enrollment exception.
 func (m *MemStore) frozenThawGuardsHoldLocked(t FrozenThaw) bool {
 	instance, ok := m.instances[t.InstanceID]
 	proof, proofOK := m.runtimeInstanceConfigProofs[t.InstanceID]
 	app, appOK := m.apps[t.AppID]
-	acct, acctOK := m.accounts[app.AccountID]
-	dep, depOK := m.deployments[t.Fence.SecretFence.DeploymentID]
-	if !ok || !proofOK || !appOK || !acctOK || !depOK {
-		return false
-	}
-	if instance.State != string(StateFrozen) || instance.AppID != t.AppID || instance.DeploymentID != dep.ID ||
-		instance.NodeID != t.NodeID || instance.WakeID != t.WakeID ||
+	if !ok || !proofOK || !appOK || instance.State != string(StateFrozen) || instance.AppID != t.AppID ||
+		instance.DeploymentID != t.Fence.SecretFence.DeploymentID || instance.NodeID != t.NodeID || instance.WakeID != t.WakeID ||
 		proof.WakeID != instance.WakeID || proof.NodeID != instance.NodeID || proof.Fence.Fingerprint != t.Fence.Fingerprint {
 		return false
 	}
-	if app.OrgID != t.OrgID || app.OrgID != "" && !m.frozenThawEnrollmentCurrentLocked(app, t.Basis.StandardsVersion) {
-		return false
+	if app.OrgID == "" {
+		return true
 	}
-	if app.AccountID != t.AccountID || app.Type != t.AppType || app.RAMMB != t.RAMMB ||
-		app.CPUMillicores != t.CPUMillicores || app.MaxConcurrency != t.MaxConcurrency ||
-		!acct.Active() || string(acct.Plan) != t.Plan || normalizedDeploymentScope(dep.Scope) != t.Fence.SecretFence.Scope {
-		return false
-	}
-	now := m.frozenThawBasisLocked(app, dep)
-	return now.Selected && sameStamp(now.AppStamp, t.Basis.AppStamp) &&
-		sameStamp(now.DefaultScopeStamp, t.Basis.DefaultScopeStamp) && sameStamp(now.DeploymentScopeStamp, t.Basis.DeploymentScopeStamp)
-}
-
-// frozenThawEnrollmentCurrentLocked mirrors the guard's enrollment clause:
-// the row exists, is the version the ticket read and has no expired
-// exception.
-func (m *MemStore) frozenThawEnrollmentCurrentLocked(app App, version string) bool {
 	for _, row := range m.applicationStandardEnrollments {
 		if sameStandardUUID(row.AppID, app.ID) && sameStandardUUID(row.OrgID, app.OrgID) {
-			raw, _ := json.Marshal(row)
-			return fmt.Sprintf("%x", sha256.Sum256(raw)) == version &&
-				(row.ExceptionExpiresAt == nil || time.Now().Before(*row.ExceptionExpiresAt))
+			return row.ExceptionExpiresAt == nil || time.Now().Before(*row.ExceptionExpiresAt)
 		}
 	}
 	return false
-}
-
-func sameStamp(a, b *time.Time) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.Equal(*b)
 }

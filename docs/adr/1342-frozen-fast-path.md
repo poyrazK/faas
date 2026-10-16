@@ -1,7 +1,14 @@
 # ADR-1342: Frozen fast path — a thaw is a ledger check, the vmmd call beside one read, and one guarded update
 
 - Status: Proposed. Built behind schedd's `frozen_fast_path` switch, off by
-  default; it only matters once ADR-1151's `frozen_tier` is on.
+  default; it only matters once ADR-1151's `frozen_tier` is on. Amended by
+  ADR-1345 (2026-10-16): the guarded thaw checks the app's runtime
+  generation, which every change in section 3's table moves in the writer's
+  own transaction, so the column guards, the stamps and the runtime-values
+  read are gone. A ticket reads the generation first; `ThawFrozenInstance`
+  locks only the generation row and keeps the proof and enrollment-expiry
+  checks. A ticketed thaw is the workload-retirement gate and that one
+  statement.
 - Date: 2026-10-15
 - Amends: ADR-1151 decision 2, "Thaw path"
 - Builds on: ADR-1151 (pause tiers), the scaling roadmap's wake rule (zero

@@ -1,5 +1,5 @@
-// adr: 1342 — a ticketed thaw is a ledger check, the vmmd call beside one
-// read, and one guarded update.
+// adr: 1342, 1345 — a ticketed thaw is a ledger check, the vmmd call and
+// one update guarded by the app's runtime generation.
 package sched
 
 import (
@@ -19,14 +19,14 @@ import (
 func (e *Engine) EnableFrozenFastPath() { e.frozenFastPath.Store(true) }
 
 // frozenTicket is what a thaw needs, recorded when the VM froze: the plan,
-// the config fence its proof captured, the guard basis and the frozen charge
-// to restore when the thaw is refused.
+// the config fence its proof captured, the app's runtime generation read
+// before everything else (ADR-1345) and the frozen charge to restore when
+// the thaw is refused.
 type frozenTicket struct {
-	plan     frozenThawPlan
-	fence    state.RuntimeAppConfigFence
-	basis    state.FrozenThawBasis
-	guardApp state.App // the apps row as read, which the guarded update compares
-	chargeMB int
+	plan       frozenThawPlan
+	fence      state.RuntimeAppConfigFence
+	generation int64
+	chargeMB   int
 }
 
 // frozenTickets holds the tickets of this schedd's frozen VMs, by app. They
@@ -113,6 +113,16 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	if !ok || (ins.Mode != "" && ins.Mode != string(state.InstanceModeNormal)) {
 		return frozenTicket{}, errNoThawTicket
 	}
+	// The generation is read before everything else: a change after it moves
+	// the generation the guarded thaw compares, and a change before it shows
+	// in the reads below.
+	basis, err := guards.FrozenThawBasis(ctx, ins.AppID, ins.DeploymentID)
+	if err != nil {
+		return frozenTicket{}, err
+	}
+	if !basis.Selected || basis.Generation <= 0 {
+		return frozenTicket{}, errNoThawTicket
+	}
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
 		return frozenTicket{}, err
@@ -159,15 +169,6 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	if err != nil {
 		return frozenTicket{}, err
 	}
-	// The basis comes before the values: an edit after it changes a stamp the
-	// guarded thaw compares, and an edit before it shows in the values.
-	basis, err := guards.FrozenThawBasis(ctx, acct.ID, app.ID, dep.ID)
-	if err != nil {
-		return frozenTicket{}, err
-	}
-	if !basis.Selected {
-		return frozenTicket{}, errNoThawTicket
-	}
 	values, err := e.loadRuntimeDeploymentValues(ctx, resolved, dep)
 	if err != nil {
 		return frozenTicket{}, err
@@ -190,7 +191,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	} else {
 		return frozenTicket{}, fmt.Errorf("sched: frozen fast path: node: %w", nodeErr)
 	}
-	return frozenTicket{plan: plan, fence: captured, basis: basis, guardApp: app, chargeMB: chargeMB}, nil
+	return frozenTicket{plan: plan, fence: captured, generation: basis.Generation, chargeMB: chargeMB}, nil
 }
 
 // thawFromTicketLocked is wake phase 1's fast path (ADR-1342). It runs
@@ -222,29 +223,13 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 	if !e.readmitFrozenLocked(ctx, plan) {
 		return WakeResult{}, false
 	}
-	// The runtime values are read while vmmd resumes the VM; their
-	// fingerprint must still be the one the VM's proof captured.
-	var (
-		thawed    bool
-		values    runtimeDeploymentValues
-		valuesErr error
-	)
-	concurrently(
-		func() { thawed = e.thawFrozenVM(ctx, thawer, plan, &timing) },
-		func() { values, valuesErr = e.loadRuntimeDeploymentValues(ctx, plan.app, plan.dep) },
-	)
-	if !thawed {
-		return WakeResult{}, false
-	}
-	if valuesErr != nil || values.ConfigFence != ticket.fence || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
-		e.refreezeLocked(ctx, thawer, ticket, "config_read")
+	if !e.thawFrozenVM(ctx, thawer, plan, &timing) {
 		return WakeResult{}, false
 	}
 	bookkeeping := e.publicationBookkeeping(plan.frozen.ID, plan.app.ID, plan.frozen.WakeID, state.StateFrozen, state.StateRunning, "frozen_thaw")
 	fresh, err := guards.ThawFrozenInstance(ctx, state.FrozenThaw{
 		AccountID: plan.acct.ID, AppID: plan.app.ID, InstanceID: plan.frozen.ID, NodeID: plan.frozen.NodeID, WakeID: plan.frozen.WakeID,
-		OrgID: ticket.guardApp.OrgID, Fence: ticket.fence, AppType: ticket.guardApp.Type, RAMMB: ticket.guardApp.RAMMB, CPUMillicores: ticket.guardApp.CPUMillicores,
-		MaxConcurrency: ticket.guardApp.MaxConcurrency, Plan: string(plan.acct.Plan), Basis: ticket.basis, Bookkeeping: bookkeeping,
+		Fence: ticket.fence, Generation: ticket.generation, Bookkeeping: bookkeeping,
 	})
 	timing.published = time.Now()
 	switch {

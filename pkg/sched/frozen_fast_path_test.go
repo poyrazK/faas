@@ -1,4 +1,4 @@
-// adr: 1342 — a ticketed thaw skips the ordinary wake path's reads, and any
+// adr: 1342, 1345 — a ticketed thaw skips the ordinary wake path's reads, and any
 // change it cannot vouch for sends the VM back to that path.
 package sched
 

@@ -116,6 +116,13 @@ The guard replaces ADR-1342's column guards and its runtime-values read: a
 config edit bumps the counter in the edit's own transaction, so the counter
 answers what the stamps could not.
 
+Lock order: a writer takes its rows first and bumps the counter in an
+`AFTER` trigger, so it holds the app's row locks before the counter. A
+guarded statement must take the counter last, after any app or deployment
+row it locks, or lock nothing but the counter, as `ThawFrozenInstance` does.
+Taking the counter first could deadlock against a writer that holds the app
+row and waits for the counter.
+
 ### 4. Node leases
 
 When ADR-1344's node leases land, the same statements also check the node's
@@ -160,6 +167,8 @@ rides in those two statements.
   stay; they cost nothing a reader depends on.
 
 ## Rollout
+
+Done on branch `perf/schedd-owner-cache`: steps 1, 2 and 4.
 
 1. This ADR.
 2. Migration: the counter table, triggers and notification, the store

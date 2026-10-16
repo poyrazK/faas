@@ -38,17 +38,12 @@ func seedFrozenThaw(t *testing.T, store runtimeAppEnvTestStore, node string) (ru
 	if err := store.UpdateInstanceState(ctx, p.InstanceID, string(state.StateFrozen)); err != nil {
 		t.Fatalf("freeze: %v", err)
 	}
-	app, err := store.AppByID(ctx, f.app.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	basis, err := store.(state.FrozenThawStore).FrozenThawBasis(ctx, f.account.ID, f.app.ID, dep.ID)
-	if err != nil || !basis.Selected {
+	basis, err := store.(state.FrozenThawStore).FrozenThawBasis(ctx, f.app.ID, dep.ID)
+	if err != nil || !basis.Selected || basis.Generation <= 0 {
 		t.Fatalf("basis = %+v, %v; want the deployment selected", basis, err)
 	}
 	return f, state.FrozenThaw{AccountID: f.account.ID, AppID: f.app.ID, InstanceID: p.InstanceID, NodeID: p.NodeID, WakeID: p.WakeID,
-		OrgID: app.OrgID, Fence: p.ConfigFence, AppType: app.Type, RAMMB: app.RAMMB, CPUMillicores: app.CPUMillicores, MaxConcurrency: app.MaxConcurrency,
-		Plan: string(f.account.Plan), Basis: basis,
+		Fence: p.ConfigFence, Generation: basis.Generation,
 		Bookkeeping: &state.RuntimePublicationBookkeeping{EventKind: "frozen_thaw", EventData: []byte(`{"from":"frozen","to":"running"}`)}}
 }
 
@@ -91,22 +86,13 @@ func testFrozenThawGuards(t *testing.T, store runtimeAppEnvTestStore) {
 		{name: "runtime config stamped", change: func(ctx context.Context, f runtimeAppEnvFixture, _ *state.FrozenThaw) error {
 			return store.MarkAppRuntimeConfigChanged(ctx, f.app.ID)
 		}},
-		// apid stamps a value edit before acknowledging it (handlers_env.go).
-		// A write without the stamp passes this guard; the thaw's
-		// fingerprint check, read beside the vmmd call, catches it.
+		// A value written without a runtime-config stamp still moves the
+		// generation (ADR-1345), in the write's own transaction.
 		{name: "environment variable edited", change: func(ctx context.Context, f runtimeAppEnvFixture, _ *state.FrozenThaw) error {
-			if err := store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "production", "MODE", "edited"); err != nil {
-				return err
-			}
-			_, err := state.InvalidateAppSnapshotsInScope(ctx, store, f.app.ID, "production")
-			return err
+			return store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "production", "MODE", "edited")
 		}},
 		{name: "secret added", change: func(ctx context.Context, f runtimeAppEnvFixture, _ *state.FrozenThaw) error {
-			if err := store.UpsertAppSecretInScope(ctx, f.account.ID, f.app.ID, "production", "TOKEN", []byte("added")); err != nil {
-				return err
-			}
-			_, err := state.InvalidateAppSnapshotsInScope(ctx, store, f.app.ID, "production")
-			return err
+			return store.UpsertAppSecretInScope(ctx, f.account.ID, f.app.ID, "production", "TOKEN", []byte("added"))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,7 +173,7 @@ func testFrozenThawSelectionAgreesWithWake(t *testing.T, store runtimeAppEnvTest
 				}
 			}
 			dep := f.deployments["production"]
-			basis, err := store.(state.FrozenThawStore).FrozenThawBasis(ctx, f.account.ID, f.app.ID, dep.ID)
+			basis, err := store.(state.FrozenThawStore).FrozenThawBasis(ctx, f.app.ID, dep.ID)
 			if err != nil || basis.Selected != tc.wantSelected {
 				t.Fatalf("basis selected = %v, %v; want %v", basis.Selected, err, tc.wantSelected)
 			}

@@ -19010,11 +19010,7 @@ func (q *Queries) FirstCustomerOperationWorkflowEvent(ctx context.Context, db DB
 }
 
 const frozenThawBasis = `-- name: FrozenThawBasis :one
-SELECT (SELECT c.changed_at FROM app_runtime_config_changes c WHERE c.app_id=a.id) AS app_stamp,
-    (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id AND c.scope='default') AS default_scope_stamp,
-    (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id
-        AND c.scope=COALESCE(NULLIF(d.scope,''),'default')) AS deployment_scope_stamp,
-    COALESCE((SELECT s.xmin::text FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id),'')::text AS standards_version,
+SELECT COALESCE((SELECT g.generation FROM app_runtime_generations g WHERE g.app_id=a.id),0)::bigint AS generation,
     (a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
         AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
         AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
@@ -19027,41 +19023,29 @@ SELECT (SELECT c.changed_at FROM app_runtime_config_changes c WHERE c.app_id=a.i
                 AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
                     AND o.traffic_percent>0 AND o.scope IN ('production','default','')))))::boolean AS selected
 FROM apps a JOIN deployments d ON d.app_id=a.id
-WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND d.id=$3::uuid
+WHERE a.id=$1::uuid AND d.id=$2::uuid
 `
 
 type FrozenThawBasisParams struct {
 	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
 	DeploymentID pgtype.UUID
 }
 
 type FrozenThawBasisRow struct {
-	AppStamp             pgtype.Timestamptz
-	DefaultScopeStamp    pgtype.Timestamptz
-	DeploymentScopeStamp pgtype.Timestamptz
-	StandardsVersion     string
-	Selected             bool
+	Generation int64
+	Selected   bool
 }
 
-// ADR-1342: what a frozen VM's thaw guard compares with, read when it
-// freezes. selected repeats ThawFrozenInstance's selection rule: the app's
-// active production release pins the deployment, or no release pins the app
-// and the deployment is its only live production-lane deployment with
-// traffic. The stamps are the app's runtime-config stamp rows; NULL is a row
-// that does not exist. standards_version is the app's application-standards
-// enrollment row version: the guard requires it unchanged, since the
-// enrollment rule itself is evaluated in Go when the ticket is issued.
+// ADR-1342, ADR-1345: read first when a VM freezes, before the rest of its
+// ticket, so any change after it moves the generation the guarded thaw
+// compares. selected is true when the thaw a ticket would allow is the one
+// the ordinary wake path would choose: the app's active production release
+// pins the deployment, or no release pins the app and the deployment is its
+// only live production-lane deployment with traffic.
 func (q *Queries) FrozenThawBasis(ctx context.Context, db DBTX, arg FrozenThawBasisParams) (FrozenThawBasisRow, error) {
-	row := db.QueryRow(ctx, frozenThawBasis, arg.AppID, arg.AccountID, arg.DeploymentID)
+	row := db.QueryRow(ctx, frozenThawBasis, arg.AppID, arg.DeploymentID)
 	var i FrozenThawBasisRow
-	err := row.Scan(
-		&i.AppStamp,
-		&i.DefaultScopeStamp,
-		&i.DeploymentScopeStamp,
-		&i.StandardsVersion,
-		&i.Selected,
-	)
+	err := row.Scan(&i.Generation, &i.Selected)
 	return i, err
 }
 
@@ -82512,59 +82496,35 @@ func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appI
 }
 
 const thawFrozenInstance = `-- name: ThawFrozenInstance :one
-WITH environment_lock AS (
-    SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
-    WHERE e.id=$1::uuid AND e.account_id=$2::uuid AND a.id=$3::uuid
-        AND e.slug=CASE WHEN $4::text='default' THEN 'production' ELSE $4::text END
-    FOR SHARE OF e
-), guard AS (
-    SELECT a.id FROM apps a JOIN accounts acc ON acc.id=a.account_id JOIN deployments d ON d.app_id=a.id
-    WHERE a.id=$3::uuid AND a.account_id=$2::uuid AND d.id=$5::uuid
-        AND a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
-        AND a.org_id IS NOT DISTINCT FROM $6::uuid
-        AND (a.org_id IS NULL OR EXISTS (SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
-            AND s.xmin::text=$7::text AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
-        AND a.type=$8::text AND a.ram_mb=$9::integer
-        AND a.cpu_millicores=$10::integer AND a.max_concurrency=$11::integer
-        AND acc.status IN ('active','past_due') AND acc.abuse_hold_at IS NULL AND acc.plan=$12::text
-        AND COALESCE(NULLIF(d.scope,''),'default')=$4::text
-        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
-        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
-        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
-                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
-                    AND rm.deployment_id=d.id AND d.scope='production')
-            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
-                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
-                        AND rm.deployment_id IS NOT NULL)
-                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
-                    AND o.traffic_percent>0 AND o.scope IN ('production','default',''))))
-        AND (SELECT c.changed_at FROM app_runtime_config_changes c WHERE c.app_id=a.id) IS NOT DISTINCT FROM $13::timestamptz
-        AND (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id AND c.scope='default')
-            IS NOT DISTINCT FROM $14::timestamptz
-        AND (SELECT c.changed_at FROM app_runtime_config_scope_changes c WHERE c.app_id=a.id AND c.scope=$4::text)
-            IS NOT DISTINCT FROM $15::timestamptz
-        AND ($1::uuid IS NULL OR EXISTS (SELECT 1 FROM environment_lock))
-    FOR SHARE OF a, d
+WITH generation_lock AS (
+    SELECT g.app_id FROM app_runtime_generations g
+    WHERE g.app_id=$1::uuid AND g.generation=$2::bigint
+    FOR SHARE
+), standards AS (
+    SELECT a.id FROM apps a WHERE a.id=$1::uuid AND (a.org_id IS NULL OR EXISTS (
+        SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
+            AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
 ), thawed AS (
     UPDATE instances SET started_at=clock_timestamp(), state='running'
-    WHERE id=$16::uuid AND app_id=$3::uuid
-        AND deployment_id=$5::uuid AND node_id=$17::uuid
-        AND wake_id=$18::uuid AND state='frozen' AND EXISTS (SELECT 1 FROM guard)
+    WHERE id=$3::uuid AND app_id=$1::uuid
+        AND deployment_id=$4::uuid AND node_id=$5::uuid
+        AND wake_id=$6::uuid AND state='frozen'
+        AND EXISTS (SELECT 1 FROM generation_lock) AND EXISTS (SELECT 1 FROM standards)
         AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
             AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
-            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=$19::text)
+            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=$7::text)
     RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
         state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
         coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
         node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
 ), transition_event AS (
     INSERT INTO events(actor,kind,subject,data)
-    SELECT 'schedd',$20::text,thawed.id::uuid,$21::jsonb FROM thawed
-    WHERE $20::text IS NOT NULL
+    SELECT 'schedd',$8::text,thawed.id::uuid,$9::jsonb FROM thawed
+    WHERE $8::text IS NOT NULL
     RETURNING id
 ), notification AS (
-    SELECT pg_notify($22::text,$23::text) FROM thawed
-    WHERE $22::text IS NOT NULL
+    SELECT pg_notify($10::text,$11::text) FROM thawed
+    WHERE $10::text IS NOT NULL
 )
 SELECT thawed.id, thawed.app_id, thawed.deployment_id, thawed.state, thawed.netns, thawed.guest_uid, thawed.host_ip, thawed.ram_mb, thawed.started_at, thawed.last_request_at, thawed.parked_at, thawed.node_id, thawed.wake_id, thawed.framework_ready_at, thawed.tail_count, thawed.mode, thawed.request_count, (SELECT count(*) FROM transition_event)::integer AS events_recorded,
     (SELECT count(*) FROM notification)::integer AS notifications_sent
@@ -82572,29 +82532,17 @@ FROM thawed
 `
 
 type ThawFrozenInstanceParams struct {
-	EnvironmentID        pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Scope                string
-	DeploymentID         pgtype.UUID
-	OrgID                pgtype.UUID
-	StandardsVersion     string
-	AppType              string
-	RamMb                int32
-	CpuMillicores        int32
-	MaxConcurrency       int32
-	Plan                 string
-	AppStamp             pgtype.Timestamptz
-	DefaultScopeStamp    pgtype.Timestamptz
-	DeploymentScopeStamp pgtype.Timestamptz
-	InstanceID           pgtype.UUID
-	NodeID               pgtype.UUID
-	WakeID               pgtype.UUID
-	ConfigFingerprint    string
-	EventKind            pgtype.Text
-	EventData            []byte
-	NotifyChannel        pgtype.Text
-	NotifyPayload        pgtype.Text
+	AppID             pgtype.UUID
+	Generation        int64
+	InstanceID        pgtype.UUID
+	DeploymentID      pgtype.UUID
+	NodeID            pgtype.UUID
+	WakeID            pgtype.UUID
+	ConfigFingerprint string
+	EventKind         pgtype.Text
+	EventData         []byte
+	NotifyChannel     pgtype.Text
+	NotifyPayload     pgtype.Text
 }
 
 type ThawFrozenInstanceRow struct {
@@ -82619,32 +82567,22 @@ type ThawFrozenInstanceRow struct {
 	NotificationsSent int32
 }
 
-// ADR-1342: a ticketed thaw's one control-plane round trip. The FROZEN ->
-// RUNNING compare-and-set holds every guard the ordinary wake path would
-// have read: the app, account and deployment as the ticket recorded them,
-// FrozenThawBasis's selection rule, the application-standards enrollment
-// and runtime-config stamps unchanged, and the instance's config proof. The app, deployment and project environment
-// are share-locked as PublishOwnedInstanceRuntime locks them. The
-// transition event and instance_changed notification commit with it. No
-// row means a guard refused and nothing changed.
+// ADR-1342, ADR-1345: a ticketed thaw's one control-plane round trip. The
+// FROZEN -> RUNNING compare-and-set holds when the app's runtime generation
+// is the one the ticket read: every change the ordinary wake path would have
+// read moves it, in the writer's transaction. The generation row is the only
+// lock taken, FOR SHARE, so a writer bumping it waits for this statement or
+// this statement waits for the writer and then sees the new generation. The
+// config proof must still be the ticket's, and an enrollment exception,
+// which expires with time and moves no generation, must not have expired.
+// The transition event and instance_changed notification commit with it.
+// No row means a guard refused and nothing changed.
 func (q *Queries) ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error) {
 	row := db.QueryRow(ctx, thawFrozenInstance,
-		arg.EnvironmentID,
-		arg.AccountID,
 		arg.AppID,
-		arg.Scope,
-		arg.DeploymentID,
-		arg.OrgID,
-		arg.StandardsVersion,
-		arg.AppType,
-		arg.RamMb,
-		arg.CpuMillicores,
-		arg.MaxConcurrency,
-		arg.Plan,
-		arg.AppStamp,
-		arg.DefaultScopeStamp,
-		arg.DeploymentScopeStamp,
+		arg.Generation,
 		arg.InstanceID,
+		arg.DeploymentID,
 		arg.NodeID,
 		arg.WakeID,
 		arg.ConfigFingerprint,
