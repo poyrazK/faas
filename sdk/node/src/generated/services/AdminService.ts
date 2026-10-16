@@ -19,6 +19,7 @@ import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { ObsAlertResponseTimes } from '../models/ObsAlertResponseTimes.js';
 import type { ObsAlertTriageHistory } from '../models/ObsAlertTriageHistory.js';
 import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
 import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js';
@@ -1058,6 +1059,50 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Measure retained alert acknowledgment and observed resolution timing.
+   * Reads retained platform alert episodes activated between since and as_of,
+   * inclusive. The default window is 24 hours with a maximum of 30 days.
+   * Receipt coverage must prove the complete revision sequence before first
+   * acknowledgment is included. Invalid timestamps are excluded from samples.
+   * Unknown and unobserved outcomes remain in explicit cohort denominators.
+   * Resolution measures confirmed rule recovery rather than actual repair.
+   * Discrete nearest-rank percentiles use whole-second valid samples only.
+   * Cohorts above 1000 episodes or 10000 matching receipts return 400 and
+   * require a narrower since; results are never silently sampled. Reads
+   * share one database snapshot and a five-second query budget. Retention
+   * and collection metadata do not guarantee a complete historical window.
+   *
+   * @returns ObsAlertResponseTimes Retained-cohort timing totals and bounded severity/component aggregates.
+   * @throws ApiError
+   */
+  public static getObsAlertResponseTimes({
+    since,
+  }: {
+    /**
+     * Inclusive activation-cohort lower bound; defaults to 24 hours before as_of.
+     */
+    since?: string,
+  }): CancelablePromise<ObsAlertResponseTimes> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/incidents/platform_alert/response-times',
+      query: {
+        'since': since,
+      },
+      errors: {
+        400: `Invalid timing query or cohort above the bounded read capacity; narrow since.`,
+        401: `code: unauthorized`,
+        403: `Timing read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Response timing storage could not be read within its deadline.`,
       },
     });
   }

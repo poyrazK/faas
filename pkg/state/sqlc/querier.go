@@ -2823,6 +2823,8 @@ type Querier interface {
 	OperatorAlertPruneEpisodes(ctx context.Context, db DBTX, arg OperatorAlertPruneEpisodesParams) (int64, error)
 	OperatorAlertPruneRules(ctx context.Context, db DBTX, arg OperatorAlertPruneRulesParams) error
 	OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg OperatorAlertResolveMissingParams) error
+	OperatorAlertResponseTimesEpisodes(ctx context.Context, db DBTX, arg OperatorAlertResponseTimesEpisodesParams) ([]OperatorAlertResponseTimesEpisodesRow, error)
+	OperatorAlertResponseTimesReceipts(ctx context.Context, db DBTX, arg OperatorAlertResponseTimesReceiptsParams) ([]OperatorAlertResponseTimesReceiptsRow, error)
 	OperatorAlertRetentionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
 	OperatorAlertRetentionLock(ctx context.Context, db DBTX) (bool, error)
 	OperatorAlertRetentionStatus(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (OperatorAlertRetentionStatusRow, error)

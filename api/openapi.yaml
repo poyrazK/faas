@@ -44995,6 +44995,40 @@ paths:
   # the operator_intent outcome-missing count, the trace_id
   # completeness ratio, and the Prometheus alert firing count.
   # Admin-only (admin scope + FAAS_ADMIN_EMAILS allowlist + MFA).
+  /v1/admin/obs/incidents/platform_alert/response-times:
+    get:
+      tags: [admin]
+      operationId: getObsAlertResponseTimes
+      summary: Measure retained alert acknowledgment and observed resolution timing.
+      description: |
+        Reads retained platform alert episodes activated between since and as_of,
+        inclusive. The default window is 24 hours with a maximum of 30 days.
+        Receipt coverage must prove the complete revision sequence before first
+        acknowledgment is included. Invalid timestamps are excluded from samples.
+        Unknown and unobserved outcomes remain in explicit cohort denominators.
+        Resolution measures confirmed rule recovery rather than actual repair.
+        Discrete nearest-rank percentiles use whole-second valid samples only.
+        Cohorts above 1000 episodes or 10000 matching receipts return 400 and
+        require a narrower since; results are never silently sampled. Reads
+        share one database snapshot and a five-second query budget. Retention
+        and collection metadata do not guarantee a complete historical window.
+      parameters:
+        - in: query
+          name: since
+          description: Inclusive activation-cohort lower bound; defaults to 24 hours before as_of.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Retained-cohort timing totals and bounded severity/component aggregates.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsAlertResponseTimes' }
+        '400': { description: Invalid timing query or cohort above the bounded read capacity; narrow since. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Timing read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Response timing storage could not be read within its deadline. }
+
   /v1/admin/obs/incidents/platform_alert/summary:
     get:
       tags: [admin]
@@ -64235,6 +64269,69 @@ components:
       properties:
         incident_id: { type: string }
         triage: { $ref: '#/components/schemas/ObsAlertTriage' }
+    ObsAlertResponseTimes:
+      type: object
+      description: Atomic retained activation-cohort timing with explicit evidence and sample limitations.
+      required: [as_of, since, scope, duration_basis, percentile_method, limitations, collection, retention, totals, groups]
+      properties:
+        as_of: { type: string, format: date-time }
+        since: { type: string, format: date-time }
+        scope: { type: string, enum: [retained_activation_cohort] }
+        duration_basis: { type: string, enum: [episode_activation] }
+        percentile_method: { type: string, enum: [nearest_rank_whole_seconds] }
+        limitations:
+          type: array
+          items: { type: string }
+        collection: { $ref: '#/components/schemas/ObsAlertCollectionHealth' }
+        retention: { $ref: '#/components/schemas/ObsAlertRetentionHealth' }
+        totals:
+          description: Null before any successful collection; a known quiet retained cohort has zero counts and null percentiles.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsAlertResponseAggregate' }
+            - { type: 'null' }
+        groups:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObsAlertResponseGroup' }
+    ObsAlertResponseAggregate:
+      type: object
+      description: One cohort denominator shared by independent acknowledgment and observed recovery classifications.
+      required: [episodes, unresolved, unknown_observation, acknowledgment, resolution, receipt_coverage]
+      properties:
+        episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unresolved: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unknown_observation: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        acknowledgment: { $ref: '#/components/schemas/ObsAlertResponseMetric' }
+        resolution: { $ref: '#/components/schemas/ObsAlertResponseMetric' }
+        receipt_coverage: { $ref: '#/components/schemas/ObsAlertResponseCoverage' }
+    ObsAlertResponseMetric:
+      type: object
+      description: Complete cohort partition and valid-sample percentiles without substituting zeros for missing evidence.
+      required: [samples, not_observed, unknown, invalid_clock, p50_seconds, p95_seconds]
+      properties:
+        samples: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        not_observed: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        unknown: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_clock: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        p50_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        p95_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+    ObsAlertResponseCoverage:
+      type: object
+      description: Disjoint receipt-evidence classifications against each episode's saved workflow revision.
+      required: [complete_episodes, gapped_episodes, invalid_receipt_episodes, missing_revisions]
+      properties:
+        complete_episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        gapped_episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        invalid_receipt_episodes: { type: integer, format: int64, minimum: 0, maximum: 1000 }
+        missing_revisions: { type: integer, format: int64, minimum: 0 }
+    ObsAlertResponseGroup:
+      type: object
+      description: One nonempty severity/component timing group with no actor identities or raw audit data.
+      required: [severity, component, metrics]
+      properties:
+        severity: { type: string, enum: [critical, error, warning] }
+        component: { type: string, maxLength: 64 }
+        metrics: { $ref: '#/components/schemas/ObsAlertResponseAggregate' }
     ObsAlertWorkloadSummary:
       type: object
       description: Atomic retained-alert workload snapshot with explicit collection and cleanup coverage.

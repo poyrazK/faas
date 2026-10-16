@@ -8858,6 +8858,11 @@ const (
 	ObsAlertTriageHistoryCursorMaxBytes       = 1024
 	ObsAlertTriageHistoryBudget               = 5 * time.Second
 	ObsAlertWorkloadBudget                    = 5 * time.Second
+	ObsAlertResponseTimesBudget               = 5 * time.Second
+	ObsAlertResponseTimesWindowDefault        = 24 * time.Hour
+	ObsAlertResponseTimesWindowMax            = 30 * 24 * time.Hour
+	ObsAlertResponseTimesEpisodesMax          = 1000
+	ObsAlertResponseTimesReceiptsMax          = 10000
 	ObsAlertWorkloadGroupMax                  = 72 // 3 statuses * 3 severities * 2 acknowledgment * 2 ownership * 2 snooze
 	ObsAlertTriageRevisionMax           int64 = 9007199254740991
 	ObsAlertRetentionInterval                 = 30 * time.Second

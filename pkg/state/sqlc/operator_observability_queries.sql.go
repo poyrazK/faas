@@ -331,6 +331,119 @@ func (q *Queries) OperatorAlertResolveMissing(ctx context.Context, db DBTX, arg 
 	return err
 }
 
+const operatorAlertResponseTimesEpisodes = `-- name: OperatorAlertResponseTimesEpisodes :many
+SELECT e.id,e.severity,e.component,e.started_at,e.resolved_at,e.triage_revision,
+ CASE WHEN e.resolved_at IS NOT NULL THEN 'resolved'
+  WHEN $1::boolean AND c.last_success_at IS NOT NULL AND c.last_attempt_at=c.last_success_at
+   AND c.last_success_at>=$2::timestamptz AND c.last_success_at<=$3::timestamptz
+   AND e.last_checked_at=c.last_success_at AND e.last_evaluated_at>=$2::timestamptz
+   AND e.last_evaluated_at<=$3::timestamptz THEN 'firing' ELSE 'unknown' END::text AS status
+FROM operator_alert_episodes e CROSS JOIN operator_alert_collection c
+WHERE e.started_at>=$4::timestamptz AND e.started_at<=$5::timestamptz
+ORDER BY e.started_at DESC,e.id DESC LIMIT $6::integer
+`
+
+type OperatorAlertResponseTimesEpisodesParams struct {
+	CollectionEnabled bool
+	FreshSince        pgtype.Timestamptz
+	FutureBefore      pgtype.Timestamptz
+	Since             pgtype.Timestamptz
+	AsOf              pgtype.Timestamptz
+	RowLimit          int32
+}
+
+type OperatorAlertResponseTimesEpisodesRow struct {
+	ID             string
+	Severity       string
+	Component      string
+	StartedAt      pgtype.Timestamptz
+	ResolvedAt     pgtype.Timestamptz
+	TriageRevision int64
+	Status         string
+}
+
+func (q *Queries) OperatorAlertResponseTimesEpisodes(ctx context.Context, db DBTX, arg OperatorAlertResponseTimesEpisodesParams) ([]OperatorAlertResponseTimesEpisodesRow, error) {
+	rows, err := db.Query(ctx, operatorAlertResponseTimesEpisodes,
+		arg.CollectionEnabled,
+		arg.FreshSince,
+		arg.FutureBefore,
+		arg.Since,
+		arg.AsOf,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertResponseTimesEpisodesRow{}
+	for rows.Next() {
+		var i OperatorAlertResponseTimesEpisodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Severity,
+			&i.Component,
+			&i.StartedAt,
+			&i.ResolvedAt,
+			&i.TriageRevision,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorAlertResponseTimesReceipts = `-- name: OperatorAlertResponseTimesReceipts :many
+SELECT (data->>'episode_id')::text AS episode_id,id::text AS id,received_at,
+ jsonb_build_object('episode_id',data->'episode_id','action',data->'action','previous_revision',data->'previous_revision',
+  'triage',jsonb_build_object('revision',data#>'{triage,revision}','acknowledged',data#>'{triage,acknowledged}',
+   'owned',data#>'{triage,owned}','snoozed_until',data#>'{triage,snoozed_until}','as_of',data#>'{triage,as_of}'))::jsonb AS payload
+FROM audit_log
+WHERE kind='operator.action.alert_triage' AND data->>'episode_id'=ANY($1::text[])
+LIMIT $2::integer
+`
+
+type OperatorAlertResponseTimesReceiptsParams struct {
+	EpisodeIds []string
+	RowLimit   int32
+}
+
+type OperatorAlertResponseTimesReceiptsRow struct {
+	EpisodeID  string
+	ID         string
+	ReceivedAt pgtype.Timestamptz
+	Payload    []byte
+}
+
+func (q *Queries) OperatorAlertResponseTimesReceipts(ctx context.Context, db DBTX, arg OperatorAlertResponseTimesReceiptsParams) ([]OperatorAlertResponseTimesReceiptsRow, error) {
+	rows, err := db.Query(ctx, operatorAlertResponseTimesReceipts, arg.EpisodeIds, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAlertResponseTimesReceiptsRow{}
+	for rows.Next() {
+		var i OperatorAlertResponseTimesReceiptsRow
+		if err := rows.Scan(
+			&i.EpisodeID,
+			&i.ID,
+			&i.ReceivedAt,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAlertRetentionFailed = `-- name: OperatorAlertRetentionFailed :exec
 UPDATE operator_alert_retention_health SET last_attempt_at = $1
 WHERE singleton AND (last_attempt_at IS NULL OR last_attempt_at < $1)

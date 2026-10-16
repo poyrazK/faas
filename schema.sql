@@ -45694,6 +45694,13 @@ CREATE INDEX oidc_exchanged_tokens_expires_at_idx ON public.oidc_exchanged_token
 
 
 --
+-- Name: operator_alert_episodes_activation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_alert_episodes_activation_idx ON public.operator_alert_episodes USING btree (started_at DESC, id DESC);
+
+
+--
 -- Name: operator_alert_episodes_open_idx; Type: INDEX; Schema: public; Owner: -
 --
 

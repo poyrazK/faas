@@ -989,6 +989,9 @@ var cliCommands = []cliCommand{
 			},
 
 			{
+				Name: subObsResponseTimes, Short: "Measure retained episode acknowledgment and observed resolution", Flags: []cliFlag{{Name: "since", Short: "activation-cohort lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
 				Name:  subObsSummary,
 				Short: "Summarize all retained platform alert workload and freshness",
 				Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},

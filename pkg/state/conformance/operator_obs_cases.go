@@ -39,6 +39,10 @@ func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	if err != nil || len(workload.Buckets) != 1 || workload.Buckets[0].Count != 1 || !workload.Buckets[0].Acknowledged || workload.Buckets[0].Status != "firing" {
 		t.Fatalf("workload: %+v %v", workload, err)
 	}
+	timing, err := fx.Store.OperatorAlertResponseTimes(fx.Ctx, state.OperatorAlertResponseTimesFilter{Now: now, Since: now.Add(-time.Hour), CollectionEnabled: true})
+	if err != nil || len(timing.Episodes) != 1 || timing.Episodes[0].FirstAcknowledgedAt == nil || timing.Episodes[0].ReceiptCoverage != "complete" {
+		t.Fatalf("response timing: %+v %v", timing, err)
+	}
 	if err := fx.Store.RecordOperatorAlertFailure(fx.Ctx, now.Add(100*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
