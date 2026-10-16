@@ -22,7 +22,7 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false);
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false);
 CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text);
 CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
 
@@ -335,7 +335,7 @@ func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
 	}
 	want := []string{
 		`auth.user.created {"provider": "google", "anonymous": false}`,
-		`auth.user.confirmed {}`,
+		`auth.user.confirmed {"channel": "email"}`,
 		`auth.user.signed_in {"aal": "aal1", "session_id": "` + session.String() + `"}`,
 		`auth.user.banned`,
 		`auth.user.unbanned {}`,
@@ -348,6 +348,19 @@ func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
 		if !strings.HasPrefix(got[i], want[i]) {
 			t.Fatalf("event %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+	// A phone sign-up is confirmed by its code; the number is never recorded.
+	executeSQL(t, owner, `DELETE FROM gregale_auth.event_outbox`)
+	phone := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.users (id, phone, raw_app_meta_data) VALUES ($1, '447700900123', '{"provider":"phone"}')`, phone)
+	executeSQL(t, owner, `UPDATE auth.users SET phone_confirmed_at = now() WHERE id = $1`, phone)
+	executeSQL(t, owner, `UPDATE auth.users SET phone_confirmed_at = now() WHERE id = $1`, phone)
+	var phoneEvents string
+	if err := owner.QueryRow(ctx, `SELECT string_agg(type || ' ' || data::text, '; ' ORDER BY occurred_at, ctid) FROM gregale_auth.event_outbox WHERE user_id = $1`, phone).Scan(&phoneEvents); err != nil {
+		t.Fatal(err)
+	}
+	if phoneEvents != `auth.user.created {"provider": "phone", "anonymous": false}; auth.user.confirmed {"channel": "phone"}` {
+		t.Fatalf("phone events = %s", phoneEvents)
 	}
 	// Only the auth credential reaches the outbox.
 	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
