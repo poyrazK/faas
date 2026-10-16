@@ -7,6 +7,9 @@ import type { BindingCheckFinding } from './BindingCheckFinding.js';
 import type { BindingCheckReport } from './BindingCheckReport.js';
 import type { BindingReleasePolicy } from './BindingReleasePolicy.js';
 import type { BindingVerificationPlanStep } from './BindingVerificationPlanStep.js';
+/**
+ * Read-only application binding plan used to review selection and consent before receipt creation.
+ */
 export type BindingVerificationReview = {
   app: string;
   deployment_id: string;

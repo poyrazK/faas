@@ -25,6 +25,8 @@ T = TypeVar("T", bound="ProjectBindingVerificationRun")
 
 @_attrs_define
 class ProjectBindingVerificationRun:
+    """Durable project verification graph with pinned members, a shared budget and a fixed deadline."""
+
     id: UUID
     project: str
     environment: str
@@ -42,7 +44,7 @@ class ProjectBindingVerificationRun:
     """Server-confirmed temporary qualification conditions for the original receipt. No admission or release
     authority; wait within its original expiry and recheck."""
     max_concurrency: int | Unset = 2
-    """Frozen shared admission budget; omitted values use two. Graph members share the root budget."""
+    """Project-wide admission budget frozen on this graph receipt and shared by every member run."""
     reason: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

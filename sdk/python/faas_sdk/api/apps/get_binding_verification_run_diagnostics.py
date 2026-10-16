@@ -74,7 +74,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | BindingVerificationRunDiagnostics]:
-    """Explain verification blockers and safe public changes without admitting work
+    """Explain blockers and recovery for an app verification receipt
 
     Args:
         slug (str):
@@ -106,7 +106,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | BindingVerificationRunDiagnostics | None:
-    """Explain verification blockers and safe public changes without admitting work
+    """Explain blockers and recovery for an app verification receipt
 
     Args:
         slug (str):
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | BindingVerificationRunDiagnostics]:
-    """Explain verification blockers and safe public changes without admitting work
+    """Explain blockers and recovery for an app verification receipt
 
     Args:
         slug (str):
@@ -163,7 +163,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | BindingVerificationRunDiagnostics | None:
-    """Explain verification blockers and safe public changes without admitting work
+    """Explain blockers and recovery for an app verification receipt
 
     Args:
         slug (str):

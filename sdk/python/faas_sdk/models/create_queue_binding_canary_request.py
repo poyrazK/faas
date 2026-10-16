@@ -11,6 +11,8 @@ T = TypeVar("T", bound="CreateQueueBindingCanaryRequest")
 
 @_attrs_define
 class CreateQueueBindingCanaryRequest:
+    """Publication consent and deployment selection for a bounded push queue canary."""
+
     deployment_id: UUID
     binding: str
     ttl_seconds: int

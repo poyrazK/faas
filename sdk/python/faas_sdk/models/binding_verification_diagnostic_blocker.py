@@ -22,6 +22,8 @@ T = TypeVar("T", bound="BindingVerificationDiagnosticBlocker")
 
 @_attrs_define
 class BindingVerificationDiagnosticBlocker:
+    """Public reason and recovery classification for a blocked verification selection."""
+
     code: str
     message: str
     recovery: BindingVerificationDiagnosticBlockerRecovery

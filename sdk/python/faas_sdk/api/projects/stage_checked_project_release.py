@@ -112,7 +112,8 @@ def sync_detailed(
     Args:
         slug (str):
         environment (str):
-        body (StageProjectReleaseRequest):
+        body (StageProjectReleaseRequest): Pinned project release manifest and lifetime for
+            temporary candidate service staging.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,7 +157,8 @@ def sync(
     Args:
         slug (str):
         environment (str):
-        body (StageProjectReleaseRequest):
+        body (StageProjectReleaseRequest): Pinned project release manifest and lifetime for
+            temporary candidate service staging.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,7 +197,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         environment (str):
-        body (StageProjectReleaseRequest):
+        body (StageProjectReleaseRequest): Pinned project release manifest and lifetime for
+            temporary candidate service staging.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -237,7 +240,8 @@ async def asyncio(
     Args:
         slug (str):
         environment (str):
-        body (StageProjectReleaseRequest):
+        body (StageProjectReleaseRequest): Pinned project release manifest and lifetime for
+            temporary candidate service staging.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

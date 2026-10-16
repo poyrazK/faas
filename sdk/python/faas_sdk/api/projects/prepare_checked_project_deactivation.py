@@ -88,9 +88,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CheckedProjectReleaseManifest | Problem]:
-    """Prepare checked return to exact 100% weighted fallback routes.
+    """Prepare checked release-set deactivation to exact weighted fallback routes
 
-     Requires one eligible materialized live 100% fallback per current workload,
+     Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback
+    per current workload,
     a current active graph and enforced binding policies on every fallback.
     Preparation observes routes without changing them. Use the returned manifest
     to qualify exact fallback service dependencies, then deactivate explicitly.
@@ -131,9 +132,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> CheckedProjectReleaseManifest | Problem | None:
-    """Prepare checked return to exact 100% weighted fallback routes.
+    """Prepare checked release-set deactivation to exact weighted fallback routes
 
-     Requires one eligible materialized live 100% fallback per current workload,
+     Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback
+    per current workload,
     a current active graph and enforced binding policies on every fallback.
     Preparation observes routes without changing them. Use the returned manifest
     to qualify exact fallback service dependencies, then deactivate explicitly.
@@ -169,9 +171,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CheckedProjectReleaseManifest | Problem]:
-    """Prepare checked return to exact 100% weighted fallback routes.
+    """Prepare checked release-set deactivation to exact weighted fallback routes
 
-     Requires one eligible materialized live 100% fallback per current workload,
+     Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback
+    per current workload,
     a current active graph and enforced binding policies on every fallback.
     Preparation observes routes without changing them. Use the returned manifest
     to qualify exact fallback service dependencies, then deactivate explicitly.
@@ -210,9 +213,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> CheckedProjectReleaseManifest | Problem | None:
-    """Prepare checked return to exact 100% weighted fallback routes.
+    """Prepare checked release-set deactivation to exact weighted fallback routes
 
-     Requires one eligible materialized live 100% fallback per current workload,
+     Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback
+    per current workload,
     a current active graph and enforced binding policies on every fallback.
     Preparation observes routes without changing them. Use the returned manifest
     to qualify exact fallback service dependencies, then deactivate explicitly.

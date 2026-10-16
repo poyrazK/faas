@@ -139,7 +139,7 @@ func TestRunnerReconcilesUncertainWrites(t *testing.T) {
 					if mode == "forbidden" {
 						c.cause = &api.Problem{Status: 403}
 					}
-					ctx, cancel := context.WithCancel(t.Context())
+					ctx, cancel := context.WithCancel(testContext(t))
 					if mode == "expires" {
 						var deadlineCancel context.CancelFunc
 						ctx, deadlineCancel = context.WithTimeout(ctx, 20*time.Millisecond)

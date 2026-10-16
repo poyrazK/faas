@@ -16,6 +16,8 @@ T = TypeVar("T", bound="CheckedProjectReleaseResponse")
 
 @_attrs_define
 class CheckedProjectReleaseResponse:
+    """Result of a checked project release operation with per-member binding checks."""
+
     release: ProjectReleaseSetResponse
     """Immutable project deployment graph. Active sets do not expire; when replaced, their TTL starts and
     expires_at is set."""

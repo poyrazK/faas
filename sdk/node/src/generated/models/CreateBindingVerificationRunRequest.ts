@@ -7,7 +7,7 @@
  */
 export type CreateBindingVerificationRunRequest = {
   /**
-   * Frozen shared admission budget; omitted values use two. Graph members share the root budget.
+   * Requested app receipt admission budget, from one to eight concurrent resources; defaults to two.
    */
   max_concurrency?: number;
   service_targets?: Record<string, string>;

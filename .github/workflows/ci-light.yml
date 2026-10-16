@@ -76,6 +76,7 @@ jobs:
         run: python -m pip install ruamel.yaml pytest -e sdk/python
       - name: OpenAPI schema and shared fixture coverage
         run: |
+          python scripts/sync_binding_runner.py --check
           python scripts/ci/check-service-binding-sdk-contract.py
           python scripts/ci/test_service_binding_sdk_contract.py
       - name: Go SDK contracts

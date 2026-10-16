@@ -98,7 +98,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> Response[CheckedProjectReleaseResponse | Problem]:
-    """Recover a retained historical graph with fresh binding evidence.
+    """Restore a historical project release set using fresh binding checks
 
      Selects an inactive, unexpired historical release in this project environment.
     Requires a different expected active release, exact historical membership,
@@ -142,7 +142,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> CheckedProjectReleaseResponse | Problem | None:
-    """Recover a retained historical graph with fresh binding evidence.
+    """Restore a historical project release set using fresh binding checks
 
      Selects an inactive, unexpired historical release in this project environment.
     Requires a different expected active release, exact historical membership,
@@ -181,7 +181,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> Response[CheckedProjectReleaseResponse | Problem]:
-    """Recover a retained historical graph with fresh binding evidence.
+    """Restore a historical project release set using fresh binding checks
 
      Selects an inactive, unexpired historical release in this project environment.
     Requires a different expected active release, exact historical membership,
@@ -223,7 +223,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> CheckedProjectReleaseResponse | Problem | None:
-    """Recover a retained historical graph with fresh binding evidence.
+    """Restore a historical project release set using fresh binding checks
 
      Selects an inactive, unexpired historical release in this project environment.
     Requires a different expected active release, exact historical membership,

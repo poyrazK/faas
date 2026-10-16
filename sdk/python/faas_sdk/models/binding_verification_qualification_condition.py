@@ -16,6 +16,8 @@ T = TypeVar("T", bound="BindingVerificationQualificationCondition")
 
 @_attrs_define
 class BindingVerificationQualificationCondition:
+    """Temporary readiness condition preventing final qualification of a selected binding."""
+
     app: str
     code: BindingVerificationQualificationConditionCode
     type_: str | Unset = UNSET

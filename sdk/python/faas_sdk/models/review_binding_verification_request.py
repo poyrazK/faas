@@ -20,6 +20,8 @@ T = TypeVar("T", bound="ReviewBindingVerificationRequest")
 
 @_attrs_define
 class ReviewBindingVerificationRequest:
+    """Application deployment and binding selection to review without admitting work."""
+
     deployment_id: UUID | Unset = UNSET
     """Exact deployment; omission selects the current live deployment once."""
     service_targets: ReviewBindingVerificationRequestServiceTargets | Unset = UNSET

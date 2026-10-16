@@ -141,7 +141,7 @@ func TestCreationAutomaticReconciliation(t *testing.T) {
 						c.app.ID = "55555555-5555-4555-8555-000000000001"
 					}
 				}
-				ctx, cancel := context.WithCancel(t.Context())
+				ctx, cancel := context.WithCancel(testContext(t))
 				defer cancel()
 				if mode == "deadline" {
 					var end context.CancelFunc
@@ -234,9 +234,9 @@ func TestCreationRetryBudgetValidation(t *testing.T) {
 			o.StatusReadRetries = &n
 			var err error
 			if graph {
-				_, err = CreateProject(t.Context(), f, "project", "production", g, o)
+				_, err = CreateProject(testContext(t), f, "project", "production", g, o)
 			} else {
-				_, err = CreateApp(t.Context(), f, "api", r, o)
+				_, err = CreateApp(testContext(t), f, "api", r, o)
 			}
 			var e *CreationError
 			if !errors.As(err, &e) || e.Attempted || f.writes != 0 || f.reads != 0 {
@@ -256,7 +256,7 @@ func TestCreationPreservesPlanRepresentationForCustomClients(t *testing.T) {
 		r.Plan[i].QueueEnvironment = &scope
 		f.app.Steps[i].Plan = r.Plan[i]
 	}
-	if _, err := CreateApp(t.Context(), f, "api", r, o); err != nil {
+	if _, err := CreateApp(testContext(t), f, "api", r, o); err != nil {
 		t.Fatalf("valid custom-client receipt changed during freezing: %v", err)
 	}
 }

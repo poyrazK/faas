@@ -14,6 +14,8 @@ T = TypeVar("T", bound="StageProjectReleaseRequest")
 
 @_attrs_define
 class StageProjectReleaseRequest:
+    """Pinned project release manifest and lifetime for temporary candidate service staging."""
+
     manifest: CheckedProjectReleaseManifest
     """Immutable candidate graph and expected routing and policy state. This manifest conveys no evidence or
     waiver."""

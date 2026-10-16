@@ -16,6 +16,8 @@ T = TypeVar("T", bound="QueueBindingCanary")
 
 @_attrs_define
 class QueueBindingCanary:
+    """Retained deployment-bound receipt for an explicitly authorized push queue completion probe."""
+
     id: UUID
     binding: str
     deployment_id: UUID

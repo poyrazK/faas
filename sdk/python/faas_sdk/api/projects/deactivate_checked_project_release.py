@@ -98,7 +98,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> Response[CheckedProjectReleaseResponse | Problem]:
-    """Deactivate the current graph after checking every fallback recipient.
+    """Deactivate a checked project release set after verifying fallback recipients
 
      Requires one eligible materialized live 100% fallback per current workload,
     a current active graph and enforced binding policies on every fallback.
@@ -145,7 +145,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> CheckedProjectReleaseResponse | Problem | None:
-    """Deactivate the current graph after checking every fallback recipient.
+    """Deactivate a checked project release set after verifying fallback recipients
 
      Requires one eligible materialized live 100% fallback per current workload,
     a current active graph and enforced binding policies on every fallback.
@@ -187,7 +187,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> Response[CheckedProjectReleaseResponse | Problem]:
-    """Deactivate the current graph after checking every fallback recipient.
+    """Deactivate a checked project release set after verifying fallback recipients
 
      Requires one eligible materialized live 100% fallback per current workload,
     a current active graph and enforced binding policies on every fallback.
@@ -232,7 +232,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> CheckedProjectReleaseResponse | Problem | None:
-    """Deactivate the current graph after checking every fallback recipient.
+    """Deactivate a checked project release set after verifying fallback recipients
 
      Requires one eligible materialized live 100% fallback per current workload,
     a current active graph and enforced binding policies on every fallback.

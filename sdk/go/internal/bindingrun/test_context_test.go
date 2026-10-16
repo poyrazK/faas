@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// testContext cancels work during cleanup using the SDK's Go 1.23 API floor.
+// testContext uses Go 1.23 APIs so canonical runner tests also work in the SDK.
 func testContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

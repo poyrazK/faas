@@ -15,6 +15,8 @@ T = TypeVar("T", bound="BindingVerificationPlanStep")
 
 @_attrs_define
 class BindingVerificationPlanStep:
+    """Selected binding resource and immutable operation planned for a verification receipt."""
+
     type_: str
     name: str
     binding: str

@@ -5,6 +5,9 @@
 import type { BindingCheckFinding } from './BindingCheckFinding.js';
 import type { BindingVerificationReview } from './BindingVerificationReview.js';
 import type { CheckedProjectReleaseManifest } from './CheckedProjectReleaseManifest.js';
+/**
+ * Read-only project verification plan, blockers, required consent and opaque review digests.
+ */
 export type ProjectBindingVerificationReview = {
   project: string;
   environment: string;

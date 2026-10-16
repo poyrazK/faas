@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Public reason and recovery classification for a blocked verification selection.
+ */
 export type BindingVerificationDiagnosticBlocker = {
   code: string;
   message: string;

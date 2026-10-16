@@ -76,11 +76,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ReviewBindingVerificationRequest,
 ) -> Response[Any | BindingVerificationReview]:
-    """Review verification without creating receipts or admitting work
+    """Review app binding verification selection and consent without admitting work
 
     Args:
         slug (str):
-        body (ReviewBindingVerificationRequest):
+        body (ReviewBindingVerificationRequest): Application deployment and binding selection to
+            review without admitting work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -108,11 +109,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ReviewBindingVerificationRequest,
 ) -> Any | BindingVerificationReview | None:
-    """Review verification without creating receipts or admitting work
+    """Review app binding verification selection and consent without admitting work
 
     Args:
         slug (str):
-        body (ReviewBindingVerificationRequest):
+        body (ReviewBindingVerificationRequest): Application deployment and binding selection to
+            review without admitting work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,11 +137,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ReviewBindingVerificationRequest,
 ) -> Response[Any | BindingVerificationReview]:
-    """Review verification without creating receipts or admitting work
+    """Review app binding verification selection and consent without admitting work
 
     Args:
         slug (str):
-        body (ReviewBindingVerificationRequest):
+        body (ReviewBindingVerificationRequest): Application deployment and binding selection to
+            review without admitting work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,11 +168,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ReviewBindingVerificationRequest,
 ) -> Any | BindingVerificationReview | None:
-    """Review verification without creating receipts or admitting work
+    """Review app binding verification selection and consent without admitting work
 
     Args:
         slug (str):
-        body (ReviewBindingVerificationRequest):
+        body (ReviewBindingVerificationRequest): Application deployment and binding selection to
+            review without admitting work.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

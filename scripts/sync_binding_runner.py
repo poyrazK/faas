@@ -6,7 +6,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--check", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-for name in ("runner.go", "runner_test.go", "diagnostics.go", "diagnostics_test.go", "create.go", "create_test.go", "status_retry.go", "status_retry_test.go", "qualification.go", "qualification_test.go", "reconcile_test.go", "create_reconcile.go", "create_reconcile_test.go"):
+for name in ("runner.go", "runner_test.go", "test_context_test.go", "diagnostics.go", "diagnostics_test.go", "create.go", "create_test.go", "status_retry.go", "status_retry_test.go", "qualification.go", "qualification_test.go", "reconcile_test.go", "create_reconcile.go", "create_reconcile_test.go"):
     source = (root / "pkg/bindingrun" / name).read_text().replace(
         '"github.com/onebox-faas/faas/pkg/api"',
         '"github.com/poyrazK/faas/sdk/go/internal/api"',

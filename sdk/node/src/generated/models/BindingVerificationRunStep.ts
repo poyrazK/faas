@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { BindingVerificationPlanStep } from './BindingVerificationPlanStep.js';
+/**
+ * One frozen verification step and its retained admission and completion state.
+ */
 export type BindingVerificationRunStep = {
   plan: BindingVerificationPlanStep;
   resource_id?: string;

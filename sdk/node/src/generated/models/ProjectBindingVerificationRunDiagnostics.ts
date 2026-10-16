@@ -7,6 +7,9 @@ import type { BindingVerificationDiagnosticBlocker } from './BindingVerification
 import type { BindingVerificationDifference } from './BindingVerificationDifference.js';
 import type { BindingVerificationRecoveryAction } from './BindingVerificationRecoveryAction.js';
 import type { BindingVerificationRunDiagnostics } from './BindingVerificationRunDiagnostics.js';
+/**
+ * Public graph receipt observations, safe differences and suggested recovery actions.
+ */
 export type ProjectBindingVerificationRunDiagnostics = {
   budget?: BindingVerificationBudget;
   run_id: string;

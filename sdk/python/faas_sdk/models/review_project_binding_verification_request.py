@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ReviewProjectBindingVerificationRequest")
 
 @_attrs_define
 class ReviewProjectBindingVerificationRequest:
+    """Project release selection to review without creating receipts or starting verification."""
+
     manifest: CheckedProjectReleaseManifest
     """Immutable candidate graph and expected routing and policy state. This manifest conveys no evidence or
     waiver."""

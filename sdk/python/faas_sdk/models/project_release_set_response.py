@@ -34,6 +34,7 @@ class ProjectReleaseSetResponse:
     created_at: datetime.datetime
     members: list[ProjectReleaseSetMemberResponse]
     deactivation: ProjectReleaseDeactivationReceipt | Unset = UNSET
+    """Recorded deactivation decision and exact fallback routes reviewed for a project graph."""
     rollback_source_release_id: UUID | Unset = UNSET
     rollback_previous_release_id: UUID | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET

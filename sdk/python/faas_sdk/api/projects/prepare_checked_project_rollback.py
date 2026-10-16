@@ -98,9 +98,10 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PrepareProjectRollbackRequest,
 ) -> Response[CheckedProjectReleaseManifest | Problem]:
-    """Prepare recovery to an explicit retained historical graph.
+    """Prepare checked release-set recovery to a selected retained graph
 
-     Selects an inactive, unexpired historical release in this project environment.
+     Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this
+    project environment.
     Requires a different expected active release, exact historical membership,
     current enforced policies, fresh target-specific evidence and ready artifacts
     and service replicas. Historical expiry is checked again at commit.
@@ -111,7 +112,8 @@ def sync_detailed(
     Args:
         slug (str):
         environment (str):
-        body (PrepareProjectRollbackRequest):
+        body (PrepareProjectRollbackRequest): Historical release selection used to prepare a
+            checked project rollback.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,9 +143,10 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PrepareProjectRollbackRequest,
 ) -> CheckedProjectReleaseManifest | Problem | None:
-    """Prepare recovery to an explicit retained historical graph.
+    """Prepare checked release-set recovery to a selected retained graph
 
-     Selects an inactive, unexpired historical release in this project environment.
+     Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this
+    project environment.
     Requires a different expected active release, exact historical membership,
     current enforced policies, fresh target-specific evidence and ready artifacts
     and service replicas. Historical expiry is checked again at commit.
@@ -154,7 +157,8 @@ def sync(
     Args:
         slug (str):
         environment (str):
-        body (PrepareProjectRollbackRequest):
+        body (PrepareProjectRollbackRequest): Historical release selection used to prepare a
+            checked project rollback.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,9 +183,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PrepareProjectRollbackRequest,
 ) -> Response[CheckedProjectReleaseManifest | Problem]:
-    """Prepare recovery to an explicit retained historical graph.
+    """Prepare checked release-set recovery to a selected retained graph
 
-     Selects an inactive, unexpired historical release in this project environment.
+     Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this
+    project environment.
     Requires a different expected active release, exact historical membership,
     current enforced policies, fresh target-specific evidence and ready artifacts
     and service replicas. Historical expiry is checked again at commit.
@@ -192,7 +197,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         environment (str):
-        body (PrepareProjectRollbackRequest):
+        body (PrepareProjectRollbackRequest): Historical release selection used to prepare a
+            checked project rollback.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,9 +226,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PrepareProjectRollbackRequest,
 ) -> CheckedProjectReleaseManifest | Problem | None:
-    """Prepare recovery to an explicit retained historical graph.
+    """Prepare checked release-set recovery to a selected retained graph
 
-     Selects an inactive, unexpired historical release in this project environment.
+     Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this
+    project environment.
     Requires a different expected active release, exact historical membership,
     current enforced policies, fresh target-specific evidence and ready artifacts
     and service replicas. Historical expiry is checked again at commit.
@@ -233,7 +240,8 @@ async def asyncio(
     Args:
         slug (str):
         environment (str):
-        body (PrepareProjectRollbackRequest):
+        body (PrepareProjectRollbackRequest): Historical release selection used to prepare a
+            checked project rollback.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

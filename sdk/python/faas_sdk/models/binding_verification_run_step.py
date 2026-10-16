@@ -22,7 +22,10 @@ T = TypeVar("T", bound="BindingVerificationRunStep")
 
 @_attrs_define
 class BindingVerificationRunStep:
+    """One frozen verification step and its retained admission and completion state."""
+
     plan: BindingVerificationPlanStep
+    """Selected binding resource and immutable operation planned for a verification receipt."""
     owned: bool
     status: str
     resource_id: UUID | Unset = UNSET

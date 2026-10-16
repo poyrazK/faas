@@ -121,11 +121,11 @@ def sync_detailed(
     scope: str | Unset = UNSET,
     include_members: bool | Unset = False,
 ) -> Response[BindingVerificationRunList | Problem]:
-    """List retained verification receipt summaries without requalifying evidence.
+    """List retained app binding verification receipt summaries
 
-     Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor.
-    observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no
-    admission or release authority.
+     App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters
+    with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages.
+    Listings grant no admission or release authority.
 
     Args:
         slug (str):
@@ -172,11 +172,11 @@ def sync(
     scope: str | Unset = UNSET,
     include_members: bool | Unset = False,
 ) -> BindingVerificationRunList | Problem | None:
-    """List retained verification receipt summaries without requalifying evidence.
+    """List retained app binding verification receipt summaries
 
-     Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor.
-    observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no
-    admission or release authority.
+     App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters
+    with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages.
+    Listings grant no admission or release authority.
 
     Args:
         slug (str):
@@ -218,11 +218,11 @@ async def asyncio_detailed(
     scope: str | Unset = UNSET,
     include_members: bool | Unset = False,
 ) -> Response[BindingVerificationRunList | Problem]:
-    """List retained verification receipt summaries without requalifying evidence.
+    """List retained app binding verification receipt summaries
 
-     Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor.
-    observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no
-    admission or release authority.
+     App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters
+    with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages.
+    Listings grant no admission or release authority.
 
     Args:
         slug (str):
@@ -267,11 +267,11 @@ async def asyncio(
     scope: str | Unset = UNSET,
     include_members: bool | Unset = False,
 ) -> BindingVerificationRunList | Problem | None:
-    """List retained verification receipt summaries without requalifying evidence.
+    """List retained app binding verification receipt summaries
 
-     Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor.
-    observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no
-    admission or release authority.
+     App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters
+    with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages.
+    Listings grant no admission or release authority.
 
     Args:
         slug (str):

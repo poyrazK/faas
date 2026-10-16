@@ -6,6 +6,9 @@ import type { BindingVerificationBudget } from './BindingVerificationBudget.js';
 import type { BindingVerificationDiagnosticBlocker } from './BindingVerificationDiagnosticBlocker.js';
 import type { BindingVerificationDifference } from './BindingVerificationDifference.js';
 import type { BindingVerificationRecoveryAction } from './BindingVerificationRecoveryAction.js';
+/**
+ * Public app receipt observations and recovery suggestions without admission authority.
+ */
 export type BindingVerificationRunDiagnostics = {
   budget?: BindingVerificationBudget;
   run_id: string;

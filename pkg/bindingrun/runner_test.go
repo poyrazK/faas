@@ -289,13 +289,13 @@ func TestRunnerSharedRecoveryContracts(t *testing.T) {
 			deadline := f.root.expires()
 			events := []Progress{}
 			options := Options{PollInterval: time.Millisecond, Concurrency: scenario.Concurrency, OnProgress: func(p Progress) error { events = append(events, p); return nil }}
-			status, err := runFake(t.Context(), f, options)
+			status, err := runFake(testContext(t), f, options)
 			if scenario.Resume {
 				var recovery *RecoveryError
 				if !errors.As(err, &recovery) || recovery.RunID != f.root.id() {
 					t.Fatalf("lost response did not preserve root identity: %v", err)
 				}
-				status, err = runFake(t.Context(), f, options)
+				status, err = runFake(testContext(t), f, options)
 				if !f.root.expires().Equal(deadline) {
 					t.Fatal("resume renewed original expiry")
 				}
@@ -335,7 +335,7 @@ func TestRunnerLocalStopsPreserveWork(t *testing.T) {
 	for _, callbackError := range []bool{false, true} {
 		t.Run(fmt.Sprint(callbackError), func(t *testing.T) {
 			f := newFake(contractCase{Graph: true, Actions: []string{"probe", "queue-canary"}})
-			ctx, cancel := context.WithCancel(t.Context())
+			ctx, cancel := context.WithCancel(testContext(t))
 			defer cancel()
 			sentinel := errors.New("persist progress failed")
 			_, err := runFake(ctx, f, Options{PollInterval: time.Millisecond, OnProgress: func(p Progress) error {
@@ -378,7 +378,7 @@ func (c *inFlightClient) AdmitBindingVerificationRunStep(ctx context.Context, ap
 func TestRunnerStopDuringAdmissionResumesCommittedResource(t *testing.T) {
 	f := newFake(contractCase{Actions: []string{"probe"}})
 	c := &inFlightClient{fakeClient: f, committed: make(chan struct{})}
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(testContext(t))
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
@@ -395,7 +395,7 @@ func TestRunnerStopDuringAdmissionResumesCommittedResource(t *testing.T) {
 		t.Fatalf("in-flight stop lost context: %v", err)
 	}
 	deadline := f.root.expires()
-	status, err := runFake(t.Context(), f, Options{PollInterval: time.Millisecond})
+	status, err := runFake(testContext(t), f, Options{PollInterval: time.Millisecond})
 	if err != nil || status != "passed" || f.admits != 1 || !f.root.expires().Equal(deadline) {
 		t.Fatalf("committed admission replaced after stop: %s %v admits=%d", status, err, f.admits)
 	}

@@ -29,6 +29,8 @@ T = TypeVar("T", bound="ProjectBindingVerificationRunDiagnostics")
 
 @_attrs_define
 class ProjectBindingVerificationRunDiagnostics:
+    """Public graph receipt observations, safe differences and suggested recovery actions."""
+
     run_id: UUID
     project: str
     environment: str

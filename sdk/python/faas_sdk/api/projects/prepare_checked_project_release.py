@@ -98,9 +98,10 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
 ) -> Response[CheckedProjectReleaseManifest | Problem]:
-    """Prepare a pinned graph manifest without changing routes.
+    """Prepare a project release-set manifest for checked binding qualification
 
-     Requires an enforced binding release policy on every project member scope.
+     Checked release-set preparation. Requires an enforced binding release policy on every project member
+    scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
     policy revisions and internal service targets. It is a metadata observation,
     not an evidence grant. Qualification uses candidate-specific task probes.
@@ -144,9 +145,10 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
 ) -> CheckedProjectReleaseManifest | Problem | None:
-    """Prepare a pinned graph manifest without changing routes.
+    """Prepare a project release-set manifest for checked binding qualification
 
-     Requires an enforced binding release policy on every project member scope.
+     Checked release-set preparation. Requires an enforced binding release policy on every project member
+    scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
     policy revisions and internal service targets. It is a metadata observation,
     not an evidence grant. Qualification uses candidate-specific task probes.
@@ -185,9 +187,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
 ) -> Response[CheckedProjectReleaseManifest | Problem]:
-    """Prepare a pinned graph manifest without changing routes.
+    """Prepare a project release-set manifest for checked binding qualification
 
-     Requires an enforced binding release policy on every project member scope.
+     Checked release-set preparation. Requires an enforced binding release policy on every project member
+    scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
     policy revisions and internal service targets. It is a metadata observation,
     not an evidence grant. Qualification uses candidate-specific task probes.
@@ -229,9 +232,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PublishProjectReleaseSetRequest,
 ) -> CheckedProjectReleaseManifest | Problem | None:
-    """Prepare a pinned graph manifest without changing routes.
+    """Prepare a project release-set manifest for checked binding qualification
 
-     Requires an enforced binding release policy on every project member scope.
+     Checked release-set preparation. Requires an enforced binding release policy on every project member
+    scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
     policy revisions and internal service targets. It is a metadata observation,
     not an evidence grant. Qualification uses candidate-specific task probes.

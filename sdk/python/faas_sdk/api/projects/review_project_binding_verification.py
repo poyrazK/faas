@@ -84,7 +84,8 @@ def sync_detailed(
     Args:
         slug (str):
         environment (str):
-        body (ReviewProjectBindingVerificationRequest):
+        body (ReviewProjectBindingVerificationRequest): Project release selection to review
+            without creating receipts or starting verification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,7 +120,8 @@ def sync(
     Args:
         slug (str):
         environment (str):
-        body (ReviewProjectBindingVerificationRequest):
+        body (ReviewProjectBindingVerificationRequest): Project release selection to review
+            without creating receipts or starting verification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +151,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         environment (str):
-        body (ReviewProjectBindingVerificationRequest):
+        body (ReviewProjectBindingVerificationRequest): Project release selection to review
+            without creating receipts or starting verification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,7 +185,8 @@ async def asyncio(
     Args:
         slug (str):
         environment (str):
-        body (ReviewProjectBindingVerificationRequest):
+        body (ReviewProjectBindingVerificationRequest): Project release selection to review
+            without creating receipts or starting verification.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

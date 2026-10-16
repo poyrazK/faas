@@ -11,6 +11,8 @@ T = TypeVar("T", bound="PrepareProjectRollbackRequest")
 
 @_attrs_define
 class PrepareProjectRollbackRequest:
+    """Historical release selection used to prepare a checked project rollback."""
+
     release_id: UUID
     """Retained inactive historical graph in this project environment."""
     ttl_seconds: int

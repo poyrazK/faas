@@ -21,6 +21,8 @@ T = TypeVar("T", bound="ProjectBindingVerificationReview")
 
 @_attrs_define
 class ProjectBindingVerificationReview:
+    """Read-only project verification plan, blockers, required consent and opaque review digests."""
+
     project: str
     environment: str
     reviewed_at: datetime.datetime

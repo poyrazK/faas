@@ -32,7 +32,7 @@ class CreateBindingVerificationRunRequest:
     object_storage_write: bool
     queue_publish: bool
     max_concurrency: int | Unset = 2
-    """Frozen shared admission budget; omitted values use two. Graph members share the root budget."""
+    """Requested app receipt admission budget, from one to eight concurrent resources; defaults to two."""
     service_targets: CreateBindingVerificationRunRequestServiceTargets | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

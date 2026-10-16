@@ -7101,15 +7101,21 @@ export class AppsService {
     });
   }
   /**
-   * Explain verification blockers and safe public changes without admitting work
-   * @returns BindingVerificationRunDiagnostics Read-only public observations and suggested recovery; grants no admission or activation authority.
+   * Explain blockers and recovery for an app verification receipt
+   * @returns BindingVerificationRunDiagnostics App receipt diagnostics. Read-only public observations and suggested recovery; grants no admission or activation authority.
    * @throws ApiError
    */
   public static getBindingVerificationRunDiagnostics({
     slug,
     run,
   }: {
+    /**
+     * Slug of the app for diagnosing an app binding verification receipt.
+     */
     slug: string,
+    /**
+     * Verification receipt UUID for diagnosing an app binding verification receipt.
+     */
     run: string,
   }): CancelablePromise<BindingVerificationRunDiagnostics> {
     return __request(OpenAPI, {
@@ -7120,22 +7126,25 @@ export class AppsService {
         'run': run,
       },
       errors: {
-        400: `Invalid receipt UUID.`,
-        403: `Read access to every reviewed binding domain is required.`,
-        404: `No owned receipt was found.`,
-        503: `Receipt metadata could not be read.`,
+        400: `App receipt diagnostics. Invalid receipt UUID.`,
+        403: `App receipt diagnostics. Read access to every reviewed binding domain is required.`,
+        404: `App receipt diagnostics. No owned receipt was found.`,
+        503: `App receipt diagnostics. Receipt metadata could not be read.`,
       },
     });
   }
   /**
-   * Review verification without creating receipts or admitting work
-   * @returns BindingVerificationReview Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
+   * Review app binding verification selection and consent without admitting work
+   * @returns BindingVerificationReview App verification review. Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
    * @throws ApiError
    */
   public static reviewBindingVerification({
     slug,
     requestBody,
   }: {
+    /**
+     * Slug of the app for reviewing an app binding plan before admitting work.
+     */
     slug: string,
     requestBody: ReviewBindingVerificationRequest,
   }): CancelablePromise<BindingVerificationReview> {
@@ -7148,9 +7157,9 @@ export class AppsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        403: `Read access to every reviewed binding domain is required.`,
-        409: `The selected deployment, policy or prepared manifest changed.`,
-        503: `A complete review could not be read.`,
+        403: `App verification review. Read access to every reviewed binding domain is required.`,
+        409: `App verification review. The selected deployment, policy or prepared manifest changed.`,
+        503: `App verification review. A complete review could not be read.`,
       },
     });
   }
@@ -7164,8 +7173,17 @@ export class AppsService {
     run,
     step,
   }: {
+    /**
+     * Slug of the app for admitting one frozen app verification step.
+     */
     slug: string,
+    /**
+     * Verification receipt UUID for admitting one frozen app verification step.
+     */
     run: string,
+    /**
+     * Frozen step index selected for admission within this app receipt.
+     */
     step: number,
   }): CancelablePromise<BindingVerificationRunStep> {
     return __request(OpenAPI, {
@@ -7192,14 +7210,20 @@ export class AppsService {
   }
   /**
    * Complete only after fresh server-side policy preflight.
-   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @returns BindingVerificationRun App receipt completion. Durable receipt with original identity and deadline.
    * @throws ApiError
    */
   public static completeBindingVerificationRun({
     slug,
     run,
   }: {
+    /**
+     * Slug of the app for finalizing an app verification receipt.
+     */
     slug: string,
+    /**
+     * Verification receipt UUID for finalizing an app verification receipt.
+     */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
     return __request(OpenAPI, {
@@ -7225,14 +7249,20 @@ export class AppsService {
   }
   /**
    * Confirm the original review without extending deadlines or replacing work.
-   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @returns BindingVerificationRun App receipt reconciliation. Durable receipt with original identity and deadline.
    * @throws ApiError
    */
   public static resumeBindingVerificationRun({
     slug,
     run,
   }: {
+    /**
+     * Slug of the app for reconciling unfinished app verification work.
+     */
     slug: string,
+    /**
+     * Verification receipt UUID for reconciling unfinished app verification work.
+     */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
     return __request(OpenAPI, {
@@ -7258,14 +7288,20 @@ export class AppsService {
   }
   /**
    * Observe the original plan and current owned or reused resource status.
-   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @returns BindingVerificationRun App receipt status. Durable receipt with original identity and deadline.
    * @throws ApiError
    */
   public static getBindingVerificationRun({
     slug,
     run,
   }: {
+    /**
+     * Slug of the app for inspecting or cancelling an app verification receipt.
+     */
     slug: string,
+    /**
+     * Verification receipt UUID for inspecting or cancelling an app verification receipt.
+     */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
     return __request(OpenAPI, {
@@ -7291,14 +7327,20 @@ export class AppsService {
   }
   /**
    * Block admissions and cancel only unfinished work owned by this run.
-   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @returns BindingVerificationRun App receipt cancellation. Durable receipt with original identity and deadline.
    * @throws ApiError
    */
   public static cancelBindingVerificationRun({
     slug,
     run,
   }: {
+    /**
+     * Slug of the app for inspecting or cancelling an app verification receipt.
+     */
     slug: string,
+    /**
+     * Verification receipt UUID for inspecting or cancelling an app verification receipt.
+     */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
     return __request(OpenAPI, {
@@ -7323,9 +7365,9 @@ export class AppsService {
     });
   }
   /**
-   * List retained verification receipt summaries without requalifying evidence.
-   * Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
-   * @returns BindingVerificationRunList Bounded retained receipt summaries; not a permanent history or proof of current qualification.
+   * List retained app binding verification receipt summaries
+   * App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
+   * @returns BindingVerificationRunList App receipt discovery. Bounded retained receipt summaries; not a permanent history or proof of current qualification.
    * @throws ApiError
    */
   public static listBindingVerificationRuns({
@@ -7337,12 +7379,33 @@ export class AppsService {
     scope,
     includeMembers = false,
   }: {
+    /**
+     * Slug of the app for discovering or creating app verification receipts.
+     */
     slug: string,
+    /**
+     * Maximum retained app verification receipts returned on this page.
+     */
     limit?: number,
+    /**
+     * Opaque continuation cursor from the previous app verification receipt page.
+     */
     cursor?: string,
+    /**
+     * Restrict retained app verification receipts to this exact deployment UUID.
+     */
     deploymentId?: string,
+    /**
+     * Restrict app verification receipt discovery to this effective retained status.
+     */
     status?: 'pending' | 'passed' | 'cancelled' | 'expired',
+    /**
+     * Only app receipts whose frozen binding scope matches this value are returned.
+     */
     scope?: string,
+    /**
+     * Include app receipts created as members of project verification graphs.
+     */
     includeMembers?: boolean,
   }): CancelablePromise<BindingVerificationRunList> {
     return __request(OpenAPI, {
@@ -7374,13 +7437,16 @@ export class AppsService {
   }
   /**
    * Create a reviewed fixed-deadline single-app verification receipt.
-   * @returns BindingVerificationRun Durable receipt with original identity and deadline.
+   * @returns BindingVerificationRun App receipt creation. Durable receipt with original identity and deadline.
    * @throws ApiError
    */
   public static createBindingVerificationRun({
     slug,
     requestBody,
   }: {
+    /**
+     * Slug of the app for discovering or creating app verification receipts.
+     */
     slug: string,
     requestBody: CreateBindingVerificationRunRequest,
   }): CancelablePromise<BindingVerificationRun> {
@@ -7415,7 +7481,13 @@ export class AppsService {
     slug,
     canary,
   }: {
+    /**
+     * Slug of the app for inspecting or cancelling an existing queue completion canary.
+     */
     slug: string,
+    /**
+     * Identifier of the push queue completion canary selected for inspection or cancellation.
+     */
     canary: string,
   }): CancelablePromise<QueueBindingCanary> {
     return __request(OpenAPI, {
@@ -7440,14 +7512,20 @@ export class AppsService {
   }
   /**
    * Cancel the canary and revoke its evidence.
-   * @returns QueueBindingCanary Current evidence; an in-flight handler may finish after cancellation.
+   * @returns QueueBindingCanary Queue canary cancellation. Current evidence; an in-flight handler may finish after cancellation.
    * @throws ApiError
    */
   public static cancelQueueBindingCanary({
     slug,
     canary,
   }: {
+    /**
+     * Slug of the app for inspecting or cancelling an existing queue completion canary.
+     */
     slug: string,
+    /**
+     * Identifier of the push queue completion canary selected for inspection or cancellation.
+     */
     canary: string,
   }): CancelablePromise<QueueBindingCanary> {
     return __request(OpenAPI, {
@@ -7480,6 +7558,9 @@ export class AppsService {
     slug,
     requestBody,
   }: {
+    /**
+     * Slug of the app for publishing a consented push queue completion canary.
+     */
     slug: string,
     requestBody: CreateQueueBindingCanaryRequest,
   }): CancelablePromise<QueueBindingCanary> {

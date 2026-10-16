@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Retained deployment-bound receipt for an explicitly authorized push queue completion probe.
+ */
 export type QueueBindingCanary = {
   id: string;
   binding: string;

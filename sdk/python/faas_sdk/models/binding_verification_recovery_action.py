@@ -16,6 +16,8 @@ T = TypeVar("T", bound="BindingVerificationRecoveryAction")
 
 @_attrs_define
 class BindingVerificationRecoveryAction:
+    """Suggested client recovery step for a verification receipt; it grants no execution authority."""
+
     action: BindingVerificationRecoveryActionAction
     message: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

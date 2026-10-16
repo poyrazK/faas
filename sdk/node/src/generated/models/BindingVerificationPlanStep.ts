@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Selected binding resource and immutable operation planned for a verification receipt.
+ */
 export type BindingVerificationPlanStep = {
   target_deployment_id?: string;
   type: string;

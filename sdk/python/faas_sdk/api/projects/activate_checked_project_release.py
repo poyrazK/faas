@@ -98,7 +98,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> Response[CheckedProjectReleaseResponse | Problem]:
-    """Activate a pinned graph with fresh checked binding evidence.
+    """Activate a checked project release set with pinned binding evidence
 
      Requires an enforced binding release policy on every project member scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
@@ -144,7 +144,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> CheckedProjectReleaseResponse | Problem | None:
-    """Activate a pinned graph with fresh checked binding evidence.
+    """Activate a checked project release set with pinned binding evidence
 
      Requires an enforced binding release policy on every project member scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
@@ -185,7 +185,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> Response[CheckedProjectReleaseResponse | Problem]:
-    """Activate a pinned graph with fresh checked binding evidence.
+    """Activate a checked project release set with pinned binding evidence
 
      Requires an enforced binding release policy on every project member scope.
     Preparation freezes exact deployments, active graph or weighted fallback,
@@ -229,7 +229,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CheckedProjectReleaseManifest,
 ) -> CheckedProjectReleaseResponse | Problem | None:
-    """Activate a pinned graph with fresh checked binding evidence.
+    """Activate a checked project release set with pinned binding evidence
 
      Requires an enforced binding release policy on every project member scope.
     Preparation freezes exact deployments, active graph or weighted fallback,

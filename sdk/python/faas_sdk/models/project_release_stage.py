@@ -20,6 +20,8 @@ T = TypeVar("T", bound="ProjectReleaseStage")
 
 @_attrs_define
 class ProjectReleaseStage:
+    """Bounded lease for temporarily admitting candidate project services; observed readiness is not binding evidence."""
+
     id: UUID
     project: str
     environment: str

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectReleaseSetMemberResponse } from './ProjectReleaseSetMemberResponse.js';
+/**
+ * Recorded deactivation decision and exact fallback routes reviewed for a project graph.
+ */
 export type ProjectReleaseDeactivationReceipt = {
   id: string;
   release_id: string;

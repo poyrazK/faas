@@ -54,7 +54,7 @@ func TestRunnerAutomaticDiagnosticsPreserveCauseAndSelection(t *testing.T) {
 				}
 				return out, nil
 			}
-			ctx, cancel := context.WithCancel(t.Context())
+			ctx, cancel := context.WithCancel(testContext(t))
 			defer cancel()
 			if mode == "cancelled" {
 				cancel()
@@ -96,7 +96,7 @@ func TestRunnerAutomaticGraphDiagnostics(t *testing.T) {
 		}
 		return api.ProjectBindingVerificationRunDiagnostics{RunID: selected.ID, Project: selected.Project, Environment: selected.Environment, Status: "pending", CheckedAt: time.Now(), ExpiresAt: selected.ExpiresAt, Members: members, Complete: true}, nil
 	}
-	_, err := RunProject(t.Context(), client, selected.Project, selected.Environment, selected.ID, Options{PollInterval: time.Millisecond})
+	_, err := RunProject(testContext(t), client, selected.Project, selected.Environment, selected.ID, Options{PollInterval: time.Millisecond})
 	var recovery *RecoveryError
 	if !errors.As(err, &recovery) || recovery.ProjectDiagnostics == nil || len(recovery.ProjectDiagnostics.Members) != 2 || client.calls != 1 {
 		t.Fatalf("graph diagnostics: %+v %v", recovery, err)
@@ -110,7 +110,7 @@ func TestRunnerAutomaticDiagnosticsBoundedAndCancellation(t *testing.T) {
 			<-ctx.Done()
 			return api.BindingVerificationRunDiagnostics{}, ctx.Err()
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+		ctx, cancel := context.WithTimeout(testContext(t), 80*time.Millisecond)
 		defer cancel()
 		options := Options{PollInterval: time.Millisecond}
 		if callbackFailure {

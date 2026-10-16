@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Application deployment and binding selection to review without admitting work.
+ */
 export type ReviewBindingVerificationRequest = {
   /**
    * Exact deployment; omission selects the current live deployment once.

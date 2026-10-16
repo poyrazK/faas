@@ -2603,8 +2603,17 @@ export class ProjectsService {
     environment,
     run,
   }: {
+    /**
+     * Slug of the project for diagnosing blockers in a project verification graph.
+     */
     slug: string,
+    /**
+     * Project environment for diagnosing blockers in a project verification graph.
+     */
     environment: string,
+    /**
+     * Verification receipt UUID for diagnosing blockers in a project verification graph.
+     */
     run: string,
   }): CancelablePromise<ProjectBindingVerificationRunDiagnostics> {
     return __request(OpenAPI, {
@@ -2633,7 +2642,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for reviewing project graph verification before receipt creation.
+     */
     slug: string,
+    /**
+     * Project environment for reviewing project graph verification before receipt creation.
+     */
     environment: string,
     requestBody: ReviewProjectBindingVerificationRequest,
   }): CancelablePromise<ProjectBindingVerificationReview> {
@@ -2647,7 +2662,7 @@ export class ProjectsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        403: `Read access to every reviewed binding domain is required.`,
+        403: `Project verification review. Read access to every reviewed binding domain is required.`,
         409: `The selected deployment, policy or prepared manifest changed.`,
         503: `A complete review could not be read.`,
       },
@@ -2663,8 +2678,17 @@ export class ProjectsService {
     environment,
     run,
   }: {
+    /**
+     * Slug of the project for finalizing a retained project verification graph.
+     */
     slug: string,
+    /**
+     * Project environment for finalizing a retained project verification graph.
+     */
     environment: string,
+    /**
+     * Verification receipt UUID for finalizing a retained project verification graph.
+     */
     run: string,
   }): CancelablePromise<ProjectBindingVerificationRun> {
     return __request(OpenAPI, {
@@ -2683,7 +2707,7 @@ export class ProjectsService {
   }
   /**
    * resumeProjectBindingVerificationRun
-   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @returns ProjectBindingVerificationRun Project graph reconciliation. Frozen graph verification run; qualification does not change traffic.
    * @throws ApiError
    */
   public static resumeProjectBindingVerificationRun({
@@ -2691,8 +2715,17 @@ export class ProjectsService {
     environment,
     run,
   }: {
+    /**
+     * Slug of the project for reconciling unfinished project verification work.
+     */
     slug: string,
+    /**
+     * Project environment for reconciling unfinished project verification work.
+     */
     environment: string,
+    /**
+     * Verification receipt UUID for reconciling unfinished project verification work.
+     */
     run: string,
   }): CancelablePromise<ProjectBindingVerificationRun> {
     return __request(OpenAPI, {
@@ -2704,14 +2737,14 @@ export class ProjectsService {
         'run': run,
       },
       errors: {
-        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
-        429: `Normal admission or receipt capacity reached.`,
+        409: `Project graph reconciliation. Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Project graph reconciliation. Normal admission or receipt capacity reached.`,
       },
     });
   }
   /**
    * getProjectBindingVerificationRun
-   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @returns ProjectBindingVerificationRun Project graph status. Frozen graph verification run; qualification does not change traffic.
    * @throws ApiError
    */
   public static getProjectBindingVerificationRun({
@@ -2719,8 +2752,17 @@ export class ProjectsService {
     environment,
     run,
   }: {
+    /**
+     * Slug of the project for reading retained project graph verification status.
+     */
     slug: string,
+    /**
+     * Project environment for reading retained project graph verification status.
+     */
     environment: string,
+    /**
+     * Verification receipt UUID for reading retained project graph verification status.
+     */
     run: string,
   }): CancelablePromise<ProjectBindingVerificationRun> {
     return __request(OpenAPI, {
@@ -2732,14 +2774,14 @@ export class ProjectsService {
         'run': run,
       },
       errors: {
-        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
-        429: `Normal admission or receipt capacity reached.`,
+        409: `Project graph status. Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Project graph status. Normal admission or receipt capacity reached.`,
       },
     });
   }
   /**
    * cancelProjectBindingVerificationRun
-   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @returns ProjectBindingVerificationRun Project graph cancellation. Frozen graph verification run; qualification does not change traffic.
    * @throws ApiError
    */
   public static cancelProjectBindingVerificationRun({
@@ -2747,8 +2789,17 @@ export class ProjectsService {
     environment,
     run,
   }: {
+    /**
+     * Slug of the project for requesting cancellation of a project verification graph.
+     */
     slug: string,
+    /**
+     * Project environment for requesting cancellation of a project verification graph.
+     */
     environment: string,
+    /**
+     * Verification receipt UUID for requesting cancellation of a project verification graph.
+     */
     run: string,
   }): CancelablePromise<ProjectBindingVerificationRun> {
     return __request(OpenAPI, {
@@ -2760,8 +2811,8 @@ export class ProjectsService {
         'run': run,
       },
       errors: {
-        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
-        429: `Normal admission or receipt capacity reached.`,
+        409: `Project graph cancellation. Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Project graph cancellation. Normal admission or receipt capacity reached.`,
       },
     });
   }
@@ -2779,11 +2830,29 @@ export class ProjectsService {
     deploymentId,
     status,
   }: {
+    /**
+     * Slug of the project for listing retained project graph verification receipts.
+     */
     slug: string,
+    /**
+     * Project environment for listing retained project graph verification receipts.
+     */
     environment: string,
+    /**
+     * Maximum retained project verification receipts returned on this page.
+     */
     limit?: number,
+    /**
+     * Opaque continuation cursor from the previous project verification receipt page.
+     */
     cursor?: string,
+    /**
+     * Restrict retained project verification receipts to this exact deployment UUID.
+     */
     deploymentId?: string,
+    /**
+     * Restrict project verification receipt discovery to this effective retained status.
+     */
     status?: 'pending' | 'passed' | 'cancelled' | 'expired',
   }): CancelablePromise<BindingVerificationRunList> {
     return __request(OpenAPI, {
@@ -2814,7 +2883,7 @@ export class ProjectsService {
   }
   /**
    * createProjectBindingVerificationRun
-   * @returns ProjectBindingVerificationRun Frozen graph verification run; qualification does not change traffic.
+   * @returns ProjectBindingVerificationRun Project graph creation. Frozen graph verification run; qualification does not change traffic.
    * @throws ApiError
    */
   public static createProjectBindingVerificationRun({
@@ -2822,7 +2891,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for creating a reviewed project verification graph.
+     */
     slug: string,
+    /**
+     * Project environment for creating a reviewed project verification graph.
+     */
     environment: string,
     requestBody: CreateProjectBindingVerificationRunRequest,
   }): CancelablePromise<ProjectBindingVerificationRun> {
@@ -2836,13 +2911,13 @@ export class ProjectsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        409: `Frozen membership, routing, policy, configuration or evidence changed.`,
-        429: `Normal admission or receipt capacity reached.`,
+        409: `Project graph creation. Frozen membership, routing, policy, configuration or evidence changed.`,
+        429: `Project graph creation. Normal admission or receipt capacity reached.`,
       },
     });
   }
   /**
-   * Deactivate the current graph after checking every fallback recipient.
+   * Deactivate a checked project release set after verifying fallback recipients
    * Requires one eligible materialized live 100% fallback per current workload,
    * a current active graph and enforced binding policies on every fallback.
    * Preparation observes routes without changing them. Use the returned manifest
@@ -2862,7 +2937,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for deactivating a checked project release set.
+     */
     slug: string,
+    /**
+     * Project environment for deactivating a checked project release set.
+     */
     environment: string,
     requestBody: CheckedProjectReleaseManifest,
   }): CancelablePromise<CheckedProjectReleaseResponse> {
@@ -2890,8 +2971,8 @@ export class ProjectsService {
     });
   }
   /**
-   * Prepare checked return to exact 100% weighted fallback routes.
-   * Requires one eligible materialized live 100% fallback per current workload,
+   * Prepare checked release-set deactivation to exact weighted fallback routes
+   * Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback per current workload,
    * a current active graph and enforced binding policies on every fallback.
    * Preparation observes routes without changing them. Use the returned manifest
    * to qualify exact fallback service dependencies, then deactivate explicitly.
@@ -2909,7 +2990,13 @@ export class ProjectsService {
     slug,
     environment,
   }: {
+    /**
+     * Slug of the project for reviewing exact weighted fallbacks before graph deactivation.
+     */
     slug: string,
+    /**
+     * Project environment for reviewing exact weighted fallbacks before graph deactivation.
+     */
     environment: string,
   }): CancelablePromise<CheckedProjectReleaseManifest> {
     return __request(OpenAPI, {
@@ -2934,7 +3021,7 @@ export class ProjectsService {
     });
   }
   /**
-   * Recover a retained historical graph with fresh binding evidence.
+   * Restore a historical project release set using fresh binding checks
    * Selects an inactive, unexpired historical release in this project environment.
    * Requires a different expected active release, exact historical membership,
    * current enforced policies, fresh target-specific evidence and ready artifacts
@@ -2951,7 +3038,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for restoring a retained graph with fresh binding qualification.
+     */
     slug: string,
+    /**
+     * Project environment for restoring a retained graph with fresh binding qualification.
+     */
     environment: string,
     requestBody: CheckedProjectReleaseManifest,
   }): CancelablePromise<CheckedProjectReleaseResponse> {
@@ -2979,8 +3072,8 @@ export class ProjectsService {
     });
   }
   /**
-   * Prepare recovery to an explicit retained historical graph.
-   * Selects an inactive, unexpired historical release in this project environment.
+   * Prepare checked release-set recovery to a selected retained graph
+   * Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this project environment.
    * Requires a different expected active release, exact historical membership,
    * current enforced policies, fresh target-specific evidence and ready artifacts
    * and service replicas. Historical expiry is checked again at commit.
@@ -2996,7 +3089,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for reviewing recovery to a selected historical release graph.
+     */
     slug: string,
+    /**
+     * Project environment for reviewing recovery to a selected historical release graph.
+     */
     environment: string,
     requestBody: PrepareProjectRollbackRequest,
   }): CancelablePromise<CheckedProjectReleaseManifest> {
@@ -3024,7 +3123,7 @@ export class ProjectsService {
     });
   }
   /**
-   * Activate a pinned graph with fresh checked binding evidence.
+   * Activate a checked project release set with pinned binding evidence
    * Requires an enforced binding release policy on every project member scope.
    * Preparation freezes exact deployments, active graph or weighted fallback,
    * policy revisions and internal service targets. It is a metadata observation,
@@ -3043,7 +3142,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for activating a pinned project graph after binding checks.
+     */
     slug: string,
+    /**
+     * Project environment for activating a pinned project graph after binding checks.
+     */
     environment: string,
     requestBody: CheckedProjectReleaseManifest,
   }): CancelablePromise<CheckedProjectReleaseResponse> {
@@ -3071,8 +3176,8 @@ export class ProjectsService {
     });
   }
   /**
-   * Prepare a pinned graph manifest without changing routes.
-   * Requires an enforced binding release policy on every project member scope.
+   * Prepare a project release-set manifest for checked binding qualification
+   * Checked release-set preparation. Requires an enforced binding release policy on every project member scope.
    * Preparation freezes exact deployments, active graph or weighted fallback,
    * policy revisions and internal service targets. It is a metadata observation,
    * not an evidence grant. Qualification uses candidate-specific task probes.
@@ -3090,7 +3195,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for preparing binding qualification for a pinned release-set manifest.
+     */
     slug: string,
+    /**
+     * Project environment for preparing binding qualification for a pinned release-set manifest.
+     */
     environment: string,
     requestBody: PublishProjectReleaseSetRequest,
   }): CancelablePromise<CheckedProjectReleaseManifest> {
@@ -3127,8 +3238,17 @@ export class ProjectsService {
     environment,
     stage,
   }: {
+    /**
+     * Slug of the project for observing or cancelling a candidate service staging lease.
+     */
     slug: string,
+    /**
+     * Project environment for observing or cancelling a candidate service staging lease.
+     */
     environment: string,
+    /**
+     * Identifier of the candidate service staging lease selected for status or cancellation.
+     */
     stage: string,
   }): CancelablePromise<ProjectReleaseStage> {
     return __request(OpenAPI, {
@@ -3155,7 +3275,7 @@ export class ProjectsService {
   }
   /**
    * Cancel temporary candidate capacity; active graph and traffic allocations remain authoritative.
-   * @returns ProjectReleaseStage Current staging lease and observed service readiness; this conveys no binding evidence.
+   * @returns ProjectReleaseStage Candidate service staging cancellation. Current staging lease and observed service readiness; this conveys no binding evidence.
    * @throws ApiError
    */
   public static cancelProjectReleaseStage({
@@ -3163,8 +3283,17 @@ export class ProjectsService {
     environment,
     stage,
   }: {
+    /**
+     * Slug of the project for observing or cancelling a candidate service staging lease.
+     */
     slug: string,
+    /**
+     * Project environment for observing or cancelling a candidate service staging lease.
+     */
     environment: string,
+    /**
+     * Identifier of the candidate service staging lease selected for status or cancellation.
+     */
     stage: string,
   }): CancelablePromise<ProjectReleaseStage> {
     return __request(OpenAPI, {
@@ -3199,7 +3328,7 @@ export class ProjectsService {
    * A different manifest conflicts until the current stage is cancelled or expires.
    * Qualification and activation remain explicit and independently recheck readiness and evidence.
    *
-   * @returns ProjectReleaseStage Current staging lease and observed service readiness; this conveys no binding evidence.
+   * @returns ProjectReleaseStage Candidate service staging admission. Current staging lease and observed service readiness; this conveys no binding evidence.
    * @throws ApiError
    */
   public static stageCheckedProjectRelease({
@@ -3207,7 +3336,13 @@ export class ProjectsService {
     environment,
     requestBody,
   }: {
+    /**
+     * Slug of the project for temporarily admitting selected candidate services for staging.
+     */
     slug: string,
+    /**
+     * Project environment for temporarily admitting selected candidate services for staging.
+     */
     environment: string,
     requestBody: StageProjectReleaseRequest,
   }): CancelablePromise<ProjectReleaseStage> {

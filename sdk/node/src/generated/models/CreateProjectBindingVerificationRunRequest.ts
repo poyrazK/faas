@@ -3,9 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CheckedProjectReleaseManifest } from './CheckedProjectReleaseManifest.js';
+/**
+ * Reviewed project selection, consent and shared concurrency for creating a durable verification graph.
+ */
 export type CreateProjectBindingVerificationRunRequest = {
   /**
-   * Frozen shared admission budget; omitted values use two. Graph members share the root budget.
+   * Requested shared graph admission budget; defaults to two and applies across all project members.
    */
   max_concurrency?: number;
   /**

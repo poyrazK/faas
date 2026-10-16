@@ -24,6 +24,8 @@ T = TypeVar("T", bound="BindingVerificationReview")
 
 @_attrs_define
 class BindingVerificationReview:
+    """Read-only application binding plan used to review selection and consent before receipt creation."""
+
     app: str
     deployment_id: UUID
     scope: str

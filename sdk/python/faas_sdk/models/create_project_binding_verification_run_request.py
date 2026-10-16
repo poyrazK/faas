@@ -21,6 +21,8 @@ T = TypeVar("T", bound="CreateProjectBindingVerificationRunRequest")
 
 @_attrs_define
 class CreateProjectBindingVerificationRunRequest:
+    """Reviewed project selection, consent and shared concurrency for creating a durable verification graph."""
+
     id: UUID
     manifest: CheckedProjectReleaseManifest
     """Immutable candidate graph and expected routing and policy state. This manifest conveys no evidence or
@@ -30,7 +32,7 @@ class CreateProjectBindingVerificationRunRequest:
     object_storage_write: bool
     queue_publish: bool
     max_concurrency: int | Unset = 2
-    """Frozen shared admission budget; omitted values use two. Graph members share the root budget."""
+    """Requested shared graph admission budget; defaults to two and applies across all project members."""
     review_digest: str | Unset = UNSET
     """Optional aggregate digest issued by graph review; when supplied, manifest, member digests and consent must
     match."""

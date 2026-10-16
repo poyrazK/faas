@@ -12,6 +12,8 @@ T = TypeVar("T", bound="ProjectReleaseStageMember")
 
 @_attrs_define
 class ProjectReleaseStageMember:
+    """Candidate service deployment and observed replica state covered by a staging lease."""
+
     app: str
     deployment_id: UUID
     desired: int

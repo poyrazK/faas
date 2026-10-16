@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ProjectReleaseDeactivationReceipt")
 
 @_attrs_define
 class ProjectReleaseDeactivationReceipt:
+    """Recorded deactivation decision and exact fallback routes reviewed for a project graph."""
+
     id: UUID
     release_id: UUID
     completed_at: datetime.datetime

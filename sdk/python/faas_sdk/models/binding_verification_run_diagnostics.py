@@ -26,6 +26,8 @@ T = TypeVar("T", bound="BindingVerificationRunDiagnostics")
 
 @_attrs_define
 class BindingVerificationRunDiagnostics:
+    """Public app receipt observations and recovery suggestions without admission authority."""
+
     run_id: UUID
     app: str
     deployment_id: UUID

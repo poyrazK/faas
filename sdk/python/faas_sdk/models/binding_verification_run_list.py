@@ -17,6 +17,8 @@ T = TypeVar("T", bound="BindingVerificationRunList")
 
 @_attrs_define
 class BindingVerificationRunList:
+    """Bounded retained receipt summaries and a cursor tied to the original observation cutoff."""
+
     runs: list[BindingVerificationRunSummary]
     observed_at: datetime.datetime
     next_cursor: str | Unset = UNSET

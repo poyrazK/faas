@@ -43,6 +43,7 @@ class AppBindingInventoryItem:
     service_target_deployment_id: UUID | Unset = UNSET
     """Exact candidate service recipient required by this inventory selection."""
     queue_canary: QueueBindingCanary | Unset = UNSET
+    """Retained deployment-bound receipt for an explicitly authorized push queue completion probe."""
     queue_canary_supported: bool | Unset = UNSET
     queue_environment: str | Unset = UNSET
     """Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an
