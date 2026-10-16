@@ -140,12 +140,13 @@ type TargetAwareStatusSynthDispatcher interface {
 // dispatcher-surface widening above stays load-bearing: a future Move
 // 2 surface can extend SynthDispatcher without rewriting the wire.
 type SynthServer struct {
-	socketPath string
-	dispatcher SynthDispatcher
-	log        *slog.Logger
-	srv        *http.Server
-	mux        *http.ServeMux
-	calls      atomic.Int64
+	workerJobEvidence func(context.Context, state.Invocation, string) error
+	socketPath        string
+	dispatcher        SynthDispatcher
+	log               *slog.Logger
+	srv               *http.Server
+	mux               *http.ServeMux
+	calls             atomic.Int64
 	// internalSvcVerifier (ADR-119) is the per-service
 	// public-key allowlist consulted by the synth-side gate
 	// (synth_internal_only.go). nil = gate disabled; an
@@ -938,6 +939,18 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 	// Per-record timeout (audit round 2 finding #4). Wraps the
 	// Invoke call so a stuck function or stuck dispatcher can't
 	// pin a single record.
+	var observed state.Invocation
+	defer func() {
+		if !observed.WorkerJobEvidence || s.workerJobEvidence == nil {
+			return
+		}
+		result.DeploymentID = observed.ResolvedDeploymentID
+		evidenceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ProjectWorkerHealthWriteTimeout)
+		defer cancel()
+		if err := s.workerJobEvidence(evidenceCtx, observed, result.Status); err != nil {
+			s.log.Warn("worker job outcome evidence unavailable", "err", err)
+		}
+	}()
 	recCtx, recCancel := context.WithTimeout(invocationCtx, batchDispatchPerRecordTimeout)
 	defer recCancel()
 	var payload []byte
@@ -985,6 +998,7 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 	} else {
 		out, err = s.dispatcher.Invoke(recCtx, req.AppID, inv)
 	}
+	observed = out
 	if err != nil {
 		s.log.Warn("gateway synth: invoke (batch)",
 			"inv", logsanitize.Field(inv.ID),
@@ -1177,4 +1191,10 @@ func (s *SynthServer) applyExclusiveServiceAuth(w http.ResponseWriter, r *http.R
 		return true
 	}
 	return false
+}
+
+// WithWorkerJobEvidence persists the final classification, including reported partial failures.
+func (s *SynthServer) WithWorkerJobEvidence(record func(context.Context, state.Invocation, string) error) *SynthServer {
+	s.workerJobEvidence = record
+	return s
 }

@@ -15,7 +15,10 @@ GOVULNCHECK_VERSION ?= 1.7.0
 # Both are built into ./bin by `make build`.
 CLIS := gregale gregalectl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
+# An uncommitted checkout cannot claim a revision's qualification. Release
+# builders using a verified source archive can supply SOURCE_REVISION explicitly.
+SOURCE_REVISION ?= $(shell if test -z "$$(git status --porcelain 2>/dev/null)"; then git rev-parse HEAD 2>/dev/null || echo unknown; else echo unknown; fi)
+LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION) -X github.com/onebox-faas/faas/pkg/wire.GitSHA=$(SOURCE_REVISION)
 # Release artifacts must not contain host-specific source paths or automatic
 # VCS metadata. The release workflow supplies VERSION from the tag commit;
 # these flags make the bytes independent of the runner checkout path and
@@ -456,7 +459,7 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
-	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags "$${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
@@ -1058,8 +1061,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/dev_source_patch_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql pkg/state/route_advice_queries.sql pkg/state/service_wake_ahead_queries.sql pkg/state/route_priority_queries.sql "$$tmp/pkg/state/"; \
-	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/queries.sql pkg/state/*_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
 	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
@@ -1067,8 +1069,10 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  mkdir -p "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
+	  mkdir -p "$$tmp/pkg/e2etest/migrationprobe"; \
+	  cp pkg/e2etest/migrationprobe/queries.sql pkg/e2etest/migrationprobe/schema.sql "$$tmp/pkg/e2etest/migrationprobe/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done

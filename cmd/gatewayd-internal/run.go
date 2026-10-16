@@ -1531,6 +1531,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return releaseID, deploymentID, err
 		}).
+		WithProjectCanaryResolver(func(ctx context.Context, appID, scope, key string) (string, string, error) {
+			releaseID, deploymentID, err := pgStore.ResolveProjectCanary(ctx, appID, scope, key)
+			if errors.Is(err, state.ErrNotFound) {
+				err = gateway.ErrReleaseGone
+			}
+			return releaseID, deploymentID, err
+		}).
 		WithRevisionPinResolver(func(ctx context.Context, appID, scope, deploymentID string) (bool, error) {
 			_, err := pgStore.ResolveRevisionPin(ctx, appID, scope, deploymentID)
 			if errors.Is(err, state.ErrNotFound) {
@@ -1920,6 +1927,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			inv.ResolvedDeploymentID = deploymentID
+			if inv.Source == "esm" && inv.Attempts > 0 && inv.DeploymentScope == "production" && inv.QueueBindingID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+				if err := pgStore.BeginProjectWorkerJobEvidence(ctx, inv); err != nil {
+					return inv, 0, err
+				}
+				inv.WorkerJobEvidence = true
+			}
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
 	}
@@ -1931,6 +1944,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	deps.synth.WithWorkerJobEvidence(pgStore.FinishProjectWorkerJobEvidence)
 	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
 	// lookup here. The verifier itself is loaded later from the cluster key or
 	// environment fallback and is attached after that load completes.
@@ -3791,6 +3805,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Authorize:                 newServiceProxyAuthorizer(pgStore),
 			AllowAlias:                guestServiceAliasAllowed,
 			ResolveEnvironmentBinding: newServiceProxyEnvironmentBindingResolver(pgStore),
+			AuthorizeBound:            newServiceProxyBoundAuthorizer(pgStore),
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},

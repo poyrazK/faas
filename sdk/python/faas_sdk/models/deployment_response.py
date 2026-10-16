@@ -49,6 +49,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.build_plan import BuildPlan
+    from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
@@ -85,6 +86,9 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    configuration: DeploymentConfigurationStatus | Unset = UNSET
+    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentResponseStageState | Unset = UNSET
@@ -295,6 +299,10 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        configuration: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.configuration, Unset):
+            configuration = self.configuration.to_dict()
 
         durable_entity_validator: dict[str, Any] | Unset = UNSET
         if not isinstance(self.durable_entity_validator, Unset):
@@ -609,6 +617,8 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if configuration is not UNSET:
+            field_dict["configuration"] = configuration
         if durable_entity_validator is not UNSET:
             field_dict["durable_entity_validator"] = durable_entity_validator
         if stage_state is not UNSET:
@@ -731,6 +741,7 @@ class DeploymentResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.build_plan import BuildPlan
+        from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
@@ -759,6 +770,13 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _configuration = d.pop("configuration", UNSET)
+        configuration: DeploymentConfigurationStatus | Unset
+        if isinstance(_configuration, Unset):
+            configuration = UNSET
+        else:
+            configuration = DeploymentConfigurationStatus.from_dict(_configuration)
 
         _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
         durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
@@ -1318,6 +1336,7 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            configuration=configuration,
             durable_entity_validator=durable_entity_validator,
             stage_state=stage_state,
             dev_patch=dev_patch,

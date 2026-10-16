@@ -88,9 +88,15 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Project deploys now honor the normal wait contract. Return a
 		// terminal fixture for each golden deployment so these planner tests
 		// exercise that path without a real scheduler.
-		writeJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{
-			ID: strings.TrimPrefix(r.URL.Path, "/v1/deployments/"), Status: statusLive,
-		})
+		id := strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
+		var appID string
+		for _, build := range s.applyBody.Builds {
+			if build.DeploymentID == id {
+				appID = build.AppID
+				break
+			}
+		}
+		writeJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{ID: id, AppID: appID, Status: statusLive})
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}

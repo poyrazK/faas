@@ -2739,9 +2739,12 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 }
 
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
+	return appByIDDB(ctx, s.pool, id)
+}
+
+func appByIDDB(ctx context.Context, db sqlc.DBTX, id string) (App, error) {
 	sel := `select ` + appsSelectColumns + ` from apps where id = $1`
-	row := s.pool.QueryRow(ctx, sel, id)
-	return scanApp(row)
+	return scanApp(db.QueryRow(ctx, sel, id))
 }
 
 func (s *PgStore) AppBySlug(ctx context.Context, slug string) (App, error) {
@@ -3929,6 +3932,12 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
+	if p.DeploySettingsGuard != nil {
+		app, _, err := s.UpdateAppWithActivity(ctx, id, p, OrgActivity{}, func(App, App) (json.RawMessage, bool, error) {
+			return nil, false, nil
+		})
+		return app, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return App{}, mapErr(err)
@@ -4137,7 +4146,10 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 			   request_rate_limit_rps = case when $80 then nullif($81, 0) else request_rate_limit_rps end,
 			   request_rate_limit_burst = case when $82 then nullif($83, 0) else request_rate_limit_burst end,
 		   egress_ports = case when $84 then $85::integer[] else egress_ports end,
-		   platform_tenant_required = case when $86 then $87 else platform_tenant_required end
+		   platform_tenant_required = case when $86 then $87 else platform_tenant_required end,
+ deployment_policy_revision = case when $88 then deployment_policy_revision+1 else deployment_policy_revision end,
+ deployment_policy_owner = case when $88 then '' else deployment_policy_owner end,
+ deployment_policy_fingerprint = case when $88 then '' else deployment_policy_fingerprint end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -4270,7 +4282,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 		p.SetRequestRateLimitRPS, intOrZero(p.RequestRateLimitRPS),
 		p.SetRequestRateLimitBurst, intOrZero(p.RequestRateLimitBurst),
 		p.SetEgressPorts, egressPortsParam(p.EgressPorts),
-		p.SetPlatformTenantRequired, boolOrFalse(p.PlatformTenantRequired))
+		p.SetPlatformTenantRequired, boolOrFalse(p.PlatformTenantRequired), p.TouchDeploymentPolicies)
 	return scanApp(row)
 }
 
@@ -6808,15 +6820,26 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // to supply a deterministic UUID; all other callers keep the database-generated
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
+	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
+	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
 	created, _, err := s.createDeployment(ctx, d, nil, nil)
 	return created, err
 }
 
 func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
+	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
+	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
 	return s.createDeployment(ctx, d, &activity, nil)
 }
 
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	if d.submissionAttemptID != "" && !api.ValidDeploymentAttemptID(d.submissionAttemptID) {
+		return Deployment{}, 0, ErrInvalidArgument
+	}
 	if d.EnvironmentWorkloadManaged() {
 		return Deployment{}, 0, ErrInvalidArgument
 	}
@@ -6842,6 +6865,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 	}
 	if promotionInput != nil {
+		if err := lockPromotionPreparationDB(ctx, tx, promotionInput.PromotionID); err != nil {
+			return Deployment{}, 0, err
+		}
 		if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotionInput.PromotionID); err != nil {
 			return Deployment{}, 0, err
 		}
@@ -6874,6 +6900,43 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
 	}
+	if err := guardReleaseAdditionDeploymentDB(ctx, tx, d); err != nil {
+		return Deployment{}, 0, err
+	}
+	if d.releaseWorkerAttempt != "" {
+		if err := validateReleaseWorkerCandidateDB(ctx, tx, d); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	var releaseVariables []projectReleaseVariable
+	if d.releaseConfigAttempt != "" {
+		releaseVariables, err = candidateReleaseConfigurationDB(ctx, tx, d)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if d.releaseConfigAttempt == "" {
+		releaseVariables, err = inheritedReleaseVariablesDB(ctx, tx, d.AppID, d.Scope)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+
+	releaseSecrets, secretPinned, secretErr := candidateReleaseSecretsDB(ctx, tx, d)
+	if secretErr != nil {
+		return Deployment{}, 0, secretErr
+	}
+
+	if d.retryDeploymentID != "" {
+		latest, err := sqlc.New().LatestDeployment(ctx, tx, mustPgUUID(d.AppID))
+		if err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: read retry target: %w", err)
+		}
+		if pgUUIDString(latest.ID) != d.retryDeploymentID || latest.Status != string(DeployFailed) {
+			return Deployment{}, 0, ErrDeploymentRetryChanged
+		}
+	}
+
 	if len(cloneInputs) > 0 {
 		d, cloneRecord, err = prepareCloneDeploymentTx(ctx, tx, *cloneInputs[0], cloneOperation)
 		if err != nil {
@@ -6912,6 +6975,29 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 				return Deployment{}, 0, mapErr(err)
 			}
 			return existing, 0, nil
+		}
+	}
+	if promotionInput != nil {
+		owner, err := sqlc.New().ReleaseConfigurationCandidateOwner(ctx, tx, d.AppID)
+		if err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+		configured, err := readPromotionReleaseCaptureDB(ctx, tx, owner.AccountID, promotionInput.PromotionID)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if configured != nil {
+			w, err := configured.workload(d.AppID, promotionInput.SourceDeploymentID)
+			if err != nil || !d.TrafficPercentExplicit || d.TrafficPercent != 0 {
+				return Deployment{}, 0, ErrConflict
+			}
+			releaseVariables = promotedReleaseVariables(w, d.Scope)
+			if configured.Secrets != nil {
+				releaseSecrets, secretPinned = cloneReleaseSecrets(w.SecretTarget), true
+			}
+			if w.PromotedOverrideEnv != nil {
+				d.OverrideEnv = append(json.RawMessage(nil), (*w.PromotedOverrideEnv)...)
+			}
 		}
 	}
 	// 2. Supersede an older pending row, if any. A live deployment remains
@@ -7100,6 +7186,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err != nil {
 		return Deployment{}, 0, err
 	}
+	if d.submissionAttemptID != "" {
+		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if len(cloneInputs) > 0 {
 		if err := attachCloneDeploymentTx(ctx, tx, *cloneInputs[0], cloneRecord, created); err != nil {
 			return Deployment{}, 0, err
@@ -7146,6 +7237,22 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 		outboxID, err = enqueueOrgActivityOutboxTx(ctx, tx, normalized)
 		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if d.releaseWorkerAttempt != "" {
+		if err := pinReleaseWorkerCandidateDB(ctx, tx, created, d.releaseWorkerAttempt); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if secretPinned {
+		if err := pinReleaseSecretsDB(ctx, tx, created.ID, releaseSecrets); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+
+	if releaseVariables != nil {
+		if err := pinReleaseEnvironmentDB(ctx, tx, created.ID, releaseVariables); err != nil {
 			return Deployment{}, 0, err
 		}
 	}
@@ -13381,6 +13488,10 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	if _, err := sqlc.New().LockCronAccountForApp(ctx, tx, appID); err != nil {
+		return Cron{}, mapErr(err)
+	}
+
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps the lock
 	//    acquisition in one round-trip; the FOR UPDATE blocks any
 	//    concurrent createCron for the same app until COMMIT/ROLLBACK.
@@ -13522,7 +13633,18 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		retryMaxArg, retryBackoffArg = opts.RetryMax, opts.RetryBackoffSeconds
 		schedulePolicyArg, failureRulesArg = policyJSON(opts.SchedulePolicy), policyJSON(opts.FailureRules)
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Cron{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = sqlc.New().LockCronAccountForCron(ctx, tx, id); err != nil {
+		return Cron{}, mapErr(err)
+	}
+	if _, err = sqlc.New().LockCronParent(ctx, tx, id); err != nil {
+		return Cron{}, mapErr(err)
+	}
+	row := tx.QueryRow(ctx,
 		`update crons set
 		   schedule   = coalesce($2, schedule),
 		   path       = coalesce($3, path),
@@ -13541,18 +13663,32 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 	if err != nil {
 		return Cron{}, mapErr(err)
 	}
+	if err = tx.Commit(ctx); err != nil {
+		return Cron{}, err
+	}
 	return c, nil
 }
 
 func (s *PgStore) DeleteCron(ctx context.Context, id, appID string) error {
-	tag, err := s.pool.Exec(ctx, `delete from crons where id = $1 and app_id = $2`, id, appID)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = sqlc.New().LockCronAccountForCron(ctx, tx, id); err != nil {
+		return mapErr(err)
+	}
+	parent, err := sqlc.New().LockCronParent(ctx, tx, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	if parent != appID {
 		return ErrNotFound
 	}
-	return nil
+	if err = sqlc.New().DeleteGuardedCron(ctx, tx, sqlc.DeleteGuardedCronParams{CronID: id, AppID: appID}); err != nil {
+		return mapErr(err)
+	}
+	return tx.Commit(ctx)
 }
 
 // MarkCronFired stamps the last_fired_at column. Schema migration
@@ -16916,6 +17052,9 @@ func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentI
 	var reserve func(pgx.Tx) error
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {
+			if err := workerGraphAdmissionDB(ctx, tx, appID, deploymentID); err != nil {
+				return err
+			}
 			return reserveAccountWorker(ctx, tx, appID, deploymentID)
 		}
 	}
@@ -23395,6 +23534,14 @@ func (s *PgStore) mutateCustomerAppSecret(ctx context.Context, appID, scope, key
 		return pgconn.CommandTag{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	account, ok := arguments[0].(string)
+	if !ok {
+		return pgconn.CommandTag{}, ErrInvalidArgument
+	}
+	if _, err := sqlc.New().LockRuntimeSecretApp(ctx, tx, sqlc.LockRuntimeSecretAppParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(appID)}); err != nil {
+		return pgconn.CommandTag{}, mapErr(err)
+	}
+
 	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
 		return pgconn.CommandTag{}, err
 	}
@@ -23598,6 +23745,12 @@ func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretD
 	}); err != nil {
 		return 0, runtimeSecretFenceError(err)
 	}
+	if _, err := queries.ReadDeploymentReleaseSecrets(ctx, tx, mustPgUUID(result.Fence.DeploymentID)); err == nil {
+		return 0, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, err
+	}
+
 	rows, err := queries.ReadRuntimeSecretDeliveryVersions(ctx, tx, sqlc.ReadRuntimeSecretDeliveryVersionsParams{
 		AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), Scope: scope,
 	})
@@ -25524,6 +25677,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "release_secret_snapshot_owned", "release_secret_key_retired", "release_secret_version_immutable":
+				return ErrConflict
 			case "environment_gitops_job_managed":
 				return ErrEnvironmentGitManaged
 			case "environment_gitops_job_link_contract":
@@ -25544,7 +25699,7 @@ func mapErr(err error) error {
 				return ErrBindingPromotionExpired
 			case "binding_release_policy_revision":
 				return ErrBindingReleasePolicyRevision
-			case "runtime_upgrade_traffic_fenced", "object_version_protection_fenced":
+			case "runtime_upgrade_traffic_fenced", "object_version_protection_fenced", "promotion_control_publication_fenced":
 				return ErrConflict
 			case "object_multipart_part_writer_conflict", "object_multipart_initiation_original", "object_multipart_initiation_immutable", "object_multipart_initiation_positive_result", "object_multipart_initiation_intent", "object_multipart_initiation_uncertain":
 				return ErrConflict

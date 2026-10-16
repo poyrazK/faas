@@ -18,10 +18,14 @@ def _get_kwargs(
     *,
     body: CreateDeploymentRequest | CreateDeploymentFilesBody | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -109,6 +113,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentRequest | CreateDeploymentFilesBody | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Create a deployment.
 
@@ -123,6 +128,7 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
@@ -145,6 +151,7 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -160,6 +167,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentRequest | CreateDeploymentFilesBody | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Create a deployment.
 
@@ -174,6 +182,7 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
@@ -197,6 +206,7 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     ).parsed
 
 
@@ -206,6 +216,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentRequest | CreateDeploymentFilesBody | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Create a deployment.
 
@@ -220,6 +231,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
@@ -242,6 +254,7 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -255,6 +268,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentRequest | CreateDeploymentFilesBody | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Create a deployment.
 
@@ -269,6 +283,7 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentRequest): Two content-types accepted (see operation description):
             prebuilt OCI image reference, or multipart source upload. The optional `overrides` object
             (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
@@ -293,5 +308,6 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            deployment_attempt_id=deployment_attempt_id,
         )
     ).parsed

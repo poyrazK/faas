@@ -242,7 +242,7 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 				}
 				_ = part.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -350,7 +350,7 @@ func TestDeployZeroConfig_SecretsBeforeFirstUpload(t *testing.T) {
 		case r.URL.Path == "/v1/apps/demo-secrets/deployments" && r.Method == http.MethodPost:
 			calls = append(calls, "deploy")
 			_, _ = io.Copy(io.Discard, r.Body)
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo-secrets"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}
@@ -592,7 +592,7 @@ func TestDeployZeroConfig_GitHeadGoFunctionStaysFunction(t *testing.T) {
 				}
 				_ = part.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "go-function"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}
@@ -680,7 +680,7 @@ func TestDeployZeroConfig_PathArchivesSelectedTree(t *testing.T) {
 				}
 				_ = part.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "api"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}
@@ -771,7 +771,7 @@ func TestDeployZeroConfig_WorkspacePathRetainsRepositoryContext(t *testing.T) {
 				}
 				_ = part.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "api"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}
@@ -858,7 +858,7 @@ func TestDeployZeroConfig_PathWorktreeIncludesLocalChanges(t *testing.T) {
 				}
 				_ = part.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "api"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}
@@ -957,7 +957,7 @@ func TestDeployZeroConfig_409SameAccount_GETProbeAndPATCH(t *testing.T) {
 		case r.URL.Path == "/v1/apps/demo/deployments" && r.Method == "POST":
 			z.gotCalls["deploy"]++
 			_, _ = io.Copy(io.Discard, r.Body)
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -1040,7 +1040,7 @@ func TestDeployZeroConfig_JSONShape(t *testing.T) {
 		case r.URL.Path == "/v1/apps/demo/deployments" && r.Method == "POST":
 			z.gotCalls["deploy"]++
 			_, _ = io.Copy(io.Discard, r.Body)
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -1134,7 +1134,7 @@ func TestDeployZeroConfig_ReceiptContainsProvenance(t *testing.T) {
 		case r.URL.Path == "/v1/apps/demo/deployments" && r.Method == "POST":
 			z.gotCalls["deploy"]++
 			_, _ = io.Copy(io.Discard, r.Body)
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -1274,7 +1274,7 @@ func TestDeployZeroConfig_DirtyTree_OnlyCommitsShipped(t *testing.T) {
 					sourceBytes, _ = io.ReadAll(p)
 				}
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "dirty"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}

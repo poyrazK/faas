@@ -151,6 +151,8 @@ type Harness struct {
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
 	procs []*exec.Cmd
+	// Controlled fault stops remain reaped until their explicit restart.
+	expectedStops map[*exec.Cmd]bool
 	// scheddEnv/config retain the launch recipe so metal acceptance tests can
 	// fault-inject a schedd restart without reaching into this package's
 	// private process list.
@@ -1695,6 +1697,7 @@ func (h *Harness) KillSchedd() error {
 				}
 			}
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: schedd process not found")
@@ -1756,6 +1759,18 @@ func (h *Harness) SetAPIDEnv(key, value string) error {
 	return nil
 }
 
+// APIDPID identifies the live child for peer-credential checks in fault tests.
+func (h *Harness) APIDPID() (int, error) {
+	if h != nil {
+		for _, proc := range h.procs {
+			if proc != nil && proc.Process != nil && proc.ProcessState == nil && filepath.Base(proc.Path) == "apid" {
+				return proc.Process.Pid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("e2etest: live apid process not found")
+}
+
 // KillAPID terminates and reaps the apid child while leaving the rest of the
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.
@@ -1779,6 +1794,7 @@ func (h *Harness) KillAPID() error {
 				}
 			}
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: apid process not found")
@@ -2092,7 +2108,7 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
 
-	if name, out, dead := firstDeadDaemon(h.procs); dead {
+	if name, out, dead := firstDeadDaemon(h.watchedDaemons()); dead {
 		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)

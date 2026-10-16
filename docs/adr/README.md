@@ -1,5 +1,9 @@
 # Architecture Decision Records
 
+- [ADR-984: Preserve configuration when deployment acceptance is uncertain](984-deploy-submission-outcomes.md) — explicit submission outcomes and commit uncertainty across processes
+
+- [ADR-983: Deploy upload recovery across CLI processes](983-deploy-upload-recovery.md) — content and intent checkpoints, interruption recovery, and expired-session replacement keys
+
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
 separate files here. This directory holds ADRs made *after* the spec.
@@ -795,3 +799,29 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-967: Scenario TCP fault injection](967-scenario-tcp-fault-injection.md)
 
 - [ADR-977: Decompose cmd/apid into pkg/apid domain packages](977-apid-package-decomposition.md)
+
+- [ADR-982: Deploy acceptance and secret ordering](982-deploy-acceptance-and-secret-ordering.md)
+
+- [ADR-992: Saved deploy sessions](992-saved-deploy-sessions.md)
+
+- [ADR-986: Atomic deploy settings recovery](986-atomic-deploy-settings-recovery.md)
+
+- [ADR-993: Durable deployment submission receipts](993-deployment-submission-receipts.md)
+
+- [ADR-994: Durable pre-submission profiling and tracing recovery](994-durable-deploy-policy-staging.md)
+
+- [ADR-995: Durable manifest cron staging and recovery](995-durable-deploy-cron-staging.md)
+
+- [ADR-1010: Progressive project canary policy](1010-project-progressive-canary-policy.md)
+
+- [ADR-1011: Durable project worker release pins](1011-durable-project-worker-release-pins.md)
+
+- [ADR-1012: Retained project worker pools for pinned jobs](1012-retained-project-worker-pools.md)
+
+- [ADR-1013: Staged project canary publication and transactional promotion](1013-staged-project-canary-publication.md)
+
+- [ADR-1022: Snapshot-aware HTTP environment promotion](1022-snapshot-aware-environment-promotion.md)
+
+- [ADR-1023: Health-gated HTTP environment promotion](1023-health-gated-environment-promotion.md)
+
+- [ADR-1024: Destination-aware HTTP service graph promotion](1024-destination-aware-service-graph-promotion.md)

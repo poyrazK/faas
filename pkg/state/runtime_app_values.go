@@ -17,6 +17,8 @@ type RuntimeAppSecretGrants struct {
 // RuntimeAppValuesSnapshot contains plaintext configuration and sealed secret
 // inputs for one deployment. Delivery observations are not configuration.
 type RuntimeAppValuesSnapshot struct {
+	ReleaseSecretsPinned    bool
+	ReleaseSecretVersionIDs map[string]string
 	RuntimeAppEnvSnapshot
 	Secrets       []AppSecret
 	SecretGrants  RuntimeAppSecretGrants

@@ -126,20 +126,6 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fingerprint options: %v", err)
 	}
-	statePath, err := uploadStatePath("demo", path)
-	if err != nil {
-		t.Fatalf("state path: %v", err)
-	}
-	if err := saveResumableUploadState(statePath, resumableUploadState{
-		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
-		APIBase:     apiBase(),
-		ArchivePath: path, ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
-		ArchiveModTimeUnixNano: info.ModTime().UnixNano(), DeployOptionsSHA256: optionsHash,
-		TotalSize: info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
-	}); err != nil {
-		t.Fatalf("save state: %v", err)
-	}
-
 	var offsets []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -172,9 +158,25 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	client := api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil)
+	identity := uploadRecoveryIdentity(client, context.Background(), "demo", digestHex, optionsHash)
+	statePath, err := uploadStatePath(identity)
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if err := saveResumableUploadState(statePath, resumableUploadState{
+		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
+		APIBase: srv.URL, RecoveryIdentitySHA256: identity,
+		ArchivePath: path, ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
+		DeployOptionsSHA256: optionsHash,
+		TotalSize:           info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
 	var progress []int64
 	dep, gotDigest, supported, err := DeployResumableTarball(
-		api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil),
+		client,
 		context.Background(), "demo", path,
 		func(uploaded, _ int64) { progress = append(progress, uploaded) },
 	)

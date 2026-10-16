@@ -21,6 +21,10 @@ type Proxy struct {
 }
 
 func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16) Proxy {
+	return OpenProxyWithDeadline(t, cluster, listenIP, port, 30*time.Second)
+}
+
+func OpenProxyWithDeadline(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16, deadline time.Duration) Proxy {
 	t.Helper()
 	listener, err := net.Listen("tcp4", net.JoinHostPort(listenIP, strconv.Itoa(int(port))))
 	if err != nil {
@@ -62,8 +66,8 @@ func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16
 					return
 				}
 				defer func() { _ = upstream.Close() }()
-				_ = client.SetDeadline(time.Now().Add(30 * time.Second))
-				_ = upstream.SetDeadline(time.Now().Add(30 * time.Second))
+				_ = client.SetDeadline(time.Now().Add(deadline))
+				_ = upstream.SetDeadline(time.Now().Add(deadline))
 				done := make(chan struct{})
 				go func() { _, _ = io.Copy(upstream, client); _ = upstream.Close(); close(done) }()
 				_, _ = io.Copy(client, upstream)

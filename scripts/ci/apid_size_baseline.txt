@@ -1,3 +1,39 @@
 # Non-test Go lines in cmd/apid (scripts/ci/check_apid_size.sh, ADR-977).
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid.
-169282
+# ADR-986/993/994/995/996/997/998/999 add authenticated app-scoped recovery wiring and callbacks
+# to existing validation/response helpers. Protocol and guard persistence live
+# in pkg/api and pkg/state; this increase covers those server adapters and upload receipt recovery.
+170874
+# ADR-999 adds per-workload project cron admission and diagnostic adapters.
+
+# ADR-1002 adds project attempt registration and account-scoped receipt adapters.
+
+# ADR-1003 adds guarded project retry HTTP adapters; domain validation remains in deploystaging.
+
+# ADR-1004 adds safe source admission and worker adapters; orchestration lives in state/deploystaging.
+
+# ADR-1005 adds policy admission and scoped probe callbacks; verification and probe execution live in deploystaging.
+
+# ADR-1006 adds paired configuration upload and admission adapters; persistence lives in state.
+
+# ADR-1007 adds source-command planning and staging adapters; task evidence and admission guards live in state.
+
+# ADR-1008 adds worker-mode admission and feature-gate adapters; durable handoff guards live in state/sched.
+
+# ADR-1009 adds worker-health header admission; evidence and verification remain in state/gateway.
+
+# ADR-1013 adds progressive header admission and a default-off qualification gate; routing and transactional effects remain in state/gateway/deploystaging.
+
+# ADR-1014 adds authenticated abort/recover adapters; persistence and health guards remain in state.
+
+# ADR-1015 adds bounded stabilization header/retention admission; monitoring lives in state.
+
+# ADR-1016 adds the migration baseline recorder capability check; proof and reconciliation remain outside cmd/apid.
+
+# ADR-1017 adds source-contract planning, runtime enablement and operator-control wiring; admission and fencing live in state/deploystaging.
+
+# ADR-1018 adds strict recovery-body decoding and response/error adapters; validation, probing and persistence remain in api/state/deploystaging.
+
+# ADR-1019 adds the expired rollback baseline problem response adapter.
+
+# ADR-1020 adds authenticated encrypted staging adapters and secret-release admission wiring; protocol lives in pkg/apid/deploystaging and pkg/state.

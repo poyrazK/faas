@@ -25,7 +25,8 @@ import (
 // Version is stamped at build time via -ldflags "-X .../pkg/wire.Version=...".
 var Version = "dev"
 
-// GitSHA is the abbreviated commit SHA the binary was built from.
+// GitSHA is the full source revision the binary was built from. Promotion
+// rollout approvals require the exact revision; abbreviated SHAs cannot qualify.
 // Stamped at build time via -ldflags "-X .../pkg/wire.GitSHA=...";
 // default "unknown" for dev builds. Used by the daemon_build_info
 // metric (issue #586 / ADR-129) so the operator can answer "what

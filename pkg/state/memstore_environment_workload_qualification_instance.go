@@ -87,6 +87,9 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 // Ordinary lifecycle writers cannot borrow a qualification reservation.
 // Dedicated execution methods must first validate its capability under m.mu.
 func (m *MemStore) guardInstanceRuntimeTransitionLocked(old, next Instance) error {
+	if next.State != "parked" && next.State != "stopped" && next.State != "failed" && m.migrationDeploymentRetiredLocked(next.DeploymentID) {
+		return ErrConflict
+	}
 	if m.qualificationExecutionUnretiredLocked(old.ID) && !qualificationExecutionStateCharged(State(next.State)) {
 		return ErrConflict
 	}

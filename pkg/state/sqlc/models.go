@@ -512,6 +512,13 @@ type App struct {
 	ManagedPostgresAdmissionCutoverID pgtype.UUID
 	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
 	ServiceAddressIndex               pgtype.Int4
+	DeploymentPolicyRevision          int64
+	DeploymentPolicyOwner             string
+	DeploymentPolicyFingerprint       string
+	DeploymentCronRevision            int64
+	DeploymentCronOwner               string
+	DeploymentCronFingerprint         string
+	DeploymentCronBefore              []byte
 }
 
 type AppApiRoute struct {
@@ -2024,6 +2031,26 @@ type DeploymentCodePinDeadline struct {
 	ExpiresAt    interface{}
 }
 
+type DeploymentCronActivation struct {
+	AppID       pgtype.UUID
+	SessionID   string
+	Intent      []byte
+	Fingerprint string
+	Revision    int64
+	Status      string
+	UpdatedAt   pgtype.Timestamptz
+	UploadID    pgtype.Text
+}
+
+type DeploymentCronOutcome struct {
+	DeploymentID pgtype.UUID
+	SessionID    string
+	Revision     int64
+	Status       string
+	Reason       string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type DeploymentDependencyGate struct {
 	DeploymentID pgtype.UUID
 	Pins         []byte
@@ -2075,9 +2102,27 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentProjectReleaseWorker struct {
+	DeploymentID pgtype.UUID
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	AttemptID    string
+}
+
 type DeploymentRecoveryLineage struct {
 	DeploymentID            pgtype.UUID
 	PredecessorDeploymentID pgtype.UUID
+}
+
+type DeploymentReleaseEnvSnapshot struct {
+	DeploymentID pgtype.UUID
+	ValuesJson   []byte
+}
+
+type DeploymentReleaseSecretSnapshot struct {
+	DeploymentID pgtype.UUID
+	ValuesJson   []byte
+	CreatedAt    pgtype.Timestamptz
 }
 
 type DeploymentRevisionPin struct {
@@ -2186,6 +2231,13 @@ type DeploymentSidecarSecretReloadSignal struct {
 	DeploymentID pgtype.UUID
 	SidecarName  string
 	Signal       string
+}
+
+type DeploymentSubmissionReceipt struct {
+	AppID        pgtype.UUID
+	AttemptID    string
+	DeploymentID pgtype.UUID
+	AcceptedAt   pgtype.Timestamptz
 }
 
 type DevBridgeSession struct {
@@ -3227,6 +3279,1429 @@ type ExecutionUsageLedger struct {
 	FinishedAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	RecordedAt   pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23Account struct {
+	ID                     pgtype.UUID
+	Email                  interface{}
+	Plan                   string
+	Status                 string
+	ProviderCustomerID     pgtype.Text
+	CreatedAt              pgtype.Timestamptz
+	DeletionRequestedAt    pgtype.Timestamptz
+	StripeSubscriptionItem pgtype.Text
+	LastQuotaWarningAt     pgtype.Timestamptz
+	PastDueAt              pgtype.Timestamptz
+	MfaEnrolledAt          pgtype.Timestamptz
+	MfaSecretEncrypted     []byte
+	MfaRecoveryCodesHash   [][]byte
+	MfaRequired            bool
+	OverageCapCents        pgtype.Int8
+	KeyGraceWindowDays     pgtype.Int4
+	EgressAllowlistExtra   int32
+}
+
+type FaasTestE696c01fd4829d23AccountCredit struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	CentsRemaining int64
+	Reason         string
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AccountPassword struct {
+	AccountID pgtype.UUID
+	Hash      string
+	UpdatedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AccountSpendSnapshot struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	GbSeconds   float64
+	EurCents    int64
+	Source      string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AlertDelivery struct {
+	ID             pgtype.UUID
+	RuleID         pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	IdempotencyKey string
+	Payload        []byte
+	Status         string
+	AttemptCount   int32
+	LastStatusCode pgtype.Int4
+	LastError      pgtype.Text
+	ObservedValue  float64
+	FiredAt        pgtype.Timestamptz
+	DeliveredAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AlertPreset struct {
+	ID                     pgtype.UUID
+	Name                   string
+	DisplayName            string
+	Description            string
+	Category               string
+	Metric                 string
+	Comparison             string
+	Threshold              float64
+	WindowSpec             string
+	DefaultCooldownMinutes int32
+	EnabledInCatalog       bool
+	MinimumPlan            string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AlertRule struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	Name                string
+	Enabled             bool
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	FailureSource       pgtype.Text
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	CooldownMinutes     int32
+	State               string
+	LastFiredAt         pgtype.Timestamptz
+	LastEvaluatedAt     pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	OrgID               pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23ApiKey struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	KeySha256     []byte
+	Label         pgtype.Text
+	LastUsedAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	Scopes        []string
+	OrgID         pgtype.UUID
+	ExpiresAt     pgtype.Timestamptz
+	Status        string
+	RevokedAt     pgtype.Timestamptz
+	RotatedFromID pgtype.UUID
+	CreatedIp     *netip.Addr
+	CreatedUa     pgtype.Text
+	ParentKeyID   pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23App struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Slug                   string
+	Type                   string
+	Runtime                pgtype.Text
+	RamMb                  int32
+	IdleTimeoutS           pgtype.Int4
+	MaxConcurrency         int32
+	Status                 string
+	CreatedAt              pgtype.Timestamptz
+	Manifest               []byte
+	GithubInstallID        pgtype.Int8
+	GithubRepoFullName     pgtype.Text
+	GithubProductionBranch pgtype.Text
+	MinInstances           int32
+	EgressAllowlist        []netip.Prefix
+	// Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).
+	AutoscaleTargetRps pgtype.Int4
+	// Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.
+	AutoscaleTargetCpuPct     pgtype.Int4
+	GithubInstallBindingID    pgtype.Text
+	GithubInstallAccountID    pgtype.UUID
+	GithubInstallLinkedAt     pgtype.Timestamptz
+	ProjectID                 pgtype.UUID
+	RootDir                   string
+	WorkloadName              string
+	WorkloadClass             string
+	StartCommand              pgtype.Text
+	StreamingEnabled          bool
+	ScalingPolicy             []byte
+	LastScaleOutAt            pgtype.Timestamptz
+	LastScaleInAt             pgtype.Timestamptz
+	RequireSigned             bool
+	NodeID                    pgtype.UUID
+	ReassignedAt              pgtype.Timestamptz
+	OrgID                     pgtype.UUID
+	MigratedAt                pgtype.Timestamptz
+	WarmSnapshotEnabled       bool
+	WarmSnapshotMinRequests   int32
+	WarmSnapshotMinMs         int32
+	EvictionPriority          string
+	RequireAuthn              bool
+	PublicAuthMode            string
+	PublicAuthBasic           []byte
+	WebsocketEnabled          bool
+	AuthDefaultFlippedAt      pgtype.Timestamptz
+	OverflowNode              pgtype.UUID
+	RouteMetricsEnabled       bool
+	PreviewOfSlug             pgtype.Text
+	PreviewPrNumber           pgtype.Int4
+	PreviewPrState            pgtype.Text
+	PreviewExpiresAt          pgtype.Timestamptz
+	CorsDefaultEnabled        bool
+	CorsDefaultOrigins        []string
+	MaintenanceMode           bool
+	PublicAuthIpAllowlist     []netip.Prefix
+	StaticEgressIp            *netip.Addr
+	StaticEgressIpSetAt       pgtype.Timestamptz
+	PreviewDestroyCommentedAt pgtype.Timestamptz
+	AppProtocol               string
+}
+
+type FaasTestE696c01fd4829d23AppEnv struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Key       string
+	Value     string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	OrgID     pgtype.UUID
+	Scope     string
+}
+
+type FaasTestE696c01fd4829d23AppError struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	Fingerprint   string
+	Route         string
+	HttpStatus    int32
+	ErrorClass    string
+	SampleMessage string
+	Count         int64
+	RequestCount  int64
+	FirstSeenAt   pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AppErrorRequest struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Fingerprint   string
+	RequestID     pgtype.UUID
+	ReceivedAt    pgtype.Timestamptz
+	Route         string
+	HttpStatus    int32
+	ErrorClass    string
+	SampleMessage string
+	DeploymentID  pgtype.UUID
+	HeadersSample []byte
+	Redactions    []string
+}
+
+type FaasTestE696c01fd4829d23AppOpenapiDoc struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Doc            []byte
+	DocSha256      []byte
+	ByteSize       int32
+	EndpointCount  int32
+	Source         string
+	OpenapiVersion string
+	CapturedAt     pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AppRegistryCredential struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Registry          string
+	Username          string
+	PasswordEncrypted []byte
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	LastUsedAt        pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AppSecret struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Key        string
+	Ciphertext []byte
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	OrgID      pgtype.UUID
+	Kid        pgtype.Text
+	Scope      string
+	ValueHash  pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23AppTrustedSigner struct {
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	SignerName       string
+	CosignPublicKey  []byte
+	AddedAt          pgtype.Timestamptz
+	AddedByAccountID pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23AppWebhook struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	TargetUrl    string
+	SecretSealed []byte
+	EventFilter  []string
+	RetryPolicy  string
+	Enabled      bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AppWebhookDelivery struct {
+	ID               pgtype.UUID
+	WebhookID        pgtype.UUID
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Event            string
+	Payload          []byte
+	Attempt          int32
+	Status           string
+	LastError        pgtype.Text
+	LastResponseCode pgtype.Int4
+	NextAttemptAt    pgtype.Timestamptz
+	DeliveredAt      pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23AuditLog struct {
+	ID           pgtype.UUID
+	Kind         string
+	AccountID    pgtype.UUID
+	AccountEmail pgtype.Text
+	Actor        pgtype.Text
+	ReceivedAt   pgtype.Timestamptz
+	Data         []byte
+}
+
+type FaasTestE696c01fd4829d23Build struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	Kind         string
+	SourceBytes  int64
+	Status       string
+	FailureClass pgtype.Text
+	LogPath      pgtype.Text
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	EnqueuedAt   pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23BuildProvenance struct {
+	ID               pgtype.UUID
+	BuildID          pgtype.UUID
+	BuildkitVersion  pgtype.Text
+	RailpackVersion  pgtype.Text
+	BaseDigest       pgtype.Text
+	SourceSha256     string
+	SourceUrl        pgtype.Text
+	CommitSha        pgtype.Text
+	Plan             pgtype.Text
+	RunnerDigest     pgtype.Text
+	BuilderNodeID    pgtype.Text
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	SbomStorageKey   pgtype.Text
+	FrameworkVersion pgtype.Text
+}
+
+// Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.
+type FaasTestE696c01fd4829d23BuilderUsage struct {
+	BuildID    pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	FinishedAt pgtype.Timestamptz
+	// build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-048.
+	Kind    string
+	Seconds int64
+	OrgID   pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23CliAuthCode struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	Status     string
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23ClusterSigningKey struct {
+	ID           int32
+	KeyID        string
+	PublicKeyPem string
+	SealedBlob   []byte
+	CreatedAt    pgtype.Timestamptz
+	RotatedAt    pgtype.Timestamptz
+	RetiredAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23ComputeNode struct {
+	ID                 pgtype.UUID
+	Name               string
+	TargetUrl          string
+	Vpcpus             int32
+	MemMb              int32
+	MaxConcurrency     int32
+	AdmissionCeilingMb int32
+	Active             bool
+	LastHeartbeatAt    pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	// Locality label for the chooser tie-break (pkg/sched/placement.go). Free-form text; nullable so pre-00072 rows accept the schema. The seeded default-local row is backfilled to 'local'. ADR-025.
+	Region pgtype.Text
+	// Finer locality inside region. Currently informational; nullable. ADR-025.
+	Zone            pgtype.Text
+	ScheddTargetUrl pgtype.Text
+	VcpuBudget      int32
+	PublicIp        *netip.Addr
+	PublicIpSetAt   pgtype.Timestamptz
+	// release_bundles.git_sha this node claims membership in (PR-3a). NULL = pre-bundle row. Populated by PR-3 release install + PR-2 renderer.
+	ReleaseID pgtype.Text
+	// sha256:<64hex> hash of the manifest the PR-2 renderer materialized on this node (PR-3a). NULL = pre-manifest row. Compared against release_bundles.manifest_hash by PR-4 doctor.
+	ManifestHash pgtype.Text
+	// PEM-encoded leaf certificate for this node (PR-3a). NULL = pre-PR-X or pre-cmd/hostage-gen row. Doctor reads to verify cert on disk matches cert_fingerprint.
+	HostCertificate pgtype.Text
+	// sha256:<64hex> fingerprint of host_certificate (PR-3a). NULL until secrets init (PR-X) or cmd/hostage-gen stamps it. PR-3 bundle install + PR-4 doctor compare against pkg/pki.LoadCertificateFingerprint at mTLS handshake time.
+	CertFingerprint pgtype.Text
+	// per-node role label: control-plane | compute-node (PR-3a). Populated from manifest.fleet.hosts[].role by PR-2 renderer. NULL = pre-manifest row.
+	Role pgtype.Text
+	// monotonic counter bumped by PR-4 doctor on per-node inconsistency detection (PR-3a). Default 0; never decreases.
+	Generation       pgtype.Int4
+	GatewayTargetUrl pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23ComputeNodeHeartbeat struct {
+	ID              int64
+	NodeID          pgtype.UUID
+	ReceivedAt      pgtype.Timestamptz
+	LastHeartbeatAt pgtype.Timestamptz
+	Source          string
+	CpuPct60s       pgtype.Numeric
+	DiskUsedBytes   pgtype.Int8
+}
+
+type FaasTestE696c01fd4829d23ComputeNodeKey struct {
+	ComputeNodeID pgtype.UUID
+	KeyID         string
+	PublicKeyPem  string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23ConsumerKey struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	Prefix       string
+	HashedSecret []byte
+	Scopes       []string
+	ExpiresAt    pgtype.Timestamptz
+	LastUsedAt   pgtype.Timestamptz
+	RevokedAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23CorsPreset struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Name             string
+	Description      pgtype.Text
+	AllowOrigins     []string
+	AllowMethods     []string
+	AllowHeaders     []string
+	ExposeHeaders    []string
+	AllowCredentials bool
+	MaxAgeSeconds    int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23CreditLedger struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	CreditID          pgtype.UUID
+	DeltaCents        int64
+	Reason            string
+	Actor             string
+	CreatedAt         pgtype.Timestamptz
+	ProviderInvoiceID pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23Cron struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	Schedule    string
+	Path        string
+	Enabled     bool
+	LastFiredAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	OrgID       pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23CronFireNowRequest struct {
+	ID           pgtype.UUID
+	CronID       pgtype.UUID
+	AccountID    pgtype.UUID
+	RequestedAt  pgtype.Timestamptz
+	Status       string
+	InvocationID pgtype.UUID
+	Error        pgtype.Text
+	FinishedAt   pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23CustomDomain struct {
+	Domain         interface{}
+	AppID          pgtype.UUID
+	VerifiedAt     pgtype.Timestamptz
+	ChallengeToken string
+	AppIDRedirect  pgtype.UUID
+	OrgID          pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23DataUpstream struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Source           string
+	Scope            string
+	Kind             string
+	Host             string
+	Port             int32
+	HostRedactedHash string
+	DeclaredRegion   pgtype.Text
+	LastRttMs        pgtype.Int4
+	LastProbedAt     pgtype.Timestamptz
+	LastSeenAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	DeploymentScope  string
+}
+
+type FaasTestE696c01fd4829d23DataUpstreamProbe struct {
+	ID               pgtype.UUID
+	HostRedactedHash string
+	Region           string
+	Kind             string
+	SampledAt        pgtype.Timestamptz
+	RttMs            pgtype.Int4
+	Ok               bool
+	ErrorClass       pgtype.Text
+	ProbeNode        pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23DataUpstreamProbesDefault struct {
+	ID               pgtype.UUID
+	HostRedactedHash string
+	Region           string
+	Kind             string
+	SampledAt        pgtype.Timestamptz
+	RttMs            pgtype.Int4
+	Ok               bool
+	ErrorClass       pgtype.Text
+	ProbeNode        pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23DebugRegressionObservation struct {
+	AppID            pgtype.UUID
+	DeploymentID     pgtype.UUID
+	Route            string
+	P95Ms            int32
+	P95BaseMs        int32
+	AffectedCount    int32
+	RegressionFactor pgtype.Numeric
+	FirstDetectedAt  pgtype.Timestamptz
+	LastDetectedAt   pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23Deployment struct {
+	ID                     pgtype.UUID
+	AppID                  pgtype.UUID
+	BuildID                pgtype.UUID
+	ImageDigest            string
+	RootfsPath             pgtype.Text
+	RootfsBytes            pgtype.Int8
+	Status                 string
+	Error                  pgtype.Text
+	CreatedAt              pgtype.Timestamptz
+	Kind                   string
+	SourcePath             pgtype.Text
+	SourceBytes            pgtype.Int8
+	Handler                pgtype.Text
+	LogPath                pgtype.Text
+	ErrorCode              pgtype.Text
+	RootfsKey              string
+	SourceUrl              pgtype.Text
+	CommitSha              pgtype.Text
+	OverrideEntrypoint     []string
+	OverrideCmd            []string
+	OverrideEnv            []byte
+	OverrideEnvSecrets     []byte
+	OverridePort           pgtype.Int4
+	OverrideHealthcheck    []byte
+	Sidecars               []byte
+	MinInstances           int32
+	ScanResult             []byte
+	ScanStatus             pgtype.Text
+	ScannedAt              pgtype.Timestamptz
+	OverrideLivenessProbe  []byte
+	ParkedReason           pgtype.Text
+	ParkedAt               pgtype.Timestamptz
+	TrafficPercent         int32
+	Scope                  string
+	SecretFindings         []byte
+	SecretScannedAt        pgtype.Timestamptz
+	ErrorHint              pgtype.Text
+	ErrorWhy               pgtype.Text
+	ErrorFix               pgtype.Text
+	ErrorRelevantLogs      []byte
+	StageState             []byte
+	DeployedByUserID       pgtype.UUID
+	DeployedVia            string
+	DeployedFromIp         *netip.Addr
+	PusherLogin            pgtype.Text
+	Reason                 pgtype.Text
+	Tag                    pgtype.Text
+	DeployedBy             pgtype.Text
+	PrNumber               pgtype.Int4
+	RollbackOn5xx          bool
+	FirstWakeAt            pgtype.Timestamptz
+	First5xxWindowEndsAt   pgtype.Timestamptz
+	First5xxCount          int32
+	LastAutoRollbackAt     pgtype.Timestamptz
+	LastAutoRollbackReason pgtype.Text
+	LivenessRestartCount   int32
+}
+
+type FaasTestE696c01fd4829d23DeploymentLog struct {
+	DeploymentID pgtype.UUID
+	Seq          int64
+	Stream       string
+	Line         string
+	WrittenAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23DeploymentOpenapiDoc struct {
+	DeploymentID pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Doc          []byte
+	DocSha256    []byte
+	ByteSize     int32
+	Source       string
+	Truncated    bool
+	CapturedAt   pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23DeploymentOpenapiSnapshot struct {
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Snapshot      []byte
+	Sha256        string
+	SchemaVersion int32
+	CapturedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23DeploymentSidecarLayer struct {
+	DeploymentID  pgtype.UUID
+	SidecarName   string
+	StorageKey    string
+	Bytes         int64
+	ContentDigest string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23DomainDoctorObservation struct {
+	Domain          interface{}
+	SurfaceID       pgtype.UUID
+	ObservedAt      pgtype.Timestamptz
+	DnsRecordFound  bool
+	PointsToGregale bool
+	CaaPermits      pgtype.Bool
+	Ipv6Conflict    bool
+	ObservedTarget  pgtype.Text
+	ObservedAaaa    pgtype.Text
+	CaaObserved     pgtype.Text
+	CertState       string
+	CertNotAfter    pgtype.Timestamptz
+	LastError       pgtype.Text
+	DnsCheckedAt    pgtype.Timestamptz
+	CertCheckedAt   pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23EdgeRule struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	MatchHost    string
+	MatchPath    string
+	MatchMethods []string
+	Priority     int16
+	Enabled      bool
+	Kind         string
+	Action       []byte
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	ValidateMode string
+}
+
+type FaasTestE696c01fd4829d23EgressPolicy struct {
+	ID                                 string
+	PublicIface                        string
+	MasqueradeCidr                     string
+	ChangedAt                          pgtype.Timestamptz
+	OverlayExceptions                  []string
+	DangerAcceptRfc1918LateralMovement bool
+}
+
+type FaasTestE696c01fd4829d23Event struct {
+	ID             int64
+	At             pgtype.Timestamptz
+	Actor          string
+	Kind           string
+	Subject        pgtype.UUID
+	Data           []byte
+	ActorAccountID pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23GdprRequest struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AccountEmail string
+	Action       string
+	RequestedAt  pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+	OrgID        pgtype.UUID
+	RequestID    pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23GithubInstallation struct {
+	AccountID          pgtype.UUID
+	InstallationID     int64
+	DefaultBranch      string
+	SealedInstallToken []byte
+	TokenExpiresAt     pgtype.Timestamptz
+	SealedAt           pgtype.Timestamptz
+	AuditGithubLogin   string
+	OrgID              pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23GithubWebhookSecret struct {
+	InstallationID int64
+	SecretValue    []byte
+	UpgradedAt     pgtype.Timestamptz
+	UpgradedBy     string
+}
+
+type FaasTestE696c01fd4829d23GooseDbVersion struct {
+	ID        int32
+	VersionID int64
+	IsApplied bool
+	Tstamp    pgtype.Timestamp
+}
+
+type FaasTestE696c01fd4829d23IdempotencyKey struct {
+	Key            string
+	AccountID      pgtype.UUID
+	ResponseStatus int32
+	ResponseBody   []byte
+	CreatedAt      pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23Instance struct {
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	DeploymentID       pgtype.UUID
+	State              string
+	Netns              pgtype.Text
+	GuestUid           pgtype.Int4
+	HostIp             *netip.Addr
+	RamMb              int32
+	StartedAt          pgtype.Timestamptz
+	LastRequestAt      pgtype.Timestamptz
+	ParkedAt           pgtype.Timestamptz
+	TerminalAt         pgtype.Timestamptz
+	NodeID             pgtype.UUID
+	WakeID             pgtype.UUID
+	OrgID              pgtype.UUID
+	MigratedFromNodeID pgtype.UUID
+	MigratedAt         pgtype.Timestamptz
+	LeaseToken         pgtype.Text
+	FrameworkReadyAt   pgtype.Timestamptz
+	TailCount          int32
+	RequestCount       int64
+	Kind               string
+	JobID              pgtype.UUID
+	Mode               string
+}
+
+type FaasTestE696c01fd4829d23Invocation struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Source         string
+	State          string
+	Payload        []byte
+	Headers        []byte
+	DueAt          pgtype.Timestamptz
+	Method         string
+	Path           string
+	CronID         pgtype.UUID
+	ScheduledAt    pgtype.Timestamptz
+	AckUrl         pgtype.Text
+	Result         []byte
+	LeaseExpiresAt pgtype.Timestamptz
+	ReceivedAt     pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+	InstanceID     pgtype.Text
+	Attempts       int32
+	LastError      pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	OrgID          pgtype.UUID
+	Outcome        pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23InvocationsPendingPerApp struct {
+	AppID   pgtype.UUID
+	Source  string
+	Pending int64
+}
+
+type FaasTestE696c01fd4829d23Invoice struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	Provider          string
+	ProviderInvoiceID string
+	Number            string
+	Status            string
+	PeriodStart       pgtype.Timestamptz
+	PeriodEnd         pgtype.Timestamptz
+	SubtotalCents     int64
+	TaxCents          int64
+	TotalCents        int64
+	AmountPaidCents   int64
+	Currency          string
+	PdfAvailable      bool
+	HostedUrl         string
+	Raw               []byte
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	OrgID             pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23Job struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	Kind           string
+	Name           string
+	ImageRef       string
+	RamMb          int32
+	TaskTimeoutS   int32
+	MaxParallelism int32
+	RetryMax       int32
+	EnvOverrides   []byte
+	Status         string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23JobRun struct {
+	ID              pgtype.UUID
+	JobID           pgtype.UUID
+	AccountID       pgtype.UUID
+	TriggerKind     string
+	EnvOverrides    []byte
+	Tasks           int32
+	Parallelism     int32
+	RetryMax        pgtype.Int4
+	TaskTimeoutS    pgtype.Int4
+	AggregateStatus string
+	TasksSucceeded  int32
+	TasksFailed     int32
+	TasksCancelled  int32
+	TasksRunning    int32
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23JobTask struct {
+	RunID        pgtype.UUID
+	TaskIndex    int32
+	Status       string
+	Attempt      int32
+	InstanceID   pgtype.UUID
+	ErrorClass   pgtype.Text
+	ErrorMessage pgtype.Text
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23LoginToken struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23MeterdTenantSurfaceCertExpiryState struct {
+	TenantSurfaceID          pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Hostname                 string
+	LastObservedCertNotAfter pgtype.Timestamptz
+	LastWalkStatus           string
+	LastRefreshedAt          pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23MirrorInvocationResult struct {
+	ID                 pgtype.UUID
+	MirrorRuleID       pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+	MirrorDeploymentID pgtype.UUID
+	InstanceID         pgtype.Text
+	SourceInstanceID   pgtype.Text
+	StatusCode         pgtype.Int4
+	SourceStatusCode   pgtype.Int4
+	LatencyMs          pgtype.Int4
+	SourceLatencyMs    pgtype.Int4
+	BodyHash           []byte
+	SourceBodyHash     []byte
+	SchemaHash         []byte
+	SourceSchemaHash   []byte
+	StatusDiff         bool
+	SchemaDiff         bool
+	BodyDiff           bool
+	Crashed            bool
+	RequestID          string
+	CompletedAt        pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23MirrorRule struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+	MirrorDeploymentID pgtype.UUID
+	Percent            int32
+	Enabled            bool
+	IncludeBody        bool
+	RedactHeaders      []string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23NodeJoinJob struct {
+	ID             pgtype.UUID
+	NodeName       string
+	DatabaseNode   string
+	SshHost        string
+	ManifestHash   string
+	ReleaseGitSha  string
+	Phase          string
+	Attempt        int32
+	LastError      pgtype.Text
+	LeaseOwner     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23OauthLink struct {
+	Provider        string
+	ProviderSubject string
+	AccountID       pgtype.UUID
+	Email           string
+	EmailVerified   bool
+	CreatedAt       pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23OidcExchangedToken struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	TokenHash []byte
+	ExpiresAt pgtype.Timestamptz
+	IssuerUrl string
+	Subject   string
+	Audience  []string
+	Jti       pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23OidcTrustPolicy struct {
+	AccountID      pgtype.UUID
+	IssuerUrl      string
+	JwksUrl        string
+	Audience       []string
+	SubjectPattern pgtype.Text
+	Algorithms     []string
+	RequiredClaims []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	AuditLogin     string
+}
+
+type FaasTestE696c01fd4829d23OperatorIntent struct {
+	ID                 pgtype.UUID
+	Kind               string
+	TargetID           string
+	AccountID          pgtype.UUID
+	ActorID            pgtype.UUID
+	Reason             pgtype.Text
+	Metadata           []byte
+	Status             string
+	RequestedAt        pgtype.Timestamptz
+	StartedAt          pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	Error              pgtype.Text
+	SnapIdsMarkedStale []string
+}
+
+type FaasTestE696c01fd4829d23Org struct {
+	ID                     pgtype.UUID
+	Slug                   string
+	Name                   string
+	PersonalOrg            bool
+	PersonalOwnerAccountID pgtype.UUID
+	Plan                   string
+	Status                 string
+	ProviderCustomerID     pgtype.Text
+	StripeSubscriptionItem pgtype.Text
+	DeletedPending         bool
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23OrgInvitation struct {
+	ID                 pgtype.UUID
+	OrgID              pgtype.UUID
+	Email              interface{}
+	Role               string
+	TokenHash          []byte
+	InvitedByAccountID pgtype.UUID
+	ExpiresAt          pgtype.Timestamptz
+	ConsumedAt         pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	AcceptingAccountID pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23OrgMembership struct {
+	OrgID              pgtype.UUID
+	AccountID          pgtype.UUID
+	Role               string
+	InvitedByAccountID pgtype.UUID
+	JoinedAt           pgtype.Timestamptz
+	RemovedAt          pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23PaddleOverageDedupe struct {
+	AccountID       pgtype.UUID
+	Month           pgtype.Timestamptz
+	PushedAt        pgtype.Timestamptz
+	WindowStart     pgtype.Timestamptz
+	State           string
+	ClaimedAt       pgtype.Timestamptz
+	ClaimedBy       pgtype.Text
+	OrgID           pgtype.UUID
+	PushedMbSeconds pgtype.Int8
+}
+
+type FaasTestE696c01fd4829d23PgRatelimitCounter struct {
+	Scope      string
+	SubjectID  pgtype.UUID
+	Plan       string
+	Tokens     int64
+	LastRefill pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23Project struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	Slug             string
+	RepoFullName     pgtype.Text
+	ProductionBranch pgtype.Text
+	InstallID        pgtype.Int8
+	ScanSource       string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	OrgID            pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23ProvisionedStaticEgressIp struct {
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+	CreatedAt  pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23RecentBuildClaim struct {
+	AccountID pgtype.UUID
+	ClaimedAt pgtype.Timestamptz
+	BuildID   pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23ReleaseBundle struct {
+	ID           pgtype.UUID
+	GitSha       string
+	ManifestHash string
+	DaemonHashes []byte
+	CreatedAt    pgtype.Timestamptz
+	AppliedAt    pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23RequestTelemetry struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	TraceID      pgtype.Text
+	SpansSummary []byte
+	ReceivedAt   pgtype.Timestamptz
+	Count        int32
+}
+
+type FaasTestE696c01fd4829d23RequestTelemetry202610 struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	TraceID      pgtype.Text
+	SpansSummary []byte
+	ReceivedAt   pgtype.Timestamptz
+	Count        int32
+}
+
+type FaasTestE696c01fd4829d23RequestTelemetry202611 struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	TraceID      pgtype.Text
+	SpansSummary []byte
+	ReceivedAt   pgtype.Timestamptz
+	Count        int32
+}
+
+type FaasTestE696c01fd4829d23RequestTelemetry202612 struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	TraceID      pgtype.Text
+	SpansSummary []byte
+	ReceivedAt   pgtype.Timestamptz
+	Count        int32
+}
+
+type FaasTestE696c01fd4829d23RequestTelemetryDefault struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	Method       string
+	Status       int32
+	LatencyMs    int32
+	ColdBoot     bool
+	TraceID      pgtype.Text
+	SpansSummary []byte
+	ReceivedAt   pgtype.Timestamptz
+	Count        int32
+}
+
+type FaasTestE696c01fd4829d23RuntimeConfigEntry struct {
+	ID             pgtype.UUID
+	ConfigKey      string
+	Scope          string
+	ScopeID        string
+	DesiredValue   []byte
+	EffectiveValue []byte
+	Version        int64
+	ApplyMode      string
+	Status         string
+	LastError      pgtype.Text
+	ActorID        pgtype.UUID
+	Reason         pgtype.Text
+	UpdatedAt      pgtype.Timestamptz
+	AppliedAt      pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23RuntimeConfigOperation struct {
+	ID             pgtype.UUID
+	ConfigKey      string
+	Scope          string
+	ScopeID        string
+	ConfigVersion  int64
+	DesiredValue   []byte
+	EffectiveValue []byte
+	ApplyMode      string
+	Status         string
+	Phase          string
+	Error          pgtype.Text
+	ActorID        pgtype.UUID
+	Reason         string
+	TargetCount    int32
+	AppliedCount   int32
+	FailedCount    int32
+	RequestedAt    pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23RuntimeConfigRevision struct {
+	ID        int64
+	EntryID   pgtype.UUID
+	ConfigKey string
+	Scope     string
+	ScopeID   string
+	Version   int64
+	OldValue  []byte
+	NewValue  []byte
+	ActorID   pgtype.UUID
+	Reason    pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23Session struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	IssuedIp    *netip.Addr
+	IssuedUa    pgtype.Text
+	IssuedAt    pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	BindingHash pgtype.Text
+}
+
+type FaasTestE696c01fd4829d23Snapshot struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	FcVersion    string
+	MemBytes     int64
+	DiskBytes    int64
+	Stale        bool
+	CreatedAt    pgtype.Timestamptz
+	StorageKey   string
+	Tier         string
+}
+
+// Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.
+type FaasTestE696c01fd4829d23SnapshotStorageDaily struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Day       pgtype.Date
+	// Σ snapshots.mem_bytes + snapshots.disk_bytes (latest non-stale row per app per day). ADR-049 §B.3. Informational.
+	SnapshotBytes int64
+	// Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.
+	LayerBytes int64
+	ComputedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23StatusIncident struct {
+	ID         int64
+	Component  string
+	Severity   string
+	Message    string
+	PostedAt   pgtype.Timestamptz
+	ResolvedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23StripePushDedupe struct {
+	AccountID pgtype.UUID
+	Hour      pgtype.Timestamptz
+	PushedAt  pgtype.Timestamptz
+	OrgID     pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23TenantHostname struct {
+	ID             pgtype.UUID
+	SurfaceID      pgtype.UUID
+	Hostname       interface{}
+	ChallengeToken string
+	VerifiedAt     pgtype.Timestamptz
+	LastCheckAt    pgtype.Timestamptz
+	LastError      pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23TenantSurface struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Name          interface{}
+	CertKind      string
+	Status        string
+	CertState     string
+	CertNotAfter  pgtype.Timestamptz
+	CertLastError pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23Trigger struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Kind                 string
+	Slug                 string
+	Enabled              bool
+	Config               []byte
+	BatchSizeMax         int32
+	BatchWindowMs        int32
+	MaxAttempts          int32
+	CronID               pgtype.UUID
+	Source               pgtype.Text
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	PayloadMaxBytes      int32
+	BrokerPoisonStrategy string
+	FilterCriteria       []byte
+}
+
+type FaasTestE696c01fd4829d23TriggerDeadLetter struct {
+	RecordID  pgtype.UUID
+	TriggerID pgtype.UUID
+	Reason    string
+	RoutedTo  string
+	Detail    []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23TriggerRecord struct {
+	ID               pgtype.UUID
+	TriggerID        pgtype.UUID
+	ItemIdentifier   string
+	Payload          []byte
+	Headers          []byte
+	Metadata         []byte
+	State            string
+	Attempts         int32
+	NextFireAt       pgtype.Timestamptz
+	ReceivedAt       pgtype.Timestamptz
+	LastError        pgtype.Text
+	LastDispatchedAt pgtype.Timestamptz
+}
+
+// Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.
+type FaasTestE696c01fd4829d23UsageDaily struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Day        pgtype.Date
+	MbSeconds  int64
+	Requests   int64
+	CpuUsec    int64
+	TxBytes    int64
+	NetTxBytes int64
+	NetRxBytes int64
+	// Per-day sum of usage_minutes.cold_boot_count for this (account, app, day). ADR-048. Informational — not billed.
+	ColdBootCount  int64
+	BuilderSeconds int64
+	// Timestamp the meterd cron last wrote this row. Stamped on every ON CONFLICT update so a stuck cron is visible in /v1/usage/daily metadata.
+	RolledUpAt  pgtype.Timestamptz
+	OrgID       pgtype.UUID
+	TailSeconds int64
+}
+
+type FaasTestE696c01fd4829d23UsageMinute struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	InstanceID pgtype.UUID
+	Minute     pgtype.Timestamptz
+	MbSeconds  int64
+	Requests   int32
+	// Cumulative host cgroup CPU-µs consumed by the instance during this minute. Source: vmmd cpustats.Cache (cpu.stat usage_usec delta) → schedd instancestats.Poller → meterd Sampler. Measurement only — billing is on plan RAM. issue #279 / PR-B.
+	CpuUsec int64
+	// Cumulative HTTP response body bytes the gateway forwarded for this instance in this minute. Source: pkg/gateway/handler.go statusRecorder.Bytes → per-(instance, minute) ring buffer → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed.
+	TxBytes int64
+	// Cumulative byte delta on root-side vethHost.rx_bytes for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache reading /sys/class/net/<vethHost>/statistics/rx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).
+	NetTxBytes int64
+	// Cumulative byte delta on root-side vethHost.tx_bytes (root→guest = ingress) for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache TX path reading /sys/class/net/<vethHost>/statistics/tx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-048. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).
+	NetRxBytes int64
+	// Per-minute count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled by meterd Sampler.SampleAndRoll. ADR-048. Informational — not billed. Idempotent on a redelivered tick within the same minute (only the transition counts).
+	ColdBootCount int32
+	// Billable builder VM seconds (2-vCPU / 2048-MB per spec §4.5), written once per build at build completion via state.Store.AppendBuilderUsage keyed by build_id. ADR-048. Informational — not billed. NOT counted in CountsForRAM() — runtime GB-RAM-hour billing is unchanged.
+	BuilderSeconds int64
+	// Build kind parallel to builds.kind (railpack / dockerfile / tarball); 'none' for non-build rows. ADR-048. Informational — not billed.
+	BuilderKind string
+	OrgID       pgtype.UUID
+	TailSeconds int64
+	MeterKind   string
+	JobID       pgtype.UUID
+}
+
+type FaasTestE696c01fd4829d23UsageMonthly struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Month          pgtype.Interval
+	MbSeconds      int64
+	CpuUsec        int64
+	Requests       int64
+	TxBytes        int64
+	NetTxBytes     int64
+	NetRxBytes     int64
+	ColdBootCount  int64
+	BuilderSeconds int64
+}
+
+type FaasTestE696c01fd4829d23WarmHint struct {
+	AppID     pgtype.UUID
+	NodeID    pgtype.UUID
+	WrittenAt pgtype.Timestamptz
+}
+
+type FaasTestE696c01fd4829d23WebhookDelivery struct {
+	Provider   string
+	DeliveryID string
+	ReceivedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
 }
 
 type FeatureFlagVersion struct {
@@ -6627,6 +8102,12 @@ type ProjectEnvironmentPromotion struct {
 	SourceQualificationID        pgtype.UUID
 }
 
+type ProjectEnvironmentPromotionControl struct {
+	PromotionID pgtype.UUID
+	RequestID   string
+	Payload     []byte
+}
+
 type ProjectEnvironmentPromotionFeatureFlag struct {
 	PromotionID            pgtype.UUID
 	SourceSnapshot         []byte
@@ -6635,6 +8116,42 @@ type ProjectEnvironmentPromotionFeatureFlag struct {
 	PreviousTargetHash     string
 	TargetVersion          int64
 	RollbackVersion        int64
+}
+
+type ProjectEnvironmentPromotionHealth struct {
+	PromotionID   pgtype.UUID
+	Generation    int64
+	Phase         string
+	Payload       []byte
+	LeaseToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	NextCheckAt   pgtype.Timestamptz
+	LastClaimedAt pgtype.Timestamptz
+}
+
+type ProjectEnvironmentPromotionMigration struct {
+	PromotionID        pgtype.UUID
+	TaskID             pgtype.UUID
+	RuntimeFingerprint string
+	PreparedLeaseToken pgtype.UUID
+	RuntimeNodeID      pgtype.UUID
+	RuntimeInstanceID  pgtype.UUID
+	RuntimeLeaseToken  pgtype.UUID
+	DestroyedAt        pgtype.Timestamptz
+}
+
+type ProjectEnvironmentPromotionMigrationRecovery struct {
+	PromotionID pgtype.UUID
+	RequestID   string
+	RequestHash string
+	Status      string
+	Payload     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ProjectEnvironmentPromotionReleaseConfig struct {
+	PromotionID pgtype.UUID
+	Payload     []byte
 }
 
 type ProjectEnvironmentPromotionWorkload struct {
@@ -6742,10 +8259,135 @@ type ProjectEnvironmentWorkloadSpec struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ProjectMigrationContract struct {
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	AttemptID            string
+	AppID                pgtype.UUID
+	WorkloadAttemptID    string
+	ExpansionTaskID      pgtype.UUID
+	PreparedLeaseToken   pgtype.UUID
+	RuntimeFingerprint   pgtype.Text
+	Command              []string
+	CommandHash          string
+	TaskID               pgtype.UUID
+	RequestID            pgtype.Text
+	Generation           pgtype.Int8
+	ReleaseID            pgtype.UUID
+	ConfigVersion        pgtype.Int8
+	ConfigHash           pgtype.Text
+	RetiredDeploymentIds []pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+}
+
+type ProjectMigrationPendingContract struct {
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	AttemptID            string
+	AppID                pgtype.UUID
+	WorkloadAttemptID    string
+	ExpansionTaskID      pgtype.UUID
+	PreparedLeaseToken   pgtype.UUID
+	RuntimeFingerprint   pgtype.Text
+	Command              []string
+	CommandHash          string
+	TaskID               pgtype.UUID
+	RequestID            pgtype.Text
+	Generation           pgtype.Int8
+	ReleaseID            pgtype.UUID
+	ConfigVersion        pgtype.Int8
+	ConfigHash           pgtype.Text
+	RetiredDeploymentIds []pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+}
+
+type ProjectMigrationRecovery struct {
+	AccountID            pgtype.UUID
+	AttemptID            string
+	ProjectID            pgtype.UUID
+	RequestID            string
+	RequestHash          string
+	TaskID               pgtype.UUID
+	Generation           int64
+	ReplacementAttemptID string
+	ReplacementReleaseID pgtype.UUID
+	ConfigVersion        int64
+	ConfigHash           string
+	RuntimeFingerprints  []byte
+	EvidenceHash         string
+	ResolvedAt           pgtype.Timestamptz
+}
+
+type ProjectMigrationRetiredDeployment struct {
+	DeploymentID interface{}
+}
+
+type ProjectMigrationTaskAdmission struct {
+	ID pgtype.UUID
+}
+
+type ProjectPromotionHealthWork struct {
+	PromotionID   pgtype.UUID
+	AccountID     pgtype.UUID
+	ProjectSlug   string
+	ToEnvironment string
+	NextCheckAt   pgtype.Timestamptz
+	LastClaimedAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	Urgent        pgtype.Bool
+}
+
+type ProjectPromotionMigrationResolvedTask struct {
+	TaskID pgtype.UUID
+}
+
+type ProjectPromotionWorkerTarget struct {
+	PromotionID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectReleaseAddition struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	AttemptID   string
+	Fingerprint string
+	Dormant     bool
+}
+
+type ProjectReleaseCanary struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	AttemptID   string
+	Policy      []byte
+	Status      string
+	WorkerAppID pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ProjectReleaseConfigIntent struct {
+	AccountID pgtype.UUID
+	AttemptID string
+	Payload   []byte
+}
+
 type ProjectReleaseMember struct {
 	ReleaseID    pgtype.UUID
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
+}
+
+type ProjectReleaseSecretBundle struct {
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	RequestID    string
+	RequestHash  string
+	ValuesJson   []byte
+	ResponseJson []byte
+	CreatedAt    pgtype.Timestamptz
 }
 
 type ProjectReleaseSet struct {
@@ -6757,6 +8399,52 @@ type ProjectReleaseSet struct {
 	TtlSeconds      int32
 	ExpiresAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectReleaseWorkerDrain struct {
+	InstanceID  pgtype.UUID
+	RequestedAt pgtype.Timestamptz
+}
+
+type ProjectSubmission struct {
+	AccountID   pgtype.UUID
+	AttemptID   string
+	Fingerprint string
+	Payload     []byte
+	Status      string
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ProjectWorkerCanaryTarget struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectWorkerJobEvidence struct {
+	InvocationID     pgtype.UUID
+	ReplayGeneration int64
+	Attempt          int32
+	AppID            pgtype.UUID
+	BindingID        pgtype.UUID
+	DeploymentID     pgtype.UUID
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	Outcome          string
+	QueueDelayMs     int64
+}
+
+type ProjectWorkerPinnedTarget struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectWorkerReleasePin struct {
+	RootInvocationID pgtype.UUID
+	AppID            pgtype.UUID
+	BindingID        pgtype.UUID
+	ReleaseID        pgtype.UUID
+	DeploymentID     pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
 }
 
 type ProvisionedStaticEgressIp struct {
@@ -6797,6 +8485,22 @@ type ReleaseBundle struct {
 	DaemonHashes []byte
 	CreatedAt    pgtype.Timestamptz
 	AppliedAt    pgtype.Timestamptz
+}
+
+type ReleaseSecretKeyRetirement struct {
+	Kid       string
+	RetiredAt pgtype.Timestamptz
+}
+
+type ReleaseSecretKeyRetirementFence struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ReleaseSecretRekeyDocument struct {
+	Kind    string
+	ID      interface{}
+	Payload []byte
 }
 
 type RequestAuditEvent struct {

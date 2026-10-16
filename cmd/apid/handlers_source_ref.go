@@ -261,7 +261,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !req.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !req.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -351,7 +354,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	// Reload the deployment row so the response carries the
 	// canonical wire shape (mirrors createDeployment's
 	// LatestDeployment re-read).
-	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return

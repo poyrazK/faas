@@ -17,6 +17,9 @@ def _get_kwargs(
     *,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -24,6 +27,12 @@ def _get_kwargs(
     params["from"] = from_
 
     params["sync_config"] = sync_config
+
+    params["verify"] = verify
+
+    params["migrate"] = migrate
+
+    params["workers"] = workers
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -91,6 +100,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Response[Problem | ProjectEnvironmentPromotionPreviewResponse]:
     """Preview promotion of live workloads between project environments.
 
@@ -105,12 +117,22 @@ def sync_detailed(
     Protected-target promotions from an active source release set also
     require the latest passing health and smoke qualification, which is
     bound to that immutable release-set ID and expires after 24 hours.
+    With `verify=true`, the exact GET/HEAD critical probe policy is also
+    captured in the approval identity. The first milestone requires pinned
+    HTTP configuration, a probe for every HTTP workload, at most five probes,
+    and at least 21 minutes of revision retention. With `workers=true`, one
+    existing production push worker participates in the same cutover. Its
+    destination binding and credentials remain unchanged; startup proof and
+    real delivery health gate promotion.
 
     Args:
         slug (str):
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,6 +147,9 @@ def sync_detailed(
         environment=environment,
         from_=from_,
         sync_config=sync_config,
+        verify=verify,
+        migrate=migrate,
+        workers=workers,
     )
 
     response = client.get_httpx_client().request(
@@ -141,6 +166,9 @@ def sync(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Problem | ProjectEnvironmentPromotionPreviewResponse | None:
     """Preview promotion of live workloads between project environments.
 
@@ -155,12 +183,22 @@ def sync(
     Protected-target promotions from an active source release set also
     require the latest passing health and smoke qualification, which is
     bound to that immutable release-set ID and expires after 24 hours.
+    With `verify=true`, the exact GET/HEAD critical probe policy is also
+    captured in the approval identity. The first milestone requires pinned
+    HTTP configuration, a probe for every HTTP workload, at most five probes,
+    and at least 21 minutes of revision retention. With `workers=true`, one
+    existing production push worker participates in the same cutover. Its
+    destination binding and credentials remain unchanged; startup proof and
+    real delivery health gate promotion.
 
     Args:
         slug (str):
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,6 +214,9 @@ def sync(
         client=client,
         from_=from_,
         sync_config=sync_config,
+        verify=verify,
+        migrate=migrate,
+        workers=workers,
     ).parsed
 
 
@@ -186,6 +227,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Response[Problem | ProjectEnvironmentPromotionPreviewResponse]:
     """Preview promotion of live workloads between project environments.
 
@@ -200,12 +244,22 @@ async def asyncio_detailed(
     Protected-target promotions from an active source release set also
     require the latest passing health and smoke qualification, which is
     bound to that immutable release-set ID and expires after 24 hours.
+    With `verify=true`, the exact GET/HEAD critical probe policy is also
+    captured in the approval identity. The first milestone requires pinned
+    HTTP configuration, a probe for every HTTP workload, at most five probes,
+    and at least 21 minutes of revision retention. With `workers=true`, one
+    existing production push worker participates in the same cutover. Its
+    destination binding and credentials remain unchanged; startup proof and
+    real delivery health gate promotion.
 
     Args:
         slug (str):
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,6 +274,9 @@ async def asyncio_detailed(
         environment=environment,
         from_=from_,
         sync_config=sync_config,
+        verify=verify,
+        migrate=migrate,
+        workers=workers,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -234,6 +291,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Problem | ProjectEnvironmentPromotionPreviewResponse | None:
     """Preview promotion of live workloads between project environments.
 
@@ -248,12 +308,22 @@ async def asyncio(
     Protected-target promotions from an active source release set also
     require the latest passing health and smoke qualification, which is
     bound to that immutable release-set ID and expires after 24 hours.
+    With `verify=true`, the exact GET/HEAD critical probe policy is also
+    captured in the approval identity. The first milestone requires pinned
+    HTTP configuration, a probe for every HTTP workload, at most five probes,
+    and at least 21 minutes of revision retention. With `workers=true`, one
+    existing production push worker participates in the same cutover. Its
+    destination binding and credentials remain unchanged; startup proof and
+    real delivery health gate promotion.
 
     Args:
         slug (str):
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -270,5 +340,8 @@ async def asyncio(
             client=client,
             from_=from_,
             sync_config=sync_config,
+            verify=verify,
+            migrate=migrate,
+            workers=workers,
         )
     ).parsed

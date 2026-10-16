@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	resumableUploadStateVersion = 2
+	resumableUploadStateVersion = 3
 	uploadCacheMaxAge           = 7 * 24 * time.Hour
 	uploadCacheMaxEntries       = 256
 )
@@ -31,30 +31,36 @@ type resumableUploadState struct {
 	UploadID               string `json:"upload_id"`
 	AppSlug                string `json:"app_slug"`
 	APIBase                string `json:"api_base"`
+	RecoveryIdentitySHA256 string `json:"recovery_identity_sha256"`
 	ArchivePath            string `json:"archive_path"`
 	ArchiveSize            int64  `json:"archive_size"`
 	ArchiveSHA256          string `json:"archive_sha256"`
-	ArchiveModTimeUnixNano int64  `json:"archive_mtime_unix_nano"`
 	DeployOptionsSHA256    string `json:"deploy_options_sha256"`
 	TotalSize              int64  `json:"total_size"`
 	ChunkSize              int64  `json:"chunk_size"`
 	CreatedAt              string `json:"created_at"`
+	CommitAttempted        bool   `json:"commit_attempted,omitempty"`
 }
 
-// uploadStatePath is keyed by the app and absolute archive path so rerunning
-// the same deploy resumes naturally while separate archives can progress in
-// parallel. The path itself is stored only as diagnostic metadata.
-func uploadStatePath(appSlug, archivePath string) (string, error) {
-	abs, err := filepath.Abs(archivePath)
-	if err != nil {
-		return "", fmt.Errorf("absolutize upload archive: %w", err)
-	}
+// uploadRecoveryIdentity binds recovery to the authenticated connection,
+// source bytes, deployment options, and logical retry intent. Temporary archive
+// paths and mtimes do not determine source identity. Only the
+// combined digest is persisted; credentials and retry keys are never saved.
+func uploadRecoveryIdentity(c *Client, ctx context.Context, slug, archiveSHA256, optionsSHA256 string) string {
+	values := []string{c.BaseURL(), c.Token(), slug, archiveSHA256, optionsSHA256, api.IdempotencyKeyFromContext(ctx)}
+	data, _ := json.Marshal(values) // A slice of strings cannot fail to marshal.
+	key := sha256.Sum256(data)
+	return hex.EncodeToString(key[:])
+}
+
+// uploadStatePath is keyed by content and intent so a repacked archive can
+// resume across CLI processes. The same identity also serializes local uploads.
+func uploadStatePath(identity string) (string, error) {
 	dir, err := uploadStateDir()
 	if err != nil {
 		return "", err
 	}
-	key := sha256.Sum256([]byte(apiBase() + "\x00" + appSlug + "\x00" + abs))
-	return filepath.Join(dir, hex.EncodeToString(key[:])+".json"), nil
+	return filepath.Join(dir, identity+".json"), nil
 }
 
 func uploadStateDir() (string, error) {

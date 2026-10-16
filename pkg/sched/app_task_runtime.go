@@ -88,9 +88,22 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
-	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, task.Kind == state.AppTaskKindRelease)
+	migration := task.Kind == state.AppTaskKindRelease
+	if recorder, ok := e.store.(state.ProjectMigrationTaskRuntimeStore); ok && !migration {
+		contract, readErr := recorder.ProjectMigrationTaskIsContract(ctx, task)
+		if readErr != nil {
+			return ResolvedAppTaskRuntime{}, readErr
+		}
+		migration = contract
+	}
+	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, migration)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
+	}
+	if recorder, ok := e.store.(state.ProjectMigrationTaskRuntimeStore); ok {
+		if err := recorder.BindProjectMigrationTaskRuntime(ctx, task, runtimeValues.ConfigFence); err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
 	}
 	apiEnv, err := appendEnvironmentGitOpsServiceBindings(runtimeValues.APIEnv, runtimeValues.MainSecrets.Entries, dep)
 	if err != nil {
@@ -124,8 +137,18 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if spec.BaseKey == "" || spec.LayerKey == "" || !spec.Plan.Valid() {
 		return ResolvedAppTaskRuntime{}, errors.New("sched: app task runtime projection is incomplete")
 	}
+	runtimeID := request.ID
+	if recorder, ok := e.store.(state.PromotionMigrationRuntimeStore); ok {
+		id, err := recorder.RegisterPromotionMigrationRuntime(ctx, task, placement.NodeID)
+		if err != nil {
+			return ResolvedAppTaskRuntime{}, err
+		}
+		if id != "" {
+			runtimeID = id
+		}
+	}
 	if err := e.ledger.Admit(Request{
-		Instance: request.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
+		Instance: runtimeID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
@@ -134,10 +157,11 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, err
 	}
 	return ResolvedAppTaskRuntime{
-		NodeID: placement.NodeID,
-		Spec:   AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
+		NodeID:    placement.NodeID,
+		RuntimeID: runtimeID,
+		Spec:      AppTaskRestoreSpec{Instance: runtimeID, DeploymentID: dep.ID, App: spec},
 		release: func() {
-			e.ledger.Release(request.ID)
+			e.ledger.Release(runtimeID)
 		},
 	}, nil
 }

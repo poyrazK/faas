@@ -907,9 +907,21 @@ type ScenarioTestChaosMatch struct {
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
+// AppDeploySettingsCondition is a precondition for a single-app settings PATCH.
+// ExpectedSettings includes every targeted field, including fields that already
+// match the desired value and are therefore omitted from the partial update.
+type AppDeploySettingsCondition struct {
+	ExpectedAppID        string                     `json:"expected_app_id"`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id"`
+	ExpectedSettings     map[string]json.RawMessage `json:"expected_settings"`
+}
+
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// DeploySettingsCondition makes single-app recovery settings updates
+	// conditional on the app, deployment and observed targeted fields.
+	DeploySettingsCondition *AppDeploySettingsCondition `json:"deploy_settings_condition,omitempty"`
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
 	// values are public or internal. Internal is available on every plan.
 	Visibility *string `json:"visibility,omitempty"`
@@ -3051,6 +3063,7 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
+	Configuration          *DeploymentConfigurationStatus        `json:"configuration,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
@@ -7047,6 +7060,7 @@ type QuotaBlock struct {
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
+	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
 	ProjectSlug           string                 `json:"project_slug"`
 	RepoFullName          string                 `json:"repo_full_name,omitempty"`
 	Environment           string                 `json:"environment,omitempty"`
@@ -7116,6 +7130,7 @@ type PlanResponse struct {
 // stable; the field is only populated when the apply path actually
 // enqueued builds (i.e. when at least one app was added or changed).
 type ApplyResponse struct {
+	SubmissionAttemptID string `json:"submission_attempt_id,omitempty"`
 	PlanResponse
 	ProjectID string             `json:"project_id"`
 	Apps      []ApplyResponseApp `json:"apps"`
@@ -7135,10 +7150,11 @@ type ApplyResponseApp struct {
 // On staging or enqueue failure, Error is non-empty and the
 // deployment/build IDs are empty. Partial failure is by design.
 type AppliedBuild struct {
-	Slug         string `json:"slug"`
-	AppID        string `json:"app_id"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	BuildID      string `json:"build_id,omitempty"`
+	Configuration *DeploymentConfigurationStatus `json:"configuration,omitempty"`
+	Slug          string                         `json:"slug"`
+	AppID         string                         `json:"app_id"`
+	DeploymentID  string                         `json:"deployment_id,omitempty"`
+	BuildID       string                         `json:"build_id,omitempty"`
 	// DeploymentStatus and BuildStatus are populated by clients that wait for
 	// project readiness. They are omitted in the immediate server enqueue
 	// response, preserving the original apply wire shape for --no-wait users.
@@ -12897,4 +12913,65 @@ type EventRecoveryNotificationRetryBacklogTotals struct {
 	PendingCount            int `json:"pending_count"`
 	InconclusiveCount       int `json:"inconclusive_count"`
 	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+// DeploymentSubmissionReceipt is immutable acceptance evidence for a saved attempt.
+type DeploymentSubmissionReceipt struct {
+	AttemptID    string    `json:"attempt_id"`
+	AppID        string    `json:"app_id"`
+	DeploymentID string    `json:"deployment_id"`
+	AcceptedAt   time.Time `json:"accepted_at"`
+}
+
+// DeploymentStagingSnapshot binds the app policy group to a monotonic revision.
+type DeploymentStagingSnapshot struct {
+	AppID              string                     `json:"app_id"`
+	Revision           int64                      `json:"revision"`
+	LatestDeploymentID string                     `json:"latest_deployment_id"`
+	Settings           map[string]json.RawMessage `json:"settings"`
+}
+
+type DeploymentStagingRequest struct {
+	SessionID            string                     `json:"session_id"`
+	Operation            string                     `json:"operation"`
+	ExpectedAppID        string                     `json:"expected_app_id"`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id"`
+	ExpectedRevision     int64                      `json:"expected_revision"`
+	Before               map[string]json.RawMessage `json:"before"`
+	Desired              map[string]json.RawMessage `json:"desired"`
+}
+
+type DeploymentStagingReceipt struct {
+	SessionID string `json:"session_id"`
+	AppID     string `json:"app_id"`
+	Status    string `json:"status"`
+	Revision  int64  `json:"revision"`
+}
+
+// DeploymentCronConfig is the closed, non-secret scheduling intent for an HTTP cron.
+type DeploymentCronConfig struct {
+	ID            string `json:"id"`
+	Schedule      string `json:"schedule"`
+	Path          string `json:"path"`
+	Enabled       bool   `json:"enabled"`
+	Timezone      string `json:"timezone"`
+	SkipIfRunning bool   `json:"skip_if_running"`
+}
+
+type DeploymentCronStagingSnapshot struct {
+	AppID              string                 `json:"app_id"`
+	Revision           int64                  `json:"revision"`
+	LatestDeploymentID string                 `json:"latest_deployment_id"`
+	Crons              []DeploymentCronConfig `json:"crons"`
+}
+
+type DeploymentCronStagingRequest struct {
+	UploadID             string                 `json:"upload_id,omitempty"`
+	SessionID            string                 `json:"session_id"`
+	Operation            string                 `json:"operation"`
+	ExpectedAppID        string                 `json:"expected_app_id"`
+	ExpectedDeploymentID string                 `json:"expected_deployment_id"`
+	ExpectedRevision     int64                  `json:"expected_revision"`
+	Before               []DeploymentCronConfig `json:"before"`
+	Desired              []DeploymentCronConfig `json:"desired"`
 }

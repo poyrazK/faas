@@ -62,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -792,6 +793,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 				log.Error("upload session reaper exited", "err", err)
 			}
 		}()
+		go srv.runCronActivationWorker(ctx)
+		go srv.runSafeProjectReleaseWorker(ctx)
+		go srv.runPromotionHealthWorker(ctx)
 		// Move 3 (M7.5 prep): bridge pg_notify → in-process broadcaster.
 		// Runs as a background goroutine for the daemon's lifetime; the
 		// SubscribeWithReconnect wrapper reconnects across Postgres
@@ -1447,8 +1451,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
+		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
+		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
+		WithPromotionServiceGraphEnabled(deps.getenv("FAAS_PROMOTION_SERVICE_GRAPH_ENABLED") == "1").
+		WithPromotionMigrationsEnabled(deps.getenv("FAAS_PROMOTION_MIGRATIONS_ENABLED") == "1").
+		WithPromotionWorkersEnabled(deps.getenv("FAAS_PROMOTION_WORKERS_ENABLED") == "1").
+		WithProjectReleaseSecretsEnabled(deps.getenv("FAAS_PROJECT_RELEASE_SECRETS_ENABLED") == "1").
+		WithAtomicServiceAdditionsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED") == "1").
+		WithProjectMigrationContractsEnabled(deps.getenv("FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED") == "1").
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.promotionRollout = promotionrollout.FromEnv(deps.getenv, wire.GitSHA)
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

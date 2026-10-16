@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
 const (
@@ -23,6 +24,7 @@ const (
 	resumableUploadMaxAttempts  = 5
 	resumableUploadMaxRestarts  = 2
 	resumableUploadCancelWait   = 2 * time.Second
+	resumableUploadConfirmWait  = 2 * time.Second
 
 	// These codes are owned by the server upload-session contract. Keep the
 	// client copy private so this PR can merge independently of that server PR.
@@ -57,11 +59,19 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, s
 // never copied to the local state directory.
 func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, progress resumableUploadProgress, options ...api.UploadDeployOptions) (dep api.DeploymentResponse, sourceSHA256 string, supported bool, err error) {
 	phase := "upload"
+	outcome := deploySubmissionRejected
 	defer func() {
 		if err != nil {
+			var submission *deploySubmissionError
+			if !errors.As(err, &submission) {
+				err = submissionError(outcome, err)
+			}
 			err = &deployPhaseError{stage: phase, err: err}
 		}
 	}()
+	if _, err := validateConfigAPIBase(c.BaseURL()); err != nil {
+		return api.DeploymentResponse{}, "", true, errors.New("upload recovery API endpoint cannot contain credentials, query parameters or fragments")
+	}
 
 	f, err := openCustomerFile(path)
 	if err != nil {
@@ -87,7 +97,8 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
 	}
-	statePath, err := uploadStatePath(slug, archivePath)
+	identity := uploadRecoveryIdentity(c, ctx, slug, archiveSHA256, optionsSHA256)
+	statePath, err := uploadStatePath(identity)
 	if err != nil {
 		return api.DeploymentResponse{}, "", true, err
 	}
@@ -112,15 +123,24 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			PrintWarn(osStderr, "ignoring invalid upload recovery state: %v", stateErr)
 		}
 	}
-	if stateFound && !uploadStateMatches(state, slug, archivePath, info, archiveSHA256, optionsSHA256) {
-		// Do not leave an old spool consuming the account's upload budget
-		// when the same local path now contains a different archive.
+	if stateFound && !uploadStateMatches(state, c, slug, identity, info.Size(), archiveSHA256, optionsSHA256) {
+		// An inconsistent record is not proof of ownership of its upload ID.
+		// Discard local metadata without cancelling an unrelated server session.
 		if !jsonOutput {
 			PrintWarn(osStderr, "upload recovery state does not match this archive or deploy options; starting a new upload")
 		}
-		cancelUploadBestEffort(ctx, c, state.UploadID)
 		removeResumableUploadState(statePath)
+		state = resumableUploadState{}
 		stateFound = false
+	}
+
+	if stateFound {
+		if state.CommitAttempted {
+			phase, outcome = "submission", deploySubmissionUnknown
+		}
+		if err := saveSessionUpload(ctx, c, state); err != nil {
+			return api.DeploymentResponse{}, "", true, fmt.Errorf("save deploy upload identity: %w", err)
+		}
 	}
 
 	for restart := 0; restart <= resumableUploadMaxRestarts; restart++ {
@@ -130,12 +150,24 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 		if restart == 0 && stateFound {
 			// A saved session may already have committed a deployment.
 			phase = "submission"
+			outcome = deploySubmissionUnknown
 			remote, discoverErr := c.GetUploadSession(ctx, state.UploadID)
 			if discoverErr == nil {
 				switch strings.ToLower(remote.Status) {
 				case "committed", "complete", "completed":
+					if err := validateDiscoveredUpload(state, remote, info.Size()); err != nil {
+						return api.DeploymentResponse{}, "", true, err
+					}
+					outcome = deploySubmissionAccepted
+					state.CommitAttempted = true
+					persistUploadCommitAttempt(statePath, state)
 					if remote.DeploymentID == nil || *remote.DeploymentID == "" {
 						return api.DeploymentResponse{}, "", true, errors.New("upload session is committed without a deployment id")
+					}
+					if session := sessionFromContext(ctx); session != nil {
+						if err := session.bindCommittedCronUpload(ctx, c, state.UploadID, *remote.DeploymentID); err != nil {
+							return api.DeploymentResponse{ID: *remote.DeploymentID}, "", true, err
+						}
 					}
 					phase = "deployment"
 					dep, err := c.GetDeployment(ctx, *remote.DeploymentID)
@@ -146,6 +178,9 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 					return dep, archiveSHA256, true, nil
 				case "open", "":
 					if err := validateDiscoveredUpload(state, remote, info.Size()); err != nil {
+						if state.CommitAttempted {
+							return api.DeploymentResponse{}, "", true, err
+						}
 						cancelUploadBestEffort(ctx, c, state.UploadID)
 						removeResumableUploadState(statePath)
 						stateFound = false
@@ -158,12 +193,25 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 						}
 						statePersisted = true
 					}
-				default:
-					removeResumableUploadState(statePath)
+					if !state.CommitAttempted {
+						outcome = deploySubmissionRejected
+					}
+				case "expired", "cancelled", "canceled":
+					if state.CommitAttempted {
+						return api.DeploymentResponse{}, "", true, fmt.Errorf("upload session is %s after an uncertain commit; inspect deployment history before starting another upload", remote.Status)
+					}
+					outcome = deploySubmissionRejected
+					// Keep the ended session ID until its replacement is saved.
+					// It scopes a fresh start key, even after another interruption.
 					stateFound = false
+				default:
+					return api.DeploymentResponse{}, "", true, fmt.Errorf("upload session returned unknown status %q", remote.Status)
 				}
 			} else if isUploadSessionRestart(discoverErr) {
-				removeResumableUploadState(statePath)
+				if state.CommitAttempted {
+					return api.DeploymentResponse{}, "", true, fmt.Errorf("discover upload after an uncertain commit: %w", discoverErr)
+				}
+				outcome = deploySubmissionRejected
 				stateFound = false
 			} else {
 				return api.DeploymentResponse{}, "", true, fmt.Errorf("discover upload session: %w", discoverErr)
@@ -182,7 +230,11 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			}
 			startCtx := ctx
 			if baseKey := api.IdempotencyKeyFromContext(ctx); baseKey != "" {
-				startCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, "resumable-start"))
+				operation := "resumable-start"
+				if state.UploadID != "" {
+					operation += "-after-" + state.UploadID
+				}
+				startCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, operation))
 			}
 			session, err = c.StartUpload(startCtx, slug, info.Size(), archiveSHA256, options...)
 			if err != nil {
@@ -193,8 +245,8 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			}
 			state = resumableUploadState{
 				Version: resumableUploadStateVersion, UploadID: session.UploadID,
-				AppSlug: slug, APIBase: apiBase(), ArchivePath: archivePath, ArchiveSize: info.Size(),
-				ArchiveSHA256: archiveSHA256, ArchiveModTimeUnixNano: info.ModTime().UnixNano(),
+				AppSlug: slug, APIBase: c.BaseURL(), RecoveryIdentitySHA256: identity,
+				ArchivePath: archivePath, ArchiveSize: info.Size(), ArchiveSHA256: archiveSHA256,
 				DeployOptionsSHA256: optionsSHA256, TotalSize: session.TotalSize,
 				ChunkSize: session.ChunkSize, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			}
@@ -205,6 +257,10 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 			} else {
 				statePersisted = true
 			}
+		}
+
+		if err := saveSessionUpload(ctx, c, state); err != nil {
+			return api.DeploymentResponse{}, "", true, fmt.Errorf("save deploy upload identity: %w", err)
 		}
 
 		if session.TotalSize != info.Size() {
@@ -227,37 +283,104 @@ func DeployResumableTarball(c *Client, ctx context.Context, slug, path string, p
 		}
 		err = uploadSessionChunks(ctx, c, session, f, progress)
 		if err != nil {
-			cancelUploadBestEffort(ctx, c, session.UploadID)
-			if statePersisted {
-				removeResumableUploadState(statePath)
+			if isUploadProblem(err, uploadSessionAlreadyCommittedCode) {
+				// Start may replay a session whose successful checkpoint was
+				// already cleared. Recover its deployment rather than cancel it.
+				phase = "deployment"
+				state.CommitAttempted = true
+				if statePersisted {
+					persistUploadCommitAttempt(statePath, state)
+				}
+				dep, recoverErr := recoverCommittedUpload(ctx, c, err)
+				if recoverErr == nil {
+					removeResumableUploadState(statePath)
+				}
+				return dep, archiveSHA256, true, recoverErr
 			}
 			if ctx.Err() != nil {
 				return api.DeploymentResponse{}, "", true, ctx.Err()
 			}
-			if isUploadSessionRestart(err) && restart < resumableUploadMaxRestarts {
-				continue
+			if state.CommitAttempted {
+				return api.DeploymentResponse{}, "", true, submissionError(deploySubmissionUnknown, err)
+			}
+			if isUploadSessionRestart(err) {
+				if restart < resumableUploadMaxRestarts {
+					continue
+				}
+			} else if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !retryableUploadError(err) {
+				cancelUploadBestEffort(ctx, c, session.UploadID)
+				if statePersisted {
+					removeResumableUploadState(statePath)
+				}
 			}
 			return api.DeploymentResponse{}, "", true, err
 		}
 
 		phase = "submission"
+		if ctx.Err() != nil {
+			return api.DeploymentResponse{}, "", true, ctx.Err()
+		}
+		priorCommitAttempted := state.CommitAttempted
+		state.CommitAttempted = true
+		if statePersisted {
+			// Do not leave a saved "never committed" record behind if this
+			// attempt could admit a build. A later process might replace it.
+			if err := saveResumableUploadState(statePath, state); err != nil {
+				return api.DeploymentResponse{}, "", true, fmt.Errorf("record upload commit attempt: %w", err)
+			}
+		}
 		dep, err := commitUploadWithRetry(ctx, c, session.UploadID)
 		if err == nil {
 			removeResumableUploadState(statePath)
 			return dep, archiveSHA256, true, nil
 		}
-		if ctx.Err() != nil {
-			return dep, "", true, ctx.Err()
+		commitOutcome := submissionOutcome(dep, err)
+		if priorCommitAttempted && commitOutcome == deploySubmissionRejected {
+			commitOutcome = deploySubmissionUnknown
+			err = submissionError(commitOutcome, err)
 		}
-		if isUploadSessionRestart(err) && restart < resumableUploadMaxRestarts {
-			cancelUploadBestEffort(ctx, c, session.UploadID)
-			removeResumableUploadState(statePath)
+		if commitOutcome == deploySubmissionUnknown {
+			dep, err = reconcileUploadCommit(ctx, c, state, err)
+			return dep, "", true, err
+		}
+		if commitOutcome == deploySubmissionRejected {
+			state.CommitAttempted = false
+			if statePersisted {
+				persistUploadCommitAttempt(statePath, state)
+			}
+		}
+		if commitOutcome == deploySubmissionRejected && isUploadSessionRestart(err) && restart < resumableUploadMaxRestarts {
 			stateFound = false
 			continue
 		}
 		return dep, "", true, err
 	}
 	return api.DeploymentResponse{}, "", true, errors.New("resumable upload exhausted its restart budget")
+}
+
+func persistUploadCommitAttempt(statePath string, state resumableUploadState) {
+	if err := saveResumableUploadState(statePath, state); err != nil && !jsonOutput {
+		PrintWarn(osStderr, "could not save upload commit recovery state: %v", err)
+	}
+}
+
+// A positive receipt confirms acceptance. Negative reads cannot disprove it:
+// admission can precede updating the upload row, or still be running remotely.
+func reconcileUploadCommit(ctx context.Context, c *Client, state resumableUploadState, commitErr error) (api.DeploymentResponse, error) {
+	confirmCtx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(ctx)), resumableUploadConfirmWait)
+	defer cancel()
+	remote, err := c.GetUploadSession(confirmCtx, state.UploadID)
+	if err == nil && validateDiscoveredUpload(state, remote, state.TotalSize) == nil {
+		switch strings.ToLower(remote.Status) {
+		case "committed", "complete", "completed":
+			dep := api.DeploymentResponse{}
+			if remote.DeploymentID != nil {
+				dep.ID = *remote.DeploymentID
+			}
+			return dep, submissionError(deploySubmissionAccepted, commitErr)
+		}
+	}
+	return api.DeploymentResponse{}, submissionError(deploySubmissionUnknown, commitErr)
 }
 
 func hashUploadArchive(f *os.File) (string, error) {
@@ -274,14 +397,10 @@ func hashUploadArchive(f *os.File) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func uploadStateMatches(state resumableUploadState, slug, archivePath string, info os.FileInfo, archiveSHA256, optionsSHA256 string) bool {
-	if state.Version != resumableUploadStateVersion || state.UploadID == "" || state.AppSlug != slug || state.APIBase != apiBase() || state.ArchivePath != archivePath || state.ArchiveSize != info.Size() || state.DeployOptionsSHA256 != optionsSHA256 {
-		return false
-	}
-	if state.ArchiveSHA256 != "" {
-		return strings.EqualFold(state.ArchiveSHA256, archiveSHA256)
-	}
-	return state.ArchiveModTimeUnixNano == info.ModTime().UnixNano()
+func uploadStateMatches(state resumableUploadState, c *Client, slug, identity string, size int64, archiveSHA256, optionsSHA256 string) bool {
+	return state.Version == resumableUploadStateVersion && state.UploadID != "" &&
+		state.AppSlug == slug && state.APIBase == c.BaseURL() && state.RecoveryIdentitySHA256 == identity &&
+		state.ArchiveSize == size && state.DeployOptionsSHA256 == optionsSHA256 && state.ArchiveSHA256 == archiveSHA256
 }
 
 func validateDiscoveredUpload(state resumableUploadState, remote api.UploadSessionResponse, localSize int64) error {
@@ -380,30 +499,42 @@ func commitUploadWithRetry(ctx context.Context, c *Client, uploadID string) (api
 	if baseKey := api.IdempotencyKeyFromContext(ctx); baseKey != "" {
 		commitCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(baseKey, "resumable-commit-"+uploadID))
 	}
+	outcome := deploySubmissionRejected
 	for attempt := 0; attempt < resumableUploadMaxAttempts; attempt++ {
 		dep, err := c.CommitUpload(commitCtx, uploadID)
 		if err == nil {
 			return dep, nil
 		}
 		if isUploadProblem(err, uploadSessionAlreadyCommittedCode) {
-			deploymentID := committedDeploymentID(err)
-			if deploymentID == "" {
-				return api.DeploymentResponse{}, fmt.Errorf("upload committed but response did not include a deployment id: %w", err)
-			}
-			recovered, recoverErr := c.GetDeployment(ctx, deploymentID)
-			if recoverErr != nil {
-				return api.DeploymentResponse{ID: deploymentID}, recoverErr
-			}
-			return recovered, nil
+			return recoverCommittedUpload(ctx, c, err)
+		}
+		if submissionOutcome(dep, err) == deploySubmissionAccepted {
+			return dep, submissionError(deploySubmissionAccepted, err)
+		}
+		if submissionOutcome(dep, err) == deploySubmissionUnknown {
+			outcome = deploySubmissionUnknown
 		}
 		if isUploadSessionRestart(err) || !retryableUploadError(err) || attempt == resumableUploadMaxAttempts-1 {
-			return api.DeploymentResponse{}, err
+			return api.DeploymentResponse{}, submissionError(outcome, err)
 		}
 		if err := waitForUploadRetry(ctx, err, attempt); err != nil {
-			return api.DeploymentResponse{}, err
+			return api.DeploymentResponse{}, submissionError(outcome, err)
 		}
 	}
 	return api.DeploymentResponse{}, errors.New("upload commit exhausted its retry budget")
+}
+
+func recoverCommittedUpload(ctx context.Context, c *Client, committedErr error) (dep api.DeploymentResponse, err error) {
+	defer func() { err = submissionError(deploySubmissionAccepted, err) }()
+	deploymentID := committedDeploymentID(committedErr)
+	if deploymentID == "" {
+		return api.DeploymentResponse{}, fmt.Errorf("upload committed but response did not include a deployment id: %w", committedErr)
+	}
+	dep, err = c.GetDeployment(ctx, deploymentID)
+	if err != nil {
+		return api.DeploymentResponse{ID: deploymentID}, err
+	}
+	return dep, nil
 }
 
 func currentUploadOffset(err error) (int64, bool) {

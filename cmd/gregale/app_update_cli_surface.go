@@ -13,6 +13,7 @@ type updateAppCLISurface struct {
 }
 
 var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
+	"deploy_settings_condition":       {Path: "deploy / deploy resume guarded post-ready settings (ADR-986/992)"},
 	"visibility":                      {Path: "gregale app <slug> --visibility", AppFlags: []string{"visibility"}},
 	"allowed_service_callers":         {KnownGap: "no customer CLI setter; API-only today"},
 	"allowed_service_call_scopes":     {KnownGap: "no customer CLI setter; API-only today"},

@@ -1,4 +1,4 @@
-//go:build metal
+//go:build metal && !promotionacceptance
 
 package e2etest
 

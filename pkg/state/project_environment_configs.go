@@ -33,6 +33,10 @@ func (m *MemStore) ProjectEnvironmentConfigLatest(_ context.Context, accountID, 
 func (m *MemStore) CreateProjectEnvironmentConfigVersion(_ context.Context, config ProjectEnvironmentConfig) (ProjectEnvironmentConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if config.EnvironmentSlug == "production" && !m.migrationPublicationAllowedLocked(config.ProjectID) {
+		return ProjectEnvironmentConfig{}, ErrConflict
+	}
+
 	project, ok := m.projects[config.ProjectID]
 	if !ok || project.AccountID != config.AccountID {
 		return ProjectEnvironmentConfig{}, ErrNotFound
@@ -92,6 +96,8 @@ func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion Pro
 	if sourceErr != nil || previousErr != nil || sourceHash != promotion.SourceConfigHash || previousHash != promotion.PreviousTargetConfigHash {
 		return ErrConflict
 	}
+	capture := m.promotionReleaseConfigurations[promotion.ID]
+	_, destinationHash := promotionDestinationConfig(promotion, &capture)
 	target := m.projectEnvironmentConfigLatestLocked(promotion.ProjectID, promotion.ToEnvironment)
 	if rollback {
 		if promotion.RollbackConfigVersion != 0 {
@@ -100,13 +106,13 @@ func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion Pro
 			}
 			return nil
 		}
-		if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+		if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != destinationHash {
 			return ErrConflict
 		}
 		return nil
 	}
 	if promotion.TargetConfigVersion != 0 {
-		if target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+		if target.Version != promotion.TargetConfigVersion || target.ConfigHash != destinationHash {
 			return ErrConflict
 		}
 		return nil
@@ -119,7 +125,8 @@ func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion Pro
 }
 
 func (m *MemStore) appendProjectEnvironmentPromotionConfigLocked(promotion ProjectEnvironmentPromotion, rollback bool) int64 {
-	values, hash := promotion.SourceConfigSnapshot, promotion.SourceConfigHash
+	capture := m.promotionReleaseConfigurations[promotion.ID]
+	values, hash := promotionDestinationConfig(promotion, &capture)
 	if rollback {
 		values, hash = promotion.PreviousTargetConfigSnapshot, promotion.PreviousTargetConfigHash
 	}

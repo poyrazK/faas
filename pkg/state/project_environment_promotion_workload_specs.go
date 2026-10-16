@@ -2,6 +2,13 @@ package state
 
 import "context"
 
+// A copied artifact gets a new promotion owner. Creation-only source receipt
+// and retry metadata must not carry into a different environment or operation.
+func promotionDeploymentCreationMetadata(d Deployment) Deployment {
+	d.submissionAttemptID, d.releaseConfigAttempt, d.releaseWorkerAttempt, d.retryDeploymentID = "", "", "", ""
+	return d
+}
+
 type ProjectEnvironmentPromotionWorkloadSpecInput struct {
 	PromotionID        string
 	SourceDeploymentID string

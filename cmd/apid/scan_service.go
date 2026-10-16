@@ -30,7 +30,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +43,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
+	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -60,6 +61,7 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
+	SafeReleaseID          string `json:"safe_release_id,omitempty"`
 	Hash                   string `json:"hash"`
 	AccountID              string `json:"account_id"`
 	Slug                   string `json:"slug"`
@@ -77,8 +79,12 @@ type planTokenWire struct {
 // /apply. The handler builds this from the multipart stream before
 // dispatching to the scan service.
 type scanPlanRequest struct {
-	SourcePath   string // spool path after validateAndSpool + extractTarGzToDir
-	SourceSHA256 string // hex digest of the original compressed bytes
+	MigrationContractCommand string
+	ReleaseConfig            json.RawMessage
+	SafeRelease              *api.ProjectSafeRelease
+	RetryTargets             map[string]string
+	SourcePath               string // spool path after validateAndSpool + extractTarGzToDir
+	SourceSHA256             string // hex digest of the original compressed bytes
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
@@ -107,8 +113,9 @@ type scanPlanRequest struct {
 	// the suppression decision made during preview.
 	NoTriggers             bool
 	PlatformTenantRequired *bool
-	Environment            string // registered project environment; resolved to deployment scope
-	ApprovalToken          string // exact-plan approval credential for protected applies
+	Environment            string            // registered project environment; resolved to deployment scope
+	ApprovalToken          string            // exact-plan approval credential for protected applies
+	Secrets                map[string]string // apply-only; sealed before any build admission
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -139,6 +146,7 @@ func validProjectRepoFullName(repo string) bool {
 // `plan.workloads[i].tier` serialize as "compose" instead of
 // `8`. The conversion lives in toPlanWorkload below.
 type scanPlanResponse struct {
+	SafeRelease           *api.ProjectSafeRelease `json:"safe_release,omitempty"`
 	ProjectSlug           string                  `json:"project_slug"`
 	RepoFullName          string                  `json:"repo_full_name,omitempty"`
 	Environment           string                  `json:"environment,omitempty"`
@@ -225,56 +233,7 @@ type scanPlanResponse struct {
 // a typed int (1/3/5/8) and the wire shape is the .String()
 // representation ("single"/"convention"/"workspace"/"compose"/
 // "unknown"), matching the OpenAPI PlanWorkload.tier enum.
-func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
-	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
-	if w.ServiceBindingPolicy == "" {
-		policy = api.ServiceBindingPolicyDeclared
-	}
-	return api.PlanWorkload{
-		Name:                w.Name,
-		RootDir:             w.RootDir,
-		Dockerfile:          w.Dockerfile,
-		Image:               w.Image,
-		ImageHealthcheck:    w.ImageHealthcheck.Clone(),
-		Command:             w.Command,
-		DependsOn:           w.DependsOn,
-		DependsOnConditions: maps.Clone(w.DependsOnConditions),
-
-		ServiceBindingPolicy:      policy,
-		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
-		ServiceReliability:        w.ServiceReliability,
-		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
-		AllowedServiceCallers:     w.AllowedServiceCallers,
-		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
-		PlatformTenantRequired:    w.PlatformTenantRequired,
-
-		Class:      string(w.Class),
-		Schedule:   w.Schedule,
-		Ports:      w.Ports,
-		EnvKeys:    w.EnvKeys,
-		Source:     w.Source,
-		Tier:       w.Tier.String(),
-		DetectedBy: toPlanDetectedBy(w.DetectedBy),
-	}
-}
-
-// toPlanDetectedBy translates the reposcan detection trace into the
-// wire DTO (issue #742). Returns nil for the zero Detection so the
-// `detected_by` key is omitted entirely rather than serialising an
-// empty object — a scan produced before the trace existed, or by a
-// caller that constructed Workload directly, stays byte-identical
-// on the wire.
-func toPlanDetectedBy(d reposcan.Detection) *api.PlanDetectedBy {
-	if d.Detector == "" {
-		return nil
-	}
-	return &api.PlanDetectedBy{
-		Detector:   d.Detector,
-		Marker:     d.Marker,
-		Priority:   int(d.Priority),
-		MergedFrom: d.MergedFrom,
-	}
-}
+func toPlanWorkload(w reposcan.Workload) api.PlanWorkload { return reposcan.PlanWorkload(w) }
 
 func toPlanDetectionWarnings(warnings []reposcan.DetectionWarning) []api.PlanDetectionWarning {
 	if len(warnings) == 0 {
@@ -684,80 +643,6 @@ func toPlanManaged(m reposcan.Managed) api.PlanManaged {
 	}
 }
 
-// evaluateQuotaGate computes the can_apply triple for the given
-// (workloads, limits, observedApps, observedCrons). The function
-// derives the cron count from workloads (any workload with a
-// non-empty Schedule is also a cron — see scan_service.go:714-727
-// for the equivalent inline loop) so callers can evaluate the gate
-// on both pre-filter and post-filter workloads without sharing
-// scan-internal state.
-//
-// Returns:
-//
-//	canApply    — true when the plan fits under the plan caps AND
-//	               crons are allowed by the plan.
-//	notAllowed  — true when crons are forbidden by the plan (the
-//	               special hard-block Free plan sees on Hobby/Pro/
-//	               Scale cron workloads). The flag is independent
-//	               of canApply: a Free-plan operator who uploaded
-//	               a cron sees both canApply=false AND
-//	               notAllowed=true.
-//	reasons     — human-readable list of why can_apply is false.
-//	               Empty when can_apply is true. The dashboard
-//	               renders these verbatim in the gate card;
-//	               CanApplyReasons on PlanResponse carries this
-//	               same slice.
-//	cronCount   — the count derived from workloads (returned so
-//	               the caller can size the partition's
-//	               observed_crons wire field without re-walking
-//	               workloads).
-//
-// Pure function; no I/O. Tests pin the three failure-mode shapes
-// (apps-over, crons-not-allowed, crons-over) plus the rescue
-// invariant (preCanApply=false → postCanApply=true after exclude).
-func evaluateQuotaGate(
-	workloads []reposcan.Workload,
-	limits api.Limits,
-	observedApps int,
-	observedCrons int,
-) (canApply bool, notAllowed bool, reasons []string, cronCount int) {
-	for _, wl := range workloads {
-		workloadCronCount := len(wl.CronSchedules())
-		cronCount += workloadCronCount
-		if limits.CronLimitPerApp > 0 && workloadCronCount > limits.CronLimitPerApp {
-			canApply = false
-			reasons = append(reasons, fmt.Sprintf(
-				"crons over per-app limit for %s: %d > %d",
-				wl.Name, workloadCronCount, limits.CronLimitPerApp,
-			))
-		}
-	}
-
-	if len(reasons) == 0 {
-		canApply = true
-	}
-	if observedApps+len(workloads) > limits.DeployedApps {
-		canApply = false
-		reasons = append(reasons, fmt.Sprintf(
-			"apps over plan limit: %d + %d > %d",
-			observedApps, len(workloads), limits.DeployedApps,
-		))
-	}
-	if cronCount > 0 && limits.CronLimitPerAccount == 0 {
-		canApply = false
-		notAllowed = true
-		reasons = append(reasons, "crons not allowed on this plan")
-	}
-	if observedCrons+cronCount > limits.CronLimitPerAccount {
-		canApply = false
-		reasons = append(reasons, fmt.Sprintf(
-			"crons over plan limit: %d + %d > %d",
-			observedCrons, cronCount, limits.CronLimitPerAccount,
-		))
-	}
-	return
-}
-
 func evaluateProjectedQuotaGate(
 	desiredCrons []planCron,
 	limits api.Limits,
@@ -955,7 +840,16 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
 	environment string,
+	cronPlans ...map[string]projectDeploymentCronPlan,
 ) []appliedBuild {
+	tracker := deploystaging.ProjectSubmissionFromContext(ctx)
+	safe := tracker != nil && tracker.Receipt.Apply.SafeRelease != nil
+	if safe {
+		environment = "production"
+	}
+	if environment == "production" && !safe {
+		environment = state.DefaultEnvScope
+	}
 	workloadByName := make(map[string]reposcan.Workload, len(workloads))
 	for _, workload := range workloads {
 		workloadByName[strings.ToLower(workload.Name)] = workload
@@ -965,6 +859,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	touched = append(touched, changed...)
 	if order, orderErr := reposcan.DependencyOrder(workloads, managed); orderErr == nil {
 		touched = orderAppsByWorkload(touched, order)
+	}
+	if tracker != nil {
+		if err := tracker.Select(ctx, project, touched); err != nil {
+			out := make([]appliedBuild, 0, len(touched))
+			for _, app := range touched {
+				out = append(out, appliedBuild{Slug: app.Slug, AppID: app.ID, Error: "project submission selection could not be recorded"})
+			}
+			return out
+		}
 	}
 	out := make([]appliedBuild, 0, len(touched))
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
@@ -981,6 +884,32 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// later cannot deploy).
 		if !acct.MayDeploy() {
 			res.Error = acct.DeployBlockedProblem().Detail
+			out = append(out, res)
+			continue
+		}
+		var cronPlan projectDeploymentCronPlan
+		managedCrons := false
+		if len(cronPlans) > 0 {
+			cronPlan, managedCrons = cronPlans[0][app.ID]
+		}
+		if managedCrons && cronPlan.err != nil {
+			res.Error = "cron planning failed (server logs carry the detail)"
+			s.log.Warn("apid: project cron planning failed", "app_id", app.ID, "err", cronPlan.err)
+			out = append(out, res)
+			continue
+		}
+		if managedCrons && cronPlan.plan.Reuse != nil {
+			if tracker != nil {
+				_, err := s.store.(state.DeploymentSubmissionStore).AttachDeploymentSubmission(ctx, app.ID, state.ProjectWorkloadAttempt(tracker.Receipt.AttemptID, app.ID), cronPlan.plan.Reuse.ID)
+				if err != nil {
+					res.Error = "reused deployment acceptance could not be recorded"
+					out = append(out, res)
+					continue
+				}
+			}
+			res.DeploymentID, res.BuildID = cronPlan.plan.Reuse.ID, cronPlan.plan.Reuse.BuildID
+			res.Configuration = s.readProjectDeploymentConfiguration(ctx, acct.ID, res.DeploymentID)
+			accepted[strings.ToLower(app.WorkloadName)] = true
 			out = append(out, res)
 			continue
 		}
@@ -1053,7 +982,38 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// + NotifyBuildQueued + (optional) NotifyDeploymentChanged for
 		// the prior row. Source="tarball" keeps the build_queued
 		// payload's kind field aligned with the deployment's kind.
-		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
+		deployCtx := ctx
+		if tracker != nil {
+			attempt := state.ProjectWorkloadAttempt(tracker.Receipt.AttemptID, app.ID)
+			deployCtx = state.ContextWithDeploymentSubmission(ctx, attempt)
+			if safe && tracker.Receipt.Apply.SafeRelease.Worker != nil && tracker.Receipt.Apply.SafeRelease.Worker.AppID == app.ID {
+				deployCtx = state.ContextWithProjectReleaseWorkerAttempt(deployCtx, tracker.Receipt.AttemptID)
+			}
+			if safe && tracker.Receipt.Apply.SafeRelease.Configuration != nil {
+				deployCtx = state.ContextWithProjectReleaseConfigurationAttempt(deployCtx, tracker.Receipt.AttemptID)
+			}
+			if managedCrons {
+				cronPlan.plan.Request.SessionID = attempt
+			}
+		}
+		if managedCrons {
+			if err := s.prepareProjectDeploymentCrons(ctx, acct, app.ID, cronPlan); err != nil {
+				_ = os.Remove(staged)
+				res.Error = "cron preparation failed (server logs carry the detail)"
+				s.log.Warn("apid: project cron preparation failed", "app_id", app.ID, "err", err)
+				out = append(out, res)
+				continue
+			}
+			deployCtx = state.ContextWithDeploymentSubmission(ctx, cronPlan.plan.Request.SessionID)
+		}
+		if safe && (!safeProjectCommandMatches(tracker.Receipt.Apply.SafeRelease, app.ID, releaseCommand) || len(operationDefinitions) > 0) {
+			res.Error = "release command differs from the atomic plan, or operation changes are unsupported"
+			_ = os.Remove(staged)
+			out = append(out, res)
+			continue
+		}
+		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
+			TrafficPercentExplicit:    safe,
 			OperationDefinitions:      operationDefinitions,
 			OperationAdmissionEnabled: s.operationDefinitionsAdmission(app.AccountID, app.ID, environment, operationDefinitions),
 			AppID:                     app.ID,
@@ -1087,12 +1047,20 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ActorFromIP:         middleware.ClientIP(r),
 			ReleaseCommand:      releaseCommand.command,
 			ReleaseCommandShell: releaseCommand.shell,
-			ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
+			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
 		}
 		if enqErr != nil {
+			if managedCrons {
+				cancel := cronPlan.plan.Request
+				cancel.Operation = "cancel"
+				_, cancelErr := s.store.(state.DeploymentCronStagingStore).ApplyDeploymentCronStaging(context.WithoutCancel(ctx), app.ID, state.DeploymentCronStagingParams{AccountID: acct.ID, Request: cancel})
+				if cancelErr != nil {
+					s.log.Warn("apid: cancel rejected project cron intent", "app_id", app.ID, "err", cancelErr)
+				}
+			}
 			// Same wire/server split as the stage branch
 			// above: surface a generic message to the
 			// customer, log the full error (which can carry
@@ -1104,12 +1072,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		res.DeploymentID = enqRes.DeploymentID
+		if managedCrons {
+			res.Configuration = s.readProjectDeploymentConfiguration(ctx, acct.ID, res.DeploymentID)
+		}
 		accepted[strings.ToLower(app.WorkloadName)] = true
 		res.BuildID = enqRes.BuildID
 		// Enqueue is the acceptance boundary for the source. Checkpoint the
 		// per-workload digest only after the deployment and build rows exist;
 		// failed staging/admission/enqueue attempts therefore remain retryable.
-		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok {
+		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok && !safe {
 			manifest := app.Manifest
 			manifest.ProjectSourceSHA256 = workload.SourceSHA256
 			if _, checkpointErr := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); checkpointErr != nil {
@@ -1118,6 +1089,9 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			}
 		}
 		out = append(out, res)
+	}
+	if tracker != nil {
+		tracker.Complete(out)
 	}
 	return out
 }
@@ -1215,6 +1189,29 @@ func (s *server) scanService(
 	req, prob := parseScanMultipart(r, acct, limits)
 	if prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
+	defer func() { _ = os.Remove(req.SourcePath); _ = os.RemoveAll(req.ScanDir) }()
+	if prob := s.prepareSafeProjectRelease(r, acct, req, apply); prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
+	if apply {
+		if prob := s.prepareProjectRetry(r, acct, req); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if len(req.RetryTargets) > 0 {
+			r = r.WithContext(state.ContextWithDeploymentRetry(r.Context(), req.RetryTargets))
+		}
+		if prob := s.beginProjectSubmission(r.Context(), req); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if tracker := deploystaging.ProjectSubmissionFromContext(r.Context()); tracker != nil {
+			defer s.finishProjectSubmission(r.Context(), tracker)
+		}
+	}
+	if len(req.Secrets) > 0 {
+		if prob := projectDeploySecretsPermission(r, apply); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
 	}
 	if prob := s.validateProjectDeploymentEnvironment(r.Context(), acct, req.ProjectSlug, req.Environment); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
@@ -1329,18 +1326,6 @@ func (s *server) scanService(
 				fmt.Sprintf("duplicate: %s", strings.Join(clash, ", ")))
 		}
 	}
-	// Cleanup the spooled upload. Best-effort: a failure here just
-	// means the original tarball lingers under FAAS_SCAN_SPOOL_ROOT
-	// until the next sweep.
-	defer func() { _ = os.Remove(req.SourcePath) }() //nolint:errcheck // best-effort
-	// Cleanup the extracted dir on every return path. Pre-task #19
-	// this was documented "cleaned up by caller" but no caller ever
-	// removed it, so every successful scan leaked the extracted dir
-	// under FAAS_SCAN_SPOOL_ROOT. The defer fires AFTER all the
-	// in-function staging reads (applyBuildsForAddedChanged runs
-	// synchronously and walks req.ScanDir before the return at the
-	// bottom), so the staging sees a still-live tree.
-	defer func() { _ = os.RemoveAll(req.ScanDir) }() //nolint:errcheck // best-effort
 
 	// If a plan_token was passed (apply path), validate it BEFORE
 	// running the scan. Mismatch -> 409 plan_token_stale. This
@@ -1358,6 +1343,11 @@ func (s *server) scanService(
 				"plan_token_stale",
 				"plan_token does not match uploaded source",
 				"re-run scan and apply in one flow")
+		}
+		if req.SafeRelease == nil || !req.SafeRelease.AddServices {
+			if pt.SafeReleaseID != safeProjectReleaseID(req.SafeRelease) {
+				return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("safe release baseline changed after scan")
+			}
 		}
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
 			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
@@ -1793,6 +1783,7 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 	}
 	resp := &scanPlanResponse{
+		SafeRelease:           req.SafeRelease,
 		ProjectSlug:           req.ProjectSlug,
 		RepoFullName:          req.RepoFullName,
 		Environment:           req.Environment,
@@ -1855,10 +1846,18 @@ func (s *server) scanService(
 		StalePersistedExclusions: stalePersistedSlugs,
 	}
 
+	if req.SafeRelease != nil {
+		if _, _, prob := s.safeProjectSourceApps(r, acct, req, reposcan.Result{Workloads: filteredW, Managed: filteredMc, Tier: result.Tier}); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if err := serviceadditions.ValidatePlanToken(planToken, safeProjectReleaseID(req.SafeRelease)); err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation(err.Error())
+		}
+	}
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256, req.PlatformTenantRequired)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256, req.PlatformTenantRequired, safeProjectReleaseID(req.SafeRelease))
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "create project scan token",
 				"Gregale could not finish preparing this project scan.",
@@ -1922,6 +1921,25 @@ func (s *server) scanService(
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
 
+	if req.SafeRelease != nil {
+		project, apps, prob := s.safeProjectSourceApps(r, acct, req, reposcan.Result{Workloads: filteredW, Managed: filteredMc, Tier: result.Tier})
+		if prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if problem := s.stageSafeProjectCommand(r.Context(), acct.ID, project.ID, req); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := s.stageSafeProjectConfiguration(r.Context(), acct.ID, project.ID, req); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		apps, prob = s.stageSafeProjectAdditions(r.Context(), acct, project.ID, req.SafeRelease, apps)
+		if prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, nil, apps, req.Environment)
+		added, serving := serviceadditions.Partition(apps, req.SafeRelease)
+		return resp, project, added, serving, nil, builds, nil
+	}
 	project := state.Project{
 		AccountID:        acct.ID,
 		Slug:             req.ProjectSlug,
@@ -2121,22 +2139,10 @@ func (s *server) scanService(
 			excludeSeen[name] = true
 		}
 	}
-	var cronSpecs []reconcile.CronSpec
-	if !req.NoTriggers {
-		cronSpecs = make([]reconcile.CronSpec, 0, len(desiredCrons))
-		for _, cron := range desiredCrons {
-			cronSpecs = append(cronSpecs, reconcile.CronSpec{
-				WorkloadName: cron.WorkloadName,
-				Schedule:     cron.Schedule,
-				Path:         cron.Path,
-				Enabled:      cron.Enabled,
-			})
-		}
-	}
 	rec, recErr := s.reconcileSvc.ReconcileWithCrons(
 		r.Context(), project, filteredScan,
 		reconcileInputs.CommitSHA, reconcileInputs.Branch,
-		excludeList, cronSpecs)
+		excludeList, nil)
 	if recErr != nil {
 		// Map reconcile-package errors into the existing RFC 7807
 		// problem shapes so the handler can use a single dispatch
@@ -2176,7 +2182,7 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	needsProjectApps := len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
 	var currentProjectApps []state.App
 	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
@@ -2209,7 +2215,6 @@ func (s *server) scanService(
 	// handler reads the third slot (added) and fourth slot
 	// (changed) to:
 	//
-	//  - build the slug→ID map for cron stamping (added ∪ changed)
 	//  - emit per-app NotifyAppChanged with kind=created for
 	//    rec.Added entries and kind=updated for rec.Changed entries
 	//  - soft-delete crons whose workload_name is in removedSlugs
@@ -2235,6 +2240,17 @@ func (s *server) scanService(
 	// cleanup into this func must keep staging reads ahead of
 	// the cleanup.
 	buildChanged := rec.Changed
+	if len(req.RetryTargets) > 0 {
+		seen := make(map[string]bool)
+		for _, app := range buildChanged {
+			seen[app.ID] = true
+		}
+		for _, app := range currentProjectApps {
+			if _, retry := req.RetryTargets[app.ID]; retry && !seen[app.ID] {
+				buildChanged = append(buildChanged, app)
+			}
+		}
+	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
@@ -2243,16 +2259,41 @@ func (s *server) scanService(
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		firstBuilds, firstErr := environmentAppsWithoutLiveDeployment(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), req.Environment, rec.Added, rec.Changed)
+		firstBuilds, firstErr := environmentAppsWithoutLiveDeployment(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), req.Environment, rec.Added, buildChanged)
 		if firstErr != nil {
 			prob := customerInternalProblem(s.log, "inspect environment deployments",
 				"Gregale could not check which workloads this environment still needs to deploy.",
 				"Retry the deployment in a moment; if it continues, contact support.", firstErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		buildChanged = append(append([]state.App(nil), rec.Changed...), firstBuilds...)
+		buildChanged = append(append([]state.App(nil), buildChanged...), firstBuilds...)
 	}
-	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, buildChanged, req.Environment)
+	if len(req.Secrets) > 0 {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, req.Environment, req.Secrets); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		// Secret-only redeploys also need a build, even if source reconciliation
+		// left app metadata unchanged. Avoid duplicating newly added/changed apps.
+		touched := make(map[string]bool, len(rec.Added)+len(buildChanged))
+		for _, app := range rec.Added {
+			touched[app.ID] = true
+		}
+		for _, app := range buildChanged {
+			touched[app.ID] = true
+		}
+		for _, app := range selectedApps {
+			if !touched[app.ID] {
+				buildChanged = append(buildChanged, app)
+				touched[app.ID] = true
+			}
+		}
+	}
+	var cronPlans map[string]projectDeploymentCronPlan
+	if !req.NoTriggers && reconcileProductionEnvironment(req.Environment) {
+		buildChanged, cronPlans = s.planProjectDeploymentCrons(r.Context(), acct, selectedProjectManifestApps(filteredW, currentProjectApps), rec.Added, buildChanged, desiredCrons)
+	}
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, buildChanged, req.Environment, cronPlans)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs
@@ -2278,7 +2319,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	// Multipart cap before parsing — mirrors createDeployment.
 	// Leave bounded room for multipart headers and the small metadata fields;
 	// validateAndSpool independently enforces the exact source-file limit.
-	max := int64(limits.SourceTarballMaxMB)*1024*1024 + 1*1024*1024
+	max := int64(limits.SourceTarballMaxMB)*1024*1024 + 1*1024*1024 + api.ProjectSecretsMaxJSONBytes(limits)
 	r.Body = http.MaxBytesReader(nil, r.Body, max)
 	mr, err := r.MultipartReader()
 	if err != nil {
@@ -2299,7 +2340,17 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		environment            string
 		approvalToken          string
 		projectSlugSet         bool
+		secrets                map[string]string
+		secretsSet             bool
+		releaseConfig          json.RawMessage
+		releaseConfigSet       bool
 	)
+	parsed := false
+	defer func() {
+		if !parsed && sourcePath != "" {
+			_ = os.Remove(sourcePath)
+		}
+	}()
 	for {
 		part, perr := mr.NextPart()
 		if perr == io.EOF {
@@ -2312,6 +2363,9 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		name := part.FormName()
 		switch name {
 		case "source":
+			if sourcePath != "" {
+				return nil, api.ErrValidation("source must appear only once")
+			}
 			if vErr := assertMultipartFileName(part); vErr != nil {
 				return nil, vErr
 			}
@@ -2406,6 +2460,29 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 				return nil, api.ErrSourceInvalid("environment is too long")
 			}
 			environment = strings.TrimSpace(string(b))
+		case "release_config":
+			if releaseConfigSet {
+				return nil, api.ErrValidation("release_config must appear only once")
+			}
+			releaseConfigSet = true
+			raw, err := io.ReadAll(io.LimitReader(part, api.ProjectReleaseConfigMaxBytes+1))
+			if err != nil {
+				return nil, api.ErrValidation("release configuration could not be read")
+			}
+			releaseConfig, _, err = api.NormalizeProjectReleaseConfig(raw)
+			if err != nil {
+				return nil, api.ErrValidation(err.Error())
+			}
+		case "secrets":
+			if secretsSet {
+				return nil, api.ErrValidation("secrets must appear only once")
+			}
+			secretsSet = true
+			var secretProblem *api.Problem
+			secrets, secretProblem = readProjectDeploySecrets(part, limits)
+			if secretProblem != nil {
+				return nil, secretProblem
+			}
 		case "approval_token":
 			b, readErr := io.ReadAll(io.LimitReader(part, 512))
 			if readErr != nil {
@@ -2456,6 +2533,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		return nil, prob
 	}
 
+	parsed = true
 	return &scanPlanRequest{
 		SourcePath:             sourcePath,
 		SourceSHA256:           hash,
@@ -2471,6 +2549,8 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		PlatformTenantRequired: platformTenantRequired,
 		Environment:            environment,
 		ApprovalToken:          approvalToken,
+		Secrets:                secrets,
+		ReleaseConfig:          releaseConfig,
 	}, nil
 }
 
@@ -2496,7 +2576,7 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool, safeReleaseIDs ...string) (string, error) {
 	pt := planTokenWire{
 		Hash:                   hashHex,
 		AccountID:              accountID,
@@ -2509,6 +2589,9 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		Environment:            environment,
 		ConfigHash:             configHash,
 		TSUnix:                 nowUnix(),
+	}
+	if len(safeReleaseIDs) > 0 {
+		pt.SafeReleaseID = safeReleaseIDs[0]
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {

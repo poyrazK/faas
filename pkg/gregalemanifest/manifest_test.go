@@ -1668,3 +1668,19 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestContractCommandManifest(t *testing.T) {
+	for _, command := range []string{"node migrate.js contract", "echo\x00invalid", strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1)} {
+		config := &ReleaseConfig{Command: "node migrate.js expand", ContractCommand: command}
+		err := config.Validate()
+		if command == "node migrate.js contract" && err != nil {
+			t.Fatal(err)
+		}
+		if command != "node migrate.js contract" && err == nil {
+			t.Fatal("invalid cleanup command accepted")
+		}
+	}
+	if err := (&ReleaseConfig{ContractCommand: "node migrate.js contract"}).Validate(); err != nil {
+		t.Fatalf("Procfile expansion owner cannot declare cleanup: %v", err)
+	}
+}

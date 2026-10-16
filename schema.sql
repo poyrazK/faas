@@ -16,6 +16,13 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: faas_test_e696c01fd4829d23; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA faas_test_e696c01fd4829d23;
+
+
+--
 -- Name: citext; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -42,6 +49,612 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
     'maintenance',
     'retired'
 );
+
+
+--
+-- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.alert_presets_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: app_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.app_openapi_docs_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_egress_allowlist_cidr_check(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.apps_egress_allowlist_cidr_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  bad cidr;
+begin
+  if new.egress_allowlist is null or cardinality(new.egress_allowlist) = 0 then
+    return new;
+  end if;
+  -- Per-entry guards: family must be v4 or v6, mask must be non-zero.
+  -- The /0 reject closes the same hole as the v4-only trigger's
+  -- `prefix.Bits() == 0` reject at the wire + apid layers: an
+  -- operator cannot pin "the entire address space" — that is the
+  -- chain-policy accept's job, not the allowlist's. Two narrow
+  -- selects (one per guard) keep the error messages specific; a
+  -- combined select with bool_or would conflate family and masklen
+  -- failures and force a parser to guess.
+  for bad in
+    select c
+      from unnest(new.egress_allowlist) c
+     where family(c) not in (4, 6)
+     limit 1
+  loop
+    raise exception 'apps_egress_allowlist: only v4 or v6 CIDRs (got family % for %)', family(bad), bad
+      using errcode = '23514',
+            constraint = 'apps_egress_allowlist_cidr';
+  end loop;
+  for bad in
+    select c
+      from unnest(new.egress_allowlist) c
+     where masklen(c) = 0
+     limit 1
+  loop
+    raise exception 'apps_egress_allowlist: rejected % (masklen /0; ADR-032 non-/0 contract)', bad
+      using errcode = '23514',
+            constraint = 'apps_egress_allowlist_cidr';
+  end loop;
+  return new;
+end;
+$$;
+
+
+--
+-- Name: apps_maintenance_mode_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.apps_maintenance_mode_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (TG_OP = 'UPDATE' AND NEW.maintenance_mode IS DISTINCT FROM OLD.maintenance_mode) THEN
+        PERFORM pg_notify('app_changed', NEW.id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_public_auth_ip_allowlist_cidr_check(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.apps_public_auth_ip_allowlist_cidr_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  bad cidr;
+begin
+  if new.public_auth_ip_allowlist is null or cardinality(new.public_auth_ip_allowlist) = 0 then
+    return new;
+  end if;
+  -- Per-entry guards: family must be v4 or v6, mask must be non-zero.
+  -- The /0 reject closes the same hole as the egress allowlist's
+  -- chain-policy accept: an operator cannot pin "the entire
+  -- address space" — that is the default-pass posture's job, not
+  -- the allowlist's. Two narrow selects (one per guard) keep the
+  -- error messages specific; a combined select with bool_or would
+  -- conflate family and masklen failures.
+  for bad in
+    select c
+      from unnest(new.public_auth_ip_allowlist) c
+     where family(c) not in (4, 6)
+     limit 1
+  loop
+    raise exception 'apps_public_auth_ip_allowlist: only v4 or v6 CIDRs (got family % for %)', family(bad), bad
+      using errcode = '23514',
+            constraint = 'apps_public_auth_ip_allowlist_cidr';
+  end loop;
+  for bad in
+    select c
+      from unnest(new.public_auth_ip_allowlist) c
+     where masklen(c) = 0
+     limit 1
+  loop
+    raise exception 'apps_public_auth_ip_allowlist: rejected % (masklen /0; ADR-118 non-/0 contract)', bad
+      using errcode = '23514',
+            constraint = 'apps_public_auth_ip_allowlist_cidr';
+  end loop;
+  return new;
+end;
+$$;
+
+
+--
+-- Name: cluster_signing_keys_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.cluster_signing_keys_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('cluster_signing_keys_changed', TG_TABLE_NAME);
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.compute_node_keys_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+    perform pg_notify('compute_node_changed', TG_TABLE_NAME);
+    return null;
+end;
+$$;
+
+
+--
+-- Name: compute_node_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.compute_node_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+    payload jsonb;
+begin
+    payload := jsonb_build_object(
+        'node_id', new.id::text,
+        'active', new.active
+    );
+    perform pg_notify('compute_node_changed', payload::text);
+    return new;
+end;
+$$;
+
+
+--
+-- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.consumer_keys_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: cors_presets_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.cors_presets_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: data_upstreams_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.data_upstreams_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'data_upstreams_changed',
+        format('%s|%s|%s|%s|%s|%s|%s',
+            COALESCE(NEW.app_id, OLD.app_id)::text,
+            COALESCE(NEW.scope, OLD.scope),
+            COALESCE(NEW.deployment_scope, OLD.deployment_scope),
+            COALESCE(NEW.kind, OLD.kind),
+            COALESCE(NEW.host, OLD.host),
+            COALESCE(NEW.port, OLD.port)::text,
+            TG_OP)
+    );
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployment_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.deployment_openapi_docs_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployment_sidecar_layers_cap_check(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.deployment_sidecar_layers_cap_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    current_count integer;
+BEGIN
+    -- NEW-row predicate on UPDATE; existing-row count on INSERT.
+    -- Same query works for both because NEW carries the row's
+    -- deployment_id whether we're inserting a fresh row or
+    -- rewriting an existing one.
+    -- `current_count` is the number of rows for this deployment_id
+    -- ALREADY in the table at the time of this trigger call. We
+    -- reject the operation when the row count would exceed
+    -- SidecarCapMax (=2). Because the trigger fires BEFORE the
+    -- row is written, the post-insert count is current_count + 1
+    -- (INSERT) or unchanged (UPDATE that doesn't move the row to
+    -- a different deployment). We compare against the post-write
+    -- ceiling: if the existing count is already at or above
+    -- SidecarCapMax, refuse — that is, current_count >= 2 is a
+    -- hard reject, since adding another row would push us to 3.
+    SELECT count(*) INTO current_count
+        FROM deployment_sidecar_layers
+        WHERE deployment_id = NEW.deployment_id;
+
+    IF current_count >= 2 THEN
+        RAISE EXCEPTION 'deployment_sidecar_layers: deployment % exceeds the 2-row cap (existing=%, new would make 3)',
+            NEW.deployment_id, current_count
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: edge_rules_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.edge_rules_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: egress_policy_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.egress_policy_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+    perform pg_notify(
+        'egress_policy_changed',
+        json_build_object(
+            'policy_id', new.id,
+            'public_iface', new.public_iface,
+            'masquerade_cidr', new.masquerade_cidr,
+            'overlay_exceptions', new.overlay_exceptions,
+            'danger_accept_rfc1918_lateral_movement', new.danger_accept_rfc1918_lateral_movement,
+            'changed_at', new.changed_at
+        )::text
+    );
+    return null;
+end;
+$$;
+
+
+--
+-- Name: github_webhook_secrets_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.github_webhook_secrets_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'github_webhook_secret_changed',
+        jsonb_build_object('installation_id', NEW.installation_id)::text
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: instances_started_at_set(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.instances_started_at_set() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if new.started_at is null then
+    new.started_at = now();
+  end if;
+  return new;
+end
+$$;
+
+
+--
+-- Name: invocation_done_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.invocation_done_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+    payload jsonb;
+begin
+    if (tg_op = 'UPDATE' and old.state in ('pending','dispatching')
+        and new.state in ('completed','failed','cancelled')) then
+        payload := jsonb_build_object(
+            'invocation_id', new.id::text,
+            'app_id', new.app_id::text,
+            'source', new.source,
+            'state', new.state
+        );
+        perform pg_notify('invocation_done', payload::text);
+    end if;
+    return new;
+end;
+$$;
+
+
+--
+-- Name: invocation_due_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.invocation_due_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+    payload jsonb;
+begin
+    payload := jsonb_build_object(
+        'invocation_id', new.id::text,
+        'app_id', new.app_id::text,
+        'source', new.source
+    );
+    perform pg_notify('invocation_due', payload::text);
+    return new;
+end;
+$$;
+
+
+--
+-- Name: job_tasks_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.job_tasks_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Only notify on transitions INTO queued (initial
+    -- INSERT) or from queued (claim by the dispatch
+    -- tick). Other transitions don't need to wake the
+    -- LISTEN worker because they're responses to the
+    -- worker's own batch.
+    IF (TG_OP = 'INSERT' AND NEW.status = 'queued')
+       OR (TG_OP = 'UPDATE' AND OLD.status = 'queued'
+           AND NEW.status <> 'queued') THEN
+        PERFORM pg_notify(
+            'job_tasks_queued',
+            format('%s|%s|%s', NEW.run_id, NEW.task_index, TG_OP)
+        );
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: migration_notify(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.migration_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Only fire when the new row is at the leading edge of the
+    -- applied ledger. Earlier rows (e.g. a downgrade script run
+    -- out-of-band, or a partial-replay rollback) do not signal
+    -- "we're caught up". The waiter is gated on MAX(version_id)
+    -- after every notification, so a spurious early fire is
+    -- harmless; a missed late fire is impossible because goose
+    -- inserts in strict ascending order inside the advisory lock.
+    IF NEW.is_applied IS DISTINCT FROM true THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.version_id = (SELECT MAX(version_id) FROM goose_db_version) THEN
+        PERFORM pg_notify('migrations_applied', NEW.version_id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: mirror_rules_set_updated_at(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.mirror_rules_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_pg_ratelimit_counters(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.notify_pg_ratelimit_counters() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM pg_notify(
+    'rate_limit_changed',
+    json_build_object(
+      'scope', NEW.scope,
+      'subject_id', NEW.subject_id,
+      'plan', NEW.plan
+    )::text
+  );
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_runtime_config_changed(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.notify_runtime_config_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'runtime_config_changed',
+        json_build_object(
+            'key', NEW.config_key,
+            'scope', NEW.scope,
+            'scope_id', NEW.scope_id,
+            'version', NEW.version
+        )::text
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_runtime_config_operation_changed(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.notify_runtime_config_operation_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify(
+        'runtime_config_operation_changed',
+        json_build_object(
+            'id', NEW.id,
+            'config_key', NEW.config_key,
+            'config_version', NEW.config_version,
+            'status', NEW.status
+        )::text
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: notify_tenant_surface_changed(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.notify_tenant_surface_changed() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('tenant_surface_changed', OLD.surface_id::text);
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- surface row updates (status, cert_state, cert_not_after, …)
+        -- bubble up the surface id directly; this trigger is also
+        -- responsible for the surface's row-level changes.
+        PERFORM pg_notify('tenant_surface_changed', NEW.id::text);
+        RETURN NEW;
+    ELSE
+        -- INSERT on tenant_surfaces
+        PERFORM pg_notify('tenant_surface_changed', NEW.id::text);
+        RETURN NEW;
+    END IF;
+END
+$$;
+
+
+--
+-- Name: pg_tier_rank(text); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.pg_tier_rank(tier text) RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE tier
+        WHEN 'compose'    THEN 8
+        WHEN 'k8s'        THEN 8
+        WHEN 'render'     THEN 8
+        WHEN 'fly'        THEN 8
+        WHEN 'serverless' THEN 8
+        WHEN 'procfile'   THEN 6
+        WHEN 'workspace'  THEN 4
+        WHEN 'convention' THEN 2
+        WHEN 'single'     THEN 1
+        ELSE 0
+    END
+$$;
+
+
+--
+-- Name: trg_notify_trigger_ready(); Type: FUNCTION; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE FUNCTION faas_test_e696c01fd4829d23.trg_notify_trigger_ready() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('trigger_ready',
+        json_build_object('trigger_id', NEW.trigger_id,
+                          'record_id',  NEW.id,
+                          'item_id',    NEW.item_identifier)::text);
+    RETURN NEW;
+END $$;
 
 
 --
@@ -3376,7 +3989,6 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
     CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
-    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
     CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
     CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
     CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
@@ -5480,6 +6092,54 @@ BEGIN
     IF NEW.status = 'deleted' THEN
         NEW.deleted_at := coalesce(NEW.deleted_at, now());
         NEW.delete_grace_until := coalesce(NEW.delete_grace_until, now() + interval '7 days');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: fence_deployment_cron_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_deployment_cron_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE parent record; old_app uuid; new_app uuid; http_intent boolean;
+BEGIN
+ IF TG_OP <> 'INSERT' THEN old_app := OLD.app_id; END IF;
+ IF TG_OP <> 'DELETE' THEN new_app := NEW.app_id; END IF;
+ http_intent := (TG_OP <> 'INSERT' AND cardinality(OLD.command) = 0)
+             OR (TG_OP <> 'DELETE' AND cardinality(NEW.command) = 0);
+ FOR parent IN SELECT id, account_id FROM apps WHERE id IN (old_app,new_app) ORDER BY account_id,id LOOP
+  PERFORM 1 FROM accounts WHERE id = parent.account_id FOR UPDATE;
+  IF http_intent THEN
+   UPDATE apps SET deployment_cron_revision=deployment_cron_revision+1,
+    deployment_cron_owner='', deployment_cron_fingerprint='', deployment_cron_before=NULL WHERE id=parent.id;
+  END IF;
+ END LOOP;
+ RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: fence_deployment_policy_changes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_deployment_policy_changes() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF coalesce(OLD.manifest->'profiling','null'::jsonb) IS DISTINCT FROM coalesce(NEW.manifest->'profiling','null'::jsonb)
+       OR coalesce(OLD.manifest->'tracing','null'::jsonb) IS DISTINCT FROM coalesce(NEW.manifest->'tracing','null'::jsonb) THEN
+        IF NEW.deployment_policy_revision = OLD.deployment_policy_revision THEN
+            NEW.deployment_policy_revision := OLD.deployment_policy_revision + 1;
+        END IF;
+        IF NEW.deployment_policy_owner = OLD.deployment_policy_owner THEN
+            NEW.deployment_policy_owner := '';
+            NEW.deployment_policy_fingerprint := '';
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -8881,6 +9541,159 @@ END $$;
 
 
 --
+-- Name: guard_project_migration_publication(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_migration_publication() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.project_id=NEW.project_id) THEN RETURN NEW; END IF;
+ PERFORM 1 FROM projects WHERE id=NEW.project_id FOR UPDATE;
+ IF TG_TABLE_NAME='project_release_sets' THEN
+  IF NEW.active AND EXISTS(SELECT 1 FROM project_migration_pending_contracts c WHERE c.project_id=NEW.project_id AND c.release_id<>NEW.id) THEN
+   RAISE EXCEPTION 'schema contract prevents publication' USING ERRCODE='23514';
+  END IF;
+ ELSE
+  IF NEW.environment_slug='production' AND EXISTS(SELECT 1 FROM project_migration_pending_contracts c WHERE c.project_id=NEW.project_id) THEN
+   RAISE EXCEPTION 'schema contract prevents configuration change' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_project_migration_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_migration_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE project uuid; deployment uuid;
+BEGIN
+ IF TG_TABLE_NAME='deployments' THEN deployment:=NEW.id; ELSE deployment:=NEW.deployment_id; END IF;
+ SELECT project_id INTO project FROM apps WHERE id=NEW.app_id;
+ IF project IS NULL OR NOT EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.project_id=project) THEN RETURN NEW; END IF;
+ PERFORM 1 FROM projects WHERE id=project FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM project_migration_retired_deployments f WHERE f.deployment_id=deployment) THEN
+  IF TG_TABLE_NAME='instances' THEN
+   IF NEW.state IN ('parked','stopped','failed') THEN RETURN NEW; END IF;
+  ELSIF TG_TABLE_NAME='deployments' THEN
+   IF NEW.status<>'live' THEN RETURN NEW; END IF;
+   IF TG_OP='UPDATE' AND OLD.status='live' AND OLD.traffic_percent=0 AND NEW.traffic_percent=0 THEN RETURN NEW; END IF;
+  ELSIF TG_TABLE_NAME='app_tasks' THEN
+   IF NEW.status NOT IN ('queued','restoring','running') THEN RETURN NEW; END IF;
+  END IF;
+  RAISE EXCEPTION 'deployment retired by schema contract' USING ERRCODE='23514';
+ END IF;
+ IF TG_TABLE_NAME='app_tasks' THEN
+ IF NEW.status='running' AND EXISTS(SELECT 1 FROM project_migration_contracts c WHERE c.task_id=NEW.id AND (c.prepared_lease_token IS NULL OR c.prepared_lease_token<>NEW.lease_token)) THEN
+  RAISE EXCEPTION 'cleanup runtime has not been attested for this lease' USING ERRCODE='23514';
+ END IF;
+ IF NEW.status='running' AND NEW.kind='release' AND EXISTS(SELECT 1 FROM project_migration_contracts c JOIN deployment_submission_receipts ds ON ds.app_id=c.app_id AND ds.attempt_id=c.workload_attempt_id WHERE ds.deployment_id=NEW.deployment_id AND (c.expansion_task_id IS NULL OR c.expansion_task_id<>NEW.id OR c.runtime_fingerprint IS NULL)) THEN
+  RAISE EXCEPTION 'expansion runtime has not been attested' USING ERRCODE='23514';
+ END IF;
+ IF NEW.status IN ('restoring','running') AND NOT EXISTS(SELECT 1 FROM project_migration_task_admission admission WHERE admission.id=NEW.id) THEN
+  RAISE EXCEPTION 'schema contract task admission fenced' USING ERRCODE='23514';
+ END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_project_release_worker_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_release_worker_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' OR pg_trigger_depth()=1
+ THEN RAISE EXCEPTION 'project release worker identity is immutable' USING ERRCODE='23514'; END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: guard_promotion_control_publication(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_promotion_control_publication() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE h record; publication_token text;
+BEGIN
+ SELECT generation,phase,payload INTO h FROM project_environment_promotion_health WHERE promotion_id=NEW.id;
+ IF FOUND AND h.payload ? 'control' THEN
+  IF NEW.target_release_set_id IS DISTINCT FROM OLD.target_release_set_id THEN
+   RAISE EXCEPTION 'operator-controlled promotion cannot cut over' USING ERRCODE='23514',CONSTRAINT='promotion_control_publication_fenced';
+  END IF;
+  IF NEW.restored_target_release_set_id IS DISTINCT FROM OLD.restored_target_release_set_id THEN
+   publication_token := NEW.id::text || ':' || h.generation::text || ':' || (h.payload#>>'{control,request,request_id}');
+   IF h.phase<>'rolling_back' OR h.payload#>>'{control,status}'<>'pending' OR
+      (h.payload#>>'{control,deadline}')::timestamptz<=clock_timestamp() OR
+      current_setting('faas.promotion_control_publication',true) IS DISTINCT FROM publication_token THEN
+    RAISE EXCEPTION 'operator restoration requires the guarded publication transaction' USING ERRCODE='23514',CONSTRAINT='promotion_control_publication_fenced';
+   END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_promotion_migration_task(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_promotion_migration_task() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE project uuid; owner record;
+BEGIN
+ IF NEW.kind<>'release' THEN RETURN NEW; END IF;
+ SELECT project_id INTO project FROM apps WHERE id=NEW.app_id;
+ IF project IS NULL THEN RETURN NEW; END IF;
+ PERFORM 1 FROM projects WHERE id=project FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM project_environment_promotion_migrations m JOIN project_environment_promotions p ON p.id=m.promotion_id
+   WHERE p.project_id=project AND (p.status='running' OR EXISTS(SELECT 1 FROM project_environment_promotion_migration_recoveries recovery WHERE recovery.promotion_id=p.id AND recovery.status IN ('quiescing','verifying')) OR EXISTS(SELECT 1 FROM app_tasks previous WHERE previous.id=m.task_id AND previous.started_at IS NOT NULL AND previous.exit_code IS NULL AND NOT EXISTS(SELECT 1 FROM project_promotion_migration_resolved_tasks resolved WHERE resolved.task_id=previous.id))) AND m.task_id IS DISTINCT FROM NEW.id) AND (TG_OP='INSERT' OR NEW.status IN ('restoring','running')) THEN
+  RAISE EXCEPTION 'project has an admitted promotion migration' USING ERRCODE='23514';
+ END IF;
+ SELECT p.status,h.phase,h.payload,m.prepared_lease_token,m.runtime_lease_token,m.runtime_node_id,m.runtime_instance_id INTO owner FROM project_environment_promotion_migrations m
+ JOIN project_environment_promotions p ON p.id=m.promotion_id JOIN project_environment_promotion_health h ON h.promotion_id=p.id WHERE m.task_id=NEW.id;
+ IF FOUND AND NEW.status IN ('restoring','running') THEN
+  IF owner.status<>'running' OR owner.phase<>'migrating' OR (owner.payload->>'deadline')::timestamptz<=clock_timestamp()
+    OR NEW.retry_max<>0 OR (NEW.status='running' AND (owner.prepared_lease_token IS NULL OR owner.prepared_lease_token IS DISTINCT FROM NEW.lease_token OR owner.runtime_lease_token IS DISTINCT FROM NEW.lease_token OR owner.runtime_node_id IS NULL OR owner.runtime_instance_id IS NULL)) THEN
+   RAISE EXCEPTION 'promotion migration is not authorized for dispatch' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_promotion_worker_set_publication(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_promotion_worker_set_publication() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE h record; restoring boolean;
+BEGIN
+ SELECT generation,payload INTO h FROM project_environment_promotion_health WHERE promotion_id=NEW.id;
+ IF FOUND AND h.payload->'policy' ? 'workers' AND
+  (NEW.target_release_set_id IS DISTINCT FROM OLD.target_release_set_id OR NEW.restored_target_release_set_id IS DISTINCT FROM OLD.restored_target_release_set_id) THEN
+  restoring := NEW.restored_target_release_set_id IS DISTINCT FROM OLD.restored_target_release_set_id;
+  IF current_setting('faas.promotion_worker_set_guard',true) IS DISTINCT FROM NEW.id::text||':'||h.generation::text||':'||restoring::text THEN
+   RAISE EXCEPTION 'worker set publication requires every current startup guard' USING ERRCODE='23514',CONSTRAINT='promotion_worker_set_publication_fenced';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_queue_binding_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9000,6 +9813,30 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_release_secret_key_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_release_secret_key_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE document jsonb; kind text;
+BEGIN
+ PERFORM pg_advisory_xact_lock_shared(hashtextextended('release-secret-key-retirement',0));
+ -- A transaction with an older repeatable-read snapshot must serialize or fail.
+ PERFORM generation FROM release_secret_key_retirement_fence WHERE singleton FOR SHARE;
+ IF TG_TABLE_NAME='app_secrets' THEN document:=jsonb_build_array(to_jsonb(NEW)); kind:='app';
+ ELSIF TG_TABLE_NAME IN ('project_release_config_intents','project_environment_promotion_release_config') THEN document:=NEW.payload; kind:='capture';
+ ELSE document:=NEW.values_json; kind:='array'; END IF;
+ IF EXISTS(SELECT 1 FROM release_secret_document_envelopes(document,kind) e
+   WHERE EXISTS(SELECT 1 FROM release_secret_key_retirements r WHERE r.kid=coalesce(e->>'kid','') OR coalesce(e->>'kid','')='')) THEN
+  RAISE EXCEPTION 'encrypted release input uses a retired or unlabelled key'
+   USING ERRCODE='23514',CONSTRAINT='release_secret_key_retired';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -9816,6 +10653,8 @@ CREATE FUNCTION public.invalidate_lifecycle_successor_routes() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE oldrow jsonb; newrow jsonb; affected uuid; owner uuid; hostname text;
+ watched text[] := ARRAY['status','slug','manifest','visibility','org_id','project_id','account_id',
+                         'only_declared_routes','declared_routes','consumer_auth_mode','maintenance_mode'];
 BEGIN
  IF TG_OP<>'INSERT' THEN oldrow:=to_jsonb(OLD); END IF;
  IF TG_OP<>'DELETE' THEN newrow:=to_jsonb(NEW); END IF;
@@ -9823,9 +10662,17 @@ BEGIN
   UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE split_part(m->>'successor_url','/',3) IN (oldrow->>'hostname',newrow->>'hostname'));
   RETURN NULL;
  END IF;
+ IF TG_TABLE_NAME='apps' AND TG_OP='UPDATE' AND
+    (SELECT jsonb_object_agg(k, CASE WHEN k='status' AND v #>> '{}' IN ('active','evicted_cold') THEN '"scale_to_zero"'::jsonb ELSE v END)
+       FROM jsonb_each(oldrow) e(k,v) WHERE k=ANY(watched))
+    IS NOT DISTINCT FROM
+    (SELECT jsonb_object_agg(k, CASE WHEN k='status' AND v #>> '{}' IN ('active','evicted_cold') THEN '"scale_to_zero"'::jsonb ELSE v END)
+       FROM jsonb_each(newrow) e(k,v) WHERE k=ANY(watched)) THEN
+  RETURN NULL;
+ END IF;
  FOR affected IN SELECT DISTINCT id FROM (VALUES(coalesce(oldrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN oldrow->>'id' END)::uuid),(coalesce(newrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN newrow->>'id' END)::uuid)) ids(id) WHERE id IS NOT NULL LOOP
   SELECT account_id INTO owner FROM apps WHERE id=affected;
-  PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+  PERFORM 1 FROM accounts WHERE id=owner FOR NO KEY UPDATE;
   UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND
    ((TG_TABLE_NAME<>'deployments' AND r.app_id=affected) OR EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE m->>'successor_app_id'=affected::text AND (TG_TABLE_NAME<>'deployments' OR affected<>r.app_id)));
  END LOOP;
@@ -11997,6 +12844,226 @@ END $$;
 
 
 --
+-- Name: protect_promotion_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.payload ? 'admission' AND (
+  NOT NEW.payload ? 'admission'
+  OR NEW.payload#>'{admission,queued_at}' IS DISTINCT FROM OLD.payload#>'{admission,queued_at}'
+  OR NEW.payload#>'{admission,wait_deadline}' IS DISTINCT FROM OLD.payload#>'{admission,wait_deadline}'
+  OR (OLD.payload#>>'{admission,started_at}' IS NOT NULL AND NEW.payload#>'{admission,started_at}' IS DISTINCT FROM OLD.payload#>'{admission,started_at}')
+ ) THEN RAISE EXCEPTION 'promotion queue identity and execution start are immutable' USING ERRCODE='23514'; END IF;
+ IF NEW.phase='queued' AND OLD.phase<>'queued' THEN RAISE EXCEPTION 'active promotion cannot reenter waiting queue' USING ERRCODE='23514'; END IF;
+ IF OLD.phase='queued' AND NEW.phase IN ('preflight','migrating') THEN
+  IF coalesce(current_setting('faas.promotion_queue_dispatch',true),'')<>OLD.promotion_id::text || ':' || OLD.generation::text || ':' || coalesce(OLD.lease_token::text,'')
+   OR OLD.lease_token IS NULL OR OLD.lease_until<=clock_timestamp()
+   OR (OLD.payload#>>'{admission,wait_deadline}')::timestamptz<=clock_timestamp()
+   OR NEW.payload#>>'{admission,started_at}' IS NULL
+   OR NEW.payload#>>'{admission,started_at}' IS DISTINCT FROM NEW.payload->>'started_at'
+   OR NEW.generation<>OLD.generation+1
+  THEN RAISE EXCEPTION 'queued promotion requires validated dispatch ownership' USING ERRCODE='23514'; END IF;
+ ELSIF OLD.phase='queued' AND NEW.phase NOT IN ('queued','failed','conflicted','aborted') THEN
+  RAISE EXCEPTION 'queued promotion cannot publish or skip preflight' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_control(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_control() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
+   RAISE EXCEPTION 'promotion control receipts follow promotion lifetime' USING ERRCODE='23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.promotion_id<>OLD.promotion_id OR NEW.request_id<>OLD.request_id OR
+  (NEW.payload-'status'-'reason'-'resolved_at') IS DISTINCT FROM (OLD.payload-'status'-'reason'-'resolved_at') OR
+  (OLD.payload->>'status'<>'pending' AND NEW.payload IS DISTINCT FROM OLD.payload) THEN
+  RAISE EXCEPTION 'promotion control identity and terminal outcome are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_health_control(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_health_control() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.payload ? 'control' AND NOT NEW.payload ? 'control' OR
+  (NEW.payload ? 'control' AND NOT EXISTS(SELECT 1 FROM project_environment_promotion_controls c WHERE c.promotion_id=NEW.promotion_id AND c.request_id=NEW.payload#>>'{control,request,request_id}' AND c.payload=NEW.payload->'control')) THEN
+  RAISE EXCEPTION 'promotion health must preserve the durable operator control' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_health_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_health_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.payload->'policy' IS DISTINCT FROM OLD.payload->'policy' THEN
+  RAISE EXCEPTION 'promotion health policy is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_health_status(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_health_status() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE health_phase text;
+BEGIN
+ SELECT phase INTO health_phase FROM project_environment_promotion_health WHERE promotion_id=OLD.id;
+ IF health_phase IS NOT NULL AND (
+  (NEW.status='running' AND OLD.status<>'running' AND NOT (OLD.status='failed' AND (health_phase='preflight' AND EXISTS(SELECT 1 FROM project_environment_promotion_migration_recoveries WHERE promotion_id=OLD.id AND status='resumed') OR health_phase='restoring' AND EXISTS(SELECT 1 FROM project_environment_promotion_controls WHERE promotion_id=OLD.id AND payload->>'status'='pending')))) OR
+  (NEW.status='succeeded' AND health_phase<>'succeeded') OR
+  (NEW.status='failed' AND health_phase NOT IN ('preflight','aborted','failed','conflicted','rollback_failed'))
+ ) THEN RAISE EXCEPTION 'promotion status is owned by destination health' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_migration_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_migration_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
+   RAISE EXCEPTION 'promotion migration evidence follows promotion lifetime' USING ERRCODE='23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF OLD.task_id IS NOT NULL AND (NEW.task_id IS DISTINCT FROM OLD.task_id OR NEW.runtime_fingerprint<>OLD.runtime_fingerprint) THEN
+  RAISE EXCEPTION 'promotion migration task and runtime identity are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_migration_recovery(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_migration_recovery() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
+   RAISE EXCEPTION 'promotion recovery follows parent lifetime' USING ERRCODE='23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF OLD.status IN ('resumed','resolved','blocked') OR NEW.request_hash<>OLD.request_hash OR NEW.payload#>'{receipt,request}' IS DISTINCT FROM OLD.payload#>'{receipt,request}'
+  OR NEW.payload#>'{receipt,operator_account_id}' IS DISTINCT FROM OLD.payload#>'{receipt,operator_account_id}' OR NEW.payload#>'{receipt,requested_at}' IS DISTINCT FROM OLD.payload#>'{receipt,requested_at}'
+  OR NEW.payload#>'{receipt,deadline}' IS DISTINCT FROM OLD.payload#>'{receipt,deadline}' OR NEW.payload->'runtime_fingerprint' IS DISTINCT FROM OLD.payload->'runtime_fingerprint' THEN
+  RAISE EXCEPTION 'promotion recovery identity and terminal decisions are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_migration_runtime(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_migration_runtime() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.destroyed_at IS NOT NULL AND NEW.destroyed_at IS DISTINCT FROM OLD.destroyed_at OR
+  EXISTS(SELECT 1 FROM app_tasks WHERE id=OLD.task_id AND started_at IS NOT NULL) AND
+  (NEW.runtime_node_id IS DISTINCT FROM OLD.runtime_node_id OR NEW.runtime_instance_id IS DISTINCT FROM OLD.runtime_instance_id OR NEW.runtime_lease_token IS DISTINCT FROM OLD.runtime_lease_token OR NEW.prepared_lease_token IS DISTINCT FROM OLD.prepared_lease_token) THEN
+  RAISE EXCEPTION 'dispatched migration runtime identity is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: protect_promotion_release_configuration(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_promotion_release_configuration() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND current_setting('faas.release_secret_rekey',true)='on'
+  AND to_jsonb(OLD)-'payload'=to_jsonb(NEW)-'payload'
+  AND release_secret_without_envelopes(OLD.payload,'promotion')=release_secret_without_envelopes(NEW.payload,'promotion') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' OR EXISTS(SELECT 1 FROM project_environment_promotions WHERE id=OLD.promotion_id) THEN
+  RAISE EXCEPTION 'promotion release configuration follows promotion lifetime' USING ERRCODE='23514';
+ END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: protect_release_configuration_snapshot(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_release_configuration_snapshot() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF TG_TABLE_NAME='project_release_config_intents' AND current_setting('faas.release_secret_rekey',true)='on'
+   AND to_jsonb(OLD)-'payload'=to_jsonb(NEW)-'payload'
+   AND release_secret_without_envelopes(OLD.payload,'capture')=release_secret_without_envelopes(NEW.payload,'capture') THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'release configuration snapshots are immutable' USING ERRCODE='23514';
+ END IF;
+ IF TG_TABLE_NAME='deployment_release_env_snapshots' THEN
+  IF EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RAISE EXCEPTION 'release configuration snapshots follow deployment lifetime' USING ERRCODE='23514'; END IF;
+ ELSE
+  IF EXISTS(SELECT 1 FROM project_submissions WHERE account_id=OLD.account_id AND attempt_id=OLD.attempt_id) THEN RAISE EXCEPTION 'release configuration snapshots follow submission lifetime' USING ERRCODE='23514'; END IF;
+ END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: protect_release_secret_envelope_update(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.protect_release_secret_envelope_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF current_setting('faas.release_secret_rekey',true)='on'
+  AND to_jsonb(OLD)-'values_json'=to_jsonb(NEW)-'values_json'
+  AND release_secret_without_envelopes(OLD.values_json,'array')=release_secret_without_envelopes(NEW.values_json,'array') THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'release secret versions are immutable' USING ERRCODE='23514',CONSTRAINT='release_secret_version_immutable';
+END $$;
+
+
+--
 -- Name: prune_pr_preview_set_on_root_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12383,6 +13450,35 @@ $$;
 
 
 --
+-- Name: reject_pinned_release_secret_mutation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_pinned_release_secret_mutation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE selected_app uuid; selected_scope text;
+BEGIN
+ selected_app:=coalesce(NEW.app_id,OLD.app_id); selected_scope:=coalesce(NEW.scope,OLD.scope);
+ PERFORM 1 FROM apps WHERE id=selected_app AND status<>'deleted' FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM project_release_sets r JOIN project_release_members m ON m.release_id=r.id
+  JOIN deployment_release_secret_snapshots s ON s.deployment_id=m.deployment_id JOIN apps a ON a.id=m.app_id AND a.status<>'deleted'
+  WHERE r.active AND r.environment_slug=selected_scope AND m.app_id=selected_app) THEN
+  IF TG_OP='UPDATE' AND current_setting('faas.release_secret_rekey',true)='on'
+   AND to_jsonb(OLD)-ARRAY['kid','ciphertext']=to_jsonb(NEW)-ARRAY['kid','ciphertext'] THEN RETURN NEW; END IF;
+  IF TG_OP='UPDATE' AND NEW.ciphertext=OLD.ciphertext AND NEW.kid IS NOT DISTINCT FROM OLD.kid
+   AND NEW.value_hash IS NOT DISTINCT FROM OLD.value_hash AND NEW.secret_version IS NOT DISTINCT FROM OLD.secret_version
+   AND NEW.delivery_version=OLD.delivery_version AND NEW.app_id=OLD.app_id AND NEW.account_id=OLD.account_id AND NEW.scope=OLD.scope AND NEW.key=OLD.key
+   AND NEW.managed_credential_ref IS NOT DISTINCT FROM OLD.managed_credential_ref AND NEW.managed_credential_generation IS NOT DISTINCT FROM OLD.managed_credential_generation
+   AND NEW.secret_class=OLD.secret_class AND NEW.managed_postgres_binding_id IS NOT DISTINCT FROM OLD.managed_postgres_binding_id
+   AND NEW.managed_object_storage_credential_id IS NOT DISTINCT FROM OLD.managed_object_storage_credential_id THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'release secrets require an atomic secret deployment' USING ERRCODE='23514',CONSTRAINT='release_secret_snapshot_owned';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: reject_reserved_app_slug_allocation(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12429,6 +13525,118 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: app_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_secrets (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    key text NOT NULL,
+    ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    kid text,
+    scope text DEFAULT 'default'::text NOT NULL,
+    value_hash text,
+    managed_postgres_binding_id uuid,
+    managed_credential_ref text,
+    managed_credential_generation bigint,
+    managed_object_storage_credential_id uuid,
+    delivery_version bigint DEFAULT 1 NOT NULL,
+    delivered_version bigint,
+    delivery_status text DEFAULT 'pending'::text NOT NULL,
+    last_delivery_attempt_at timestamp with time zone,
+    last_delivered_at timestamp with time zone,
+    last_delivery_error_code text,
+    last_delivered_wake_id text,
+    last_delivered_instance_id text,
+    last_runtime_reload_version bigint,
+    last_runtime_reload_revision text,
+    last_runtime_reload_projection text,
+    last_runtime_reload_signal text,
+    last_runtime_reload_at timestamp with time zone,
+    last_runtime_reload_error_code text,
+    last_runtime_reload_instance_id text,
+    secret_version bigint,
+    secret_class text DEFAULT 'persistent'::text NOT NULL,
+    CONSTRAINT app_secrets_delivered_version_range CHECK (((delivered_version IS NULL) OR ((delivered_version >= 1) AND (delivered_version <= delivery_version)))),
+    CONSTRAINT app_secrets_delivery_state_consistent CHECK ((((delivery_status = 'delivered'::text) AND (delivered_version = delivery_version) AND (last_delivery_attempt_at IS NOT NULL) AND (last_delivered_at IS NOT NULL) AND (last_delivery_error_code IS NULL) AND (last_delivered_wake_id IS NOT NULL) AND (last_delivered_instance_id IS NOT NULL)) OR ((delivery_status = 'failed'::text) AND (last_delivery_attempt_at IS NOT NULL) AND (last_delivery_error_code IS NOT NULL) AND ((delivered_version IS NULL) OR (delivered_version < delivery_version))) OR ((delivery_status = 'pending'::text) AND (last_delivery_error_code IS NULL) AND ((delivered_version IS NULL) OR (delivered_version < delivery_version))))),
+    CONSTRAINT app_secrets_delivery_status_shape CHECK ((delivery_status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text]))),
+    CONSTRAINT app_secrets_delivery_version_positive CHECK ((delivery_version >= 1)),
+    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_secrets_managed_postgres_owner_chk CHECK ((((managed_postgres_binding_id IS NULL) AND (managed_credential_ref IS NULL) AND (managed_credential_generation IS NULL)) OR ((managed_postgres_binding_id IS NOT NULL) AND (managed_credential_ref IS NOT NULL) AND (managed_credential_generation >= 1)))),
+    CONSTRAINT app_secrets_runtime_reload_observation_consistent CHECK ((((last_runtime_reload_version IS NULL) AND (last_runtime_reload_revision IS NULL) AND (last_runtime_reload_projection IS NULL) AND (last_runtime_reload_signal IS NULL) AND (last_runtime_reload_at IS NULL) AND (last_runtime_reload_error_code IS NULL) AND (last_runtime_reload_instance_id IS NULL)) OR ((last_runtime_reload_version IS NOT NULL) AND (last_runtime_reload_revision IS NOT NULL) AND (last_runtime_reload_projection IS NOT NULL) AND (last_runtime_reload_signal IS NOT NULL) AND (last_runtime_reload_at IS NOT NULL) AND (last_runtime_reload_instance_id IS NOT NULL) AND (last_runtime_reload_version >= 1) AND (last_runtime_reload_version <= delivery_version) AND (last_runtime_reload_revision ~ '^[a-f0-9]{64}$'::text) AND (last_runtime_reload_projection = ANY (ARRAY['updated'::text, 'unchanged'::text, 'failed'::text])) AND (last_runtime_reload_signal = ANY (ARRAY['sent'::text, 'queued'::text, 'failed'::text, 'not_attempted'::text])) AND (last_runtime_reload_at IS NOT NULL) AND (last_runtime_reload_instance_id IS NOT NULL) AND (((last_runtime_reload_projection = 'failed'::text) AND (last_runtime_reload_signal = 'not_attempted'::text) AND (last_runtime_reload_error_code IS NOT NULL) AND (last_runtime_reload_error_code = 'projection_failed'::text)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = ANY (ARRAY['sent'::text, 'not_attempted'::text])) AND (last_runtime_reload_error_code IS NULL)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = 'queued'::text) AND (last_runtime_reload_error_code IS NULL)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = 'failed'::text) AND (last_runtime_reload_error_code IS NOT NULL) AND (last_runtime_reload_error_code = 'signal_failed'::text)) OR ((last_runtime_reload_projection = 'unchanged'::text) AND (last_runtime_reload_signal = 'not_attempted'::text) AND (last_runtime_reload_error_code IS NULL)))))),
+    CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT app_secrets_secret_class_shape CHECK ((secret_class = ANY (ARRAY['persistent'::text, 'ephemeral'::text]))),
+    CONSTRAINT app_secrets_secret_version_positive CHECK (((secret_version IS NULL) OR (secret_version >= 1))),
+    CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16)))
+);
+
+
+--
+-- Name: release_secret_app_document(public.app_secrets); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.release_secret_app_document(s public.app_secrets) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_array(jsonb_build_object('key',(s).key,'kid',coalesce((s).kid,''),
+ 'ciphertext',encode((s).ciphertext,'base64'),'value_hash',coalesce((s).value_hash,''),
+ 'secret_class',(s).secret_class,'secret_version',(s).secret_version,'delivery_version',(s).delivery_version,
+ 'created_at',(s).created_at,'updated_at',(s).updated_at,
+ 'managed_postgres_binding_id',coalesce((s).managed_postgres_binding_id::text,''),
+ 'managed_postgres_access','',
+ 'managed_credential_ref',coalesce((s).managed_credential_ref,''),
+ 'managed_credential_generation',coalesce((s).managed_credential_generation,0),
+ 'managed_object_storage_credential_id',coalesce((s).managed_object_storage_credential_id::text,'')))
+$$;
+
+
+--
+-- Name: release_secret_document_envelopes(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.release_secret_document_envelopes(payload jsonb, kind text) RETURNS SETOF jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+ SELECT value FROM jsonb_array_elements(CASE WHEN kind IN ('capture','promotion') THEN '[]'::jsonb ELSE payload END)
+ UNION ALL SELECT jsonb_path_query(payload,'$.workloads[*].live_secrets[*]') WHERE kind IN ('capture','promotion')
+ UNION ALL SELECT jsonb_path_query(payload,'$.workloads[*].secret_snapshot[*]') WHERE kind IN ('capture','promotion')
+ UNION ALL SELECT jsonb_path_query(payload,'$.workloads[*].secret_target[*]') WHERE kind IN ('capture','promotion')
+$_$;
+
+
+--
+-- Name: release_secret_without_envelopes(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.release_secret_without_envelopes(payload jsonb, kind text) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE result jsonb:=payload; workloads jsonb; w jsonb; entries jsonb; field text; idx integer:=0;
+BEGIN
+ IF kind NOT IN ('capture','promotion') THEN
+  SELECT coalesce(jsonb_agg(value-ARRAY['kid','ciphertext'] ORDER BY ord),'[]'::jsonb) INTO result
+   FROM jsonb_array_elements(payload) WITH ORDINALITY AS e(value,ord);
+  RETURN result;
+ END IF;
+ workloads:=payload->'workloads';
+ FOR w IN SELECT value FROM jsonb_array_elements(workloads) LOOP
+  FOREACH field IN ARRAY ARRAY['live_secrets','secret_snapshot','secret_target'] LOOP
+   IF jsonb_typeof(w->field)='array' THEN
+    SELECT coalesce(jsonb_agg(value-ARRAY['kid','ciphertext'] ORDER BY ord),'[]'::jsonb) INTO entries
+     FROM jsonb_array_elements(w->field) WITH ORDINALITY AS e(value,ord);
+    result:=jsonb_set(result,ARRAY['workloads',idx::text,field],entries);
+   END IF;
+  END LOOP;
+  idx:=idx+1;
+ END LOOP;
+ RETURN result;
+END $$;
 
 
 --
@@ -13020,6 +14228,24 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: schedule_promotion_health(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.schedule_promotion_health() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.lease_token IS DISTINCT FROM OLD.lease_token AND NEW.lease_token IS NOT NULL THEN
+  NEW.last_claimed_at := clock_timestamp();
+  NEW.next_check_at := NEW.lease_until;
+ ELSIF NEW.generation<>OLD.generation THEN
+  NEW.next_check_at := least(NEW.next_check_at,clock_timestamp());
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -13893,6 +15119,19 @@ END $$;
 
 
 --
+-- Name: wake_promotion_recovery(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.wake_promotion_recovery() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ UPDATE project_environment_promotion_health SET next_check_at=least(next_check_at,clock_timestamp()) WHERE promotion_id=NEW.promotion_id;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: workflow_due_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14023,6 +15262,2484 @@ CREATE FUNCTION public.workflow_tenant_event_recipients(target_account uuid, tar
    AND event_fanout_pattern_matches(definition->'trigger'->>'source', event_source)
    AND event_fanout_pattern_matches(definition->'trigger'->>'event_type', event_type);
 $$;
+
+
+--
+-- Name: account_credits; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.account_credits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    cents_remaining bigint NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT account_credits_cents_remaining_check CHECK ((cents_remaining >= 0)),
+    CONSTRAINT account_credits_reason_check CHECK (((char_length(reason) >= 3) AND (char_length(reason) <= 500)))
+);
+
+
+--
+-- Name: account_passwords; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.account_passwords (
+    account_id uuid NOT NULL,
+    hash text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: account_spend_snapshot; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.account_spend_snapshot (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone DEFAULT now() NOT NULL,
+    gb_seconds double precision NOT NULL,
+    eur_cents bigint NOT NULL,
+    source text DEFAULT 'running_seconds'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_spend_snapshot_eur_cents_chk CHECK ((eur_cents >= 0)),
+    CONSTRAINT account_spend_snapshot_gb_seconds_chk CHECK ((gb_seconds >= (0)::double precision)),
+    CONSTRAINT account_spend_snapshot_period_chk CHECK ((period_end > period_start)),
+    CONSTRAINT account_spend_snapshot_source_chk CHECK ((source = ANY (ARRAY['running_seconds'::text, 'overage'::text, 'build_seconds'::text, 'snapshot_storage'::text])))
+);
+
+
+--
+-- Name: accounts; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    email public.citext NOT NULL,
+    plan text DEFAULT 'free'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    provider_customer_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deletion_requested_at timestamp with time zone,
+    stripe_subscription_item text,
+    last_quota_warning_at timestamp with time zone,
+    past_due_at timestamp with time zone,
+    mfa_enrolled_at timestamp with time zone,
+    mfa_secret_encrypted bytea,
+    mfa_recovery_codes_hash bytea[],
+    mfa_required boolean DEFAULT false NOT NULL,
+    overage_cap_cents bigint,
+    key_grace_window_days integer,
+    egress_allowlist_extra integer DEFAULT 0 NOT NULL,
+    CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
+    CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
+    CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
+    CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
+    CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
+);
+
+
+--
+-- Name: alert_deliveries; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.alert_deliveries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    idempotency_key text NOT NULL,
+    payload jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    last_status_code integer,
+    last_error text,
+    observed_value double precision NOT NULL,
+    fired_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
+    CONSTRAINT alert_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: alert_presets; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.alert_presets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    display_name text NOT NULL,
+    description text NOT NULL,
+    category text NOT NULL,
+    metric text NOT NULL,
+    comparison text NOT NULL,
+    threshold double precision NOT NULL,
+    window_spec text NOT NULL,
+    default_cooldown_minutes integer DEFAULT 15 NOT NULL,
+    enabled_in_catalog boolean DEFAULT true NOT NULL,
+    minimum_plan text DEFAULT 'hobby'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT alert_presets_category_chk CHECK ((category = ANY (ARRAY['availability'::text, 'reliability'::text, 'cost'::text, 'deployment'::text, 'infrastructure'::text]))),
+    CONSTRAINT alert_presets_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
+    CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
+    CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
+    CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'queue_depth'::text]))),
+    CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
+    CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
+);
+
+
+--
+-- Name: alert_rules; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.alert_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    name text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    metric text NOT NULL,
+    comparison text NOT NULL,
+    threshold double precision NOT NULL,
+    window_spec text NOT NULL,
+    failure_source text,
+    webhook_url text NOT NULL,
+    webhook_secret_sealed bytea NOT NULL,
+    cooldown_minutes integer DEFAULT 30 NOT NULL,
+    state text DEFAULT 'ok'::text NOT NULL,
+    last_fired_at timestamp with time zone,
+    last_evaluated_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
+    CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
+    CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text])))),
+    CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'queue_depth'::text]))),
+    CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
+    CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text]))),
+    CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
+);
+
+
+--
+-- Name: api_keys; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.api_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    key_sha256 bytea NOT NULL,
+    label text,
+    last_used_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    scopes text[] DEFAULT '{admin}'::text[] NOT NULL,
+    org_id uuid NOT NULL,
+    expires_at timestamp with time zone,
+    status text DEFAULT 'active'::text NOT NULL,
+    revoked_at timestamp with time zone,
+    rotated_from_id uuid,
+    created_ip inet,
+    created_ua text,
+    parent_key_id uuid,
+    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'apps:read'::text, 'env:read'::text, 'env:write'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
+);
+
+
+--
+-- Name: app_envs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_envs (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    key text NOT NULL,
+    value text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    scope text DEFAULT 'default'::text NOT NULL,
+    CONSTRAINT app_envs_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_envs_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+
+--
+-- Name: app_error_requests; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_error_requests (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    fingerprint character(64) NOT NULL,
+    request_id uuid NOT NULL,
+    received_at timestamp with time zone NOT NULL,
+    route text NOT NULL,
+    http_status integer NOT NULL,
+    error_class text NOT NULL,
+    sample_message text NOT NULL,
+    deployment_id uuid,
+    headers_sample jsonb,
+    redactions text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT app_error_requests_error_class_check CHECK ((error_class = ANY (ARRAY['db_timeout'::text, 'stripe_timeout'::text, 'null_pointer'::text, 'invalid_json'::text, 'wake_failed'::text, 'upstream_5xx'::text, 'unhandled'::text, 'client_error'::text]))),
+    CONSTRAINT app_error_requests_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_error_requests_headers_sample_check CHECK (((headers_sample IS NULL) OR (pg_column_size((headers_sample)::text) <= 8192))),
+    CONSTRAINT app_error_requests_http_status_check CHECK (((http_status >= 400) AND (http_status <= 599))),
+    CONSTRAINT app_error_requests_sample_message_check CHECK ((pg_column_size(sample_message) <= 512))
+);
+
+
+--
+-- Name: app_errors; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_errors (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid,
+    fingerprint character(64) NOT NULL,
+    route text NOT NULL,
+    http_status integer NOT NULL,
+    error_class text NOT NULL,
+    sample_message text NOT NULL,
+    count bigint DEFAULT 1 NOT NULL,
+    request_count bigint DEFAULT 1 NOT NULL,
+    first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_errors_error_class_check CHECK ((error_class = ANY (ARRAY['db_timeout'::text, 'stripe_timeout'::text, 'null_pointer'::text, 'invalid_json'::text, 'wake_failed'::text, 'upstream_5xx'::text, 'unhandled'::text, 'client_error'::text]))),
+    CONSTRAINT app_errors_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_errors_http_status_check CHECK (((http_status >= 400) AND (http_status <= 599))),
+    CONSTRAINT app_errors_sample_message_check CHECK ((pg_column_size(sample_message) <= 512))
+);
+
+
+--
+-- Name: app_openapi_docs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_openapi_docs (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    doc jsonb NOT NULL,
+    doc_sha256 bytea NOT NULL,
+    byte_size integer NOT NULL,
+    endpoint_count integer NOT NULL,
+    source text NOT NULL,
+    openapi_version text NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_openapi_docs_byte_size_chk CHECK (((byte_size > 0) AND (byte_size <= 262144))),
+    CONSTRAINT app_openapi_docs_captured_before_updated_chk CHECK ((updated_at >= captured_at)),
+    CONSTRAINT app_openapi_docs_endpoint_count_chk CHECK (((endpoint_count >= 0) AND (endpoint_count <= 50))),
+    CONSTRAINT app_openapi_docs_openapi_version_vocab_chk CHECK ((openapi_version = ANY (ARRAY['3.0.0'::text, '3.0.1'::text, '3.0.2'::text, '3.0.3'::text, '3.0.4'::text, '3.1.0'::text, '3.1.1'::text]))),
+    CONSTRAINT app_openapi_docs_sha256_len_chk CHECK ((octet_length(doc_sha256) = 32)),
+    CONSTRAINT app_openapi_docs_source_vocab_chk CHECK ((source = 'manual_import'::text))
+);
+
+
+--
+-- Name: app_registry_credentials; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_registry_credentials (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    registry text NOT NULL,
+    username text NOT NULL,
+    password_encrypted bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_used_at timestamp with time zone,
+    CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
+    CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
+    CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
+);
+
+
+--
+-- Name: app_secrets; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_secrets (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    key text NOT NULL,
+    ciphertext bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    kid text,
+    scope text DEFAULT 'default'::text NOT NULL,
+    value_hash text,
+    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16)))
+);
+
+
+--
+-- Name: app_trusted_signers; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_trusted_signers (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    signer_name text NOT NULL,
+    cosign_public_key bytea NOT NULL,
+    added_at timestamp with time zone DEFAULT now() NOT NULL,
+    added_by_account_id uuid NOT NULL,
+    CONSTRAINT app_trusted_signers_name_shape CHECK ((signer_name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT app_trusted_signers_pem_shape CHECK (((octet_length(cosign_public_key) >= 64) AND (octet_length(cosign_public_key) <= 1024)))
+);
+
+
+--
+-- Name: app_webhook_deliveries; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_webhook_deliveries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    webhook_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    event text NOT NULL,
+    payload jsonb NOT NULL,
+    attempt integer DEFAULT 0 NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    last_error text,
+    last_response_code integer,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_webhook_deliveries_attempt_chk CHECK (((attempt >= 0) AND (attempt <= 8))),
+    CONSTRAINT app_webhook_deliveries_event_chk CHECK ((event = ANY (ARRAY['cron.fired'::text, 'cron.fired.manually'::text, 'app.deployed'::text, 'app.scaled'::text, 'app.parked'::text, 'app.woken'::text]))),
+    CONSTRAINT app_webhook_deliveries_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'in_flight'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
+);
+
+
+--
+-- Name: app_webhooks; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.app_webhooks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    target_url text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    event_filter text[] DEFAULT '{}'::text[] NOT NULL,
+    retry_policy text DEFAULT 'default'::text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
+    CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: apps; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    type text DEFAULT 'app'::text NOT NULL,
+    runtime text,
+    ram_mb integer NOT NULL,
+    idle_timeout_s integer,
+    max_concurrency integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
+    github_install_id bigint,
+    github_repo_full_name text,
+    github_production_branch text,
+    min_instances integer DEFAULT 0 NOT NULL,
+    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    autoscale_target_rps integer,
+    autoscale_target_cpu_pct integer,
+    github_install_binding_id text,
+    github_install_account_id uuid,
+    github_install_linked_at timestamp with time zone,
+    project_id uuid,
+    root_dir text DEFAULT ''::text NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    workload_class text DEFAULT 'http'::text NOT NULL,
+    start_command text,
+    streaming_enabled boolean DEFAULT false NOT NULL,
+    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_scale_out_at timestamp with time zone,
+    last_scale_in_at timestamp with time zone,
+    require_signed boolean DEFAULT false NOT NULL,
+    node_id uuid,
+    reassigned_at timestamp with time zone,
+    org_id uuid,
+    migrated_at timestamp with time zone,
+    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
+    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
+    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
+    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
+    require_authn boolean DEFAULT false NOT NULL,
+    public_auth_mode text DEFAULT 'open'::text NOT NULL,
+    public_auth_basic bytea,
+    websocket_enabled boolean DEFAULT false NOT NULL,
+    auth_default_flipped_at timestamp with time zone,
+    overflow_node uuid,
+    route_metrics_enabled boolean DEFAULT false NOT NULL,
+    preview_of_slug text,
+    preview_pr_number integer,
+    preview_pr_state text,
+    preview_expires_at timestamp with time zone,
+    cors_default_enabled boolean DEFAULT false NOT NULL,
+    cors_default_origins text[],
+    maintenance_mode boolean DEFAULT false NOT NULL,
+    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    static_egress_ip inet,
+    static_egress_ip_set_at timestamp with time zone,
+    preview_destroy_commented_at timestamp with time zone,
+    app_protocol text DEFAULT 'http1'::text NOT NULL,
+    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
+    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
+    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
+    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
+    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
+    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
+    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
+    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
+    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
+    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
+    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
+    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
+    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
+    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
+);
+
+
+--
+-- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
+
+
+--
+-- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
+
+
+--
+-- Name: audit_log; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.audit_log (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    account_id uuid,
+    account_email text,
+    actor text,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    data jsonb
+);
+
+
+--
+-- Name: build_provenance; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.build_provenance (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    build_id uuid NOT NULL,
+    buildkit_version text,
+    railpack_version text,
+    base_digest text,
+    source_sha256 text NOT NULL,
+    source_url text,
+    commit_sha text,
+    plan text,
+    runner_digest text,
+    builder_node_id text,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    sbom_storage_key text,
+    framework_version text
+);
+
+
+--
+-- Name: builder_usage; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.builder_usage (
+    build_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    kind text DEFAULT 'none'::text NOT NULL,
+    seconds bigint DEFAULT 0 NOT NULL,
+    org_id uuid
+);
+
+
+--
+-- Name: TABLE builder_usage; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON TABLE faas_test_e696c01fd4829d23.builder_usage IS 'Per-build wall-clock seconds, one row per terminal build. Source: cmd/builderd reaper + markSucceeded/markFailed adapters. ADR-048. Informational only — not billed.';
+
+
+--
+-- Name: COLUMN builder_usage.kind; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.builder_usage.kind IS 'build kind (railpack|dockerfile|tarball). Mirrors builds.kind. ADR-048.';
+
+
+--
+-- Name: builds; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.builds (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    kind text NOT NULL,
+    source_bytes bigint NOT NULL,
+    status text NOT NULL,
+    failure_class text,
+    log_path text,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
+    CONSTRAINT builds_kind_check CHECK ((kind = ANY (ARRAY['railpack'::text, 'dockerfile'::text, 'tarball'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT builds_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: cli_auth_codes; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.cli_auth_codes (
+    token_hash bytea NOT NULL,
+    account_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: cluster_signing_keys; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.cluster_signing_keys (
+    id integer DEFAULT 1 NOT NULL,
+    key_id text NOT NULL,
+    public_key_pem text NOT NULL,
+    sealed_blob bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rotated_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    CONSTRAINT cluster_signing_keys_id_check CHECK ((id = 1)),
+    CONSTRAINT cluster_signing_keys_key_id_check CHECK ((key_id ~ '^[A-Za-z0-9_-]{22}$'::text)),
+    CONSTRAINT cluster_signing_keys_public_key_pem_check CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
+);
+
+
+--
+-- Name: compute_node_heartbeats; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.compute_node_heartbeats (
+    id bigint NOT NULL,
+    node_id uuid NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_heartbeat_at timestamp with time zone NOT NULL,
+    source text NOT NULL,
+    cpu_pct_60s numeric(5,2),
+    disk_used_bytes bigint,
+    CONSTRAINT compute_node_heartbeats_source_check CHECK ((source = ANY (ARRAY['heartbeat_tick'::text, 'deactivation'::text, 'reactivation'::text, 'builder_tick'::text])))
+);
+
+
+--
+-- Name: compute_node_heartbeats_id_seq; Type: SEQUENCE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE SEQUENCE faas_test_e696c01fd4829d23.compute_node_heartbeats_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: compute_node_heartbeats_id_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER SEQUENCE faas_test_e696c01fd4829d23.compute_node_heartbeats_id_seq OWNED BY faas_test_e696c01fd4829d23.compute_node_heartbeats.id;
+
+
+--
+-- Name: compute_node_keys; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.compute_node_keys (
+    compute_node_id uuid NOT NULL,
+    key_id text NOT NULL,
+    public_key_pem text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT compute_node_keys_key_id_shape CHECK ((key_id ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT compute_node_keys_pem_shape CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
+);
+
+
+--
+-- Name: compute_nodes; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.compute_nodes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    target_url text NOT NULL,
+    vpcpus integer NOT NULL,
+    mem_mb integer NOT NULL,
+    max_concurrency integer NOT NULL,
+    admission_ceiling_mb integer NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    last_heartbeat_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    region text,
+    zone text,
+    schedd_target_url text,
+    vcpu_budget integer DEFAULT 160 NOT NULL,
+    public_ip inet,
+    public_ip_set_at timestamp with time zone,
+    release_id text,
+    manifest_hash text,
+    host_certificate text,
+    cert_fingerprint text,
+    role text,
+    generation integer,
+    gateway_target_url text,
+    CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
+    CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
+    CONSTRAINT compute_nodes_max_concurrency_check CHECK ((max_concurrency > 0)),
+    CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
+    CONSTRAINT compute_nodes_public_ip_format_chk CHECK (((public_ip IS NULL) OR (family(public_ip) = ANY (ARRAY[4, 6])))),
+    CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
+    CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
+    CONSTRAINT compute_nodes_vcpu_budget_check CHECK ((vcpu_budget > 0)),
+    CONSTRAINT compute_nodes_vpcpus_check CHECK ((vpcpus > 0))
+);
+
+
+--
+-- Name: COLUMN compute_nodes.region; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.region IS 'Locality label for the chooser tie-break (pkg/sched/placement.go). Free-form text; nullable so pre-00072 rows accept the schema. The seeded default-local row is backfilled to ''local''. ADR-025.';
+
+
+--
+-- Name: COLUMN compute_nodes.zone; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.zone IS 'Finer locality inside region. Currently informational; nullable. ADR-025.';
+
+
+--
+-- Name: COLUMN compute_nodes.release_id; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.release_id IS 'release_bundles.git_sha this node claims membership in (PR-3a). NULL = pre-bundle row. Populated by PR-3 release install + PR-2 renderer.';
+
+
+--
+-- Name: COLUMN compute_nodes.manifest_hash; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.manifest_hash IS 'sha256:<64hex> hash of the manifest the PR-2 renderer materialized on this node (PR-3a). NULL = pre-manifest row. Compared against release_bundles.manifest_hash by PR-4 doctor.';
+
+
+--
+-- Name: COLUMN compute_nodes.host_certificate; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.host_certificate IS 'PEM-encoded leaf certificate for this node (PR-3a). NULL = pre-PR-X or pre-cmd/hostage-gen row. Doctor reads to verify cert on disk matches cert_fingerprint.';
+
+
+--
+-- Name: COLUMN compute_nodes.cert_fingerprint; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.cert_fingerprint IS 'sha256:<64hex> fingerprint of host_certificate (PR-3a). NULL until secrets init (PR-X) or cmd/hostage-gen stamps it. PR-3 bundle install + PR-4 doctor compare against pkg/pki.LoadCertificateFingerprint at mTLS handshake time.';
+
+
+--
+-- Name: COLUMN compute_nodes.role; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.role IS 'per-node role label: control-plane | compute-node (PR-3a). Populated from manifest.fleet.hosts[].role by PR-2 renderer. NULL = pre-manifest row.';
+
+
+--
+-- Name: COLUMN compute_nodes.generation; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.compute_nodes.generation IS 'monotonic counter bumped by PR-4 doctor on per-node inconsistency detection (PR-3a). Default 0; never decreases.';
+
+
+--
+-- Name: consumer_keys; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.consumer_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    prefix text NOT NULL,
+    hashed_secret bytea NOT NULL,
+    scopes text[] DEFAULT '{}'::text[] NOT NULL,
+    expires_at timestamp with time zone,
+    last_used_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT consumer_keys_hashed_secret_len_chk CHECK ((octet_length(hashed_secret) = 32)),
+    CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
+    CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
+    CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
+    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text]) AND (cardinality(scopes) > 0)))
+);
+
+
+--
+-- Name: cors_presets; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.cors_presets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    name text NOT NULL,
+    description text,
+    allow_origins text[] NOT NULL,
+    allow_methods text[] NOT NULL,
+    allow_headers text[] DEFAULT '{}'::text[] NOT NULL,
+    expose_headers text[] DEFAULT '{}'::text[] NOT NULL,
+    allow_credentials boolean DEFAULT false NOT NULL,
+    max_age_seconds integer DEFAULT 600 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cors_presets_max_age_check CHECK (((max_age_seconds >= 0) AND (max_age_seconds <= 86400))),
+    CONSTRAINT cors_presets_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64)))
+);
+
+
+--
+-- Name: credit_ledger; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.credit_ledger (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    credit_id uuid NOT NULL,
+    delta_cents bigint NOT NULL,
+    reason text NOT NULL,
+    actor text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    provider_invoice_id text,
+    CONSTRAINT credit_ledger_delta_cents_check CHECK ((delta_cents <> 0))
+);
+
+
+--
+-- Name: cron_fire_now_requests; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.cron_fire_now_requests (
+    id uuid NOT NULL,
+    cron_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text NOT NULL,
+    invocation_id uuid,
+    error text,
+    finished_at timestamp with time zone,
+    CONSTRAINT cron_fire_now_requests_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: crons; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.crons (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    schedule text NOT NULL,
+    path text DEFAULT '/'::text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    last_fired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid
+);
+
+
+--
+-- Name: custom_domains; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.custom_domains (
+    domain public.citext NOT NULL,
+    app_id uuid NOT NULL,
+    verified_at timestamp with time zone,
+    challenge_token text DEFAULT ''::text NOT NULL,
+    app_id_redirect uuid,
+    org_id uuid
+);
+
+
+--
+-- Name: data_upstream_probes; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.data_upstream_probes (
+    id uuid NOT NULL,
+    host_redacted_hash text NOT NULL,
+    region text NOT NULL,
+    kind text NOT NULL,
+    sampled_at timestamp with time zone NOT NULL,
+    rtt_ms integer,
+    ok boolean NOT NULL,
+    error_class text,
+    probe_node text,
+    CONSTRAINT data_upstream_probes_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text])))),
+    CONSTRAINT data_upstream_probes_kind_check CHECK ((kind = ANY (ARRAY['postgres'::text, 'redis'::text, 'mongo'::text, 'cassandra'::text, 'clickhouse'::text, 'elasticsearch'::text, 'opensearch'::text, 'rabbitmq'::text, 'kafka'::text, 'nats'::text, 'minio'::text, 'memcached'::text, 'etcd'::text, 's3'::text, 'https_api'::text]))),
+    CONSTRAINT data_upstream_probes_ok_pair_chk CHECK ((((ok = true) AND (rtt_ms IS NOT NULL) AND (error_class IS NULL)) OR ((ok = false) AND (error_class IS NOT NULL)))),
+    CONSTRAINT data_upstream_probes_region_check CHECK ((region ~ '^[a-z0-9_-]{1,32}$'::text)),
+    CONSTRAINT data_upstream_probes_rtt_ms_check CHECK (((rtt_ms IS NULL) OR ((rtt_ms >= 0) AND (rtt_ms <= 600000))))
+)
+PARTITION BY RANGE (sampled_at);
+
+
+--
+-- Name: data_upstream_probes_default; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.data_upstream_probes_default (
+    id uuid NOT NULL,
+    host_redacted_hash text NOT NULL,
+    region text NOT NULL,
+    kind text NOT NULL,
+    sampled_at timestamp with time zone NOT NULL,
+    rtt_ms integer,
+    ok boolean NOT NULL,
+    error_class text,
+    probe_node text,
+    CONSTRAINT data_upstream_probes_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text])))),
+    CONSTRAINT data_upstream_probes_kind_check CHECK ((kind = ANY (ARRAY['postgres'::text, 'redis'::text, 'mongo'::text, 'cassandra'::text, 'clickhouse'::text, 'elasticsearch'::text, 'opensearch'::text, 'rabbitmq'::text, 'kafka'::text, 'nats'::text, 'minio'::text, 'memcached'::text, 'etcd'::text, 's3'::text, 'https_api'::text]))),
+    CONSTRAINT data_upstream_probes_ok_pair_chk CHECK ((((ok = true) AND (rtt_ms IS NOT NULL) AND (error_class IS NULL)) OR ((ok = false) AND (error_class IS NOT NULL)))),
+    CONSTRAINT data_upstream_probes_region_check CHECK ((region ~ '^[a-z0-9_-]{1,32}$'::text)),
+    CONSTRAINT data_upstream_probes_rtt_ms_check CHECK (((rtt_ms IS NULL) OR ((rtt_ms >= 0) AND (rtt_ms <= 600000))))
+);
+
+
+--
+-- Name: data_upstreams; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.data_upstreams (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    scope text NOT NULL,
+    kind text NOT NULL,
+    host text NOT NULL,
+    port integer NOT NULL,
+    host_redacted_hash text NOT NULL,
+    declared_region text,
+    last_rtt_ms integer,
+    last_probed_at timestamp with time zone,
+    last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deployment_scope text DEFAULT 'default'::text NOT NULL,
+    CONSTRAINT data_upstreams_declared_region_check CHECK (((declared_region IS NULL) OR (declared_region ~ '^[a-z0-9_-]{1,32}$'::text))),
+    CONSTRAINT data_upstreams_deployment_scope_shape CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT data_upstreams_host_check CHECK (((host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'::text) AND (host !~ '^[0-9]+(\.[0-9]+)+$'::text) AND ((length(host) >= 1) AND (length(host) <= 253)))),
+    CONSTRAINT data_upstreams_host_redacted_hash_check CHECK (((host_redacted_hash ~ '^[a-f0-9]{64}$'::text) OR (host_redacted_hash = '__unsalted__'::text))),
+    CONSTRAINT data_upstreams_kind_check CHECK ((kind = ANY (ARRAY['postgres'::text, 'redis'::text, 'mongo'::text, 'cassandra'::text, 'clickhouse'::text, 'elasticsearch'::text, 'opensearch'::text, 'rabbitmq'::text, 'kafka'::text, 'nats'::text, 'minio'::text, 'memcached'::text, 'etcd'::text, 's3'::text, 'https_api'::text]))),
+    CONSTRAINT data_upstreams_last_probed_pair_chk CHECK ((((last_rtt_ms IS NULL) AND (last_probed_at IS NULL)) OR ((last_rtt_ms IS NOT NULL) AND (last_probed_at IS NOT NULL)))),
+    CONSTRAINT data_upstreams_last_rtt_ms_check CHECK (((last_rtt_ms IS NULL) OR ((last_rtt_ms >= 0) AND (last_rtt_ms <= 600000)))),
+    CONSTRAINT data_upstreams_port_check CHECK (((port >= 1) AND (port <= 65535))),
+    CONSTRAINT data_upstreams_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT data_upstreams_source_check CHECK ((source = ANY (ARRAY['inferred'::text, 'explicit'::text])))
+);
+
+
+--
+-- Name: debug_regression_observations; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.debug_regression_observations (
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    p95_ms integer NOT NULL,
+    p95_base_ms integer NOT NULL,
+    affected_count integer NOT NULL,
+    regression_factor numeric(5,2) NOT NULL,
+    first_detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
+    CONSTRAINT debug_regression_observations_p95_base_ms_check CHECK ((p95_base_ms >= 0)),
+    CONSTRAINT debug_regression_observations_p95_ms_check CHECK ((p95_ms >= 0)),
+    CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
+    CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256)))
+);
+
+
+--
+-- Name: deployment_logs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.deployment_logs (
+    deployment_id uuid NOT NULL,
+    seq bigint NOT NULL,
+    stream text DEFAULT 'stdout'::text NOT NULL,
+    line text NOT NULL,
+    written_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: deployment_logs_seq_seq; Type: SEQUENCE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE SEQUENCE faas_test_e696c01fd4829d23.deployment_logs_seq_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: deployment_logs_seq_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER SEQUENCE faas_test_e696c01fd4829d23.deployment_logs_seq_seq OWNED BY faas_test_e696c01fd4829d23.deployment_logs.seq;
+
+
+--
+-- Name: deployment_openapi_docs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.deployment_openapi_docs (
+    deployment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    doc jsonb NOT NULL,
+    doc_sha256 bytea NOT NULL,
+    byte_size integer NOT NULL,
+    source text NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_openapi_docs_byte_size_chk CHECK (((byte_size > 0) AND (byte_size <= 131072))),
+    CONSTRAINT deployment_openapi_docs_captured_before_updated_chk CHECK ((updated_at >= captured_at)),
+    CONSTRAINT deployment_openapi_docs_sha256_len_chk CHECK ((octet_length(doc_sha256) = 32)),
+    CONSTRAINT deployment_openapi_docs_source_vocab_chk CHECK ((source = ANY (ARRAY['cold_boot'::text, 'manual_upload'::text])))
+);
+
+
+--
+-- Name: deployment_openapi_snapshots; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.deployment_openapi_snapshots (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    snapshot jsonb NOT NULL,
+    sha256 text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    captured_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
+    CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_sidecar_layers; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.deployment_sidecar_layers (
+    deployment_id uuid NOT NULL,
+    sidecar_name text NOT NULL,
+    storage_key text NOT NULL,
+    bytes bigint NOT NULL,
+    content_digest text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_sidecar_layers_bytes_check CHECK ((bytes >= 0))
+);
+
+
+--
+-- Name: deployments; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.deployments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    build_id uuid,
+    image_digest text NOT NULL,
+    rootfs_path text,
+    rootfs_bytes bigint,
+    status text NOT NULL,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text DEFAULT 'image'::text NOT NULL,
+    source_path text,
+    source_bytes bigint,
+    handler text,
+    log_path text,
+    error_code text,
+    rootfs_key text DEFAULT ''::text NOT NULL,
+    source_url text,
+    commit_sha text,
+    override_entrypoint text[],
+    override_cmd text[],
+    override_env jsonb,
+    override_env_secrets jsonb,
+    override_port integer,
+    override_healthcheck jsonb,
+    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
+    min_instances integer DEFAULT 0 NOT NULL,
+    scan_result jsonb,
+    scan_status text,
+    scanned_at timestamp with time zone,
+    override_liveness_probe jsonb,
+    parked_reason text,
+    parked_at timestamp with time zone,
+    traffic_percent integer DEFAULT 100 NOT NULL,
+    scope text DEFAULT 'default'::text NOT NULL,
+    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    secret_scanned_at timestamp with time zone,
+    error_hint text,
+    error_why text,
+    error_fix text,
+    error_relevant_logs jsonb,
+    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
+    deployed_by_user_id uuid,
+    deployed_via text DEFAULT 'api'::text NOT NULL,
+    deployed_from_ip inet,
+    pusher_login text,
+    reason text,
+    tag text,
+    deployed_by text,
+    pr_number integer,
+    rollback_on_5xx boolean DEFAULT false NOT NULL,
+    first_wake_at timestamp with time zone,
+    first_5xx_window_ends_at timestamp with time zone,
+    first_5xx_count integer DEFAULT 0 NOT NULL,
+    last_auto_rollback_at timestamp with time zone,
+    last_auto_rollback_reason text,
+    liveness_restart_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
+    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
+    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
+    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
+    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text])))),
+    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
+    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
+    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 2)),
+    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
+    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text]))),
+    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
+    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
+);
+
+
+--
+-- Name: domain_doctor_observations; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.domain_doctor_observations (
+    domain public.citext NOT NULL,
+    surface_id uuid,
+    observed_at timestamp with time zone DEFAULT now() NOT NULL,
+    dns_record_found boolean NOT NULL,
+    points_to_gregale boolean NOT NULL,
+    caa_permits boolean,
+    ipv6_conflict boolean NOT NULL,
+    observed_target text,
+    observed_aaaa text,
+    caa_observed text,
+    cert_state text DEFAULT 'none'::text NOT NULL,
+    cert_not_after timestamp with time zone,
+    last_error text,
+    dns_checked_at timestamp with time zone,
+    cert_checked_at timestamp with time zone,
+    CONSTRAINT domain_doctor_observations_cert_state_check CHECK ((cert_state = ANY (ARRAY['none'::text, 'pending'::text, 'issued'::text, 'failed'::text, 'dial_failed'::text])))
+);
+
+
+--
+-- Name: edge_rules; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.edge_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    match_host text NOT NULL,
+    match_path text DEFAULT '/'::text NOT NULL,
+    match_methods text[] DEFAULT '{}'::text[] NOT NULL,
+    priority smallint DEFAULT 100 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    kind text NOT NULL,
+    action jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    validate_mode text DEFAULT 'block'::text NOT NULL,
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text]))),
+    CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
+    CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
+);
+
+
+--
+-- Name: egress_policy; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.egress_policy (
+    id text NOT NULL,
+    public_iface text NOT NULL,
+    masquerade_cidr text NOT NULL,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    overlay_exceptions text[] DEFAULT '{}'::text[] NOT NULL,
+    danger_accept_rfc1918_lateral_movement boolean DEFAULT false NOT NULL,
+    CONSTRAINT egress_policy_pair_check CHECK (((NOT danger_accept_rfc1918_lateral_movement) OR (COALESCE(array_length(overlay_exceptions, 1), 0) > 0))),
+    CONSTRAINT egress_policy_singleton CHECK ((id = 'singleton'::text))
+);
+
+
+--
+-- Name: events; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.events (
+    id bigint NOT NULL,
+    at timestamp with time zone DEFAULT now() NOT NULL,
+    actor text NOT NULL,
+    kind text NOT NULL,
+    subject uuid,
+    data jsonb,
+    actor_account_id uuid
+);
+
+
+--
+-- Name: events_id_seq; Type: SEQUENCE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE faas_test_e696c01fd4829d23.events ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME faas_test_e696c01fd4829d23.events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: gdpr_requests; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.gdpr_requests (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    account_email text NOT NULL,
+    action text NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    org_id uuid,
+    request_id text,
+    CONSTRAINT gdpr_requests_action_check CHECK ((action = ANY (ARRAY['export'::text, 'delete'::text, 'restore'::text])))
+);
+
+
+--
+-- Name: github_installations; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.github_installations (
+    account_id uuid NOT NULL,
+    installation_id bigint NOT NULL,
+    default_branch text NOT NULL,
+    sealed_install_token bytea NOT NULL,
+    token_expires_at timestamp with time zone NOT NULL,
+    sealed_at timestamp with time zone DEFAULT now() NOT NULL,
+    audit_github_login text NOT NULL,
+    org_id uuid
+);
+
+
+--
+-- Name: github_webhook_secrets; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.github_webhook_secrets (
+    installation_id bigint NOT NULL,
+    secret_value bytea NOT NULL,
+    upgraded_at timestamp with time zone DEFAULT now() NOT NULL,
+    upgraded_by text DEFAULT 'platform'::text NOT NULL
+);
+
+
+--
+-- Name: goose_db_version; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.goose_db_version (
+    id integer NOT NULL,
+    version_id bigint NOT NULL,
+    is_applied boolean NOT NULL,
+    tstamp timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: goose_db_version_id_seq; Type: SEQUENCE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE faas_test_e696c01fd4829d23.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME faas_test_e696c01fd4829d23.goose_db_version_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: idempotency_keys; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.idempotency_keys (
+    key text NOT NULL,
+    account_id uuid NOT NULL,
+    response_status integer NOT NULL,
+    response_body bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: instances; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.instances (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid,
+    deployment_id uuid NOT NULL,
+    state text NOT NULL,
+    netns text,
+    guest_uid integer,
+    host_ip inet,
+    ram_mb integer NOT NULL,
+    started_at timestamp with time zone,
+    last_request_at timestamp with time zone,
+    parked_at timestamp with time zone,
+    terminal_at timestamp with time zone,
+    node_id uuid NOT NULL,
+    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid,
+    migrated_from_node_id uuid,
+    migrated_at timestamp with time zone,
+    lease_token text,
+    framework_ready_at timestamp with time zone,
+    tail_count integer DEFAULT 0 NOT NULL,
+    request_count bigint DEFAULT 0 NOT NULL,
+    kind text DEFAULT 'wake'::text NOT NULL,
+    job_id uuid,
+    mode text DEFAULT 'normal'::text NOT NULL,
+    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
+    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text]))),
+    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'migrating'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
+);
+
+
+--
+-- Name: invocations; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.invocations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    headers jsonb DEFAULT '{}'::jsonb NOT NULL,
+    due_at timestamp with time zone DEFAULT now() NOT NULL,
+    method text DEFAULT 'POST'::text NOT NULL,
+    path text DEFAULT '/'::text NOT NULL,
+    cron_id uuid,
+    scheduled_at timestamp with time zone,
+    ack_url text,
+    result jsonb,
+    lease_expires_at timestamp with time zone,
+    received_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    instance_id text,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    outcome text,
+    CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text])))),
+    CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
+    CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text])))
+);
+
+
+--
+-- Name: invocations_pending_per_app; Type: VIEW; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE VIEW faas_test_e696c01fd4829d23.invocations_pending_per_app AS
+ SELECT app_id,
+    source,
+    count(*) AS pending
+   FROM faas_test_e696c01fd4829d23.invocations
+  WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]))
+  GROUP BY app_id, source;
+
+
+--
+-- Name: invoices; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.invoices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    provider_invoice_id text NOT NULL,
+    number text DEFAULT ''::text NOT NULL,
+    status text NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    subtotal_cents bigint DEFAULT 0 NOT NULL,
+    tax_cents bigint DEFAULT 0 NOT NULL,
+    total_cents bigint DEFAULT 0 NOT NULL,
+    amount_paid_cents bigint DEFAULT 0 NOT NULL,
+    currency text DEFAULT 'eur'::text NOT NULL,
+    pdf_available boolean DEFAULT false NOT NULL,
+    hosted_url text DEFAULT ''::text NOT NULL,
+    raw jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    CONSTRAINT invoices_amount_paid_cents_check CHECK ((amount_paid_cents >= 0)),
+    CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
+    CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),
+    CONSTRAINT invoices_subtotal_cents_check CHECK ((subtotal_cents >= 0)),
+    CONSTRAINT invoices_tax_cents_check CHECK ((tax_cents >= 0)),
+    CONSTRAINT invoices_total_cents_check CHECK ((total_cents >= 0))
+);
+
+
+--
+-- Name: job_runs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.job_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    job_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    trigger_kind text NOT NULL,
+    env_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tasks integer NOT NULL,
+    parallelism integer NOT NULL,
+    retry_max integer,
+    task_timeout_s integer,
+    aggregate_status text DEFAULT 'queued'::text NOT NULL,
+    tasks_succeeded integer DEFAULT 0 NOT NULL,
+    tasks_failed integer DEFAULT 0 NOT NULL,
+    tasks_cancelled integer DEFAULT 0 NOT NULL,
+    tasks_running integer DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
+    CONSTRAINT job_runs_counters_check CHECK (((tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
+    CONSTRAINT job_runs_parallelism_check CHECK (((parallelism >= 1) AND (parallelism <= 1000))),
+    CONSTRAINT job_runs_retry_max_check CHECK (((retry_max IS NULL) OR ((retry_max >= 0) AND (retry_max <= 10)))),
+    CONSTRAINT job_runs_task_timeout_s_check CHECK (((task_timeout_s IS NULL) OR ((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))),
+    CONSTRAINT job_runs_tasks_check CHECK (((tasks >= 1) AND (tasks <= 100000))),
+    CONSTRAINT job_runs_terminal_pair_chk CHECK ((((finished_at IS NULL) AND (aggregate_status = ANY (ARRAY['queued'::text, 'running'::text]))) OR ((finished_at IS NOT NULL) AND (aggregate_status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))))),
+    CONSTRAINT job_runs_trigger_kind_check CHECK ((trigger_kind = ANY (ARRAY['manual'::text, 'scheduled'::text, 'triggered'::text])))
+);
+
+
+--
+-- Name: job_tasks; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.job_tasks (
+    run_id uuid NOT NULL,
+    task_index integer NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    attempt integer DEFAULT 1 NOT NULL,
+    instance_id uuid,
+    error_class text,
+    error_message text,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT job_tasks_attempt_check CHECK (((attempt >= 1) AND (attempt <= 11))),
+    CONSTRAINT job_tasks_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text, 'oom'::text, 'user_error'::text, 'infra'::text])))),
+    CONSTRAINT job_tasks_instance_pair_chk CHECK ((((instance_id IS NULL) AND (status = 'queued'::text)) OR (instance_id IS NOT NULL))),
+    CONSTRAINT job_tasks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text]))),
+    CONSTRAINT job_tasks_task_index_check CHECK ((task_index >= 0)),
+    CONSTRAINT job_tasks_terminal_pair_chk CHECK ((((finished_at IS NULL) AND (status = ANY (ARRAY['queued'::text, 'claimed'::text]))) OR ((finished_at IS NOT NULL) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))))
+);
+
+
+--
+-- Name: jobs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    name text NOT NULL,
+    image_ref text NOT NULL,
+    ram_mb integer NOT NULL,
+    task_timeout_s integer NOT NULL,
+    max_parallelism integer NOT NULL,
+    retry_max integer NOT NULL,
+    env_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT jobs_max_parallelism_check CHECK (((max_parallelism >= 1) AND (max_parallelism <= 1000))),
+    CONSTRAINT jobs_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT jobs_retry_max_check CHECK (((retry_max >= 0) AND (retry_max <= 10))),
+    CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
+);
+
+
+--
+-- Name: login_tokens; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.login_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone
+);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state (
+    tenant_surface_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    hostname text NOT NULL,
+    last_observed_cert_not_after timestamp with time zone,
+    last_walk_status text DEFAULT 'ok'::text NOT NULL,
+    last_refreshed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT meterd_tenant_surface_cert_expiry_status_chk CHECK ((last_walk_status = ANY (ARRAY['ok'::text, 'stale_parent'::text, 'cert_unissued'::text, 'error'::text])))
+);
+
+
+--
+-- Name: mirror_invocation_results; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.mirror_invocation_results (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    mirror_rule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    mirror_deployment_id uuid NOT NULL,
+    instance_id text,
+    source_instance_id text,
+    status_code integer,
+    source_status_code integer,
+    latency_ms integer,
+    source_latency_ms integer,
+    body_hash bytea,
+    source_body_hash bytea,
+    schema_hash bytea,
+    source_schema_hash bytea,
+    status_diff boolean DEFAULT false NOT NULL,
+    schema_diff boolean DEFAULT false NOT NULL,
+    body_diff boolean DEFAULT false NOT NULL,
+    crashed boolean DEFAULT false NOT NULL,
+    request_id text NOT NULL,
+    completed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: mirror_rules; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.mirror_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    mirror_deployment_id uuid NOT NULL,
+    percent integer DEFAULT 100 NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    include_body boolean DEFAULT false NOT NULL,
+    redact_headers text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mirror_rules_check CHECK ((source_deployment_id <> mirror_deployment_id)),
+    CONSTRAINT mirror_rules_percent_check CHECK (((percent >= 0) AND (percent <= 100))),
+    CONSTRAINT mirror_rules_redact_headers_check CHECK (((array_length(redact_headers, 1) IS NULL) OR (array_length(redact_headers, 1) <= 32)))
+);
+
+
+--
+-- Name: node_join_jobs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.node_join_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    node_name text NOT NULL,
+    database_node text NOT NULL,
+    ssh_host text NOT NULL,
+    manifest_hash text NOT NULL,
+    release_git_sha text NOT NULL,
+    phase text DEFAULT 'planned'::text NOT NULL,
+    attempt integer DEFAULT 0 NOT NULL,
+    last_error text,
+    lease_owner text,
+    lease_expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT node_join_jobs_attempt_check CHECK ((attempt >= 0)),
+    CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
+);
+
+
+--
+-- Name: oauth_links; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.oauth_links (
+    provider text NOT NULL,
+    provider_subject text NOT NULL,
+    account_id uuid NOT NULL,
+    email text NOT NULL,
+    email_verified boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: oidc_exchanged_tokens; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.oidc_exchanged_tokens (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    token_hash bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    issuer_url text NOT NULL,
+    subject text NOT NULL,
+    audience text[] NOT NULL,
+    jti text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: oidc_trust_policies; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.oidc_trust_policies (
+    account_id uuid NOT NULL,
+    issuer_url text NOT NULL,
+    jwks_url text NOT NULL,
+    audience text[] NOT NULL,
+    subject_pattern text,
+    algorithms text[] NOT NULL,
+    required_claims jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    audit_login text NOT NULL
+);
+
+
+--
+-- Name: operator_intents; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.operator_intents (
+    id uuid NOT NULL,
+    kind text NOT NULL,
+    target_id text NOT NULL,
+    account_id uuid,
+    actor_id uuid NOT NULL,
+    reason text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    error text,
+    snap_ids_marked_stale text[],
+    CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text]))),
+    CONSTRAINT operator_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: org_invitations; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.org_invitations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    email public.citext NOT NULL,
+    role text NOT NULL,
+    token_hash bytea NOT NULL,
+    invited_by_account_id uuid,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    accepting_account_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT org_invitations_role_chk CHECK ((role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text]))),
+    CONSTRAINT org_invitations_state_chk CHECK ((((consumed_at IS NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NOT NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NULL) AND (revoked_at IS NOT NULL))))
+);
+
+
+--
+-- Name: org_memberships; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.org_memberships (
+    org_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    role text NOT NULL,
+    invited_by_account_id uuid,
+    joined_at timestamp with time zone DEFAULT now() NOT NULL,
+    removed_at timestamp with time zone,
+    CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
+    CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
+);
+
+
+--
+-- Name: orgs; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.orgs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    slug text NOT NULL,
+    name text NOT NULL,
+    personal_org boolean DEFAULT false NOT NULL,
+    personal_owner_account_id uuid,
+    plan text DEFAULT 'free'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    provider_customer_id text,
+    stripe_subscription_item text,
+    deleted_pending boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
+    CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
+    CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
+);
+
+
+--
+-- Name: paddle_overage_dedupe; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.paddle_overage_dedupe (
+    account_id uuid NOT NULL,
+    month timestamp with time zone,
+    pushed_at timestamp with time zone DEFAULT now() NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    state text DEFAULT 'completed'::text NOT NULL,
+    claimed_at timestamp with time zone,
+    claimed_by text,
+    org_id uuid,
+    pushed_mb_seconds bigint,
+    CONSTRAINT paddle_overage_dedupe_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: pg_ratelimit_counters; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.pg_ratelimit_counters (
+    scope text NOT NULL,
+    subject_id uuid NOT NULL,
+    plan text NOT NULL,
+    tokens bigint NOT NULL,
+    last_refill timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT pg_ratelimit_counters_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT pg_ratelimit_counters_scope_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text, 'rule'::text]))),
+    CONSTRAINT pg_ratelimit_counters_tokens_check CHECK ((tokens >= 0))
+);
+
+
+--
+-- Name: projects; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.projects (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    repo_full_name text,
+    production_branch text,
+    install_id bigint,
+    scan_source text DEFAULT 'unknown'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
+    CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: provisioned_static_egress_ips; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.provisioned_static_egress_ips (
+    account_id uuid NOT NULL,
+    customer_ip inet NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT provisioned_static_egress_ips_family_check CHECK ((family(customer_ip) = 4))
+);
+
+
+--
+-- Name: recent_build_claims; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.recent_build_claims (
+    account_id uuid NOT NULL,
+    claimed_at timestamp with time zone DEFAULT now() NOT NULL,
+    build_id uuid NOT NULL,
+    org_id uuid
+);
+
+
+--
+-- Name: release_bundles; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.release_bundles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    git_sha text NOT NULL,
+    manifest_hash text NOT NULL,
+    daemon_hashes jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    applied_at timestamp with time zone,
+    CONSTRAINT release_bundles_git_sha_shape CHECK ((git_sha ~ '^[a-f0-9]{40}$'::text)),
+    CONSTRAINT release_bundles_manifest_shape CHECK ((manifest_hash ~ '^sha256:[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: request_telemetry; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.request_telemetry (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+)
+PARTITION BY RANGE (received_at);
+
+
+--
+-- Name: request_telemetry_202610; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.request_telemetry_202610 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: request_telemetry_202611; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.request_telemetry_202611 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: request_telemetry_202612; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.request_telemetry_202612 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: request_telemetry_default; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.request_telemetry_default (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: runtime_config_entries; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.runtime_config_entries (
+    id uuid NOT NULL,
+    config_key text NOT NULL,
+    scope text DEFAULT 'global'::text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    desired_value jsonb NOT NULL,
+    effective_value jsonb,
+    version bigint DEFAULT 1 NOT NULL,
+    apply_mode text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    last_error text,
+    actor_id uuid,
+    reason text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    applied_at timestamp with time zone,
+    CONSTRAINT runtime_config_entries_apply_mode_check CHECK ((apply_mode = ANY (ARRAY['hot'::text, 'graceful'::text, 'rolling'::text, 'break_glass'::text]))),
+    CONSTRAINT runtime_config_entries_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'control_plane'::text, 'daemon'::text, 'node'::text]))),
+    CONSTRAINT runtime_config_entries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'applied'::text, 'failed'::text, 'blocked'::text]))),
+    CONSTRAINT runtime_config_entries_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: runtime_config_operations; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.runtime_config_operations (
+    id uuid NOT NULL,
+    config_key text NOT NULL,
+    scope text DEFAULT 'global'::text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    config_version bigint NOT NULL,
+    desired_value jsonb NOT NULL,
+    effective_value jsonb,
+    apply_mode text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    phase text DEFAULT 'queued'::text NOT NULL,
+    error text,
+    actor_id uuid,
+    reason text DEFAULT ''::text NOT NULL,
+    target_count integer DEFAULT 0 NOT NULL,
+    applied_count integer DEFAULT 0 NOT NULL,
+    failed_count integer DEFAULT 0 NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    CONSTRAINT runtime_config_operations_applied_count_check CHECK ((applied_count >= 0)),
+    CONSTRAINT runtime_config_operations_apply_mode_check CHECK ((apply_mode = ANY (ARRAY['graceful'::text, 'rolling'::text, 'break_glass'::text]))),
+    CONSTRAINT runtime_config_operations_config_version_check CHECK ((config_version > 0)),
+    CONSTRAINT runtime_config_operations_failed_count_check CHECK ((failed_count >= 0)),
+    CONSTRAINT runtime_config_operations_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'control_plane'::text, 'daemon'::text, 'node'::text]))),
+    CONSTRAINT runtime_config_operations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'blocked'::text, 'cancelled'::text]))),
+    CONSTRAINT runtime_config_operations_target_count_check CHECK ((target_count >= 0))
+);
+
+
+--
+-- Name: runtime_config_revisions; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.runtime_config_revisions (
+    id bigint NOT NULL,
+    entry_id uuid NOT NULL,
+    config_key text NOT NULL,
+    scope text NOT NULL,
+    scope_id text NOT NULL,
+    version bigint NOT NULL,
+    old_value jsonb,
+    new_value jsonb NOT NULL,
+    actor_id uuid,
+    reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: runtime_config_revisions_id_seq; Type: SEQUENCE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE SEQUENCE faas_test_e696c01fd4829d23.runtime_config_revisions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: runtime_config_revisions_id_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER SEQUENCE faas_test_e696c01fd4829d23.runtime_config_revisions_id_seq OWNED BY faas_test_e696c01fd4829d23.runtime_config_revisions.id;
+
+
+--
+-- Name: sessions; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    issued_ip inet,
+    issued_ua text,
+    issued_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_seen_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    binding_hash text
+);
+
+
+--
+-- Name: snapshot_storage_daily; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.snapshot_storage_daily (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    day date NOT NULL,
+    snapshot_bytes bigint DEFAULT 0 NOT NULL,
+    layer_bytes bigint DEFAULT 0 NOT NULL,
+    computed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE snapshot_storage_daily; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON TABLE faas_test_e696c01fd4829d23.snapshot_storage_daily IS 'Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.';
+
+
+--
+-- Name: COLUMN snapshot_storage_daily.snapshot_bytes; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.snapshot_storage_daily.snapshot_bytes IS 'Σ snapshots.mem_bytes + snapshots.disk_bytes (latest non-stale row per app per day). ADR-049 §B.3. Informational.';
+
+
+--
+-- Name: COLUMN snapshot_storage_daily.layer_bytes; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.snapshot_storage_daily.layer_bytes IS 'Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.';
+
+
+--
+-- Name: snapshots; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    fc_version text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    disk_bytes bigint NOT NULL,
+    stale boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    tier text DEFAULT 'init'::text NOT NULL,
+    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
+);
+
+
+--
+-- Name: status_incidents; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.status_incidents (
+    id bigint NOT NULL,
+    component text NOT NULL,
+    severity text NOT NULL,
+    message text NOT NULL,
+    posted_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT status_incidents_component_chk CHECK ((component = ANY (ARRAY['apid'::text, 'schedd'::text, 'vmmd'::text, 'gatewayd'::text, 'meterd'::text, 'imaged'::text, 'builderd'::text, 'faas-control-plane'::text]))),
+    CONSTRAINT status_incidents_message_len_chk CHECK ((length(message) <= 1024)),
+    CONSTRAINT status_incidents_severity_chk CHECK ((severity = ANY (ARRAY['degraded'::text, 'partial_outage'::text, 'full_outage'::text, 'maintenance'::text])))
+);
+
+
+--
+-- Name: status_incidents_id_seq; Type: SEQUENCE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE SEQUENCE faas_test_e696c01fd4829d23.status_incidents_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: status_incidents_id_seq; Type: SEQUENCE OWNED BY; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER SEQUENCE faas_test_e696c01fd4829d23.status_incidents_id_seq OWNED BY faas_test_e696c01fd4829d23.status_incidents.id;
+
+
+--
+-- Name: stripe_push_dedupe; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.stripe_push_dedupe (
+    account_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    pushed_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid
+);
+
+
+--
+-- Name: tenant_hostnames; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.tenant_hostnames (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    surface_id uuid NOT NULL,
+    hostname public.citext NOT NULL,
+    challenge_token text DEFAULT ''::text NOT NULL,
+    verified_at timestamp with time zone,
+    last_check_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tenant_hostnames_hostname_len_chk CHECK (((hostname OPERATOR(public.<>) ''::public.citext) AND (length((hostname)::text) <= 253)))
+);
+
+
+--
+-- Name: tenant_surfaces; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.tenant_surfaces (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    name public.citext NOT NULL,
+    cert_kind text DEFAULT 'per_host_san'::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    cert_state text DEFAULT 'none'::text NOT NULL,
+    cert_not_after timestamp with time zone,
+    cert_last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tenant_surfaces_app_or_not_chk CHECK ((app_id IS NOT NULL)),
+    CONSTRAINT tenant_surfaces_cert_kind_check CHECK ((cert_kind = ANY (ARRAY['per_host_san'::text, 'shared_wildcard'::text, 'per_host'::text]))),
+    CONSTRAINT tenant_surfaces_cert_state_check CHECK ((cert_state = ANY (ARRAY['none'::text, 'pending'::text, 'issued'::text, 'failed'::text]))),
+    CONSTRAINT tenant_surfaces_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'suspended'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: trigger_dead_letter; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.trigger_dead_letter (
+    record_id uuid NOT NULL,
+    trigger_id uuid NOT NULL,
+    reason text NOT NULL,
+    routed_to text NOT NULL,
+    detail jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trigger_dead_letter_reason_check CHECK ((reason = ANY (ARRAY['rate_limited'::text, 'poison_record'::text, 'max_attempts'::text, 'broker_error'::text, 'plan_quota'::text, 'payload_too_large'::text, 'customer_disabled'::text]))),
+    CONSTRAINT trigger_dead_letter_routed_to_check CHECK ((routed_to = ANY (ARRAY['drop'::text, 'manual_retry'::text, 'customer_dlq'::text])))
+);
+
+
+--
+-- Name: trigger_records; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.trigger_records (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    trigger_id uuid NOT NULL,
+    item_identifier text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    headers jsonb DEFAULT '{}'::jsonb NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_fire_at timestamp with time zone DEFAULT now() NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text,
+    last_dispatched_at timestamp with time zone,
+    CONSTRAINT trigger_records_attempts_check CHECK (((attempts >= 0) AND (attempts <= 25))),
+    CONSTRAINT trigger_records_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'succeeded'::text, 'retry'::text, 'dead_letter'::text])))
+);
+
+
+--
+-- Name: triggers; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.triggers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    slug text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    batch_size_max integer DEFAULT 64 NOT NULL,
+    batch_window_ms integer DEFAULT 1000 NOT NULL,
+    max_attempts integer DEFAULT 5 NOT NULL,
+    cron_id uuid,
+    source text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    payload_max_bytes integer DEFAULT 6291456 NOT NULL,
+    broker_poison_strategy text DEFAULT 'commit'::text NOT NULL,
+    filter_criteria jsonb,
+    CONSTRAINT triggers_batch_size_max_check CHECK (((batch_size_max >= 1) AND (batch_size_max <= 5000))),
+    CONSTRAINT triggers_batch_window_ms_check CHECK (((batch_window_ms >= 10) AND (batch_window_ms <= 600000))),
+    CONSTRAINT triggers_broker_poison_strategy_check CHECK ((broker_poison_strategy = ANY (ARRAY['commit'::text, 'seek-to-offset'::text]))),
+    CONSTRAINT triggers_check CHECK ((((kind = 'cron'::text) AND (cron_id IS NOT NULL) AND (source IS NULL)) OR ((kind <> 'cron'::text) AND (cron_id IS NULL)))),
+    CONSTRAINT triggers_kind_check CHECK ((kind = ANY (ARRAY['cron'::text, 'kafka'::text, 'nats'::text, 'redis_streams'::text, 'sqs_compat'::text, 'queue'::text]))),
+    CONSTRAINT triggers_max_attempts_check CHECK (((max_attempts >= 1) AND (max_attempts <= 25))),
+    CONSTRAINT triggers_payload_max_bytes_check CHECK (((payload_max_bytes >= 1024) AND (payload_max_bytes <= 67108864))),
+    CONSTRAINT triggers_source_check CHECK (((source IS NULL) OR (source = ANY (ARRAY['queue'::text, 'delayed_task'::text]))))
+);
+
+
+--
+-- Name: usage_daily; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.usage_daily (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    day date NOT NULL,
+    mb_seconds bigint DEFAULT 0 NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    cpu_usec bigint DEFAULT 0 NOT NULL,
+    tx_bytes bigint DEFAULT 0 NOT NULL,
+    net_tx_bytes bigint DEFAULT 0 NOT NULL,
+    net_rx_bytes bigint DEFAULT 0 NOT NULL,
+    cold_boot_count bigint DEFAULT 0 NOT NULL,
+    builder_seconds bigint DEFAULT 0 NOT NULL,
+    rolled_up_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    tail_seconds bigint DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: TABLE usage_daily; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON TABLE faas_test_e696c01fd4829d23.usage_daily IS 'Per-(account, app, day) materialised rollup of usage_minutes. Populated by the meterd cron tick FAAS_ROLLUP_INTERVAL (default 5 min) via INSERT ... SELECT ... GROUP BY with ON CONFLICT additive merge. Read by GET /v1/usage/daily. ADR-048. Informational — not billed.';
+
+
+--
+-- Name: COLUMN usage_daily.cold_boot_count; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_daily.cold_boot_count IS 'Per-day sum of usage_minutes.cold_boot_count for this (account, app, day). ADR-048. Informational — not billed.';
+
+
+--
+-- Name: COLUMN usage_daily.rolled_up_at; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_daily.rolled_up_at IS 'Timestamp the meterd cron last wrote this row. Stamped on every ON CONFLICT update so a stuck cron is visible in /v1/usage/daily metadata.';
+
+
+--
+-- Name: usage_minutes; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.usage_minutes (
+    account_id uuid NOT NULL,
+    app_id uuid,
+    instance_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    mb_seconds bigint NOT NULL,
+    requests integer DEFAULT 0 NOT NULL,
+    cpu_usec bigint DEFAULT 0 NOT NULL,
+    tx_bytes bigint DEFAULT 0 NOT NULL,
+    net_tx_bytes bigint DEFAULT 0 NOT NULL,
+    net_rx_bytes bigint DEFAULT 0 NOT NULL,
+    cold_boot_count integer DEFAULT 0 NOT NULL,
+    builder_seconds bigint DEFAULT 0 NOT NULL,
+    builder_kind text DEFAULT 'none'::text NOT NULL,
+    org_id uuid,
+    tail_seconds bigint DEFAULT 0 NOT NULL,
+    meter_kind text DEFAULT 'app'::text NOT NULL,
+    job_id uuid,
+    CONSTRAINT usage_minutes_app_or_job_chk CHECK ((((meter_kind = 'app'::text) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT usage_minutes_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text])))
+);
+
+
+--
+-- Name: COLUMN usage_minutes.cpu_usec; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.cpu_usec IS 'Cumulative host cgroup CPU-µs consumed by the instance during this minute. Source: vmmd cpustats.Cache (cpu.stat usage_usec delta) → schedd instancestats.Poller → meterd Sampler. Measurement only — billing is on plan RAM. issue #279 / PR-B.';
+
+
+--
+-- Name: COLUMN usage_minutes.tx_bytes; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.tx_bytes IS 'Cumulative HTTP response body bytes the gateway forwarded for this instance in this minute. Source: pkg/gateway/handler.go statusRecorder.Bytes → per-(instance, minute) ring buffer → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed.';
+
+
+--
+-- Name: COLUMN usage_minutes.net_tx_bytes; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.net_tx_bytes IS 'Cumulative byte delta on root-side vethHost.rx_bytes for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache reading /sys/class/net/<vethHost>/statistics/rx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-046. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).';
+
+
+--
+-- Name: COLUMN usage_minutes.net_rx_bytes; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.net_rx_bytes IS 'Cumulative byte delta on root-side vethHost.tx_bytes (root→guest = ingress) for this instance in this minute. Source: vmmd pkg/fcvm/netstats.Cache TX path reading /sys/class/net/<vethHost>/statistics/tx_bytes → vmmd.Stats → schedd instancestats.Poller → meterd Sampler.SampleAndRoll → AppendUsage. ADR-048. Informational — not billed. Unit = interface bytes (includes Ethernet/IP framing).';
+
+
+--
+-- Name: COLUMN usage_minutes.cold_boot_count; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.cold_boot_count IS 'Per-minute count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed for this instance. Source: scheddgrpc.InstanceStatsRow.LastWakeMethod, sampled by meterd Sampler.SampleAndRoll. ADR-048. Informational — not billed. Idempotent on a redelivered tick within the same minute (only the transition counts).';
+
+
+--
+-- Name: COLUMN usage_minutes.builder_seconds; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.builder_seconds IS 'Billable builder VM seconds (2-vCPU / 2048-MB per spec §4.5), written once per build at build completion via state.Store.AppendBuilderUsage keyed by build_id. ADR-048. Informational — not billed. NOT counted in CountsForRAM() — runtime GB-RAM-hour billing is unchanged.';
+
+
+--
+-- Name: COLUMN usage_minutes.builder_kind; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON COLUMN faas_test_e696c01fd4829d23.usage_minutes.builder_kind IS 'Build kind parallel to builds.kind (railpack / dockerfile / tarball); ''none'' for non-build rows. ADR-048. Informational — not billed.';
+
+
+--
+-- Name: usage_monthly; Type: VIEW; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE VIEW faas_test_e696c01fd4829d23.usage_monthly AS
+ SELECT account_id,
+    app_id,
+    date_trunc('month'::text, minute) AS month,
+    sum(mb_seconds) AS mb_seconds,
+    sum(cpu_usec) AS cpu_usec,
+    sum(requests) AS requests,
+    sum(tx_bytes) AS tx_bytes,
+    sum(net_tx_bytes) AS net_tx_bytes,
+    sum(net_rx_bytes) AS net_rx_bytes,
+    sum(cold_boot_count) AS cold_boot_count,
+    sum(
+        CASE
+            WHEN (builder_kind <> 'none'::text) THEN builder_seconds
+            ELSE (0)::bigint
+        END) AS builder_seconds
+   FROM faas_test_e696c01fd4829d23.usage_minutes
+  GROUP BY account_id, app_id, (date_trunc('month'::text, minute));
+
+
+--
+-- Name: warm_hint; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.warm_hint (
+    app_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    written_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT warm_hint_written_at_chk CHECK ((written_at <= (now() + '00:01:00'::interval)))
+);
+
+
+--
+-- Name: webhook_deliveries; Type: TABLE; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TABLE faas_test_e696c01fd4829d23.webhook_deliveries (
+    provider text NOT NULL,
+    delivery_id text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT webhook_deliveries_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'stripe'::text, 'paddle'::text])))
+);
 
 
 --
@@ -15471,56 +19188,6 @@ CREATE TABLE public.app_secret_runtime_reload_observations (
 
 
 --
--- Name: app_secrets; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_secrets (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    key text NOT NULL,
-    ciphertext bytea NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    kid text,
-    scope text DEFAULT 'default'::text NOT NULL,
-    value_hash text,
-    managed_postgres_binding_id uuid,
-    managed_credential_ref text,
-    managed_credential_generation bigint,
-    managed_object_storage_credential_id uuid,
-    delivery_version bigint DEFAULT 1 NOT NULL,
-    delivered_version bigint,
-    delivery_status text DEFAULT 'pending'::text NOT NULL,
-    last_delivery_attempt_at timestamp with time zone,
-    last_delivered_at timestamp with time zone,
-    last_delivery_error_code text,
-    last_delivered_wake_id text,
-    last_delivered_instance_id text,
-    last_runtime_reload_version bigint,
-    last_runtime_reload_revision text,
-    last_runtime_reload_projection text,
-    last_runtime_reload_signal text,
-    last_runtime_reload_at timestamp with time zone,
-    last_runtime_reload_error_code text,
-    last_runtime_reload_instance_id text,
-    secret_version bigint,
-    secret_class text DEFAULT 'persistent'::text NOT NULL,
-    CONSTRAINT app_secrets_delivered_version_range CHECK (((delivered_version IS NULL) OR ((delivered_version >= 1) AND (delivered_version <= delivery_version)))),
-    CONSTRAINT app_secrets_delivery_state_consistent CHECK ((((delivery_status = 'delivered'::text) AND (delivered_version = delivery_version) AND (last_delivery_attempt_at IS NOT NULL) AND (last_delivered_at IS NOT NULL) AND (last_delivery_error_code IS NULL) AND (last_delivered_wake_id IS NOT NULL) AND (last_delivered_instance_id IS NOT NULL)) OR ((delivery_status = 'failed'::text) AND (last_delivery_attempt_at IS NOT NULL) AND (last_delivery_error_code IS NOT NULL) AND ((delivered_version IS NULL) OR (delivered_version < delivery_version))) OR ((delivery_status = 'pending'::text) AND (last_delivery_error_code IS NULL) AND ((delivered_version IS NULL) OR (delivered_version < delivery_version))))),
-    CONSTRAINT app_secrets_delivery_status_shape CHECK ((delivery_status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text]))),
-    CONSTRAINT app_secrets_delivery_version_positive CHECK ((delivery_version >= 1)),
-    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
-    CONSTRAINT app_secrets_managed_postgres_owner_chk CHECK ((((managed_postgres_binding_id IS NULL) AND (managed_credential_ref IS NULL) AND (managed_credential_generation IS NULL)) OR ((managed_postgres_binding_id IS NOT NULL) AND (managed_credential_ref IS NOT NULL) AND (managed_credential_generation >= 1)))),
-    CONSTRAINT app_secrets_runtime_reload_observation_consistent CHECK ((((last_runtime_reload_version IS NULL) AND (last_runtime_reload_revision IS NULL) AND (last_runtime_reload_projection IS NULL) AND (last_runtime_reload_signal IS NULL) AND (last_runtime_reload_at IS NULL) AND (last_runtime_reload_error_code IS NULL) AND (last_runtime_reload_instance_id IS NULL)) OR ((last_runtime_reload_version IS NOT NULL) AND (last_runtime_reload_revision IS NOT NULL) AND (last_runtime_reload_projection IS NOT NULL) AND (last_runtime_reload_signal IS NOT NULL) AND (last_runtime_reload_at IS NOT NULL) AND (last_runtime_reload_instance_id IS NOT NULL) AND (last_runtime_reload_version >= 1) AND (last_runtime_reload_version <= delivery_version) AND (last_runtime_reload_revision ~ '^[a-f0-9]{64}$'::text) AND (last_runtime_reload_projection = ANY (ARRAY['updated'::text, 'unchanged'::text, 'failed'::text])) AND (last_runtime_reload_signal = ANY (ARRAY['sent'::text, 'queued'::text, 'failed'::text, 'not_attempted'::text])) AND (last_runtime_reload_at IS NOT NULL) AND (last_runtime_reload_instance_id IS NOT NULL) AND (((last_runtime_reload_projection = 'failed'::text) AND (last_runtime_reload_signal = 'not_attempted'::text) AND (last_runtime_reload_error_code IS NOT NULL) AND (last_runtime_reload_error_code = 'projection_failed'::text)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = ANY (ARRAY['sent'::text, 'not_attempted'::text])) AND (last_runtime_reload_error_code IS NULL)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = 'queued'::text) AND (last_runtime_reload_error_code IS NULL)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = 'failed'::text) AND (last_runtime_reload_error_code IS NOT NULL) AND (last_runtime_reload_error_code = 'signal_failed'::text)) OR ((last_runtime_reload_projection = 'unchanged'::text) AND (last_runtime_reload_signal = 'not_attempted'::text) AND (last_runtime_reload_error_code IS NULL)))))),
-    CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
-    CONSTRAINT app_secrets_secret_class_shape CHECK ((secret_class = ANY (ARRAY['persistent'::text, 'ephemeral'::text]))),
-    CONSTRAINT app_secrets_secret_version_positive CHECK (((secret_version IS NULL) OR (secret_version >= 1))),
-    CONSTRAINT app_secrets_value_hash_shape CHECK (((value_hash IS NULL) OR (length(value_hash) <= 16)))
-);
-
-
---
 -- Name: app_service_address_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15935,6 +19602,13 @@ CREATE TABLE public.apps (
     managed_postgres_admission_cutover_id uuid,
     managed_postgres_admission_fenced_at timestamp with time zone,
     service_address_index integer,
+    deployment_policy_revision bigint DEFAULT 0 NOT NULL,
+    deployment_policy_owner text DEFAULT ''::text NOT NULL,
+    deployment_policy_fingerprint text DEFAULT ''::text NOT NULL,
+    deployment_cron_revision bigint DEFAULT 0 NOT NULL,
+    deployment_cron_owner text DEFAULT ''::text NOT NULL,
+    deployment_cron_fingerprint text DEFAULT ''::text NOT NULL,
+    deployment_cron_before jsonb,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -15942,6 +19616,15 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
     CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_deployment_cron_before_check CHECK (((deployment_cron_before IS NULL) OR (jsonb_typeof(deployment_cron_before) = 'array'::text))),
+    CONSTRAINT apps_deployment_cron_fingerprint_check CHECK (((deployment_cron_fingerprint = ''::text) OR (deployment_cron_fingerprint ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT apps_deployment_cron_owner_check CHECK (((deployment_cron_owner = ''::text) OR (deployment_cron_owner ~ '^[0-9a-f]{32}$'::text))),
+    CONSTRAINT apps_deployment_cron_ownership CHECK ((((deployment_cron_owner = ''::text) = (deployment_cron_fingerprint = ''::text)) AND ((deployment_cron_owner = ''::text) = (deployment_cron_before IS NULL)))),
+    CONSTRAINT apps_deployment_cron_revision_check CHECK ((deployment_cron_revision >= 0)),
+    CONSTRAINT apps_deployment_policy_fingerprint_check CHECK (((deployment_policy_fingerprint = ''::text) OR (deployment_policy_fingerprint ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT apps_deployment_policy_owner_check CHECK (((deployment_policy_owner = ''::text) OR (deployment_policy_owner ~ '^[0-9a-f]{32}$'::text))),
+    CONSTRAINT apps_deployment_policy_ownership_check CHECK (((deployment_policy_owner = ''::text) = (deployment_policy_fingerprint = ''::text))),
+    CONSTRAINT apps_deployment_policy_revision_check CHECK ((deployment_policy_revision >= 0)),
     CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
     CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
@@ -17559,6 +21242,45 @@ CREATE VIEW public.deployment_code_pin_deadlines AS
 
 
 --
+-- Name: deployment_cron_activations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_cron_activations (
+    app_id uuid NOT NULL,
+    session_id text NOT NULL,
+    intent jsonb NOT NULL,
+    fingerprint text NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    upload_id text,
+    CONSTRAINT deployment_cron_activations_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT deployment_cron_activations_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
+    CONSTRAINT deployment_cron_activations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT deployment_cron_activations_session_id_check CHECK ((session_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT deployment_cron_activations_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'conflict'::text, 'discarded'::text, 'canceled'::text])))
+);
+
+
+--
+-- Name: deployment_cron_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_cron_outcomes (
+    deployment_id uuid NOT NULL,
+    session_id text NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_cron_outcomes_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'awaiting_readiness'::text, 'awaiting_full_traffic'::text, 'awaiting_rollout'::text, 'competing_traffic'::text, 'awaiting_activation'::text, 'cron_changed'::text, 'quota_changed'::text, 'identity_conflict'::text, 'plan_unavailable'::text, 'intent_superseded'::text, 'deployment_superseded'::text, 'deployment_failed'::text, 'deployment_canceled'::text, 'rollout_aborted'::text, 'non_production'::text, 'cron_guard_conflict'::text, 'activation_discarded'::text]))),
+    CONSTRAINT deployment_cron_outcomes_revision_check CHECK ((revision > 0)),
+    CONSTRAINT deployment_cron_outcomes_session_id_check CHECK ((session_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT deployment_cron_outcomes_status_check CHECK ((status = ANY (ARRAY['prepared'::text, 'activated'::text, 'conflict'::text, 'discarded'::text])))
+);
+
+
+--
 -- Name: deployment_dependency_gates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17668,6 +21390,19 @@ CREATE TABLE public.deployment_openapi_snapshots (
 
 
 --
+-- Name: deployment_project_release_workers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_project_release_workers (
+    deployment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    CONSTRAINT deployment_project_release_workers_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
+);
+
+
+--
 -- Name: deployment_recovery_lineage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17675,6 +21410,30 @@ CREATE TABLE public.deployment_recovery_lineage (
     deployment_id uuid NOT NULL,
     predecessor_deployment_id uuid,
     CONSTRAINT deployment_recovery_lineage_check CHECK ((deployment_id <> predecessor_deployment_id))
+);
+
+
+--
+-- Name: deployment_release_env_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_release_env_snapshots (
+    deployment_id uuid NOT NULL,
+    values_json jsonb NOT NULL,
+    CONSTRAINT deployment_release_env_snapshots_values_json_check CHECK ((jsonb_typeof(values_json) = 'array'::text))
+);
+
+
+--
+-- Name: deployment_release_secret_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_release_secret_snapshots (
+    deployment_id uuid NOT NULL,
+    values_json jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_release_secret_snapshots_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT deployment_release_secret_snapshots_values_json_check CHECK ((jsonb_typeof(values_json) = 'array'::text))
 );
 
 
@@ -17877,6 +21636,20 @@ CREATE TABLE public.deployment_sidecar_secret_reload_signals (
     signal text NOT NULL,
     CONSTRAINT deployment_sidecar_secret_reload_name_chk CHECK ((sidecar_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT deployment_sidecar_secret_reload_signal_chk CHECK ((signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))
+);
+
+
+--
+-- Name: deployment_submission_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_submission_receipts (
+    app_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    deployment_id uuid NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT deployment_submission_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
+    CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
 );
 
 
@@ -25858,6 +29631,19 @@ CREATE TABLE public.project_environment_edge_policies (
 
 
 --
+-- Name: project_environment_promotion_controls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_controls (
+    promotion_id uuid NOT NULL,
+    request_id text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT project_environment_promotion_controls_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND ((payload #>> '{request,request_id}'::text[]) = request_id) AND (((payload #>> '{request,expected_generation}'::text[]))::bigint > 0) AND ((payload ->> 'action'::text) = ANY (ARRAY['abort'::text, 'recover'::text])) AND ((payload ->> 'status'::text) = ANY (ARRAY['pending'::text, 'aborted'::text, 'restored'::text, 'blocked'::text])) AND (payload ?& ARRAY['request'::text, 'action'::text, 'status'::text, 'operator_account_id'::text, 'requested_at'::text, 'deadline'::text]) AND (octet_length((payload)::text) <= 4096))),
+    CONSTRAINT project_environment_promotion_controls_request_id_check CHECK ((request_id ~ '^[a-f0-9]{32}$'::text))
+);
+
+
+--
 -- Name: project_environment_promotion_feature_flags; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25876,6 +29662,79 @@ CREATE TABLE public.project_environment_promotion_feature_flags (
     CONSTRAINT project_environment_promotion_feature_flag_target_version_check CHECK (((target_version >= 0) AND (target_version <= '9007199254740991'::bigint))),
     CONSTRAINT project_environment_promotion_feature_flags_check CHECK (((rollback_version = 0) OR ((target_version > 0) AND (rollback_version > target_version)))),
     CONSTRAINT project_environment_promotion_feature_flags_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: project_environment_promotion_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_health (
+    promotion_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    phase text NOT NULL,
+    payload jsonb NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_claimed_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT project_environment_promotion_health_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (payload ? 'policy'::text) AND (jsonb_typeof((payload -> 'policy'::text)) = 'object'::text) AND ((payload ->> 'phase'::text) = phase) AND (((payload ->> 'generation'::text))::bigint = generation) AND (octet_length((payload)::text) <= 32768))),
+    CONSTRAINT project_environment_promotion_health_generation_check CHECK ((generation >= 1)),
+    CONSTRAINT project_environment_promotion_health_last_claimed_at_check CHECK ((isfinite(last_claimed_at) OR (last_claimed_at = '-infinity'::timestamp with time zone))),
+    CONSTRAINT project_environment_promotion_health_next_check_at_check CHECK (isfinite(next_check_at)),
+    CONSTRAINT project_environment_promotion_health_phase_check CHECK ((phase = ANY (ARRAY['queued'::text, 'migrating'::text, 'preflight'::text, 'cutover'::text, 'verifying'::text, 'finalizing'::text, 'rolling_back'::text, 'restoring'::text, 'aborted'::text, 'succeeded'::text, 'failed'::text, 'conflicted'::text, 'rollback_failed'::text]))),
+    CONSTRAINT promotion_admission_payload CHECK (((NOT (payload ? 'admission'::text)) OR (((jsonb_typeof((payload -> 'admission'::text)) = 'object'::text) AND ((payload -> 'admission'::text) ?& ARRAY['queued_at'::text, 'wait_deadline'::text, 'reason'::text]) AND isfinite(((payload #>> '{admission,queued_at}'::text[]))::timestamp with time zone) AND isfinite(((payload #>> '{admission,wait_deadline}'::text[]))::timestamp with time zone) AND (((payload #>> '{admission,wait_deadline}'::text[]))::timestamp with time zone > ((payload #>> '{admission,queued_at}'::text[]))::timestamp with time zone) AND (((payload #>> '{admission,started_at}'::text[]) IS NULL) OR isfinite(((payload #>> '{admission,started_at}'::text[]))::timestamp with time zone))) IS TRUE))),
+    CONSTRAINT promotion_queued_payload CHECK (((phase <> 'queued'::text) OR (((payload ? 'admission'::text) AND ((payload #>> '{admission,started_at}'::text[]) IS NULL) AND ((payload ->> 'started_at'::text) = (payload #>> '{admission,queued_at}'::text[])) AND ((payload ->> 'deadline'::text) = (payload #>> '{admission,wait_deadline}'::text[]))) IS TRUE))),
+    CONSTRAINT promotion_worker_set_shape CHECK (((NOT ((payload -> 'policy'::text) ? 'workers'::text)) OR ((jsonb_typeof((payload #> '{policy,workers}'::text[])) = 'array'::text) AND ((jsonb_array_length((payload #> '{policy,workers}'::text[])) >= 2) AND (jsonb_array_length((payload #> '{policy,workers}'::text[])) <= 8)) AND (NOT ((payload -> 'policy'::text) ? 'worker'::text)))))
+);
+
+
+--
+-- Name: project_environment_promotion_migration_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_migration_recoveries (
+    promotion_id uuid NOT NULL,
+    request_id text NOT NULL,
+    request_hash text NOT NULL,
+    status text NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_promotion_migration_reco_request_hash_check CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_promotion_migration_recove_request_id_check CHECK ((request_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_environment_promotion_migration_recoveries_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND ((payload #>> '{receipt,status}'::text[]) = status) AND (octet_length((payload)::text) <= 32768))),
+    CONSTRAINT project_environment_promotion_migration_recoveries_status_check CHECK ((status = ANY (ARRAY['quiescing'::text, 'verifying'::text, 'resumed'::text, 'resolved'::text, 'blocked'::text])))
+);
+
+
+--
+-- Name: project_environment_promotion_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_migrations (
+    promotion_id uuid NOT NULL,
+    task_id uuid,
+    runtime_fingerprint text DEFAULT ''::text NOT NULL,
+    prepared_lease_token uuid,
+    runtime_node_id uuid,
+    runtime_instance_id uuid,
+    runtime_lease_token uuid,
+    destroyed_at timestamp with time zone,
+    CONSTRAINT project_environment_promotion_migrati_runtime_fingerprint_check CHECK (((runtime_fingerprint = ''::text) OR (runtime_fingerprint ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT project_environment_promotion_migrations_check CHECK (((task_id IS NULL) = (runtime_fingerprint = ''::text))),
+    CONSTRAINT project_environment_promotion_migrations_destroyed_at_check CHECK (((destroyed_at IS NULL) OR isfinite(destroyed_at))),
+    CONSTRAINT promotion_migration_runtime_complete CHECK ((((runtime_node_id IS NULL) = (runtime_instance_id IS NULL)) AND ((runtime_instance_id IS NULL) = (runtime_lease_token IS NULL))))
+);
+
+
+--
+-- Name: project_environment_promotion_release_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_promotion_release_config (
+    promotion_id uuid NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT project_environment_promotion_release_config_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (payload ? 'hash'::text) AND (jsonb_typeof((payload -> 'hash'::text)) = 'string'::text) AND ((payload ->> 'hash'::text) ~ '^[a-f0-9]{64}$'::text)))
 );
 
 
@@ -26118,34 +29977,307 @@ CREATE TABLE public.project_environment_workload_specs (
 
 
 --
--- Name: projects; Type: TABLE; Schema: public; Owner: -
+-- Name: project_migration_contracts; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.projects (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+CREATE TABLE public.project_migration_contracts (
     account_id uuid NOT NULL,
-    slug text NOT NULL,
-    repo_full_name text,
-    production_branch text,
-    install_id bigint,
-    scan_source text DEFAULT 'unknown'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
-    CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
-    CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+    project_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    app_id uuid NOT NULL,
+    workload_attempt_id text NOT NULL,
+    expansion_task_id uuid,
+    prepared_lease_token uuid,
+    runtime_fingerprint text,
+    command text[] NOT NULL,
+    command_hash text NOT NULL,
+    task_id uuid,
+    request_id text,
+    generation bigint,
+    release_id uuid,
+    config_version bigint,
+    config_hash text,
+    retired_deployment_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_migration_contracts_attempt_id_check CHECK ((attempt_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_migration_contracts_check CHECK (((prepared_lease_token IS NULL) OR (task_id IS NOT NULL))),
+    CONSTRAINT project_migration_contracts_check1 CHECK (((expansion_task_id IS NULL) = (runtime_fingerprint IS NULL))),
+    CONSTRAINT project_migration_contracts_check2 CHECK ((((task_id IS NULL) AND (request_id IS NULL) AND (generation IS NULL) AND (release_id IS NULL) AND (config_version IS NULL) AND (config_hash IS NULL) AND (cardinality(retired_deployment_ids) = 0)) OR ((task_id IS NOT NULL) AND (runtime_fingerprint IS NOT NULL) AND (expansion_task_id IS NOT NULL) AND (request_id IS NOT NULL) AND (generation IS NOT NULL) AND (release_id IS NOT NULL) AND (config_version IS NOT NULL) AND (config_hash IS NOT NULL)))),
+    CONSTRAINT project_migration_contracts_command_check CHECK ((cardinality(command) = 1)),
+    CONSTRAINT project_migration_contracts_command_hash_check CHECK ((command_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_migration_contracts_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_migration_contracts_config_version_check CHECK ((config_version >= 0)),
+    CONSTRAINT project_migration_contracts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_migration_contracts_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_migration_contracts_request_id_check CHECK ((request_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_migration_contracts_runtime_fingerprint_check CHECK ((runtime_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_migration_contracts_workload_attempt_id_check CHECK ((workload_attempt_id ~ '^[a-f0-9]{32}$'::text))
 );
 
 
 --
--- Name: provisioned_static_egress_ips; Type: TABLE; Schema: public; Owner: -
+-- Name: project_migration_pending_contracts; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE TABLE public.provisioned_static_egress_ips (
+CREATE VIEW public.project_migration_pending_contracts AS
+ SELECT c.account_id,
+    c.project_id,
+    c.attempt_id,
+    c.app_id,
+    c.workload_attempt_id,
+    c.expansion_task_id,
+    c.prepared_lease_token,
+    c.runtime_fingerprint,
+    c.command,
+    c.command_hash,
+    c.task_id,
+    c.request_id,
+    c.generation,
+    c.release_id,
+    c.config_version,
+    c.config_hash,
+    c.retired_deployment_ids,
+    c.created_at
+   FROM (public.project_migration_contracts c
+     LEFT JOIN public.app_tasks t ON ((t.id = c.task_id)))
+  WHERE ((c.task_id IS NOT NULL) AND ((t.id IS NULL) OR (t.status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text]))));
+
+
+--
+-- Name: project_migration_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_migration_recoveries (
     account_id uuid NOT NULL,
-    customer_ip inet NOT NULL,
+    attempt_id text NOT NULL,
+    project_id uuid NOT NULL,
+    request_id text NOT NULL,
+    request_hash text NOT NULL,
+    task_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    replacement_attempt_id text NOT NULL,
+    replacement_release_id uuid NOT NULL,
+    config_version bigint NOT NULL,
+    config_hash text NOT NULL,
+    runtime_fingerprints jsonb NOT NULL,
+    evidence_hash text NOT NULL,
+    resolved_at timestamp with time zone NOT NULL,
+    CONSTRAINT project_migration_recoveries_attempt_id_check CHECK ((attempt_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_migration_recoveries_check CHECK (((replacement_attempt_id ~ '^[a-f0-9]{32}$'::text) AND (replacement_attempt_id <> attempt_id))),
+    CONSTRAINT project_migration_recoveries_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_migration_recoveries_config_version_check CHECK ((config_version >= 0)),
+    CONSTRAINT project_migration_recoveries_evidence_hash_check CHECK ((evidence_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_migration_recoveries_generation_check CHECK ((generation > 0)),
+    CONSTRAINT project_migration_recoveries_request_hash_check CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_migration_recoveries_request_id_check CHECK ((request_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_migration_recoveries_resolved_at_check CHECK (isfinite(resolved_at)),
+    CONSTRAINT project_migration_recoveries_runtime_fingerprints_check CHECK ((jsonb_typeof(runtime_fingerprints) = 'object'::text))
+);
+
+
+--
+-- Name: project_migration_retired_deployments; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_migration_retired_deployments AS
+ SELECT DISTINCT unnest(retired_deployment_ids) AS deployment_id
+   FROM public.project_migration_contracts;
+
+
+--
+-- Name: project_migration_task_admission; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_migration_task_admission AS
+ SELECT t.id
+   FROM (public.app_tasks t
+     JOIN public.apps a ON ((a.id = t.app_id)))
+  WHERE ((NOT (EXISTS ( SELECT 1
+           FROM public.project_migration_retired_deployments f
+          WHERE (f.deployment_id = t.deployment_id)))) AND (NOT (EXISTS ( SELECT 1
+           FROM public.project_migration_pending_contracts c
+          WHERE ((c.project_id = a.project_id) AND (c.task_id <> t.id))))) AND (NOT (EXISTS ( SELECT 1
+           FROM public.project_migration_contracts c
+          WHERE ((c.task_id = t.id) AND ((NOT (EXISTS ( SELECT 1
+                   FROM public.project_release_sets r
+                  WHERE ((r.id = c.release_id) AND (r.project_id = c.project_id) AND r.active)))) OR (NOT (((c.config_version = 0) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.project_environment_config_versions empty_head
+                  WHERE ((empty_head.project_id = c.project_id) AND (empty_head.environment_slug = 'production'::text)))))) OR (EXISTS ( SELECT 1
+                   FROM public.project_environment_config_versions v
+                  WHERE ((v.project_id = c.project_id) AND (v.environment_slug = 'production'::text) AND (v.version = c.config_version) AND (v.config_hash = c.config_hash) AND (NOT (EXISTS ( SELECT 1
+                           FROM public.project_environment_config_versions newer
+                          WHERE ((newer.project_id = c.project_id) AND (newer.environment_slug = 'production'::text) AND (newer.version > v.version))))))))))))))));
+
+
+--
+-- Name: project_promotion_health_work; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_promotion_health_work AS
+ SELECT p.id AS promotion_id,
+    p.account_id,
+    p.project_slug,
+    p.to_environment,
+    h.next_check_at,
+    h.last_claimed_at,
+    h.lease_until,
+    ((h.phase = ANY (ARRAY['restoring'::text, 'rolling_back'::text])) OR (EXISTS ( SELECT 1
+           FROM public.project_environment_promotion_migration_recoveries r
+          WHERE ((r.promotion_id = p.id) AND (r.status = ANY (ARRAY['quiescing'::text, 'verifying'::text])))))) AS urgent
+   FROM (public.project_environment_promotions p
+     JOIN public.project_environment_promotion_health h ON ((h.promotion_id = p.id)))
+  WHERE (((p.status = 'running'::text) AND (h.phase = ANY (ARRAY['queued'::text, 'migrating'::text, 'preflight'::text, 'cutover'::text, 'verifying'::text, 'finalizing'::text, 'restoring'::text, 'rolling_back'::text]))) OR ((p.status = 'failed'::text) AND (EXISTS ( SELECT 1
+           FROM public.project_environment_promotion_migration_recoveries r
+          WHERE ((r.promotion_id = p.id) AND (r.status = ANY (ARRAY['quiescing'::text, 'verifying'::text])))))));
+
+
+--
+-- Name: project_promotion_migration_resolved_tasks; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_promotion_migration_resolved_tasks AS
+ SELECT m.task_id
+   FROM (public.project_environment_promotion_migrations m
+     JOIN public.project_environment_promotion_migration_recoveries r ON ((r.promotion_id = m.promotion_id)))
+  WHERE ((r.status = ANY (ARRAY['resumed'::text, 'resolved'::text])) AND (m.destroyed_at IS NOT NULL) AND (m.runtime_lease_token = m.prepared_lease_token));
+
+
+--
+-- Name: project_promotion_worker_targets; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_promotion_worker_targets AS
+ SELECT p.id AS promotion_id,
+    p.project_id,
+    p.account_id,
+    pin.app_id,
+    pin.deployment_id
+   FROM ((((public.project_environment_promotions p
+     JOIN public.project_environment_promotion_health h ON ((h.promotion_id = p.id)))
+     CROSS JOIN LATERAL jsonb_array_elements(
+        CASE
+            WHEN (jsonb_typeof((h.payload #> '{policy,workers}'::text[])) = 'array'::text) THEN (h.payload #> '{policy,workers}'::text[])
+            ELSE jsonb_build_array((h.payload #> '{policy,worker}'::text[]))
+        END) worker(policy))
+     JOIN public.project_environment_promotion_workload_specs pin ON (((pin.promotion_id = p.id) AND ((pin.app_id)::text = (worker.policy ->> 'app_id'::text)))))
+     JOIN public.deployments d ON (((d.id = pin.deployment_id) AND (d.app_id = pin.app_id) AND (d.scope = 'production'::text))))
+  WHERE ((p.status = 'running'::text) AND (p.to_environment = 'production'::text) AND (p.target_release_set_id IS NULL) AND (h.phase = ANY (ARRAY['preflight'::text, 'cutover'::text])) AND (((h.payload ->> 'deadline'::text))::timestamp with time zone > now()) AND (d.status <> ALL (ARRAY['failed'::text, 'cancelled'::text, 'superseded'::text])))
+UNION
+ SELECT p.id AS promotion_id,
+    p.project_id,
+    p.account_id,
+    d.app_id,
+    d.id AS deployment_id
+   FROM (((public.project_environment_promotions p
+     JOIN public.project_environment_promotion_health h ON ((h.promotion_id = p.id)))
+     CROSS JOIN LATERAL jsonb_array_elements(
+        CASE
+            WHEN (jsonb_typeof((h.payload #> '{policy,workers}'::text[])) = 'array'::text) THEN (h.payload #> '{policy,workers}'::text[])
+            ELSE jsonb_build_array((h.payload #> '{policy,worker}'::text[]))
+        END) worker(policy))
+     JOIN public.deployments d ON ((((d.id)::text = (worker.policy ->> 'previous_deployment_id'::text)) AND ((d.app_id)::text = (worker.policy ->> 'app_id'::text)) AND (d.scope = 'production'::text))))
+  WHERE ((p.target_release_set_id IS NOT NULL) AND (p.restored_target_release_set_id IS NULL) AND
+        CASE
+            WHEN (h.payload ? 'control'::text) THEN ((EXISTS ( SELECT 1
+               FROM public.project_release_sets baseline
+              WHERE ((baseline.id = p.previous_target_release_set_id) AND (baseline.active OR (baseline.expires_at > now()))))) AND ((h.payload #>> '{control,status}'::text[]) = 'pending'::text) AND (h.phase = ANY (ARRAY['restoring'::text, 'rolling_back'::text])) AND (((h.payload #>> '{control,deadline}'::text[]))::timestamp with time zone > now()))
+            ELSE (((h.phase = 'rolling_back'::text) OR (p.rollback_status = 'rolling_back'::text)) AND ((
+            CASE
+                WHEN (p.rollback_status = 'rolling_back'::text) THEN COALESCE(p.rollback_started_at, ((h.payload ->> 'deadline'::text))::timestamp with time zone)
+                ELSE ((h.payload ->> 'deadline'::text))::timestamp with time zone
+            END + '00:10:00'::interval) > now()))
+        END AND (d.status <> ALL (ARRAY['failed'::text, 'cancelled'::text])));
+
+
+--
+-- Name: project_release_additions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_additions (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    fingerprint text NOT NULL,
+    dormant boolean DEFAULT true NOT NULL,
+    CONSTRAINT project_release_additions_attempt_id_check CHECK ((attempt_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_release_additions_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: project_release_canaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_canaries (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    policy jsonb NOT NULL,
+    status text NOT NULL,
+    worker_app_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_release_canaries_status_check CHECK ((status = ANY (ARRAY['running'::text, 'complete'::text, 'aborted'::text, 'rollback_required'::text, 'rolled_back'::text, 'needs_operator'::text])))
+);
+
+
+--
+-- Name: project_release_config_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_config_intents (
+    account_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT project_release_config_intents_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text))
+);
+
+
+--
+-- Name: project_release_secret_bundles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_secret_bundles (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    request_id text NOT NULL,
+    request_hash text NOT NULL,
+    values_json jsonb NOT NULL,
+    response_json jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT provisioned_static_egress_ips_family_check CHECK ((family(customer_ip) = 4))
+    CONSTRAINT project_release_secret_bundles_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT project_release_secret_bundles_request_hash_check CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_release_secret_bundles_request_id_check CHECK ((request_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT project_release_secret_bundles_response_json_check CHECK ((jsonb_typeof(response_json) = 'object'::text)),
+    CONSTRAINT project_release_secret_bundles_values_json_check CHECK ((jsonb_typeof(values_json) = 'array'::text))
+);
+
+
+--
+-- Name: project_release_worker_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_worker_drains (
+    instance_id uuid NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_release_worker_drains_requested_at_check CHECK (isfinite(requested_at))
+);
+
+
+--
+-- Name: project_submissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_submissions (
+    account_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    fingerprint text NOT NULL,
+    payload jsonb NOT NULL,
+    status text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_submissions_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT project_submissions_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT project_submissions_status_check CHECK ((status = ANY (ARRAY['processing'::text, 'complete'::text, 'rejected'::text, 'interrupted'::text])))
 );
 
 
@@ -26181,6 +30313,120 @@ CREATE TABLE public.queue_bindings (
 
 
 --
+-- Name: project_worker_canary_targets; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_worker_canary_targets AS
+ SELECT DISTINCT a.id AS app_id,
+    m.deployment_id
+   FROM ((((((public.project_release_canaries c
+     JOIN public.project_submissions s ON (((s.account_id = c.account_id) AND (s.attempt_id = c.attempt_id))))
+     JOIN public.apps a ON (((a.id = c.worker_app_id) AND (a.project_id = c.project_id) AND (a.account_id = c.account_id) AND (a.status = 'active'::text))))
+     JOIN public.queue_bindings b ON (((b.id = ((s.payload #>> '{apply,safe_release,worker,binding_id}'::text[]))::uuid) AND (b.app_id = a.id) AND (b.account_id = a.account_id) AND (b.deployment_scope = 'production'::text) AND (b.mode = 'push'::text) AND (b.workload_class = 'worker'::text) AND b.enabled AND (b.retired_at IS NULL))))
+     JOIN public.project_release_sets r ON ((((r.id = ((c.policy ->> 'baseline_release_id'::text))::uuid) OR (r.id = ((c.policy ->> 'candidate_release_id'::text))::uuid)) AND (r.account_id = c.account_id) AND (r.project_id = c.project_id) AND (r.environment_slug = 'production'::text) AND (r.active OR (r.expires_at > clock_timestamp())))))
+     JOIN public.project_release_members m ON (((m.release_id = r.id) AND (m.app_id = a.id))))
+     JOIN public.deployments d ON (((d.id = m.deployment_id) AND (d.app_id = a.id) AND (d.scope = 'production'::text) AND (d.status = 'live'::text))))
+  WHERE (((c.status = 'running'::text) OR ((c.status = 'complete'::text) AND ((c.policy ->> 'stabilizing'::text) = 'true'::text) AND ((s.payload #>> '{apply,safe_release,verification,stabilization,status}'::text[]) = 'monitoring'::text))) AND (((c.policy ->> 'deadline'::text))::timestamp with time zone > clock_timestamp()) AND (EXISTS ( SELECT 1
+           FROM public.project_release_sets active
+          WHERE ((active.project_id = c.project_id) AND (active.environment_slug = 'production'::text) AND active.active AND (active.id =
+                CASE
+                    WHEN (((c.policy ->> 'percent'::text))::integer < 100) THEN ((c.policy ->> 'baseline_release_id'::text))::uuid
+                    ELSE ((c.policy ->> 'candidate_release_id'::text))::uuid
+                END)))));
+
+
+--
+-- Name: project_worker_job_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_worker_job_evidence (
+    invocation_id uuid NOT NULL,
+    replay_generation bigint NOT NULL,
+    attempt integer NOT NULL,
+    app_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    finished_at timestamp with time zone,
+    outcome text DEFAULT 'running'::text NOT NULL,
+    queue_delay_ms bigint NOT NULL,
+    CONSTRAINT project_worker_job_evidence_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT project_worker_job_evidence_check CHECK ((isfinite(finished_at) AND (finished_at >= started_at))),
+    CONSTRAINT project_worker_job_evidence_check1 CHECK (((outcome = 'running'::text) = (finished_at IS NULL))),
+    CONSTRAINT project_worker_job_evidence_outcome_check CHECK ((outcome = ANY (ARRAY['running'::text, 'succeeded'::text, 'retry'::text, 'dead_letter'::text]))),
+    CONSTRAINT project_worker_job_evidence_queue_delay_ms_check CHECK ((queue_delay_ms >= 0)),
+    CONSTRAINT project_worker_job_evidence_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT project_worker_job_evidence_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: project_worker_release_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_worker_release_pins (
+    root_invocation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT project_worker_release_pins_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
+-- Name: project_worker_pinned_targets; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.project_worker_pinned_targets AS
+ SELECT DISTINCT p.app_id,
+    p.deployment_id
+   FROM ((((((public.project_worker_release_pins p
+     JOIN public.invocations root ON (((root.id = p.root_invocation_id) AND (root.app_id = p.app_id) AND (root.queue_binding_id = p.binding_id))))
+     JOIN public.apps a ON (((a.id = p.app_id) AND (a.account_id = root.account_id) AND (a.status = 'active'::text))))
+     JOIN public.deployments d ON (((d.id = p.deployment_id) AND (d.app_id = a.id) AND (d.status = 'live'::text) AND (d.scope = 'production'::text))))
+     JOIN public.project_release_sets r ON (((r.id = p.release_id) AND (r.project_id = a.project_id) AND (r.account_id = a.account_id) AND (r.environment_slug = 'production'::text) AND (r.active OR (r.expires_at > clock_timestamp())))))
+     JOIN public.project_release_members m ON (((m.release_id = r.id) AND (m.app_id = a.id) AND (m.deployment_id = d.id))))
+     JOIN public.queue_bindings b ON (((b.id = p.binding_id) AND (b.account_id = a.account_id) AND (b.app_id = a.id) AND (b.deployment_scope = 'production'::text) AND (b.mode = 'push'::text) AND (b.workload_class = 'worker'::text) AND b.enabled AND (b.retired_at IS NULL))))
+  WHERE (EXISTS ( SELECT 1
+           FROM public.invocations i
+          WHERE ((i.account_id = a.account_id) AND (i.app_id = a.id) AND (i.queue_binding_id = b.id) AND (i.deployment_scope = 'production'::text) AND (i.environment_id IS NULL) AND (i.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) AND ((i.id = root.id) OR (i.replay_root_invocation_id = root.id)))));
+
+
+--
+-- Name: projects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.projects (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    repo_full_name text,
+    production_branch text,
+    install_id bigint,
+    scan_source text DEFAULT 'unknown'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
+    CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
+    CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: provisioned_static_egress_ips; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.provisioned_static_egress_ips (
+    account_id uuid NOT NULL,
+    customer_ip inet NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT provisioned_static_egress_ips_family_check CHECK ((family(customer_ip) = 4))
+);
+
+
+--
 -- Name: recent_build_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26206,6 +30452,62 @@ CREATE TABLE public.release_bundles (
     CONSTRAINT release_bundles_git_sha_shape CHECK ((git_sha ~ '^[a-f0-9]{40}$'::text)),
     CONSTRAINT release_bundles_manifest_shape CHECK ((manifest_hash ~ '^sha256:[a-f0-9]{64}$'::text))
 );
+
+
+--
+-- Name: release_secret_key_retirement_fence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_secret_key_retirement_fence (
+    singleton boolean NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT release_secret_key_retirement_fence_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT release_secret_key_retirement_fence_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: release_secret_key_retirements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_secret_key_retirements (
+    kid text NOT NULL,
+    retired_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT release_secret_key_retirements_kid_check CHECK ((kid ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT release_secret_key_retirements_retired_at_check CHECK (isfinite(retired_at))
+);
+
+
+--
+-- Name: release_secret_rekey_documents; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.release_secret_rekey_documents AS
+ SELECT 'app'::text AS kind,
+    (((((((s.account_id)::text || '/'::text) || (s.app_id)::text) || '/'::text) || s.scope) || '/'::text) || s.key) AS id,
+    public.release_secret_app_document(s.*) AS payload
+   FROM public.app_secrets s
+UNION ALL
+ SELECT 'bundle'::text AS kind,
+    (((project_release_secret_bundles.account_id)::text || '/'::text) || project_release_secret_bundles.request_id) AS id,
+    project_release_secret_bundles.values_json AS payload
+   FROM public.project_release_secret_bundles
+UNION ALL
+ SELECT 'capture'::text AS kind,
+    (((project_release_config_intents.account_id)::text || '/'::text) || project_release_config_intents.attempt_id) AS id,
+    project_release_config_intents.payload
+   FROM public.project_release_config_intents
+UNION ALL
+ SELECT 'deployment'::text AS kind,
+    (deployment_release_secret_snapshots.deployment_id)::text AS id,
+    deployment_release_secret_snapshots.values_json AS payload
+   FROM public.deployment_release_secret_snapshots
+UNION ALL
+ SELECT 'promotion'::text AS kind,
+    (project_environment_promotion_release_config.promotion_id)::text AS id,
+    project_environment_promotion_release_config.payload
+   FROM public.project_environment_promotion_release_config
+  WHERE (project_environment_promotion_release_config.payload ? 'secrets'::text);
 
 
 --
@@ -28797,6 +33099,41 @@ CREATE TABLE public.workflow_webhook_receipts (
 
 
 --
+-- Name: data_upstream_probes_default; Type: TABLE ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.data_upstream_probes ATTACH PARTITION faas_test_e696c01fd4829d23.data_upstream_probes_default DEFAULT;
+
+
+--
+-- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+
+
+--
+-- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+
+
+--
+-- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+
+
+--
+-- Name: request_telemetry_default; Type: TABLE ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_default DEFAULT;
+
+
+--
 -- Name: data_upstream_probes_default; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
@@ -28853,6 +33190,34 @@ ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_teleme
 
 
 --
+-- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_node_heartbeats ALTER COLUMN id SET DEFAULT nextval('faas_test_e696c01fd4829d23.compute_node_heartbeats_id_seq'::regclass);
+
+
+--
+-- Name: deployment_logs seq; Type: DEFAULT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_logs ALTER COLUMN seq SET DEFAULT nextval('faas_test_e696c01fd4829d23.deployment_logs_seq_seq'::regclass);
+
+
+--
+-- Name: runtime_config_revisions id; Type: DEFAULT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_revisions ALTER COLUMN id SET DEFAULT nextval('faas_test_e696c01fd4829d23.runtime_config_revisions_id_seq'::regclass);
+
+
+--
+-- Name: status_incidents id; Type: DEFAULT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.status_incidents ALTER COLUMN id SET DEFAULT nextval('faas_test_e696c01fd4829d23.status_incidents_id_seq'::regclass);
+
+
+--
 -- Name: compute_node_heartbeats id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -28906,6 +33271,934 @@ ALTER TABLE ONLY public.snapshot_fanout_events ALTER COLUMN id SET DEFAULT nextv
 --
 
 ALTER TABLE ONLY public.status_incidents ALTER COLUMN id SET DEFAULT nextval('public.status_incidents_id_seq'::regclass);
+
+
+--
+-- Name: account_credits account_credits_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.account_credits
+    ADD CONSTRAINT account_credits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: account_passwords account_passwords_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.account_passwords
+    ADD CONSTRAINT account_passwords_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: account_spend_snapshot account_spend_snapshot_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.account_spend_snapshot
+    ADD CONSTRAINT account_spend_snapshot_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: accounts accounts_email_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.accounts
+    ADD CONSTRAINT accounts_email_key UNIQUE (email);
+
+
+--
+-- Name: accounts accounts_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.accounts
+    ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: accounts accounts_stripe_customer_id_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.accounts
+    ADD CONSTRAINT accounts_stripe_customer_id_key UNIQUE (provider_customer_id);
+
+
+--
+-- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_deliveries
+    ADD CONSTRAINT alert_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: alert_presets alert_presets_name_uniq; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_presets
+    ADD CONSTRAINT alert_presets_name_uniq UNIQUE (name);
+
+
+--
+-- Name: alert_presets alert_presets_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_presets
+    ADD CONSTRAINT alert_presets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_rules
+    ADD CONSTRAINT alert_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_keys api_keys_key_sha256_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.api_keys
+    ADD CONSTRAINT api_keys_key_sha256_key UNIQUE (key_sha256);
+
+
+--
+-- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.api_keys
+    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_envs app_envs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_envs
+    ADD CONSTRAINT app_envs_pkey PRIMARY KEY (app_id, scope, key);
+
+
+--
+-- Name: app_error_requests app_error_requests_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_error_requests
+    ADD CONSTRAINT app_error_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_errors app_errors_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_errors
+    ADD CONSTRAINT app_errors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_openapi_docs
+    ADD CONSTRAINT app_openapi_docs_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_registry_credentials app_registry_credentials_app_registry_uq; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_registry_credentials
+    ADD CONSTRAINT app_registry_credentials_app_registry_uq UNIQUE (app_id, registry);
+
+
+--
+-- Name: app_registry_credentials app_registry_credentials_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_registry_credentials
+    ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_secrets app_secrets_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_secrets
+    ADD CONSTRAINT app_secrets_pkey PRIMARY KEY (app_id, scope, key);
+
+
+--
+-- Name: app_trusted_signers app_trusted_signers_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_trusted_signers
+    ADD CONSTRAINT app_trusted_signers_pkey PRIMARY KEY (app_id, signer_name);
+
+
+--
+-- Name: app_webhook_deliveries app_webhook_deliveries_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhook_deliveries
+    ADD CONSTRAINT app_webhook_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_webhooks app_webhooks_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhooks
+    ADD CONSTRAINT app_webhooks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: apps apps_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: apps apps_slug_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_slug_key UNIQUE (slug);
+
+
+--
+-- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.audit_log
+    ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: build_provenance build_provenance_build_id_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.build_provenance
+    ADD CONSTRAINT build_provenance_build_id_key UNIQUE (build_id);
+
+
+--
+-- Name: build_provenance build_provenance_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.build_provenance
+    ADD CONSTRAINT build_provenance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: builder_usage builder_usage_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.builder_usage
+    ADD CONSTRAINT builder_usage_pkey PRIMARY KEY (build_id);
+
+
+--
+-- Name: builds builds_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.builds
+    ADD CONSTRAINT builds_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cli_auth_codes cli_auth_codes_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cli_auth_codes
+    ADD CONSTRAINT cli_auth_codes_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: cluster_signing_keys cluster_signing_keys_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cluster_signing_keys
+    ADD CONSTRAINT cluster_signing_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: compute_node_heartbeats compute_node_heartbeats_node_at_uniq; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_node_heartbeats
+    ADD CONSTRAINT compute_node_heartbeats_node_at_uniq UNIQUE (node_id, received_at);
+
+
+--
+-- Name: compute_node_heartbeats compute_node_heartbeats_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_node_heartbeats
+    ADD CONSTRAINT compute_node_heartbeats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: compute_node_keys compute_node_keys_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_node_keys
+    ADD CONSTRAINT compute_node_keys_pkey PRIMARY KEY (compute_node_id, key_id);
+
+
+--
+-- Name: compute_nodes compute_nodes_name_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_nodes
+    ADD CONSTRAINT compute_nodes_name_key UNIQUE (name);
+
+
+--
+-- Name: compute_nodes compute_nodes_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_nodes
+    ADD CONSTRAINT compute_nodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: consumer_keys consumer_keys_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.consumer_keys
+    ADD CONSTRAINT consumer_keys_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cors_presets cors_presets_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cors_presets
+    ADD CONSTRAINT cors_presets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: credit_ledger credit_ledger_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.credit_ledger
+    ADD CONSTRAINT credit_ledger_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cron_fire_now_requests cron_fire_now_requests_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cron_fire_now_requests
+    ADD CONSTRAINT cron_fire_now_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: crons crons_app_schedule_path_unique; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.crons
+    ADD CONSTRAINT crons_app_schedule_path_unique UNIQUE (app_id, schedule, path);
+
+
+--
+-- Name: crons crons_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.crons
+    ADD CONSTRAINT crons_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: custom_domains custom_domains_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.custom_domains
+    ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.data_upstream_probes
+    ADD CONSTRAINT data_upstream_probes_pkey PRIMARY KEY (id, sampled_at);
+
+
+--
+-- Name: data_upstream_probes_default data_upstream_probes_default_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.data_upstream_probes_default
+    ADD CONSTRAINT data_upstream_probes_default_pkey PRIMARY KEY (id, sampled_at);
+
+
+--
+-- Name: data_upstreams data_upstreams_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.data_upstreams
+    ADD CONSTRAINT data_upstreams_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: debug_regression_observations debug_regression_observations_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.debug_regression_observations
+    ADD CONSTRAINT debug_regression_observations_pkey PRIMARY KEY (app_id, deployment_id, route);
+
+
+--
+-- Name: deployment_logs deployment_logs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_logs
+    ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_openapi_snapshots deployment_openapi_snapshots_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_snapshots
+    ADD CONSTRAINT deployment_openapi_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_sidecar_layers deployment_sidecar_layers_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_sidecar_layers
+    ADD CONSTRAINT deployment_sidecar_layers_pkey PRIMARY KEY (deployment_id, sidecar_name);
+
+
+--
+-- Name: deployments deployments_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployments
+    ADD CONSTRAINT deployments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: domain_doctor_observations domain_doctor_observations_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.domain_doctor_observations
+    ADD CONSTRAINT domain_doctor_observations_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: edge_rules edge_rules_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.edge_rules
+    ADD CONSTRAINT edge_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: egress_policy egress_policy_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.egress_policy
+    ADD CONSTRAINT egress_policy_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: events events_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.events
+    ADD CONSTRAINT events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: gdpr_requests gdpr_requests_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.gdpr_requests
+    ADD CONSTRAINT gdpr_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: github_installations github_installations_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.github_installations
+    ADD CONSTRAINT github_installations_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: github_webhook_secrets github_webhook_secrets_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.github_webhook_secrets
+    ADD CONSTRAINT github_webhook_secrets_pkey PRIMARY KEY (installation_id);
+
+
+--
+-- Name: goose_db_version goose_db_version_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.goose_db_version
+    ADD CONSTRAINT goose_db_version_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: idempotency_keys idempotency_keys_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.idempotency_keys
+    ADD CONSTRAINT idempotency_keys_pkey PRIMARY KEY (account_id, key);
+
+
+--
+-- Name: instances instances_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invocations invocations_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invocations
+    ADD CONSTRAINT invocations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: invoices invoices_account_id_provider_provider_invoice_id_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invoices
+    ADD CONSTRAINT invoices_account_id_provider_provider_invoice_id_key UNIQUE (account_id, provider, provider_invoice_id);
+
+
+--
+-- Name: invoices invoices_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invoices
+    ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: job_runs job_runs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.job_runs
+    ADD CONSTRAINT job_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: job_tasks job_tasks_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.job_tasks
+    ADD CONSTRAINT job_tasks_pkey PRIMARY KEY (run_id, task_index);
+
+
+--
+-- Name: jobs jobs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.jobs
+    ADD CONSTRAINT jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: login_tokens login_tokens_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.login_tokens
+    ADD CONSTRAINT login_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_pkey PRIMARY KEY (tenant_surface_id, hostname);
+
+
+--
+-- Name: mirror_invocation_results mirror_invocation_results_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_invocation_results
+    ADD CONSTRAINT mirror_invocation_results_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mirror_rules mirror_rules_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_rules
+    ADD CONSTRAINT mirror_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: node_join_jobs node_join_jobs_node_name_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.node_join_jobs
+    ADD CONSTRAINT node_join_jobs_node_name_key UNIQUE (node_name);
+
+
+--
+-- Name: node_join_jobs node_join_jobs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.node_join_jobs
+    ADD CONSTRAINT node_join_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: oauth_links oauth_links_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oauth_links
+    ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: oidc_exchanged_tokens oidc_exchanged_tokens_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oidc_exchanged_tokens
+    ADD CONSTRAINT oidc_exchanged_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: oidc_exchanged_tokens oidc_exchanged_tokens_token_hash_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oidc_exchanged_tokens
+    ADD CONSTRAINT oidc_exchanged_tokens_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: oidc_trust_policies oidc_trust_policies_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oidc_trust_policies
+    ADD CONSTRAINT oidc_trust_policies_pkey PRIMARY KEY (account_id, issuer_url);
+
+
+--
+-- Name: operator_intents operator_intents_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.operator_intents
+    ADD CONSTRAINT operator_intents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_invitations
+    ADD CONSTRAINT org_invitations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: org_invitations org_invitations_token_uniq; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_invitations
+    ADD CONSTRAINT org_invitations_token_uniq UNIQUE (token_hash);
+
+
+--
+-- Name: org_memberships org_memberships_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_memberships
+    ADD CONSTRAINT org_memberships_pkey PRIMARY KEY (org_id, account_id);
+
+
+--
+-- Name: orgs orgs_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.orgs
+    ADD CONSTRAINT orgs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: paddle_overage_dedupe paddle_overage_dedupe_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.paddle_overage_dedupe
+    ADD CONSTRAINT paddle_overage_dedupe_pkey PRIMARY KEY (account_id, window_start);
+
+
+--
+-- Name: pg_ratelimit_counters pg_ratelimit_counters_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.pg_ratelimit_counters
+    ADD CONSTRAINT pg_ratelimit_counters_pkey PRIMARY KEY (scope, subject_id, plan);
+
+
+--
+-- Name: projects projects_account_slug_uniq; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.projects
+    ADD CONSTRAINT projects_account_slug_uniq UNIQUE (account_id, slug);
+
+
+--
+-- Name: projects projects_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.projects
+    ADD CONSTRAINT projects_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: provisioned_static_egress_ips provisioned_static_egress_ips_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.provisioned_static_egress_ips
+    ADD CONSTRAINT provisioned_static_egress_ips_pkey PRIMARY KEY (account_id, customer_ip);
+
+
+--
+-- Name: release_bundles release_bundles_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.release_bundles
+    ADD CONSTRAINT release_bundles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: request_telemetry request_telemetry_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry
+    ADD CONSTRAINT request_telemetry_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202610 request_telemetry_202610_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry_202610
+    ADD CONSTRAINT request_telemetry_202610_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202611 request_telemetry_202611_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry_202611
+    ADD CONSTRAINT request_telemetry_202611_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202612 request_telemetry_202612_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry_202612
+    ADD CONSTRAINT request_telemetry_202612_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_default request_telemetry_default_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.request_telemetry_default
+    ADD CONSTRAINT request_telemetry_default_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: runtime_config_entries runtime_config_entries_config_key_scope_scope_id_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_entries
+    ADD CONSTRAINT runtime_config_entries_config_key_scope_scope_id_key UNIQUE (config_key, scope, scope_id);
+
+
+--
+-- Name: runtime_config_entries runtime_config_entries_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_entries
+    ADD CONSTRAINT runtime_config_entries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_config_operations runtime_config_operations_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_operations
+    ADD CONSTRAINT runtime_config_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: runtime_config_revisions runtime_config_revisions_entry_id_version_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_revisions
+    ADD CONSTRAINT runtime_config_revisions_entry_id_version_key UNIQUE (entry_id, version);
+
+
+--
+-- Name: runtime_config_revisions runtime_config_revisions_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_revisions
+    ADD CONSTRAINT runtime_config_revisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: snapshot_storage_daily snapshot_storage_daily_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.snapshot_storage_daily
+    ADD CONSTRAINT snapshot_storage_daily_pkey PRIMARY KEY (account_id, app_id, day);
+
+
+--
+-- Name: snapshots snapshots_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.snapshots
+    ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: status_incidents status_incidents_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.status_incidents
+    ADD CONSTRAINT status_incidents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stripe_push_dedupe stripe_push_dedupe_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.stripe_push_dedupe
+    ADD CONSTRAINT stripe_push_dedupe_pkey PRIMARY KEY (account_id, hour);
+
+
+--
+-- Name: tenant_hostnames tenant_hostnames_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.tenant_hostnames
+    ADD CONSTRAINT tenant_hostnames_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trigger_dead_letter trigger_dead_letter_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.trigger_dead_letter
+    ADD CONSTRAINT trigger_dead_letter_pkey PRIMARY KEY (record_id);
+
+
+--
+-- Name: trigger_records trigger_records_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.trigger_records
+    ADD CONSTRAINT trigger_records_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trigger_records trigger_records_trigger_id_item_identifier_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.trigger_records
+    ADD CONSTRAINT trigger_records_trigger_id_item_identifier_key UNIQUE (trigger_id, item_identifier);
+
+
+--
+-- Name: triggers triggers_app_id_slug_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.triggers
+    ADD CONSTRAINT triggers_app_id_slug_key UNIQUE (app_id, slug);
+
+
+--
+-- Name: triggers triggers_cron_id_key; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.triggers
+    ADD CONSTRAINT triggers_cron_id_key UNIQUE (cron_id);
+
+
+--
+-- Name: triggers triggers_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.triggers
+    ADD CONSTRAINT triggers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: usage_daily usage_daily_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.usage_daily
+    ADD CONSTRAINT usage_daily_pkey PRIMARY KEY (account_id, app_id, day);
+
+
+--
+-- Name: usage_minutes usage_minutes_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.usage_minutes
+    ADD CONSTRAINT usage_minutes_pkey PRIMARY KEY (instance_id, minute);
+
+
+--
+-- Name: warm_hint warm_hint_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.warm_hint
+    ADD CONSTRAINT warm_hint_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: webhook_deliveries webhook_deliveries_pkey; Type: CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.webhook_deliveries
+    ADD CONSTRAINT webhook_deliveries_pkey PRIMARY KEY (provider, delivery_id);
 
 
 --
@@ -30269,6 +35562,22 @@ ALTER TABLE ONLY public.deployment_audit
 
 
 --
+-- Name: deployment_cron_activations deployment_cron_activations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_cron_activations
+    ADD CONSTRAINT deployment_cron_activations_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: deployment_cron_outcomes deployment_cron_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_cron_outcomes
+    ADD CONSTRAINT deployment_cron_outcomes_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_dependency_gates deployment_dependency_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30309,11 +35618,35 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_project_release_workers deployment_project_release_workers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_project_release_workers
+    ADD CONSTRAINT deployment_project_release_workers_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_recovery_lineage deployment_recovery_lineage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.deployment_recovery_lineage
     ADD CONSTRAINT deployment_recovery_lineage_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_release_env_snapshots deployment_release_env_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_env_snapshots
+    ADD CONSTRAINT deployment_release_env_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_release_secret_snapshots deployment_release_secret_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_secret_snapshots
+    ADD CONSTRAINT deployment_release_secret_snapshots_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -30410,6 +35743,14 @@ ALTER TABLE ONLY public.deployment_sidecar_layers
 
 ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
     ADD CONSTRAINT deployment_sidecar_secret_reload_signals_pkey PRIMARY KEY (deployment_id, sidecar_name);
+
+
+--
+-- Name: deployment_submission_receipts deployment_submission_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_submission_receipts
+    ADD CONSTRAINT deployment_submission_receipts_pkey PRIMARY KEY (app_id, attempt_id);
 
 
 --
@@ -33917,11 +39258,59 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 
 
 --
+-- Name: project_environment_promotion_controls project_environment_promotion_controls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_controls
+    ADD CONSTRAINT project_environment_promotion_controls_pkey PRIMARY KEY (promotion_id, request_id);
+
+
+--
 -- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_promotion_feature_flags
     ADD CONSTRAINT project_environment_promotion_feature_flags_pkey PRIMARY KEY (promotion_id);
+
+
+--
+-- Name: project_environment_promotion_health project_environment_promotion_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_health
+    ADD CONSTRAINT project_environment_promotion_health_pkey PRIMARY KEY (promotion_id);
+
+
+--
+-- Name: project_environment_promotion_migration_recoveries project_environment_promotion_migration_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migration_recoveries
+    ADD CONSTRAINT project_environment_promotion_migration_recoveries_pkey PRIMARY KEY (promotion_id, request_id);
+
+
+--
+-- Name: project_environment_promotion_migrations project_environment_promotion_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migrations
+    ADD CONSTRAINT project_environment_promotion_migrations_pkey PRIMARY KEY (promotion_id);
+
+
+--
+-- Name: project_environment_promotion_migrations project_environment_promotion_migrations_task_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migrations
+    ADD CONSTRAINT project_environment_promotion_migrations_task_id_key UNIQUE (task_id);
+
+
+--
+-- Name: project_environment_promotion_release_config project_environment_promotion_release_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_release_config
+    ADD CONSTRAINT project_environment_promotion_release_config_pkey PRIMARY KEY (promotion_id);
 
 
 --
@@ -34093,11 +39482,67 @@ ALTER TABLE ONLY public.project_environments
 
 
 --
+-- Name: project_migration_contracts project_migration_contracts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_contracts
+    ADD CONSTRAINT project_migration_contracts_pkey PRIMARY KEY (account_id, attempt_id);
+
+
+--
+-- Name: project_migration_contracts project_migration_contracts_task_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_contracts
+    ADD CONSTRAINT project_migration_contracts_task_id_key UNIQUE (task_id);
+
+
+--
+-- Name: project_migration_recoveries project_migration_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_recoveries
+    ADD CONSTRAINT project_migration_recoveries_pkey PRIMARY KEY (account_id, attempt_id);
+
+
+--
+-- Name: project_release_additions project_release_additions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_additions
+    ADD CONSTRAINT project_release_additions_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: project_release_canaries project_release_canaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_canaries
+    ADD CONSTRAINT project_release_canaries_pkey PRIMARY KEY (account_id, attempt_id);
+
+
+--
+-- Name: project_release_config_intents project_release_config_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_config_intents
+    ADD CONSTRAINT project_release_config_intents_pkey PRIMARY KEY (account_id, attempt_id);
+
+
+--
 -- Name: project_release_members project_release_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_release_members
     ADD CONSTRAINT project_release_members_pkey PRIMARY KEY (release_id, app_id);
+
+
+--
+-- Name: project_release_secret_bundles project_release_secret_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_secret_bundles
+    ADD CONSTRAINT project_release_secret_bundles_pkey PRIMARY KEY (account_id, request_id);
 
 
 --
@@ -34114,6 +39559,38 @@ ALTER TABLE ONLY public.project_release_sets
 
 ALTER TABLE ONLY public.project_release_sets
     ADD CONSTRAINT project_release_sets_qualification_identity_uniq UNIQUE (id, project_id, environment_slug);
+
+
+--
+-- Name: project_release_worker_drains project_release_worker_drains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_worker_drains
+    ADD CONSTRAINT project_release_worker_drains_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: project_submissions project_submissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_submissions
+    ADD CONSTRAINT project_submissions_pkey PRIMARY KEY (account_id, attempt_id);
+
+
+--
+-- Name: project_worker_job_evidence project_worker_job_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_job_evidence
+    ADD CONSTRAINT project_worker_job_evidence_pkey PRIMARY KEY (invocation_id, replay_generation, attempt);
+
+
+--
+-- Name: project_worker_release_pins project_worker_release_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_release_pins
+    ADD CONSTRAINT project_worker_release_pins_pkey PRIMARY KEY (root_invocation_id);
 
 
 --
@@ -34162,6 +39639,22 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.release_bundles
     ADD CONSTRAINT release_bundles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: release_secret_key_retirement_fence release_secret_key_retirement_fence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_secret_key_retirement_fence
+    ADD CONSTRAINT release_secret_key_retirement_fence_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: release_secret_key_retirements release_secret_key_retirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_secret_key_retirements
+    ADD CONSTRAINT release_secret_key_retirements_pkey PRIMARY KEY (kid);
 
 
 --
@@ -35250,6 +40743,1581 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_receipt_id_key UNIQUE (receipt_id);
+
+
+--
+-- Name: account_credits_account_active_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX account_credits_account_active_idx ON faas_test_e696c01fd4829d23.account_credits USING btree (account_id, expires_at, cents_remaining) WHERE (cents_remaining > 0);
+
+
+--
+-- Name: account_spend_snapshot_account_period_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX account_spend_snapshot_account_period_idx ON faas_test_e696c01fd4829d23.account_spend_snapshot USING btree (account_id, period_start DESC);
+
+
+--
+-- Name: account_spend_snapshot_account_source_period_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX account_spend_snapshot_account_source_period_uniq ON faas_test_e696c01fd4829d23.account_spend_snapshot USING btree (account_id, source, period_end);
+
+
+--
+-- Name: accounts_deletion_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX accounts_deletion_pending_idx ON faas_test_e696c01fd4829d23.accounts USING btree (deletion_requested_at) WHERE (status = 'deleted_pending'::text);
+
+
+--
+-- Name: accounts_mfa_required_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX accounts_mfa_required_pending_idx ON faas_test_e696c01fd4829d23.accounts USING btree (id) WHERE ((mfa_required = true) AND (mfa_enrolled_at IS NULL));
+
+
+--
+-- Name: accounts_past_due_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX accounts_past_due_idx ON faas_test_e696c01fd4829d23.accounts USING btree (past_due_at) WHERE (status = 'past_due'::text);
+
+
+--
+-- Name: alert_deliveries_idempotency_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_deliveries_idempotency_uniq ON faas_test_e696c01fd4829d23.alert_deliveries USING btree (idempotency_key);
+
+
+--
+-- Name: alert_deliveries_rule_fired_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX alert_deliveries_rule_fired_idx ON faas_test_e696c01fd4829d23.alert_deliveries USING btree (rule_id, fired_at DESC);
+
+
+--
+-- Name: alert_presets_enabled_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX alert_presets_enabled_idx ON faas_test_e696c01fd4829d23.alert_presets USING btree (enabled_in_catalog, category, name) WHERE (enabled_in_catalog = true);
+
+
+--
+-- Name: alert_rules_account_name_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_rules_account_name_uniq ON faas_test_e696c01fd4829d23.alert_rules USING btree (account_id, name);
+
+
+--
+-- Name: alert_rules_enabled_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX alert_rules_enabled_idx ON faas_test_e696c01fd4829d23.alert_rules USING btree (account_id) WHERE (enabled = true);
+
+
+--
+-- Name: alert_rules_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX alert_rules_org_id_idx ON faas_test_e696c01fd4829d23.alert_rules USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: api_keys_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX api_keys_account_idx ON faas_test_e696c01fd4829d23.api_keys USING btree (account_id);
+
+
+--
+-- Name: api_keys_account_status_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX api_keys_account_status_idx ON faas_test_e696c01fd4829d23.api_keys USING btree (account_id, status);
+
+
+--
+-- Name: api_keys_active_grace_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX api_keys_active_grace_idx ON faas_test_e696c01fd4829d23.api_keys USING btree (account_id) WHERE (status = ANY (ARRAY['active'::text, 'grace'::text]));
+
+
+--
+-- Name: api_keys_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX api_keys_org_id_idx ON faas_test_e696c01fd4829d23.api_keys USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: api_keys_rotated_from_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX api_keys_rotated_from_idx ON faas_test_e696c01fd4829d23.api_keys USING btree (rotated_from_id) WHERE (rotated_from_id IS NOT NULL);
+
+
+--
+-- Name: app_envs_account_app_scope_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_envs_account_app_scope_idx ON faas_test_e696c01fd4829d23.app_envs USING btree (account_id, app_id, scope);
+
+
+--
+-- Name: app_envs_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_envs_account_idx ON faas_test_e696c01fd4829d23.app_envs USING btree (account_id);
+
+
+--
+-- Name: app_envs_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_envs_app_idx ON faas_test_e696c01fd4829d23.app_envs USING btree (app_id);
+
+
+--
+-- Name: app_envs_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_envs_org_id_idx ON faas_test_e696c01fd4829d23.app_envs USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_error_requests_drill_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_error_requests_drill_idx ON faas_test_e696c01fd4829d23.app_error_requests USING btree (account_id, app_id, fingerprint, received_at DESC, request_id DESC);
+
+
+--
+-- Name: app_error_requests_retention_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_error_requests_retention_idx ON faas_test_e696c01fd4829d23.app_error_requests USING btree (account_id, received_at);
+
+
+--
+-- Name: app_errors_account_app_fp_last_seen_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_errors_account_app_fp_last_seen_idx ON faas_test_e696c01fd4829d23.app_errors USING btree (account_id, app_id, fingerprint, last_seen_at DESC);
+
+
+--
+-- Name: app_errors_account_app_last_seen_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_errors_account_app_last_seen_idx ON faas_test_e696c01fd4829d23.app_errors USING btree (account_id, app_id, last_seen_at DESC);
+
+
+--
+-- Name: app_errors_dedupe_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX app_errors_dedupe_uniq ON faas_test_e696c01fd4829d23.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_openapi_docs_account_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_openapi_docs_account_id_idx ON faas_test_e696c01fd4829d23.app_openapi_docs USING btree (account_id);
+
+
+--
+-- Name: app_registry_credentials_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_registry_credentials_account_idx ON faas_test_e696c01fd4829d23.app_registry_credentials USING btree (account_id);
+
+
+--
+-- Name: app_secrets_account_app_scope_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_secrets_account_app_scope_idx ON faas_test_e696c01fd4829d23.app_secrets USING btree (account_id, app_id, scope);
+
+
+--
+-- Name: app_secrets_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_secrets_account_idx ON faas_test_e696c01fd4829d23.app_secrets USING btree (account_id);
+
+
+--
+-- Name: app_secrets_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_secrets_app_idx ON faas_test_e696c01fd4829d23.app_secrets USING btree (app_id);
+
+
+--
+-- Name: app_secrets_kid_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_secrets_kid_idx ON faas_test_e696c01fd4829d23.app_secrets USING btree (kid) WHERE (kid IS NOT NULL);
+
+
+--
+-- Name: app_secrets_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_secrets_org_id_idx ON faas_test_e696c01fd4829d23.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_trusted_signers_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_trusted_signers_app_idx ON faas_test_e696c01fd4829d23.app_trusted_signers USING btree (app_id);
+
+
+--
+-- Name: app_webhook_deliveries_account_created_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_webhook_deliveries_account_created_idx ON faas_test_e696c01fd4829d23.app_webhook_deliveries USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: app_webhook_deliveries_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_webhook_deliveries_pending_idx ON faas_test_e696c01fd4829d23.app_webhook_deliveries USING btree (account_id, next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'in_flight'::text]));
+
+
+--
+-- Name: app_webhooks_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX app_webhooks_account_idx ON faas_test_e696c01fd4829d23.app_webhooks USING btree (account_id);
+
+
+--
+-- Name: app_webhooks_app_target_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON faas_test_e696c01fd4829d23.app_webhooks USING btree (app_id, target_url);
+
+
+--
+-- Name: apps_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_account_idx ON faas_test_e696c01fd4829d23.apps USING btree (account_id, status);
+
+
+--
+-- Name: apps_github_install_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_github_install_account_idx ON faas_test_e696c01fd4829d23.apps USING btree (github_install_account_id) WHERE (github_install_account_id IS NOT NULL);
+
+
+--
+-- Name: apps_github_install_account_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX apps_github_install_account_uniq ON faas_test_e696c01fd4829d23.apps USING btree (github_install_account_id, github_install_binding_id) WHERE ((github_install_account_id IS NOT NULL) AND (github_install_binding_id IS NOT NULL));
+
+
+--
+-- Name: apps_github_install_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_github_install_id_idx ON faas_test_e696c01fd4829d23.apps USING btree (github_install_id) WHERE (github_install_id IS NOT NULL);
+
+
+--
+-- Name: apps_github_install_repo_branch_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_github_install_repo_branch_idx ON faas_test_e696c01fd4829d23.apps USING btree (github_repo_full_name, github_production_branch) WHERE ((github_repo_full_name IS NOT NULL) AND (github_production_branch IS NOT NULL));
+
+
+--
+-- Name: apps_maintenance_mode_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_maintenance_mode_idx ON faas_test_e696c01fd4829d23.apps USING btree (maintenance_mode) WHERE (maintenance_mode = true);
+
+
+--
+-- Name: apps_node_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_node_id_idx ON faas_test_e696c01fd4829d23.apps USING btree (node_id);
+
+
+--
+-- Name: apps_node_id_status_partial_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_node_id_status_partial_idx ON faas_test_e696c01fd4829d23.apps USING btree (node_id, status) WHERE ((node_id IS NOT NULL) AND (status = ANY (ARRAY['active'::text, 'evicted_cold'::text])));
+
+
+--
+-- Name: apps_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_org_id_idx ON faas_test_e696c01fd4829d23.apps USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: apps_overflow_node_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_overflow_node_idx ON faas_test_e696c01fd4829d23.apps USING btree (overflow_node) WHERE (overflow_node IS NOT NULL);
+
+
+--
+-- Name: apps_preview_expires_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_preview_expires_at_idx ON faas_test_e696c01fd4829d23.apps USING btree (preview_expires_at) WHERE (preview_expires_at IS NOT NULL);
+
+
+--
+-- Name: apps_preview_of_slug_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_preview_of_slug_idx ON faas_test_e696c01fd4829d23.apps USING btree (preview_of_slug) WHERE (preview_of_slug IS NOT NULL);
+
+
+--
+-- Name: apps_project_workload_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX apps_project_workload_uniq ON faas_test_e696c01fd4829d23.apps USING btree (project_id, workload_name) WHERE (project_id IS NOT NULL);
+
+
+--
+-- Name: apps_reassigned_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_reassigned_at_idx ON faas_test_e696c01fd4829d23.apps USING btree (reassigned_at) WHERE (reassigned_at IS NOT NULL);
+
+
+--
+-- Name: apps_route_metrics_enabled_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_route_metrics_enabled_idx ON faas_test_e696c01fd4829d23.apps USING btree (route_metrics_enabled) WHERE (route_metrics_enabled = true);
+
+
+--
+-- Name: apps_static_egress_ip_key; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX apps_static_egress_ip_key ON faas_test_e696c01fd4829d23.apps USING btree (static_egress_ip) WHERE (static_egress_ip IS NOT NULL);
+
+
+--
+-- Name: apps_streaming_enabled_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_streaming_enabled_idx ON faas_test_e696c01fd4829d23.apps USING btree (streaming_enabled) WHERE (streaming_enabled = true);
+
+
+--
+-- Name: apps_websocket_enabled_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX apps_websocket_enabled_idx ON faas_test_e696c01fd4829d23.apps USING btree (websocket_enabled) WHERE (websocket_enabled = true);
+
+
+--
+-- Name: audit_log_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX audit_log_account_idx ON faas_test_e696c01fd4829d23.audit_log USING btree (account_id, received_at DESC) WHERE (account_id IS NOT NULL);
+
+
+--
+-- Name: audit_log_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX audit_log_received_at_idx ON faas_test_e696c01fd4829d23.audit_log USING btree (received_at DESC);
+
+
+--
+-- Name: build_provenance_build_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX build_provenance_build_id_idx ON faas_test_e696c01fd4829d23.build_provenance USING btree (build_id);
+
+
+--
+-- Name: build_provenance_framework_version_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX build_provenance_framework_version_idx ON faas_test_e696c01fd4829d23.build_provenance USING btree (framework_version) WHERE (framework_version IS NOT NULL);
+
+
+--
+-- Name: builder_usage_account_finished_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX builder_usage_account_finished_idx ON faas_test_e696c01fd4829d23.builder_usage USING btree (account_id, finished_at DESC);
+
+
+--
+-- Name: builder_usage_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX builder_usage_org_id_idx ON faas_test_e696c01fd4829d23.builder_usage USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: builds_deployment_started_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX builds_deployment_started_idx ON faas_test_e696c01fd4829d23.builds USING btree (deployment_id, started_at DESC NULLS LAST);
+
+
+--
+-- Name: builds_running_started_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX builds_running_started_idx ON faas_test_e696c01fd4829d23.builds USING btree (started_at) WHERE (status = 'running'::text);
+
+
+--
+-- Name: cli_auth_codes_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX cli_auth_codes_pending_idx ON faas_test_e696c01fd4829d23.cli_auth_codes USING btree (status, expires_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: compute_node_heartbeats_node_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX compute_node_heartbeats_node_at_idx ON faas_test_e696c01fd4829d23.compute_node_heartbeats USING btree (node_id, received_at DESC);
+
+
+--
+-- Name: compute_node_keys_node_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX compute_node_keys_node_idx ON faas_test_e696c01fd4829d23.compute_node_keys USING btree (compute_node_id);
+
+
+--
+-- Name: compute_nodes_active_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX compute_nodes_active_idx ON faas_test_e696c01fd4829d23.compute_nodes USING btree (name) WHERE (active = true);
+
+
+--
+-- Name: compute_nodes_active_unique_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX compute_nodes_active_unique_idx ON faas_test_e696c01fd4829d23.compute_nodes USING btree (name) WHERE (active = true);
+
+
+--
+-- Name: compute_nodes_region_zone_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX compute_nodes_region_zone_idx ON faas_test_e696c01fd4829d23.compute_nodes USING btree (region, zone) WHERE (active = true);
+
+
+--
+-- Name: consumer_keys_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX consumer_keys_app_idx ON faas_test_e696c01fd4829d23.consumer_keys USING btree (app_id);
+
+
+--
+-- Name: consumer_keys_app_prefix_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_app_prefix_idx ON faas_test_e696c01fd4829d23.consumer_keys USING btree (app_id, prefix);
+
+
+--
+-- Name: consumer_keys_unique_name; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_unique_name ON faas_test_e696c01fd4829d23.consumer_keys USING btree (account_id, app_id, name);
+
+
+--
+-- Name: cors_presets_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX cors_presets_account_idx ON faas_test_e696c01fd4829d23.cors_presets USING btree (account_id);
+
+
+--
+-- Name: cors_presets_unique_name; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX cors_presets_unique_name ON faas_test_e696c01fd4829d23.cors_presets USING btree (account_id, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
+
+
+--
+-- Name: credit_ledger_account_created_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX credit_ledger_account_created_idx ON faas_test_e696c01fd4829d23.credit_ledger USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: credit_ledger_invoice_credit_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX credit_ledger_invoice_credit_idx ON faas_test_e696c01fd4829d23.credit_ledger USING btree (provider_invoice_id, credit_id) WHERE (provider_invoice_id IS NOT NULL);
+
+
+--
+-- Name: cron_fire_now_requests_cron_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX cron_fire_now_requests_cron_idx ON faas_test_e696c01fd4829d23.cron_fire_now_requests USING btree (cron_id, requested_at DESC);
+
+
+--
+-- Name: cron_fire_now_requests_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX cron_fire_now_requests_pending_idx ON faas_test_e696c01fd4829d23.cron_fire_now_requests USING btree (status, requested_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: crons_app_full_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX crons_app_full_idx ON faas_test_e696c01fd4829d23.crons USING btree (app_id);
+
+
+--
+-- Name: crons_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX crons_app_idx ON faas_test_e696c01fd4829d23.crons USING btree (app_id) WHERE enabled;
+
+
+--
+-- Name: crons_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX crons_org_id_idx ON faas_test_e696c01fd4829d23.crons USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: custom_domains_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX custom_domains_org_id_idx ON faas_test_e696c01fd4829d23.custom_domains USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: custom_domains_unverified_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX custom_domains_unverified_idx ON faas_test_e696c01fd4829d23.custom_domains USING btree (domain) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX data_upstreams_app_created_idx ON faas_test_e696c01fd4829d23.data_upstreams USING btree (app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: data_upstreams_dedupe_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX data_upstreams_dedupe_uniq ON faas_test_e696c01fd4829d23.data_upstreams USING btree (app_id, scope, deployment_scope, kind, host, port);
+
+
+--
+-- Name: data_upstreams_host_redacted_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX data_upstreams_host_redacted_idx ON faas_test_e696c01fd4829d23.data_upstreams USING btree (host_redacted_hash);
+
+
+--
+-- Name: debug_regression_observations_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX debug_regression_observations_app_idx ON faas_test_e696c01fd4829d23.debug_regression_observations USING btree (app_id, last_detected_at DESC);
+
+
+--
+-- Name: deployment_logs_seq_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployment_logs_seq_idx ON faas_test_e696c01fd4829d23.deployment_logs USING btree (deployment_id, seq DESC);
+
+
+--
+-- Name: deployment_openapi_docs_account_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployment_openapi_docs_account_id_idx ON faas_test_e696c01fd4829d23.deployment_openapi_docs USING btree (account_id);
+
+
+--
+-- Name: deployment_openapi_docs_app_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployment_openapi_docs_app_id_idx ON faas_test_e696c01fd4829d23.deployment_openapi_docs USING btree (app_id);
+
+
+--
+-- Name: deployment_openapi_snapshots_app_scope_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON faas_test_e696c01fd4829d23.deployment_openapi_snapshots USING btree (app_id, scope, captured_at DESC);
+
+
+--
+-- Name: deployment_sidecar_layers_storage_key_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployment_sidecar_layers_storage_key_idx ON faas_test_e696c01fd4829d23.deployment_sidecar_layers USING btree (storage_key);
+
+
+--
+-- Name: deployments_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployments_app_idx ON faas_test_e696c01fd4829d23.deployments USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: deployments_app_scan_complete_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployments_app_scan_complete_idx ON faas_test_e696c01fd4829d23.deployments USING btree (app_id, scanned_at DESC) WHERE (scan_status = 'complete'::text);
+
+
+--
+-- Name: deployments_app_scope_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployments_app_scope_idx ON faas_test_e696c01fd4829d23.deployments USING btree (app_id, scope, created_at DESC);
+
+
+--
+-- Name: deployments_app_scope_live_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_app_scope_live_uniq ON faas_test_e696c01fd4829d23.deployments USING btree (app_id, scope) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_failed_error_code_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployments_failed_error_code_idx ON faas_test_e696c01fd4829d23.deployments USING btree (error_code) WHERE (status = 'failed'::text);
+
+
+--
+-- Name: deployments_live_traffic_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployments_live_traffic_idx ON faas_test_e696c01fd4829d23.deployments USING btree (app_id) INCLUDE (traffic_percent, id) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_rollback_on_5xx_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX deployments_rollback_on_5xx_pending_idx ON faas_test_e696c01fd4829d23.deployments USING btree (app_id, first_5xx_count) WHERE ((rollback_on_5xx = true) AND (first_5xx_window_ends_at IS NOT NULL));
+
+
+--
+-- Name: domain_doctor_observations_stale_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX domain_doctor_observations_stale_idx ON faas_test_e696c01fd4829d23.domain_doctor_observations USING btree (observed_at);
+
+
+--
+-- Name: edge_rules_app_id_enabled_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX edge_rules_app_id_enabled_idx ON faas_test_e696c01fd4829d23.edge_rules USING btree (app_id) WHERE enabled;
+
+
+--
+-- Name: edge_rules_enabled_match_host_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX edge_rules_enabled_match_host_idx ON faas_test_e696c01fd4829d23.edge_rules USING btree (match_host) WHERE enabled;
+
+
+--
+-- Name: edge_rules_match_host_pattern_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX edge_rules_match_host_pattern_idx ON faas_test_e696c01fd4829d23.edge_rules USING btree (match_host text_pattern_ops) WHERE enabled;
+
+
+--
+-- Name: events_actor_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX events_actor_account_idx ON faas_test_e696c01fd4829d23.events USING btree (actor_account_id) WHERE (actor_account_id IS NOT NULL);
+
+
+--
+-- Name: events_kind_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX events_kind_at_idx ON faas_test_e696c01fd4829d23.events USING btree (kind, at DESC);
+
+
+--
+-- Name: events_sidecar_name_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX events_sidecar_name_idx ON faas_test_e696c01fd4829d23.events USING btree (((data ->> 'sidecar_name'::text))) WHERE (kind = ANY (ARRAY['wake.sidecar_init_exit'::text, 'wake.sidecar_restart'::text]));
+
+
+--
+-- Name: events_subject_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX events_subject_idx ON faas_test_e696c01fd4829d23.events USING btree (subject, at DESC);
+
+
+--
+-- Name: events_wake_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX events_wake_id_idx ON faas_test_e696c01fd4829d23.events USING btree (((data ->> 'wake_id'::text))) WHERE ((data ->> 'wake_id'::text) IS NOT NULL);
+
+
+--
+-- Name: gdpr_requests_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX gdpr_requests_account_idx ON faas_test_e696c01fd4829d23.gdpr_requests USING btree (account_id, requested_at DESC);
+
+
+--
+-- Name: gdpr_requests_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX gdpr_requests_org_id_idx ON faas_test_e696c01fd4829d23.gdpr_requests USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: gdpr_requests_request_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX gdpr_requests_request_id_idx ON faas_test_e696c01fd4829d23.gdpr_requests USING btree (account_id, request_id) WHERE (request_id IS NOT NULL);
+
+
+--
+-- Name: github_installations_login_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX github_installations_login_idx ON faas_test_e696c01fd4829d23.github_installations USING btree (audit_github_login);
+
+
+--
+-- Name: github_installations_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX github_installations_org_id_idx ON faas_test_e696c01fd4829d23.github_installations USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: instances_app_deployment_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_app_deployment_idx ON faas_test_e696c01fd4829d23.instances USING btree (app_id, deployment_id) WHERE (state = ANY (ARRAY['RUNNING'::text, 'WAKING'::text, 'COLD_BOOTING'::text]));
+
+
+--
+-- Name: instances_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_app_idx ON faas_test_e696c01fd4829d23.instances USING btree (app_id, state);
+
+
+--
+-- Name: instances_job_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_job_id_idx ON faas_test_e696c01fd4829d23.instances USING btree (job_id) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: instances_kind_job_task_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_kind_job_task_idx ON faas_test_e696c01fd4829d23.instances USING btree (job_id) WHERE (kind = 'job_task'::text);
+
+
+--
+-- Name: instances_migrated_from_node_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_migrated_from_node_id_idx ON faas_test_e696c01fd4829d23.instances USING btree (migrated_from_node_id) WHERE (migrated_from_node_id IS NOT NULL);
+
+
+--
+-- Name: instances_mode_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_mode_idx ON faas_test_e696c01fd4829d23.instances USING btree (app_id, mode) WHERE (mode = 'mirror'::text);
+
+
+--
+-- Name: instances_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_org_id_idx ON faas_test_e696c01fd4829d23.instances USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: instances_reaper_state_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_reaper_state_idx ON faas_test_e696c01fd4829d23.instances USING btree (started_at DESC) WHERE (state = ANY (ARRAY['running'::text, 'waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
+
+
+--
+-- Name: instances_terminal_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_terminal_at_idx ON faas_test_e696c01fd4829d23.instances USING btree (terminal_at) WHERE (state = ANY (ARRAY['stopped'::text, 'failed'::text]));
+
+
+--
+-- Name: instances_wake_attempt_active_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX instances_wake_attempt_active_idx ON faas_test_e696c01fd4829d23.instances USING btree (wake_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text]));
+
+
+--
+-- Name: instances_wake_id_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_wake_id_app_idx ON faas_test_e696c01fd4829d23.instances USING btree (app_id, wake_id) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'snapshotting'::text, 'parked'::text]));
+
+
+--
+-- Name: instances_watchdog_state_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX instances_watchdog_state_idx ON faas_test_e696c01fd4829d23.instances USING btree (state, started_at) WHERE (state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'snapshotting'::text]));
+
+
+--
+-- Name: invocations_app_dead_letter_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_app_dead_letter_idx ON faas_test_e696c01fd4829d23.invocations USING btree (app_id, created_at DESC) WHERE (state = 'dead_letter'::text);
+
+
+--
+-- Name: invocations_app_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_app_pending_idx ON faas_test_e696c01fd4829d23.invocations USING btree (app_id, source, state) WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]));
+
+
+--
+-- Name: invocations_cron_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_cron_idx ON faas_test_e696c01fd4829d23.invocations USING btree (cron_id, created_at DESC) WHERE (cron_id IS NOT NULL);
+
+
+--
+-- Name: invocations_delayed_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_delayed_idx ON faas_test_e696c01fd4829d23.invocations USING btree (app_id, scheduled_at) WHERE (source = 'delayed_task'::text);
+
+
+--
+-- Name: invocations_due_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_due_idx ON faas_test_e696c01fd4829d23.invocations USING btree (due_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: invocations_instance_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_instance_idx ON faas_test_e696c01fd4829d23.invocations USING btree (instance_id, due_at) WHERE (state = 'dispatching'::text);
+
+
+--
+-- Name: invocations_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invocations_org_id_idx ON faas_test_e696c01fd4829d23.invocations USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: invoices_account_period_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invoices_account_period_idx ON faas_test_e696c01fd4829d23.invoices USING btree (account_id, period_end DESC, id DESC);
+
+
+--
+-- Name: invoices_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX invoices_org_id_idx ON faas_test_e696c01fd4829d23.invoices USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: job_runs_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX job_runs_account_idx ON faas_test_e696c01fd4829d23.job_runs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: job_runs_active_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX job_runs_active_idx ON faas_test_e696c01fd4829d23.job_runs USING btree (account_id, id) WHERE (aggregate_status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: job_runs_job_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX job_runs_job_idx ON faas_test_e696c01fd4829d23.job_runs USING btree (job_id, created_at DESC);
+
+
+--
+-- Name: job_tasks_ready_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX job_tasks_ready_idx ON faas_test_e696c01fd4829d23.job_tasks USING btree (created_at, run_id, task_index) WHERE (status = 'queued'::text);
+
+
+--
+-- Name: job_tasks_run_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX job_tasks_run_idx ON faas_test_e696c01fd4829d23.job_tasks USING btree (run_id, task_index);
+
+
+--
+-- Name: jobs_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX jobs_account_idx ON faas_test_e696c01fd4829d23.jobs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: jobs_account_name_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX jobs_account_name_uniq ON faas_test_e696c01fd4829d23.jobs USING btree (account_id, name) WHERE (status <> 'deleted'::text);
+
+
+--
+-- Name: login_tokens_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX login_tokens_account_idx ON faas_test_e696c01fd4829d23.login_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX meterd_tenant_surface_cert_expiry_app_idx ON faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state USING btree (app_id, hostname) WHERE (last_walk_status = 'ok'::text);
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_stale_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX meterd_tenant_surface_cert_expiry_stale_idx ON faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state USING btree (last_refreshed_at) WHERE (last_walk_status <> 'ok'::text);
+
+
+--
+-- Name: mirror_invocation_results_rule_time_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX mirror_invocation_results_rule_time_idx ON faas_test_e696c01fd4829d23.mirror_invocation_results USING btree (mirror_rule_id, completed_at DESC);
+
+
+--
+-- Name: mirror_rules_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX mirror_rules_app_idx ON faas_test_e696c01fd4829d23.mirror_rules USING btree (app_id) WHERE enabled;
+
+
+--
+-- Name: mirror_rules_source_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX mirror_rules_source_idx ON faas_test_e696c01fd4829d23.mirror_rules USING btree (source_deployment_id) WHERE enabled;
+
+
+--
+-- Name: node_join_jobs_lease_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX node_join_jobs_lease_idx ON faas_test_e696c01fd4829d23.node_join_jobs USING btree (lease_expires_at) WHERE (lease_owner IS NOT NULL);
+
+
+--
+-- Name: node_join_jobs_phase_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX node_join_jobs_phase_idx ON faas_test_e696c01fd4829d23.node_join_jobs USING btree (phase, updated_at DESC);
+
+
+--
+-- Name: oauth_links_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX oauth_links_account_idx ON faas_test_e696c01fd4829d23.oauth_links USING btree (account_id);
+
+
+--
+-- Name: oidc_exchanged_tokens_expires_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX oidc_exchanged_tokens_expires_at_idx ON faas_test_e696c01fd4829d23.oidc_exchanged_tokens USING btree (expires_at);
+
+
+--
+-- Name: operator_intents_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX operator_intents_pending_idx ON faas_test_e696c01fd4829d23.operator_intents USING btree (status, requested_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: operator_intents_target_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX operator_intents_target_idx ON faas_test_e696c01fd4829d23.operator_intents USING btree (target_id, requested_at DESC);
+
+
+--
+-- Name: org_invitations_email_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX org_invitations_email_idx ON faas_test_e696c01fd4829d23.org_invitations USING btree (org_id, email) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: org_invitations_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX org_invitations_pending_idx ON faas_test_e696c01fd4829d23.org_invitations USING btree (org_id) WHERE ((consumed_at IS NULL) AND (revoked_at IS NULL));
+
+
+--
+-- Name: org_memberships_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX org_memberships_account_idx ON faas_test_e696c01fd4829d23.org_memberships USING btree (account_id) WHERE (removed_at IS NULL);
+
+
+--
+-- Name: org_memberships_one_owner_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX org_memberships_one_owner_idx ON faas_test_e696c01fd4829d23.org_memberships USING btree (org_id) WHERE ((role = 'owner'::text) AND (removed_at IS NULL));
+
+
+--
+-- Name: orgs_created_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX orgs_created_at_idx ON faas_test_e696c01fd4829d23.orgs USING btree (created_at DESC);
+
+
+--
+-- Name: orgs_one_personal_per_account_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX orgs_one_personal_per_account_uniq ON faas_test_e696c01fd4829d23.orgs USING btree (personal_owner_account_id) WHERE (personal_org = true);
+
+
+--
+-- Name: orgs_slug_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX orgs_slug_uniq ON faas_test_e696c01fd4829d23.orgs USING btree (lower(slug));
+
+
+--
+-- Name: orgs_status_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX orgs_status_idx ON faas_test_e696c01fd4829d23.orgs USING btree (status) WHERE (status <> 'active'::text);
+
+
+--
+-- Name: paddle_overage_dedupe_month_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX paddle_overage_dedupe_month_idx ON faas_test_e696c01fd4829d23.paddle_overage_dedupe USING btree (month);
+
+
+--
+-- Name: paddle_overage_dedupe_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX paddle_overage_dedupe_org_id_idx ON faas_test_e696c01fd4829d23.paddle_overage_dedupe USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: paddle_overage_dedupe_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX paddle_overage_dedupe_pending_idx ON faas_test_e696c01fd4829d23.paddle_overage_dedupe USING btree (claimed_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: pg_ratelimit_counters_subject_id_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX pg_ratelimit_counters_subject_id_app_idx ON faas_test_e696c01fd4829d23.pg_ratelimit_counters USING btree (subject_id) WHERE (scope = 'app'::text);
+
+
+--
+-- Name: projects_install_repo_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX projects_install_repo_uniq ON faas_test_e696c01fd4829d23.projects USING btree (install_id, repo_full_name) WHERE ((install_id IS NOT NULL) AND (repo_full_name IS NOT NULL));
+
+
+--
+-- Name: projects_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX projects_org_id_idx ON faas_test_e696c01fd4829d23.projects USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: provisioned_static_egress_ips_customer_ip_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX provisioned_static_egress_ips_customer_ip_idx ON faas_test_e696c01fd4829d23.provisioned_static_egress_ips USING btree (customer_ip);
+
+
+--
+-- Name: recent_build_claims_account_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX recent_build_claims_account_id_idx ON faas_test_e696c01fd4829d23.recent_build_claims USING btree (account_id);
+
+
+--
+-- Name: recent_build_claims_claimed_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX recent_build_claims_claimed_at_idx ON faas_test_e696c01fd4829d23.recent_build_claims USING btree (claimed_at);
+
+
+--
+-- Name: recent_build_claims_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX recent_build_claims_org_id_idx ON faas_test_e696c01fd4829d23.recent_build_claims USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: release_bundles_applied_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX release_bundles_applied_at_idx ON faas_test_e696c01fd4829d23.release_bundles USING btree (applied_at) WHERE (applied_at IS NOT NULL);
+
+
+--
+-- Name: release_bundles_git_sha_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX release_bundles_git_sha_idx ON faas_test_e696c01fd4829d23.release_bundles USING btree (git_sha);
+
+
+--
+-- Name: request_telemetry_app_dep_received_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_app_dep_received_idx ON ONLY faas_test_e696c01fd4829d23.request_telemetry USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202610_app_id_deployment_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_202610 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_app_received_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_app_received_idx ON ONLY faas_test_e696c01fd4829d23.request_telemetry USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202610_app_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_202610 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_trace_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_trace_idx ON ONLY faas_test_e696c01fd4829d23.request_telemetry USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202610_trace_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202610_trace_id_idx ON faas_test_e696c01fd4829d23.request_telemetry_202610 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202611_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202611_app_id_deployment_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_202611 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202611_app_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202611_app_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_202611 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202611_trace_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202611_trace_id_idx ON faas_test_e696c01fd4829d23.request_telemetry_202611 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202612_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_app_id_deployment_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_202612 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202612_app_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_app_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_202612 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202612_trace_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_trace_id_idx ON faas_test_e696c01fd4829d23.request_telemetry_202612 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_default_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_default_app_id_deployment_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_default USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_default_app_id_received_at_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_default_app_id_received_at_idx ON faas_test_e696c01fd4829d23.request_telemetry_default USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_default_trace_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX request_telemetry_default_trace_id_idx ON faas_test_e696c01fd4829d23.request_telemetry_default USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: runtime_config_entries_scope_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX runtime_config_entries_scope_idx ON faas_test_e696c01fd4829d23.runtime_config_entries USING btree (scope, scope_id, config_key);
+
+
+--
+-- Name: runtime_config_operations_key_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX runtime_config_operations_key_idx ON faas_test_e696c01fd4829d23.runtime_config_operations USING btree (config_key, scope, scope_id, config_version DESC);
+
+
+--
+-- Name: runtime_config_operations_requested_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX runtime_config_operations_requested_idx ON faas_test_e696c01fd4829d23.runtime_config_operations USING btree (status, requested_at);
+
+
+--
+-- Name: runtime_config_revisions_lookup_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX runtime_config_revisions_lookup_idx ON faas_test_e696c01fd4829d23.runtime_config_revisions USING btree (config_key, scope, scope_id, created_at DESC);
+
+
+--
+-- Name: sessions_active_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX sessions_active_account_idx ON faas_test_e696c01fd4829d23.sessions USING btree (account_id, issued_at DESC) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: snapshot_storage_daily_account_day_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX snapshot_storage_daily_account_day_idx ON faas_test_e696c01fd4829d23.snapshot_storage_daily USING btree (account_id, day DESC);
+
+
+--
+-- Name: snapshots_deployment_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX snapshots_deployment_idx ON faas_test_e696c01fd4829d23.snapshots USING btree (deployment_id);
+
+
+--
+-- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX snapshots_deployment_tier_key ON faas_test_e696c01fd4829d23.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
+
+
+--
+-- Name: snapshots_live_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX snapshots_live_idx ON faas_test_e696c01fd4829d23.snapshots USING btree (deployment_id) WHERE (stale = false);
+
+
+--
+-- Name: INDEX snapshots_live_idx; Type: COMMENT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+COMMENT ON INDEX faas_test_e696c01fd4829d23.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::LatestSnapshotBytes inner scan — bounds to non-stale rows under live deployments. ADR-049 §B.3 + PR #428 review blocker #3.';
+
+
+--
+-- Name: status_incidents_open; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX status_incidents_open ON faas_test_e696c01fd4829d23.status_incidents USING btree (component) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: stripe_push_dedupe_hour_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX stripe_push_dedupe_hour_idx ON faas_test_e696c01fd4829d23.stripe_push_dedupe USING btree (hour);
+
+
+--
+-- Name: stripe_push_dedupe_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX stripe_push_dedupe_org_id_idx ON faas_test_e696c01fd4829d23.stripe_push_dedupe USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: tenant_hostnames_hostname_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX tenant_hostnames_hostname_uniq ON faas_test_e696c01fd4829d23.tenant_hostnames USING btree (hostname);
+
+
+--
+-- Name: tenant_hostnames_pending_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_pending_idx ON faas_test_e696c01fd4829d23.tenant_hostnames USING btree (last_check_at) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: tenant_hostnames_surface_hostname_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX tenant_hostnames_surface_hostname_uniq ON faas_test_e696c01fd4829d23.tenant_hostnames USING btree (surface_id, hostname);
+
+
+--
+-- Name: tenant_hostnames_surface_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_surface_idx ON faas_test_e696c01fd4829d23.tenant_hostnames USING btree (surface_id);
+
+
+--
+-- Name: tenant_hostnames_verified_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_verified_idx ON faas_test_e696c01fd4829d23.tenant_hostnames USING btree (surface_id) WHERE (verified_at IS NOT NULL);
+
+
+--
+-- Name: tenant_surfaces_account_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX tenant_surfaces_account_idx ON faas_test_e696c01fd4829d23.tenant_surfaces USING btree (account_id) WHERE (status <> 'deleted'::text);
+
+
+--
+-- Name: tenant_surfaces_account_name_uniq; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE UNIQUE INDEX tenant_surfaces_account_name_uniq ON faas_test_e696c01fd4829d23.tenant_surfaces USING btree (account_id, name) WHERE (status <> 'deleted'::text);
+
+
+--
+-- Name: tenant_surfaces_app_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX tenant_surfaces_app_idx ON faas_test_e696c01fd4829d23.tenant_surfaces USING btree (app_id) WHERE (app_id IS NOT NULL);
+
+
+--
+-- Name: tenant_surfaces_cert_expiry_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX tenant_surfaces_cert_expiry_idx ON faas_test_e696c01fd4829d23.tenant_surfaces USING btree (cert_not_after) WHERE (cert_state = 'issued'::text);
+
+
+--
+-- Name: trigger_dlq_trigger_reason_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX trigger_dlq_trigger_reason_idx ON faas_test_e696c01fd4829d23.trigger_dead_letter USING btree (trigger_id, reason);
+
+
+--
+-- Name: trigger_records_dlq_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX trigger_records_dlq_idx ON faas_test_e696c01fd4829d23.trigger_records USING btree (trigger_id, state) WHERE (state = 'dead_letter'::text);
+
+
+--
+-- Name: trigger_records_due_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX trigger_records_due_idx ON faas_test_e696c01fd4829d23.trigger_records USING btree (trigger_id, next_fire_at) WHERE (state = ANY (ARRAY['pending'::text, 'retry'::text]));
+
+
+--
+-- Name: triggers_account_kind_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX triggers_account_kind_idx ON faas_test_e696c01fd4829d23.triggers USING btree (account_id, kind);
+
+
+--
+-- Name: triggers_app_kind_enabled; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX triggers_app_kind_enabled ON faas_test_e696c01fd4829d23.triggers USING btree (app_id, kind) WHERE enabled;
+
+
+--
+-- Name: triggers_cron_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX triggers_cron_id_idx ON faas_test_e696c01fd4829d23.triggers USING btree (cron_id) WHERE (cron_id IS NOT NULL);
+
+
+--
+-- Name: usage_daily_account_day_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX usage_daily_account_day_idx ON faas_test_e696c01fd4829d23.usage_daily USING btree (account_id, day DESC);
+
+
+--
+-- Name: usage_daily_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX usage_daily_org_id_idx ON faas_test_e696c01fd4829d23.usage_daily USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: usage_minutes_account_minute_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX usage_minutes_account_minute_idx ON faas_test_e696c01fd4829d23.usage_minutes USING btree (account_id, minute DESC);
+
+
+--
+-- Name: usage_minutes_job_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX usage_minutes_job_idx ON faas_test_e696c01fd4829d23.usage_minutes USING btree (account_id, minute DESC) WHERE (meter_kind = 'job'::text);
+
+
+--
+-- Name: usage_minutes_minute_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX usage_minutes_minute_idx ON faas_test_e696c01fd4829d23.usage_minutes USING btree (minute);
+
+
+--
+-- Name: usage_minutes_org_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX usage_minutes_org_id_idx ON faas_test_e696c01fd4829d23.usage_minutes USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: warm_hint_node_id_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX warm_hint_node_id_idx ON faas_test_e696c01fd4829d23.warm_hint USING btree (node_id);
+
+
+--
+-- Name: webhook_deliveries_expires_idx; Type: INDEX; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE INDEX webhook_deliveries_expires_idx ON faas_test_e696c01fd4829d23.webhook_deliveries USING btree (expires_at);
 
 
 --
@@ -37003,6 +44071,13 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 
 
 --
+-- Name: deployment_project_release_workers_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_project_release_workers_app_idx ON public.deployment_project_release_workers USING btree (project_id, attempt_id);
+
+
+--
 -- Name: deployment_revision_pins_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37056,6 +44131,13 @@ CREATE INDEX deployment_scope_exclusions_project_idx ON public.deployment_scope_
 --
 
 CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_sidecar_layers USING btree (storage_key);
+
+
+--
+-- Name: deployment_submission_receipts_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_submission_receipts_deployment_idx ON public.deployment_submission_receipts USING btree (deployment_id);
 
 
 --
@@ -40342,6 +47424,13 @@ CREATE INDEX project_environment_edge_policies_project_idx ON public.project_env
 
 
 --
+-- Name: project_environment_promotion_health_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_promotion_health_pending ON public.project_environment_promotion_health USING btree (promotion_id) WHERE (phase = ANY (ARRAY['migrating'::text, 'preflight'::text, 'cutover'::text, 'verifying'::text, 'finalizing'::text, 'rolling_back'::text]));
+
+
+--
 -- Name: project_environment_promotion_workloads_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -40384,10 +47473,52 @@ CREATE INDEX project_environments_account_project_idx ON public.project_environm
 
 
 --
+-- Name: project_migration_contracts_project; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_migration_contracts_project ON public.project_migration_contracts USING btree (project_id);
+
+
+--
+-- Name: project_migration_contracts_retired; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_migration_contracts_retired ON public.project_migration_contracts USING gin (retired_deployment_ids);
+
+
+--
+-- Name: project_release_additions_project_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_release_additions_project_idx ON public.project_release_additions USING btree (project_id);
+
+
+--
+-- Name: project_release_canaries_routing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_release_canaries_routing ON public.project_release_canaries USING btree (project_id, created_at DESC) WHERE (status = ANY (ARRAY['running'::text, 'needs_operator'::text]));
+
+
+--
+-- Name: project_release_canaries_running; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_release_canaries_running ON public.project_release_canaries USING btree (project_id) WHERE (status = 'running'::text);
+
+
+--
 -- Name: project_release_members_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX project_release_members_deployment_idx ON public.project_release_members USING btree (deployment_id, release_id);
+
+
+--
+-- Name: project_release_secret_bundles_project_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_release_secret_bundles_project_created ON public.project_release_secret_bundles USING btree (project_id, created_at);
 
 
 --
@@ -40412,6 +47543,34 @@ CREATE INDEX project_release_sets_history_idx ON public.project_release_sets USI
 
 
 --
+-- Name: project_submissions_safe_release_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_submissions_safe_release_pending_idx ON public.project_submissions USING btree (updated_at) WHERE ((payload #>> '{apply,safe_release,status}'::text[]) = ANY (ARRAY['building'::text, 'verifying'::text, 'rolling_back'::text]));
+
+
+--
+-- Name: project_worker_job_evidence_window; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_worker_job_evidence_window ON public.project_worker_job_evidence USING btree (app_id, binding_id, deployment_id, started_at);
+
+
+--
+-- Name: project_worker_release_pins_app_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_worker_release_pins_app_target ON public.project_worker_release_pins USING btree (app_id, deployment_id);
+
+
+--
+-- Name: project_worker_release_pins_release; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_worker_release_pins_release ON public.project_worker_release_pins USING btree (release_id);
+
+
+--
 -- Name: projects_install_repo_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -40423,6 +47582,34 @@ CREATE UNIQUE INDEX projects_install_repo_uniq ON public.projects USING btree (i
 --
 
 CREATE INDEX projects_org_id_idx ON public.projects USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: promotion_admission_inventory; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX promotion_admission_inventory ON public.project_environment_promotion_health USING btree (phase, promotion_id);
+
+
+--
+-- Name: promotion_health_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX promotion_health_due ON public.project_environment_promotion_health USING btree (next_check_at, last_claimed_at, promotion_id);
+
+
+--
+-- Name: promotion_health_leased; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX promotion_health_leased ON public.project_environment_promotion_health USING btree (lease_until) WHERE (lease_token IS NOT NULL);
+
+
+--
+-- Name: promotion_migration_one_recovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX promotion_migration_one_recovery ON public.project_environment_promotion_migration_recoveries USING btree (promotion_id) WHERE (status <> 'blocked'::text);
 
 
 --
@@ -41623,6 +48810,125 @@ CREATE INDEX workflow_webhook_receipts_outbox_idx ON public.workflow_webhook_rec
 
 
 --
+-- Name: data_upstream_probes_default_pkey; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.data_upstream_probes_pkey ATTACH PARTITION faas_test_e696c01fd4829d23.data_upstream_probes_default_pkey;
+
+
+--
+-- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_dep_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202610_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202610_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202610_pkey; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_pkey ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202610_pkey;
+
+
+--
+-- Name: request_telemetry_202610_trace_id_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_trace_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202610_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_202611_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_dep_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202611_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202611_app_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202611_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202611_pkey; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_pkey ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202611_pkey;
+
+
+--
+-- Name: request_telemetry_202611_trace_id_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_trace_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202611_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_202612_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_dep_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202612_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202612_app_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202612_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202612_pkey; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_pkey ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202612_pkey;
+
+
+--
+-- Name: request_telemetry_202612_trace_id_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_trace_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_202612_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_default_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_dep_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_default_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_default_app_id_received_at_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_app_received_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_default_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_default_pkey; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_pkey ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_default_pkey;
+
+
+--
+-- Name: request_telemetry_default_trace_id_idx; Type: INDEX ATTACH; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER INDEX faas_test_e696c01fd4829d23.request_telemetry_trace_idx ATTACH PARTITION faas_test_e696c01fd4829d23.request_telemetry_default_trace_id_idx;
+
+
+--
 -- Name: data_upstream_probes_default_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -42036,6 +49342,202 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 
 
 --
+-- Name: alert_presets alert_presets_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.alert_presets FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.alert_presets_set_updated_at();
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER app_openapi_docs_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.app_openapi_docs FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.app_openapi_docs_set_updated_at();
+
+
+--
+-- Name: apps apps_egress_allowlist_cidr; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allowlist ON faas_test_e696c01fd4829d23.apps FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.apps_egress_allowlist_cidr_check();
+
+
+--
+-- Name: apps apps_maintenance_mode_notify; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON faas_test_e696c01fd4829d23.apps FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.apps_maintenance_mode_notify();
+
+
+--
+-- Name: apps apps_public_auth_ip_allowlist_cidr; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER apps_public_auth_ip_allowlist_cidr BEFORE INSERT OR UPDATE OF public_auth_ip_allowlist ON faas_test_e696c01fd4829d23.apps FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.apps_public_auth_ip_allowlist_cidr_check();
+
+
+--
+-- Name: cluster_signing_keys cluster_signing_keys_changed_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER cluster_signing_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON faas_test_e696c01fd4829d23.cluster_signing_keys FOR EACH STATEMENT EXECUTE FUNCTION faas_test_e696c01fd4829d23.cluster_signing_keys_notify();
+
+
+--
+-- Name: compute_nodes compute_node_changed_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON faas_test_e696c01fd4829d23.compute_nodes FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.compute_node_notify();
+
+
+--
+-- Name: compute_node_keys compute_node_keys_changed_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON faas_test_e696c01fd4829d23.compute_node_keys FOR EACH STATEMENT EXECUTE FUNCTION faas_test_e696c01fd4829d23.compute_node_keys_notify();
+
+
+--
+-- Name: consumer_keys consumer_keys_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER consumer_keys_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.consumer_keys FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.consumer_keys_set_updated_at();
+
+
+--
+-- Name: cors_presets cors_presets_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER cors_presets_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.cors_presets FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.cors_presets_set_updated_at();
+
+
+--
+-- Name: data_upstreams data_upstreams_notify_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER data_upstreams_notify_trg AFTER INSERT OR DELETE OR UPDATE ON faas_test_e696c01fd4829d23.data_upstreams FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.data_upstreams_notify();
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.deployment_openapi_docs_set_updated_at();
+
+
+--
+-- Name: deployment_sidecar_layers deployment_sidecar_layers_cap_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER deployment_sidecar_layers_cap_trg BEFORE INSERT OR UPDATE ON faas_test_e696c01fd4829d23.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.deployment_sidecar_layers_cap_check();
+
+
+--
+-- Name: edge_rules edge_rules_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER edge_rules_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.edge_rules FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.edge_rules_set_updated_at();
+
+
+--
+-- Name: egress_policy egress_policy_changed_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON faas_test_e696c01fd4829d23.egress_policy FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.egress_policy_notify();
+
+
+--
+-- Name: github_webhook_secrets github_webhook_secrets_notify_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON faas_test_e696c01fd4829d23.github_webhook_secrets FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.github_webhook_secrets_notify();
+
+
+--
+-- Name: instances instances_started_at_set_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER instances_started_at_set_trg BEFORE INSERT ON faas_test_e696c01fd4829d23.instances FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.instances_started_at_set();
+
+
+--
+-- Name: invocations invocation_done_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER invocation_done_trg AFTER UPDATE ON faas_test_e696c01fd4829d23.invocations FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.invocation_done_notify();
+
+
+--
+-- Name: invocations invocation_due_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER invocation_due_trg AFTER INSERT OR UPDATE OF state ON faas_test_e696c01fd4829d23.invocations FOR EACH ROW WHEN ((new.state = 'pending'::text)) EXECUTE FUNCTION faas_test_e696c01fd4829d23.invocation_due_notify();
+
+
+--
+-- Name: job_tasks job_tasks_notify_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR DELETE OR UPDATE ON faas_test_e696c01fd4829d23.job_tasks FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.job_tasks_notify();
+
+
+--
+-- Name: goose_db_version migration_notify_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER migration_notify_trg AFTER INSERT ON faas_test_e696c01fd4829d23.goose_db_version FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.migration_notify();
+
+
+--
+-- Name: mirror_rules mirror_rules_set_updated_at_trg; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON faas_test_e696c01fd4829d23.mirror_rules FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.mirror_rules_set_updated_at();
+
+
+--
+-- Name: pg_ratelimit_counters pg_ratelimit_counters_notify; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER pg_ratelimit_counters_notify AFTER INSERT OR UPDATE OF tokens, last_refill ON faas_test_e696c01fd4829d23.pg_ratelimit_counters FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.notify_pg_ratelimit_counters();
+
+
+--
+-- Name: runtime_config_entries runtime_config_entries_notify; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER runtime_config_entries_notify AFTER INSERT OR UPDATE ON faas_test_e696c01fd4829d23.runtime_config_entries FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.notify_runtime_config_changed();
+
+
+--
+-- Name: runtime_config_operations runtime_config_operations_notify; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER runtime_config_operations_notify AFTER INSERT OR UPDATE ON faas_test_e696c01fd4829d23.runtime_config_operations FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.notify_runtime_config_operation_changed();
+
+
+--
+-- Name: tenant_hostnames tenant_hostnames_emit_change; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER tenant_hostnames_emit_change AFTER INSERT OR DELETE OR UPDATE ON faas_test_e696c01fd4829d23.tenant_hostnames FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.notify_tenant_surface_changed();
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_emit_change; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER tenant_surfaces_emit_change AFTER INSERT OR DELETE OR UPDATE ON faas_test_e696c01fd4829d23.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.notify_tenant_surface_changed();
+
+
+--
+-- Name: trigger_records trigger_ready_notify; Type: TRIGGER; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+CREATE TRIGGER trigger_ready_notify AFTER INSERT ON faas_test_e696c01fd4829d23.trigger_records FOR EACH ROW EXECUTE FUNCTION faas_test_e696c01fd4829d23.trg_notify_trigger_ready();
+
+
+--
 -- Name: accounts account_managed_postgres_databases_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42194,6 +49696,13 @@ CREATE TRIGGER apps_declared_routes_policy_notify_trg AFTER UPDATE OF only_decla
 --
 
 CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allowlist ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_egress_allowlist_cidr_check();
+
+
+--
+-- Name: apps apps_fence_deployment_policy_changes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_fence_deployment_policy_changes BEFORE UPDATE OF manifest ON public.apps FOR EACH ROW EXECUTE FUNCTION public.fence_deployment_policy_changes();
 
 
 --
@@ -42813,6 +50322,13 @@ CREATE TRIGGER crons_delete_exclusive_binding AFTER DELETE ON public.crons FOR E
 
 
 --
+-- Name: crons crons_fence_deployment_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER crons_fence_deployment_intent AFTER INSERT OR DELETE OR UPDATE OF app_id, schedule, path, enabled, timezone, skip_if_running, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, created_at ON public.crons FOR EACH ROW EXECUTE FUNCTION public.fence_deployment_cron_intent();
+
+
+--
 -- Name: crons crons_schedule_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -42943,13 +50459,6 @@ CREATE TRIGGER deployment_scope_exclusions_set_updated_at_trg BEFORE UPDATE ON p
 --
 
 CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_serving_ended_at();
-
-
---
--- Name: deployment_sidecar_layers deployment_sidecar_layers_cap_trg; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER deployment_sidecar_layers_cap_trg BEFORE INSERT OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.deployment_sidecar_layers_cap_check();
 
 
 --
@@ -43559,6 +51068,83 @@ CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR
 --
 
 CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
+-- Name: deployment_project_release_workers immutable_project_release_worker; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_project_release_worker BEFORE DELETE OR UPDATE ON public.deployment_project_release_workers FOR EACH ROW EXECUTE FUNCTION public.guard_project_release_worker_identity();
+
+
+--
+-- Name: project_environment_promotion_controls immutable_promotion_control; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_promotion_control BEFORE DELETE OR UPDATE ON public.project_environment_promotion_controls FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_control();
+
+
+--
+-- Name: project_environment_promotion_health immutable_promotion_health_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_promotion_health_policy BEFORE UPDATE ON public.project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_health_policy();
+
+
+--
+-- Name: project_environment_promotion_migrations immutable_promotion_migration; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_promotion_migration BEFORE DELETE OR UPDATE ON public.project_environment_promotion_migrations FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_migration_capture();
+
+
+--
+-- Name: project_environment_promotion_migration_recoveries immutable_promotion_migration_recovery; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_promotion_migration_recovery BEFORE DELETE OR UPDATE ON public.project_environment_promotion_migration_recoveries FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_migration_recovery();
+
+
+--
+-- Name: project_environment_promotion_migrations immutable_promotion_migration_runtime; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_promotion_migration_runtime BEFORE UPDATE ON public.project_environment_promotion_migrations FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_migration_runtime();
+
+
+--
+-- Name: project_environment_promotion_release_config immutable_promotion_release_configuration; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_promotion_release_configuration BEFORE DELETE OR UPDATE ON public.project_environment_promotion_release_config FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_release_configuration();
+
+
+--
+-- Name: deployment_release_env_snapshots immutable_release_configuration; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_release_configuration BEFORE DELETE OR UPDATE ON public.deployment_release_env_snapshots FOR EACH ROW EXECUTE FUNCTION public.protect_release_configuration_snapshot();
+
+
+--
+-- Name: project_release_config_intents immutable_release_configuration; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_release_configuration BEFORE DELETE OR UPDATE ON public.project_release_config_intents FOR EACH ROW EXECUTE FUNCTION public.protect_release_configuration_snapshot();
+
+
+--
+-- Name: deployment_release_secret_snapshots immutable_release_secret_envelopes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_release_secret_envelopes BEFORE UPDATE ON public.deployment_release_secret_snapshots FOR EACH ROW EXECUTE FUNCTION public.protect_release_secret_envelope_update();
+
+
+--
+-- Name: project_release_secret_bundles immutable_release_secret_envelopes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER immutable_release_secret_envelopes BEFORE UPDATE ON public.project_release_secret_bundles FOR EACH ROW EXECUTE FUNCTION public.protect_release_secret_envelope_update();
 
 
 --
@@ -44752,6 +52338,76 @@ CREATE TRIGGER project_environment_workload_head_changed AFTER INSERT OR UPDATE 
 
 
 --
+-- Name: project_environment_config_versions project_migration_configuration_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_configuration_fence BEFORE INSERT ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_publication();
+
+
+--
+-- Name: deployments project_migration_deployment_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_deployment_fence BEFORE INSERT OR UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: instances project_migration_instance_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_instance_fence BEFORE INSERT OR UPDATE OF state, deployment_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: project_release_members project_migration_member_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_member_fence BEFORE INSERT OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: customer_operation_code_pins project_migration_operation_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_operation_fence BEFORE INSERT OR UPDATE ON public.customer_operation_code_pins FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: project_release_sets project_migration_publication_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_publication_fence BEFORE INSERT OR UPDATE OF active ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_publication();
+
+
+--
+-- Name: deployment_revision_pins project_migration_revision_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_revision_fence BEFORE INSERT OR UPDATE ON public.deployment_revision_pins FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: app_tasks project_migration_task_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_task_fence BEFORE INSERT OR UPDATE OF status ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: project_worker_release_pins project_migration_worker_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_worker_fence BEFORE INSERT OR UPDATE ON public.project_worker_release_pins FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
+-- Name: workflow_code_pins project_migration_workflow_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_migration_workflow_fence BEFORE INSERT OR UPDATE ON public.workflow_code_pins FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
 -- Name: project_release_members project_release_member_policy_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -44770,6 +52426,62 @@ CREATE TRIGGER project_release_set_policy_changed_trg AFTER UPDATE OF active ON 
 --
 
 CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.project_release_sets FOR EACH ROW WHEN (old.active) EXECUTE FUNCTION public.project_release_set_policy_changed();
+
+
+--
+-- Name: project_environment_promotion_health promotion_admission_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_admission_gate BEFORE UPDATE ON public.project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_admission();
+
+
+--
+-- Name: project_environment_promotions promotion_control_publication_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_control_publication_gate BEFORE UPDATE OF target_release_set_id, restored_target_release_set_id ON public.project_environment_promotions FOR EACH ROW EXECUTE FUNCTION public.guard_promotion_control_publication();
+
+
+--
+-- Name: project_environment_promotion_health promotion_health_control_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_health_control_gate BEFORE UPDATE ON public.project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_health_control();
+
+
+--
+-- Name: project_environment_promotions promotion_health_owns_status; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_health_owns_status BEFORE UPDATE OF status ON public.project_environment_promotions FOR EACH ROW EXECUTE FUNCTION public.protect_promotion_health_status();
+
+
+--
+-- Name: project_environment_promotion_health promotion_health_schedule; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_health_schedule BEFORE UPDATE ON public.project_environment_promotion_health FOR EACH ROW EXECUTE FUNCTION public.schedule_promotion_health();
+
+
+--
+-- Name: app_tasks promotion_migration_task_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_migration_task_gate BEFORE INSERT OR UPDATE OF status ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.guard_promotion_migration_task();
+
+
+--
+-- Name: project_environment_promotion_migration_recoveries promotion_recovery_schedule; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_recovery_schedule AFTER INSERT OR UPDATE OF status ON public.project_environment_promotion_migration_recoveries FOR EACH ROW EXECUTE FUNCTION public.wake_promotion_recovery();
+
+
+--
+-- Name: project_environment_promotions promotion_worker_set_publication_gate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER promotion_worker_set_publication_gate BEFORE UPDATE OF target_release_set_id, restored_target_release_set_id ON public.project_environment_promotions FOR EACH ROW EXECUTE FUNCTION public.guard_promotion_worker_set_publication();
 
 
 --
@@ -44840,6 +52552,20 @@ CREATE TRIGGER queue_replay_receipt_rearm AFTER UPDATE OF state ON public.invoca
 --
 
 CREATE TRIGGER queue_work_receipt_reconciliation AFTER UPDATE OF state ON public.invocations FOR EACH ROW WHEN (((old.state = 'pending'::text) AND (new.source = 'queue'::text) AND (new.state = ANY (ARRAY['superseded'::text, 'cancelled'::text, 'expired'::text])))) EXECUTE FUNCTION public.reconcile_queue_work_receipt();
+
+
+--
+-- Name: deployment_release_env_snapshots release_env_runtime_configuration; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER release_env_runtime_configuration BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_release_env_snapshots FOR EACH ROW EXECUTE FUNCTION public.serialize_runtime_deployment_configuration();
+
+
+--
+-- Name: app_secrets release_secret_snapshot_owned; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER release_secret_snapshot_owned BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.reject_pinned_release_secret_mutation();
 
 
 --
@@ -45127,6 +52853,41 @@ CREATE TRIGGER runtime_upgrade_target_immutable BEFORE DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER runtime_upgrade_verification_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_verifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_verification();
+
+
+--
+-- Name: app_secrets secret_key_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_release_secret_key_retirement();
+
+
+--
+-- Name: deployment_release_secret_snapshots secret_key_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON public.deployment_release_secret_snapshots FOR EACH ROW EXECUTE FUNCTION public.guard_release_secret_key_retirement();
+
+
+--
+-- Name: project_environment_promotion_release_config secret_key_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON public.project_environment_promotion_release_config FOR EACH ROW EXECUTE FUNCTION public.guard_release_secret_key_retirement();
+
+
+--
+-- Name: project_release_config_intents secret_key_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON public.project_release_config_intents FOR EACH ROW EXECUTE FUNCTION public.guard_release_secret_key_retirement();
+
+
+--
+-- Name: project_release_secret_bundles secret_key_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER secret_key_retirement BEFORE INSERT OR UPDATE ON public.project_release_secret_bundles FOR EACH ROW EXECUTE FUNCTION public.guard_release_secret_key_retirement();
 
 
 --
@@ -45498,6 +53259,1070 @@ CREATE TRIGGER zz_environment_gitops_guard_queue_consumer BEFORE INSERT OR DELET
 --
 
 CREATE TRIGGER zz_environment_secret_reference_shadow BEFORE INSERT OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_reference_shadow();
+
+
+--
+-- Name: account_credits account_credits_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.account_credits
+    ADD CONSTRAINT account_credits_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_passwords account_passwords_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.account_passwords
+    ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_spend_snapshot account_spend_snapshot_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.account_spend_snapshot
+    ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_deliveries alert_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_deliveries
+    ADD CONSTRAINT alert_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_deliveries alert_deliveries_rule_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_deliveries
+    ADD CONSTRAINT alert_deliveries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES faas_test_e696c01fd4829d23.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rules alert_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_rules
+    ADD CONSTRAINT alert_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rules alert_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_rules
+    ADD CONSTRAINT alert_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rules alert_rules_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.alert_rules
+    ADD CONSTRAINT alert_rules_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: api_keys api_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.api_keys
+    ADD CONSTRAINT api_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_keys api_keys_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.api_keys
+    ADD CONSTRAINT api_keys_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: api_keys api_keys_parent_key_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.api_keys
+    ADD CONSTRAINT api_keys_parent_key_id_fkey FOREIGN KEY (parent_key_id) REFERENCES faas_test_e696c01fd4829d23.api_keys(id) ON DELETE SET NULL;
+
+
+--
+-- Name: api_keys api_keys_rotated_from_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.api_keys
+    ADD CONSTRAINT api_keys_rotated_from_id_fkey FOREIGN KEY (rotated_from_id) REFERENCES faas_test_e696c01fd4829d23.api_keys(id);
+
+
+--
+-- Name: app_envs app_envs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_envs
+    ADD CONSTRAINT app_envs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_envs app_envs_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_envs
+    ADD CONSTRAINT app_envs_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: app_error_requests app_error_requests_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_error_requests
+    ADD CONSTRAINT app_error_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_error_requests app_error_requests_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_error_requests
+    ADD CONSTRAINT app_error_requests_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_error_requests app_error_requests_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_error_requests
+    ADD CONSTRAINT app_error_requests_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_errors app_errors_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_errors
+    ADD CONSTRAINT app_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_errors app_errors_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_errors
+    ADD CONSTRAINT app_errors_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_errors app_errors_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_errors
+    ADD CONSTRAINT app_errors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_openapi_docs
+    ADD CONSTRAINT app_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_openapi_docs app_openapi_docs_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_openapi_docs
+    ADD CONSTRAINT app_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_registry_credentials app_registry_credentials_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_registry_credentials
+    ADD CONSTRAINT app_registry_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_registry_credentials app_registry_credentials_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_registry_credentials
+    ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_secrets app_secrets_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_secrets
+    ADD CONSTRAINT app_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_secrets app_secrets_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_secrets
+    ADD CONSTRAINT app_secrets_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: app_trusted_signers app_trusted_signers_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_trusted_signers
+    ADD CONSTRAINT app_trusted_signers_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhook_deliveries app_webhook_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhook_deliveries
+    ADD CONSTRAINT app_webhook_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhook_deliveries app_webhook_deliveries_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhook_deliveries
+    ADD CONSTRAINT app_webhook_deliveries_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhook_deliveries app_webhook_deliveries_webhook_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhook_deliveries
+    ADD CONSTRAINT app_webhook_deliveries_webhook_id_fkey FOREIGN KEY (webhook_id) REFERENCES faas_test_e696c01fd4829d23.app_webhooks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhooks app_webhooks_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhooks
+    ADD CONSTRAINT app_webhooks_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhooks app_webhooks_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.app_webhooks
+    ADD CONSTRAINT app_webhooks_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: apps apps_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id);
+
+
+--
+-- Name: apps apps_github_install_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_github_install_account_id_fkey FOREIGN KEY (github_install_account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: apps apps_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_e696c01fd4829d23.compute_nodes(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: apps apps_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: apps apps_overflow_node_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_overflow_node_fkey FOREIGN KEY (overflow_node) REFERENCES faas_test_e696c01fd4829d23.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: apps apps_project_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.apps
+    ADD CONSTRAINT apps_project_id_fkey FOREIGN KEY (project_id) REFERENCES faas_test_e696c01fd4829d23.projects(id) ON DELETE SET NULL;
+
+
+--
+-- Name: build_provenance build_provenance_build_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.build_provenance
+    ADD CONSTRAINT build_provenance_build_id_fkey FOREIGN KEY (build_id) REFERENCES faas_test_e696c01fd4829d23.builds(id);
+
+
+--
+-- Name: builder_usage builder_usage_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.builder_usage
+    ADD CONSTRAINT builder_usage_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: builds builds_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.builds
+    ADD CONSTRAINT builds_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id);
+
+
+--
+-- Name: cli_auth_codes cli_auth_codes_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cli_auth_codes
+    ADD CONSTRAINT cli_auth_codes_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: compute_node_heartbeats compute_node_heartbeats_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_node_heartbeats
+    ADD CONSTRAINT compute_node_heartbeats_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_e696c01fd4829d23.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: compute_node_keys compute_node_keys_compute_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.compute_node_keys
+    ADD CONSTRAINT compute_node_keys_compute_node_id_fkey FOREIGN KEY (compute_node_id) REFERENCES faas_test_e696c01fd4829d23.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.consumer_keys
+    ADD CONSTRAINT consumer_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.consumer_keys
+    ADD CONSTRAINT consumer_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: cors_presets cors_presets_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cors_presets
+    ADD CONSTRAINT cors_presets_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: cors_presets cors_presets_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cors_presets
+    ADD CONSTRAINT cors_presets_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: credit_ledger credit_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.credit_ledger
+    ADD CONSTRAINT credit_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: credit_ledger credit_ledger_credit_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.credit_ledger
+    ADD CONSTRAINT credit_ledger_credit_id_fkey FOREIGN KEY (credit_id) REFERENCES faas_test_e696c01fd4829d23.account_credits(id) ON DELETE CASCADE;
+
+
+--
+-- Name: cron_fire_now_requests cron_fire_now_requests_cron_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.cron_fire_now_requests
+    ADD CONSTRAINT cron_fire_now_requests_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES faas_test_e696c01fd4829d23.crons(id) ON DELETE CASCADE;
+
+
+--
+-- Name: crons crons_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.crons
+    ADD CONSTRAINT crons_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id);
+
+
+--
+-- Name: crons crons_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.crons
+    ADD CONSTRAINT crons_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: custom_domains custom_domains_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.custom_domains
+    ADD CONSTRAINT custom_domains_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id);
+
+
+--
+-- Name: custom_domains custom_domains_app_id_redirect_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.custom_domains
+    ADD CONSTRAINT custom_domains_app_id_redirect_fkey FOREIGN KEY (app_id_redirect) REFERENCES faas_test_e696c01fd4829d23.apps(id);
+
+
+--
+-- Name: custom_domains custom_domains_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.custom_domains
+    ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: data_upstreams data_upstreams_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.data_upstreams
+    ADD CONSTRAINT data_upstreams_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_upstreams data_upstreams_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.data_upstreams
+    ADD CONSTRAINT data_upstreams_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_logs deployment_logs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_logs
+    ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_docs deployment_openapi_docs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_docs
+    ADD CONSTRAINT deployment_openapi_docs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_snapshots deployment_openapi_snapshots_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_snapshots
+    ADD CONSTRAINT deployment_openapi_snapshots_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_openapi_snapshots deployment_openapi_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_openapi_snapshots
+    ADD CONSTRAINT deployment_openapi_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_sidecar_layers deployment_sidecar_layers_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployment_sidecar_layers
+    ADD CONSTRAINT deployment_sidecar_layers_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployments deployments_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployments
+    ADD CONSTRAINT deployments_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id);
+
+
+--
+-- Name: deployments deployments_deployed_by_user_id_fk; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.deployments
+    ADD CONSTRAINT deployments_deployed_by_user_id_fk FOREIGN KEY (deployed_by_user_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: domain_doctor_observations domain_doctor_observations_domain_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.domain_doctor_observations
+    ADD CONSTRAINT domain_doctor_observations_domain_fkey FOREIGN KEY (domain) REFERENCES faas_test_e696c01fd4829d23.custom_domains(domain) ON DELETE CASCADE;
+
+
+--
+-- Name: domain_doctor_observations domain_doctor_observations_surface_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.domain_doctor_observations
+    ADD CONSTRAINT domain_doctor_observations_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES faas_test_e696c01fd4829d23.tenant_surfaces(id) ON DELETE SET NULL;
+
+
+--
+-- Name: edge_rules edge_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.edge_rules
+    ADD CONSTRAINT edge_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: edge_rules edge_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.edge_rules
+    ADD CONSTRAINT edge_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: events events_actor_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.events
+    ADD CONSTRAINT events_actor_account_id_fkey FOREIGN KEY (actor_account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: gdpr_requests gdpr_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.gdpr_requests
+    ADD CONSTRAINT gdpr_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: github_installations github_installations_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.github_installations
+    ADD CONSTRAINT github_installations_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: github_installations github_installations_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.github_installations
+    ADD CONSTRAINT github_installations_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: idempotency_keys idempotency_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.idempotency_keys
+    ADD CONSTRAINT idempotency_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id);
+
+
+--
+-- Name: instances instances_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id);
+
+
+--
+-- Name: instances instances_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id);
+
+
+--
+-- Name: instances instances_job_id_fk; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_job_id_fk FOREIGN KEY (job_id) REFERENCES faas_test_e696c01fd4829d23.jobs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: instances instances_migrated_from_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_migrated_from_node_id_fkey FOREIGN KEY (migrated_from_node_id) REFERENCES faas_test_e696c01fd4829d23.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: instances instances_node_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_node_id_fkey FOREIGN KEY (node_id) REFERENCES faas_test_e696c01fd4829d23.compute_nodes(id);
+
+
+--
+-- Name: instances instances_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.instances
+    ADD CONSTRAINT instances_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: invocations invocations_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invocations
+    ADD CONSTRAINT invocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id);
+
+
+--
+-- Name: invocations invocations_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invocations
+    ADD CONSTRAINT invocations_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id);
+
+
+--
+-- Name: invocations invocations_cron_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invocations
+    ADD CONSTRAINT invocations_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES faas_test_e696c01fd4829d23.crons(id);
+
+
+--
+-- Name: invocations invocations_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invocations
+    ADD CONSTRAINT invocations_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: invoices invoices_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invoices
+    ADD CONSTRAINT invoices_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: invoices invoices_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.invoices
+    ADD CONSTRAINT invoices_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: job_runs job_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.job_runs
+    ADD CONSTRAINT job_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: job_runs job_runs_job_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.job_runs
+    ADD CONSTRAINT job_runs_job_id_fkey FOREIGN KEY (job_id) REFERENCES faas_test_e696c01fd4829d23.jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: job_tasks job_tasks_instance_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.job_tasks
+    ADD CONSTRAINT job_tasks_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES faas_test_e696c01fd4829d23.instances(id);
+
+
+--
+-- Name: job_tasks job_tasks_run_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.job_tasks
+    ADD CONSTRAINT job_tasks_run_id_fkey FOREIGN KEY (run_id) REFERENCES faas_test_e696c01fd4829d23.job_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: jobs jobs_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.jobs
+    ADD CONSTRAINT jobs_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: login_tokens login_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.login_tokens
+    ADD CONSTRAINT login_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: meterd_tenant_surface_cert_expiry_state meterd_tenant_surface_cert_expiry_state_tenant_surface_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.meterd_tenant_surface_cert_expiry_state
+    ADD CONSTRAINT meterd_tenant_surface_cert_expiry_state_tenant_surface_id_fkey FOREIGN KEY (tenant_surface_id) REFERENCES faas_test_e696c01fd4829d23.tenant_surfaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_invocation_results mirror_invocation_results_mirror_rule_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_invocation_results
+    ADD CONSTRAINT mirror_invocation_results_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES faas_test_e696c01fd4829d23.mirror_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_rules
+    ADD CONSTRAINT mirror_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_rules
+    ADD CONSTRAINT mirror_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_mirror_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_rules
+    ADD CONSTRAINT mirror_rules_mirror_deployment_id_fkey FOREIGN KEY (mirror_deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mirror_rules mirror_rules_source_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.mirror_rules
+    ADD CONSTRAINT mirror_rules_source_deployment_id_fkey FOREIGN KEY (source_deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: oauth_links oauth_links_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oauth_links
+    ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: oidc_exchanged_tokens oidc_exchanged_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oidc_exchanged_tokens
+    ADD CONSTRAINT oidc_exchanged_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: oidc_trust_policies oidc_trust_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.oidc_trust_policies
+    ADD CONSTRAINT oidc_trust_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_invitations org_invitations_accepting_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_invitations
+    ADD CONSTRAINT org_invitations_accepting_account_id_fkey FOREIGN KEY (accepting_account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: org_invitations org_invitations_invited_by_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_invitations
+    ADD CONSTRAINT org_invitations_invited_by_account_id_fkey FOREIGN KEY (invited_by_account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: org_invitations org_invitations_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_invitations
+    ADD CONSTRAINT org_invitations_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_memberships org_memberships_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_memberships
+    ADD CONSTRAINT org_memberships_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_memberships org_memberships_invited_by_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_memberships
+    ADD CONSTRAINT org_memberships_invited_by_account_id_fkey FOREIGN KEY (invited_by_account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: org_memberships org_memberships_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.org_memberships
+    ADD CONSTRAINT org_memberships_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: orgs orgs_personal_owner_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.orgs
+    ADD CONSTRAINT orgs_personal_owner_account_id_fkey FOREIGN KEY (personal_owner_account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: paddle_overage_dedupe paddle_overage_dedupe_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.paddle_overage_dedupe
+    ADD CONSTRAINT paddle_overage_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: paddle_overage_dedupe paddle_overage_dedupe_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.paddle_overage_dedupe
+    ADD CONSTRAINT paddle_overage_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: projects projects_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.projects
+    ADD CONSTRAINT projects_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: projects projects_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.projects
+    ADD CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: recent_build_claims recent_build_claims_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.recent_build_claims
+    ADD CONSTRAINT recent_build_claims_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: recent_build_claims recent_build_claims_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.recent_build_claims
+    ADD CONSTRAINT recent_build_claims_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: runtime_config_revisions runtime_config_revisions_entry_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.runtime_config_revisions
+    ADD CONSTRAINT runtime_config_revisions_entry_id_fkey FOREIGN KEY (entry_id) REFERENCES faas_test_e696c01fd4829d23.runtime_config_entries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sessions sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.sessions
+    ADD CONSTRAINT sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshots snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.snapshots
+    ADD CONSTRAINT snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES faas_test_e696c01fd4829d23.deployments(id);
+
+
+--
+-- Name: stripe_push_dedupe stripe_push_dedupe_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.stripe_push_dedupe
+    ADD CONSTRAINT stripe_push_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stripe_push_dedupe stripe_push_dedupe_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.stripe_push_dedupe
+    ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: tenant_hostnames tenant_hostnames_surface_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.tenant_hostnames
+    ADD CONSTRAINT tenant_hostnames_surface_id_fkey FOREIGN KEY (surface_id) REFERENCES faas_test_e696c01fd4829d23.tenant_surfaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tenant_surfaces tenant_surfaces_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: trigger_dead_letter trigger_dead_letter_record_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.trigger_dead_letter
+    ADD CONSTRAINT trigger_dead_letter_record_id_fkey FOREIGN KEY (record_id) REFERENCES faas_test_e696c01fd4829d23.trigger_records(id) ON DELETE CASCADE;
+
+
+--
+-- Name: trigger_records trigger_records_trigger_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.trigger_records
+    ADD CONSTRAINT trigger_records_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES faas_test_e696c01fd4829d23.triggers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: triggers triggers_account_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.triggers
+    ADD CONSTRAINT triggers_account_id_fkey FOREIGN KEY (account_id) REFERENCES faas_test_e696c01fd4829d23.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: triggers triggers_app_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.triggers
+    ADD CONSTRAINT triggers_app_id_fkey FOREIGN KEY (app_id) REFERENCES faas_test_e696c01fd4829d23.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: triggers triggers_cron_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.triggers
+    ADD CONSTRAINT triggers_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES faas_test_e696c01fd4829d23.crons(id) ON DELETE CASCADE;
+
+
+--
+-- Name: usage_daily usage_daily_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.usage_daily
+    ADD CONSTRAINT usage_daily_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: usage_minutes usage_minutes_org_id_fkey; Type: FK CONSTRAINT; Schema: faas_test_e696c01fd4829d23; Owner: -
+--
+
+ALTER TABLE ONLY faas_test_e696c01fd4829d23.usage_minutes
+    ADD CONSTRAINT usage_minutes_org_id_fkey FOREIGN KEY (org_id) REFERENCES faas_test_e696c01fd4829d23.orgs(id) ON DELETE RESTRICT;
 
 
 --
@@ -47501,6 +56326,30 @@ ALTER TABLE ONLY public.deployment_aliases
 
 
 --
+-- Name: deployment_cron_activations deployment_cron_activations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_cron_activations
+    ADD CONSTRAINT deployment_cron_activations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_cron_activations deployment_cron_activations_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_cron_activations
+    ADD CONSTRAINT deployment_cron_activations_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.upload_sessions(id) ON DELETE SET NULL;
+
+
+--
+-- Name: deployment_cron_outcomes deployment_cron_outcomes_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_cron_outcomes
+    ADD CONSTRAINT deployment_cron_outcomes_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_dependency_gates deployment_dependency_gates_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47565,6 +56414,38 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_project_release_workers deployment_project_release_workers_account_id_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_project_release_workers
+    ADD CONSTRAINT deployment_project_release_workers_account_id_attempt_id_fkey FOREIGN KEY (account_id, attempt_id) REFERENCES public.project_submissions(account_id, attempt_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_project_release_workers deployment_project_release_workers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_project_release_workers
+    ADD CONSTRAINT deployment_project_release_workers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_project_release_workers deployment_project_release_workers_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_project_release_workers
+    ADD CONSTRAINT deployment_project_release_workers_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_project_release_workers deployment_project_release_workers_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_project_release_workers
+    ADD CONSTRAINT deployment_project_release_workers_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_recovery_lineage deployment_recovery_lineage_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47578,6 +56459,22 @@ ALTER TABLE ONLY public.deployment_recovery_lineage
 
 ALTER TABLE ONLY public.deployment_recovery_lineage
     ADD CONSTRAINT deployment_recovery_lineage_predecessor_deployment_id_fkey FOREIGN KEY (predecessor_deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: deployment_release_env_snapshots deployment_release_env_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_env_snapshots
+    ADD CONSTRAINT deployment_release_env_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_secret_snapshots deployment_release_secret_snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_secret_snapshots
+    ADD CONSTRAINT deployment_release_secret_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -47762,6 +56659,22 @@ ALTER TABLE ONLY public.deployment_sidecar_layers
 
 ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
     ADD CONSTRAINT deployment_sidecar_secret_reload_signals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_submission_receipts deployment_submission_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_submission_receipts
+    ADD CONSTRAINT deployment_submission_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_submission_receipts deployment_submission_receipts_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_submission_receipts
+    ADD CONSTRAINT deployment_submission_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -52053,6 +60966,14 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 
 
 --
+-- Name: project_environment_promotion_controls project_environment_promotion_controls_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_controls
+    ADD CONSTRAINT project_environment_promotion_controls_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_promotion_feature_flags project_environment_promotion_feature_flags_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52061,11 +60982,59 @@ ALTER TABLE ONLY public.project_environment_promotion_feature_flags
 
 
 --
+-- Name: project_environment_promotion_health project_environment_promotion_health_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_health
+    ADD CONSTRAINT project_environment_promotion_health_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_migration_recoveries project_environment_promotion_migration_recov_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migration_recoveries
+    ADD CONSTRAINT project_environment_promotion_migration_recov_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_migrations project_environment_promotion_migrations_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migrations
+    ADD CONSTRAINT project_environment_promotion_migrations_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_promotion_migrations project_environment_promotion_migrations_runtime_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migrations
+    ADD CONSTRAINT project_environment_promotion_migrations_runtime_node_id_fkey FOREIGN KEY (runtime_node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: project_environment_promotion_migrations project_environment_promotion_migrations_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_migrations
+    ADD CONSTRAINT project_environment_promotion_migrations_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: project_environment_promotions project_environment_promotion_previous_target_release_set__fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_environment_promotions
     ADD CONSTRAINT project_environment_promotion_previous_target_release_set__fkey FOREIGN KEY (previous_target_release_set_id) REFERENCES public.project_release_sets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: project_environment_promotion_release_config project_environment_promotion_release_config_promotion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_promotion_release_config
+    ADD CONSTRAINT project_environment_promotion_release_config_promotion_id_fkey FOREIGN KEY (promotion_id) REFERENCES public.project_environment_promotions(id) ON DELETE CASCADE;
 
 
 --
@@ -52333,6 +61302,102 @@ ALTER TABLE ONLY public.project_environments
 
 
 --
+-- Name: project_migration_contracts project_migration_contracts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_contracts
+    ADD CONSTRAINT project_migration_contracts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_migration_contracts project_migration_contracts_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_contracts
+    ADD CONSTRAINT project_migration_contracts_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_migration_recoveries project_migration_recoveries_account_id_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_recoveries
+    ADD CONSTRAINT project_migration_recoveries_account_id_attempt_id_fkey FOREIGN KEY (account_id, attempt_id) REFERENCES public.project_migration_contracts(account_id, attempt_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_migration_recoveries project_migration_recoveries_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_migration_recoveries
+    ADD CONSTRAINT project_migration_recoveries_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_additions project_release_additions_account_id_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_additions
+    ADD CONSTRAINT project_release_additions_account_id_attempt_id_fkey FOREIGN KEY (account_id, attempt_id) REFERENCES public.project_submissions(account_id, attempt_id);
+
+
+--
+-- Name: project_release_additions project_release_additions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_additions
+    ADD CONSTRAINT project_release_additions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_release_additions project_release_additions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_additions
+    ADD CONSTRAINT project_release_additions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_additions project_release_additions_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_additions
+    ADD CONSTRAINT project_release_additions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_canaries project_release_canaries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_canaries
+    ADD CONSTRAINT project_release_canaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_canaries project_release_canaries_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_canaries
+    ADD CONSTRAINT project_release_canaries_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_canaries project_release_canaries_worker_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_canaries
+    ADD CONSTRAINT project_release_canaries_worker_app_id_fkey FOREIGN KEY (worker_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_config_intents project_release_config_intents_account_id_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_config_intents
+    ADD CONSTRAINT project_release_config_intents_account_id_attempt_id_fkey FOREIGN KEY (account_id, attempt_id) REFERENCES public.project_submissions(account_id, attempt_id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_release_members project_release_members_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52357,6 +61422,22 @@ ALTER TABLE ONLY public.project_release_members
 
 
 --
+-- Name: project_release_secret_bundles project_release_secret_bundles_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_secret_bundles
+    ADD CONSTRAINT project_release_secret_bundles_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_secret_bundles project_release_secret_bundles_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_secret_bundles
+    ADD CONSTRAINT project_release_secret_bundles_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_release_sets project_release_sets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52378,6 +61459,94 @@ ALTER TABLE ONLY public.project_release_sets
 
 ALTER TABLE ONLY public.project_release_sets
     ADD CONSTRAINT project_release_sets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_release_worker_drains project_release_worker_drains_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_worker_drains
+    ADD CONSTRAINT project_release_worker_drains_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_submissions project_submissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_submissions
+    ADD CONSTRAINT project_submissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_job_evidence project_worker_job_evidence_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_job_evidence
+    ADD CONSTRAINT project_worker_job_evidence_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_job_evidence project_worker_job_evidence_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_job_evidence
+    ADD CONSTRAINT project_worker_job_evidence_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.queue_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_job_evidence project_worker_job_evidence_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_job_evidence
+    ADD CONSTRAINT project_worker_job_evidence_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_job_evidence project_worker_job_evidence_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_job_evidence
+    ADD CONSTRAINT project_worker_job_evidence_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_release_pins project_worker_release_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_release_pins
+    ADD CONSTRAINT project_worker_release_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_release_pins project_worker_release_pins_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_release_pins
+    ADD CONSTRAINT project_worker_release_pins_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.queue_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_worker_release_pins project_worker_release_pins_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_release_pins
+    ADD CONSTRAINT project_worker_release_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: project_worker_release_pins project_worker_release_pins_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_release_pins
+    ADD CONSTRAINT project_worker_release_pins_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.project_release_sets(id);
+
+
+--
+-- Name: project_worker_release_pins project_worker_release_pins_root_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_worker_release_pins
+    ADD CONSTRAINT project_worker_release_pins_root_invocation_id_fkey FOREIGN KEY (root_invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --

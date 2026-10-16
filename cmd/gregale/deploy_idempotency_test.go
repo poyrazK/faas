@@ -58,3 +58,37 @@ func TestDeployIdempotencyKeyValidatesExplicitKeysAndScopesOperations(t *testing
 		t.Fatalf("operation key length = %d, want <= %d", len(multipart), maxDeployIdempotencyKeyLength)
 	}
 }
+
+func TestDeployIdempotencyMutableRefsAndSecretBundles(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		intent deployIdempotencyIntent
+		stable bool
+	}{
+		{"branch", deployIdempotencyIntent{Repo: "acme/demo", Ref: "main"}, false},
+		{"tag", deployIdempotencyIntent{Repo: "acme/demo", Ref: "v1.0"}, false},
+		{"short SHA", deployIdempotencyIntent{Repo: "acme/demo", Ref: "abcdef1"}, false},
+		{"commit", deployIdempotencyIntent{Repo: "acme/demo", Ref: strings.Repeat("a", 40)}, true},
+		{"secrets", deployIdempotencyIntent{SourceSHA256: "abc", HasSecrets: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first, err := deployIdempotencyKey("", tc.intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := deployIdempotencyKey("", tc.intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (first == second) != tc.stable {
+				t.Fatalf("keys equal=%v, want %v", first == second, tc.stable)
+			}
+			for i := 0; i < 2; i++ {
+				key, err := deployIdempotencyKey("release-42", tc.intent)
+				if err != nil || key != "release-42" {
+					t.Fatalf("explicit key=%q err=%v", key, err)
+				}
+			}
+		})
+	}
+}

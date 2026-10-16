@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { AppDeploySettingsCondition } from './AppDeploySettingsCondition.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
@@ -20,6 +21,7 @@ import type { WorkerScaling } from './WorkerScaling.js';
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
+  deploy_settings_condition?: AppDeploySettingsCondition;
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
   /**

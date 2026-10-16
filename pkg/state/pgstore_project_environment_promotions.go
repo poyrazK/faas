@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const projectEnvironmentPromotionSelectColumns = `id, account_id, project_id, project_slug, from_environment, to_environment,
@@ -63,7 +64,7 @@ func scanProjectEnvironmentPromotionWorkload(row pgx.Row) (ProjectEnvironmentPro
 }
 
 func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promotion ProjectEnvironmentPromotion, workloads []ProjectEnvironmentPromotionWorkload) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, nil, fmt.Errorf("state: begin environment promotion: %w", err)
 	}
@@ -71,6 +72,12 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 	if promotion.SyncConfig {
 		if err := lockProjectForReleaseSetTx(ctx, tx, promotion.AccountID, promotion.ProjectID); err != nil {
 			return ProjectEnvironmentPromotion{}, nil, err
+		}
+	}
+
+	if promotion.HealthPolicy != nil {
+		if err := sqlc.New().LockPromotionAdmission(ctx, tx); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, mapErr(err)
 		}
 	}
 
@@ -101,12 +108,22 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 			return ProjectEnvironmentPromotion{}, nil, err
 		}
 		promotion.ID = created.ID
+		if err := capturePromotionReleaseConfigurationDB(ctx, tx, promotion, workloads); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
+		if err := admitPromotionMigrationDB(ctx, tx, promotion); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
 		if err := capturePromotionFeatureFlagsTx(ctx, tx, promotion); err != nil {
 			return ProjectEnvironmentPromotion{}, nil, err
 		}
 	}
 
 	createdWorkloads := make([]ProjectEnvironmentPromotionWorkload, 0, len(workloads))
+	promotion.ID = created.ID
+	if err := insertPromotionHealthDB(ctx, tx, promotion); err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
 	for _, workload := range workloads {
 		row := tx.QueryRow(ctx, `
 			insert into project_environment_promotion_workloads
@@ -126,6 +143,13 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 			return ProjectEnvironmentPromotion{}, nil, err
 		}
 		createdWorkloads = append(createdWorkloads, createdWorkload)
+	}
+	if promotion.Approval != nil {
+		approval, err := consumePromotionAdmissionApprovalDB(ctx, tx, promotion)
+		if err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
+		created.ConsumedApproval = approval
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironmentPromotion{}, nil, fmt.Errorf("state: commit environment promotion: %w", err)

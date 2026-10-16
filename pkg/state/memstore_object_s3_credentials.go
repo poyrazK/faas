@@ -91,6 +91,9 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 		return ObjectS3Credential{}, ErrConflict
 	}
 	for _, secret := range req.Secrets {
+		if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+			return ObjectS3Credential{}, ErrConflict
+		}
 		if _, exists := m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}]; exists {
 			return ObjectS3Credential{}, ErrConflict
 		}
@@ -256,6 +259,9 @@ func (m *MemStore) StageObjectS3CredentialRotation(_ context.Context, req Object
 		}
 	}
 	for _, secret := range req.Secrets {
+		if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+			return ObjectS3Credential{}, ErrConflict
+		}
 		row, ok := m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}]
 		if !ok || row.AccountID != secret.AccountID || row.ManagedObjectStorageCredentialID != req.BindingID {
 			return ObjectS3Credential{}, ErrConflict

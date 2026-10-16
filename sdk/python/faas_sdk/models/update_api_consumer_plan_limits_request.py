@@ -13,8 +13,9 @@ T = TypeVar("T", bound="UpdateAPIConsumerPlanLimitsRequest")
 
 @_attrs_define
 class UpdateAPIConsumerPlanLimitsRequest:
-    """Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty
-    list clears them.
+    """Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list
+    clears them.
+
     """
 
     max_requests_per_minute: int

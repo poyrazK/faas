@@ -19,6 +19,9 @@ class ProjectScanRequest:
 
     source: File
     """tar.gz of the repo root."""
+    release_config: str | Unset = UNSET
+    """JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload
+    variables."""
     project_slug: str | Unset = UNSET
     """kebab slug; default = repo dir basename"""
     repo_full_name: str | Unset = UNSET
@@ -41,6 +44,8 @@ class ProjectScanRequest:
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
+
+        release_config = self.release_config
 
         project_slug = self.project_slug
 
@@ -65,6 +70,8 @@ class ProjectScanRequest:
                 "source": source,
             }
         )
+        if release_config is not UNSET:
+            field_dict["release_config"] = release_config
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
@@ -88,6 +95,9 @@ class ProjectScanRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.release_config, Unset):
+            files.append(("release_config", (None, str(self.release_config).encode(), "text/plain")))
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
@@ -125,6 +135,8 @@ class ProjectScanRequest:
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
 
+        release_config = d.pop("release_config", UNSET)
+
         project_slug = d.pop("project_slug", UNSET)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
@@ -143,6 +155,7 @@ class ProjectScanRequest:
 
         project_scan_request = cls(
             source=source,
+            release_config=release_config,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,

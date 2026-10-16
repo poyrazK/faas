@@ -138,6 +138,20 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	migrationContracts                   map[string]projectMigrationContract
+	projectCanaries                      map[string]projectCanaryRecord
+	workerReleasePins                    map[string]projectWorkerReleasePin
+	workerJobEvidence                    map[string]projectWorkerJobObservation
+	projectSubmissions                   map[string]projectSubmissionEntry
+	projectReleaseAdditions              map[string]projectReleaseAdditionRecord
+	releaseWorkerDrains                  map[string]bool
+	releaseWorkerCandidates              map[string]string
+	releaseSecretBundles                 map[string]releaseSecretBundle
+	releaseSecretPins                    map[string][]releaseSecretVersion
+	retiredSecretEncryptionKeys          map[string]bool
+	releaseConfigurationIntents          map[string]projectReleaseConfigCapture
+	releaseEnvironmentPins               map[string][]AppEnv
+	promotionReleaseConfigurations       map[string]promotionReleaseConfiguration
 	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
 	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
 	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
@@ -363,8 +377,14 @@ type MemStore struct {
 	mailSuppressions map[string]mailSuppressionRow
 	// deployFailedEmailAt mirrors apps.last_deploy_failed_email_at for
 	// the in-memory implementation of the I1 cooldown gate.
-	deployFailedEmailAt map[string]time.Time
-	deployments         map[string]Deployment
+	deployFailedEmailAt          map[string]time.Time
+	deployments                  map[string]Deployment
+	deploymentSubmissionReceipts map[string]api.DeploymentSubmissionReceipt
+	deploymentPolicyStates       map[string]deploymentPolicyState
+	deploymentCronStates         map[string]deploymentPolicyState
+	deploymentCronActivations    map[string]cronActivation
+	deploymentCronOutcomes       map[string]cronOutcome
+	deploymentCronBefore         map[string][]Cron
 	// deploymentServingEndedAt mirrors deployments.serving_ended_at; see
 	// putDeploymentLocked.
 	deploymentServingEndedAt map[string]time.Time
@@ -583,13 +603,20 @@ type MemStore struct {
 	routeMonitorNextCheck     map[string]time.Time
 	routeMonitorIncidents     map[string][]api.RouteMonitorIncident
 	// routeProbeData holds ADR-847 probe rounds and results; lazily created.
-	routeProbeOnce           sync.Once
-	routeProbeData           *memRouteProbes
-	routeHealthGates         map[string]api.RouteHealthGate
-	routeHealthHistory       map[string][]routeHealthStoredDecision
-	routeHealthNotifications map[string]routeHealthNotificationState
-	profilePeriodicMonitors  map[string]*memPeriodicMonitor
-	profileAlertStates       map[string]profileAlertState
+	routeProbeOnce             sync.Once
+	routeProbeData             *memRouteProbes
+	routeHealthGates           map[string]api.RouteHealthGate
+	promotionRecoveries        map[string]map[string]promotionRecoveryRecord
+	promotionMigrationRuntimes map[string]promotionMigrationRuntime
+	promotionMigrations        map[string]promotionMigrationCapture
+	promotionHealth            map[string]*api.ProjectPromotionHealth
+	promotionHealthLeases      map[string]promotionHealthLease
+	promotionHealthSchedules   map[string]promotionHealthSchedule
+	promotionControls          map[string]map[string]api.ProjectPromotionControl
+	routeHealthHistory         map[string][]routeHealthStoredDecision
+	routeHealthNotifications   map[string]routeHealthNotificationState
+	profilePeriodicMonitors    map[string]*memPeriodicMonitor
+	profileAlertStates         map[string]profileAlertState
 	// edgeRuleGeneration mirrors edge_rule_generation_seq. Gaps are allowed;
 	// values never decrease during the MemStore lifetime.
 	edgeRuleGeneration int64
@@ -4535,7 +4562,7 @@ func (m *MemStore) AppByID(_ context.Context, id string) (App, error) {
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	return a, nil
+	return cloneDeploymentPolicyPointers(a), nil
 }
 
 func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
@@ -4543,7 +4570,7 @@ func (m *MemStore) AppBySlug(_ context.Context, slug string) (App, error) {
 	defer m.mu.Unlock()
 	for _, a := range m.apps {
 		if a.Slug == slug && a.Status != AppDeleted {
-			return a, nil
+			return cloneDeploymentPolicyPointers(a), nil
 		}
 	}
 	return App{}, ErrNotFound
@@ -4554,7 +4581,7 @@ func (m *MemStore) AppBySlugIncludingDeleted(_ context.Context, slug string) (Ap
 	defer m.mu.Unlock()
 	for _, a := range m.apps {
 		if a.Slug == slug {
-			return a, nil
+			return cloneDeploymentPolicyPointers(a), nil
 		}
 	}
 	return App{}, ErrNotFound
@@ -5089,6 +5116,10 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationDeploymentRetiredLocked(id) {
+		return Deployment{}, 0, ErrConflict
+	}
+
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if params.RequireSafeReleaseLease {
 		if m.safeReleaseWorkerLeaseUntil.IsZero() {
@@ -5258,6 +5289,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationDeploymentRetiredLocked(id) {
+		return Deployment{}, ErrConflict
+	}
+
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 
 	d, ok := m.deployments[id]
@@ -5314,7 +5349,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	var siblings []sibling
 	for otherID, other := range m.deployments {
-		if other.AppID != appID || other.Status != DeployLive || otherID == id {
+		if other.AppID != appID || other.Status != DeployLive || otherID == id || m.migrationDeploymentRetiredLocked(otherID) {
 			continue
 		}
 		siblings = append(siblings, sibling{ID: otherID, Prior: other.TrafficPercent})
@@ -6123,6 +6158,11 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 		return App{}, ErrNotFound
 	}
 	before := a
+	var guardErr error
+	p, guardErr = m.prepareDeploySettingsUpdateLocked(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
 	if a.ScalingPolicyRevision <= 0 {
 		a.ScalingPolicyRevision = 1
 	}
@@ -6210,7 +6250,8 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if syncErr != nil {
 		return App{}, syncErr
 	}
-	m.apps[id] = a
+	m.invalidateDeploymentPoliciesLocked(before, a, p.TouchDeploymentPolicies)
+	m.apps[id] = cloneDeploymentPolicyPointers(a)
 	if routeCheckAppInputsChanged(before, a) {
 		m.enqueueRoutePolicyChecksLocked(id)
 	}
@@ -6521,6 +6562,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.invocations {
 		if v.AppID == id {
 			delete(m.invocations, key)
+			delete(m.workerReleasePins, key)
 			delete(m.eventDeliverySlots, key)
 			m.deleteInvocationAttemptsLocked(key)
 			delete(m.keyedReplayChildren, key)
@@ -6548,16 +6590,23 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if v.AppID == id {
 			delete(m.instances, key)
 			delete(m.runtimeInstanceConfigProofs, key)
+			delete(m.releaseWorkerDrains, key)
 			delete(m.instanceRuntimeConfigReceipts, key)
 			m.deleteSecretRuntimeProcessesLocked(key)
 			delete(m.capacityInstanceResources, key)
 		}
 	}
+	delete(m.deploymentPolicyStates, id)
+	delete(m.deploymentCronStates, id)
+	delete(m.deploymentCronActivations, id)
+	delete(m.deploymentCronBefore, id)
 	depIDs := make(map[string]struct{})
 	for key, d := range m.deployments {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
 			delete(m.deployments, key)
+			delete(m.releaseEnvironmentPins, key)
+			m.deleteDeploymentSubmissionsLocked(key)
 			delete(m.deploymentRuntimeEnvironmentOwners, key)
 			delete(m.operationCodePins, key)
 			delete(m.workflowCodePins, key)
@@ -7077,12 +7126,20 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // the new row. The race-free supersede closes the same TOCTOU the
 // image: branch had before, and gives the tarball branch the parity
 // it has always lacked.
-func (m *MemStore) CreateDeployment(_ context.Context, d Deployment) (Deployment, error) {
+func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
+	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
+	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
+	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
 	created, _, err := m.createDeployment(d, nil, nil)
 	return created, err
 }
 
-func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
+	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
+	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
+	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
 	return m.createDeployment(d, &activity, nil)
 }
 
@@ -7099,6 +7156,46 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
 	}
+	if err := guardReleaseAdditionDeployment(d, m.projectReleaseAdditions[d.AppID]); err != nil {
+		return Deployment{}, 0, err
+	}
+	if d.retryDeploymentID != "" {
+		latest := m.latestPolicyDeploymentLocked(d.AppID)
+		if latest != d.retryDeploymentID || m.deployments[latest].Status != DeployFailed {
+			return Deployment{}, 0, ErrDeploymentRetryChanged
+		}
+	}
+
+	if d.submissionAttemptID != "" {
+		if !api.ValidDeploymentAttemptID(d.submissionAttemptID) {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		if _, exists := m.deploymentSubmissionReceipts[submissionKey(d.AppID, d.submissionAttemptID)]; exists {
+			return Deployment{}, 0, ErrDeploymentSubmissionConflict
+		}
+	}
+	if d.releaseWorkerAttempt != "" {
+		if err := m.validateReleaseWorkerCandidateLocked(d); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	var releaseVariables []AppEnv
+	if d.releaseConfigAttempt != "" {
+		var err error
+		releaseVariables, err = m.candidateReleaseConfigurationLocked(d)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if d.releaseConfigAttempt == "" {
+		releaseVariables = m.inheritedReleaseVariablesLocked(d.AppID, d.Scope)
+	}
+
+	releaseSecrets, secretPinned, secretErr := m.candidateReleaseSecretsLocked(d)
+	if secretErr != nil {
+		return Deployment{}, 0, secretErr
+	}
+
 	var cloneRecord projectCloneWorkloadRecord
 	if len(cloneInputs) > 0 {
 		if len(cloneInputs) != 1 || cloneInputs[0] == nil || promotionInput != nil || activity != nil {
@@ -7134,6 +7231,19 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		prepared, capture, err = m.preparePromotionWorkloadSpecLocked(app, d.Scope, *promotionInput)
 		if err != nil {
 			return Deployment{}, 0, err
+		}
+		if configured, ok := m.promotionReleaseConfigurations[promotionInput.PromotionID]; ok {
+			w, err := configured.workload(app.ID, promotionInput.SourceDeploymentID)
+			if err != nil || !d.TrafficPercentExplicit || d.TrafficPercent != 0 {
+				return Deployment{}, 0, ErrConflict
+			}
+			releaseVariables = releaseVariableRows(promotedReleaseVariables(w, d.Scope))
+			if configured.Secrets != nil {
+				releaseSecrets, secretPinned = cloneReleaseSecrets(w.SecretTarget), true
+			}
+			if w.PromotedOverrideEnv != nil {
+				d.OverrideEnv = append(json.RawMessage(nil), (*w.PromotedOverrideEnv)...)
+			}
 		}
 	}
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
@@ -7291,6 +7401,28 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	}
 	m.recordRecoveryPredecessorLocked(d)
 	m.putDeploymentLocked(d.ID, d)
+	if releaseVariables != nil {
+		if m.releaseEnvironmentPins == nil {
+			m.releaseEnvironmentPins = map[string][]AppEnv{}
+		}
+		m.releaseEnvironmentPins[d.ID] = append([]AppEnv{}, releaseVariables...)
+	}
+	if secretPinned {
+		if m.releaseSecretPins == nil {
+			m.releaseSecretPins = map[string][]releaseSecretVersion{}
+		}
+		m.releaseSecretPins[d.ID] = cloneReleaseSecrets(releaseSecrets)
+	}
+
+	if d.releaseWorkerAttempt != "" {
+		if m.releaseWorkerCandidates == nil {
+			m.releaseWorkerCandidates = map[string]string{}
+		}
+		m.releaseWorkerCandidates[d.ID] = d.releaseWorkerAttempt
+	}
+	if d.submissionAttemptID != "" {
+		m.saveDeploymentSubmissionLocked(d.submissionAttemptID, d)
+	}
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate
 	}
@@ -8692,6 +8824,10 @@ func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) er
 func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest bool) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationDeploymentRetiredLocked(id) {
+		return ErrConflict
+	}
+
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	d, ok := m.deployments[id]
 	if !ok {
@@ -11852,12 +11988,15 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 	if err := validateCronCreateRetryOptions(opts); err != nil {
 		return Cron{}, err
 	}
-	c := Cron{ID: newID(), AppID: appID, Schedule: schedule, Path: path,
+	c := Cron{ID: newCronID(), AppID: appID, Schedule: schedule, Path: path,
 		Command: append([]string(nil), opts.Command...), CommandShell: opts.CommandShell,
 		CommandTimeoutSeconds: opts.CommandTimeoutSeconds, CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
 		RetryMax: opts.RetryMax, RetryBackoffSeconds: opts.RetryBackoffSeconds,
 		SchedulePolicy: workpolicy.Clone(opts.SchedulePolicy), FailureRules: workpolicy.Clone(opts.FailureRules),
 		ScheduleRevision: 1, Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
+	}
 	m.crons[c.ID] = c
 	return c, nil
 }
@@ -11942,7 +12081,7 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		}
 	}
 	c := Cron{
-		ID:                    newID(),
+		ID:                    newCronID(),
 		AppID:                 appID,
 		Schedule:              schedule,
 		Path:                  path,
@@ -11959,6 +12098,9 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		Timezone:              opts.Timezone,
 		SkipIfRunning:         opts.SkipIfRunning,
 		CreatedAt:             time.Now(),
+	}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
 	m.crons[c.ID] = c
 	return c, nil
@@ -12039,6 +12181,9 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if scheduleChanged || timezoneChanged {
 		c.ScheduleRevision++
 	}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
+	}
 	m.crons[id] = c
 	return c, nil
 }
@@ -12049,6 +12194,9 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 	c, ok := m.crons[id]
 	if !ok || c.AppID != appID {
 		return ErrNotFound
+	}
+	if len(c.Command) == 0 {
+		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
 	delete(m.crons, id)
 	delete(m.exclusiveTriggerBindings, "cron\x00"+id)
@@ -14271,6 +14419,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		}
 	}
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
+		if err := m.workerGraphAdmissionLocked(appID, deploymentID); err != nil {
+			return Instance{}, err
+		}
 		if err := m.checkAccountWorkerReservationLocked(appID, deploymentID); err != nil {
 			return Instance{}, err
 		}
@@ -15105,6 +15256,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	for _, row := range candidates {
 		delete(m.instances, row.id)
 		delete(m.runtimeInstanceConfigProofs, row.id)
+		delete(m.releaseWorkerDrains, row.id)
 		delete(m.instanceRuntimeConfigReceipts, row.id)
 		m.deleteSecretRuntimeProcessesLocked(row.id)
 		delete(m.capacityInstanceResources, row.id)
@@ -15145,6 +15297,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	}
 	delete(m.instances, id)
 	delete(m.runtimeInstanceConfigProofs, id)
+	delete(m.releaseWorkerDrains, id)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
 	delete(m.capacityInstanceResources, id)
@@ -20060,6 +20213,13 @@ func (m *MemStore) UpsertAppSecretWithKid(ctx context.Context, accountID, appID,
 func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, scope, key string, ciphertext []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked("") {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	now := time.Now()
@@ -20096,6 +20256,13 @@ func (m *MemStore) UpsertAppSecretInScope(_ context.Context, accountID, appID, s
 func (m *MemStore) UpsertAppSecretWithKidInScope(_ context.Context, accountID, appID, scope, key, kid string, ciphertext []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(kid) {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	now := time.Now()
@@ -20145,6 +20312,13 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(_ context.Context, accountID,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(kid) {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	now := time.Now()
@@ -20193,6 +20367,13 @@ func defaultSecretClass(value string) string {
 func (m *MemStore) ResealAppSecretWithKidAndValueHashInScope(_ context.Context, accountID, appID, scope, key, kid, valueHash string, ciphertext []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(kid) {
+		return ErrConflict
+	}
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.secrets[k]
 	if !ok || existing.AccountID != accountID {
@@ -20217,6 +20398,9 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+		return ErrConflict
+	}
 	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
 	existing, ok := m.secrets[k]
 	if ok && (existing.ManagedPostgresBindingID != secret.ManagedPostgresBindingID || existing.ManagedPostgresAccess != secret.ManagedPostgresAccess ||
@@ -20301,6 +20485,9 @@ func (m *MemStore) PutManagedObjectStorageSecret(_ context.Context, secret AppSe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+		return ErrConflict
+	}
 	k := secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}
 	existing, ok := m.secrets[k]
 	if ok && (existing.AccountID != secret.AccountID || (existing.ManagedObjectStorageCredentialID != "" && existing.ManagedObjectStorageCredentialID != secret.ManagedObjectStorageCredentialID) || existing.ManagedPostgresBindingID != "") {
@@ -20385,6 +20572,10 @@ func (m *MemStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID,
 func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.releaseSecretsPinnedLocked(appID, scope) {
+		return AppSecretRevocation{}, ErrConflict
+	}
+
 	k := secretKey{AppID: appID, Scope: scope, Key: key}
 	row, ok := m.secrets[k]
 	if !ok || row.AccountID != accountID {
@@ -20763,6 +20954,10 @@ func (m *MemStore) RecordAppSecretDelivery(_ context.Context, result AppSecretDe
 	if instance.WakeID != result.WakeID || (!State(instance.State).CountsForRAM() && instance.State != string(StateFailed)) {
 		return 0, ErrConflict
 	}
+	if _, pinned := m.releaseSecretPins[result.Fence.DeploymentID]; pinned {
+		return 0, nil
+	}
+
 	for _, candidate := range result.Candidates {
 		secret, ok := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
 		if candidate.Scope != scope || !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
@@ -21681,6 +21876,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
 			delete(m.runtimeInstanceConfigProofs, iid)
+			delete(m.releaseWorkerDrains, iid)
 			delete(m.instanceRuntimeConfigReceipts, iid)
 			m.deleteSecretRuntimeProcessesLocked(iid)
 			delete(m.capacityInstanceResources, iid)
@@ -21769,6 +21965,8 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
 			delete(m.deployments, did)
+			delete(m.releaseEnvironmentPins, did)
+			m.deleteDeploymentSubmissionsLocked(did)
 			delete(m.deploymentRuntimeEnvironmentOwners, did)
 			delete(m.operationCodePins, did)
 			delete(m.workflowCodePins, did)
@@ -26059,6 +26257,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		if inv, ok := m.invocations[id]; ok {
 			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
 			delete(m.invocations, id)
+			delete(m.workerReleasePins, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)
 			delete(m.keyedReplayChildren, id)
