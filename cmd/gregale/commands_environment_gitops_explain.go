@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 )
 
-func cmdEnvironmentGitOpsExplain(args []string) int {
+func cmdProjectsEnvironmentGitOpsExplain(args []string) int {
 	flags, target := splitArgsForFlags(args, "json")
 	fs := newFlagSet("environment-gitops-explain", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit the read-only explanation as JSON")

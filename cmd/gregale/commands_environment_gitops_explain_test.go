@@ -11,25 +11,28 @@ import (
 )
 
 func TestEnvironmentGitOpsExplainIsReadOnlyAndSupportsOlderStatus(t *testing.T) {
-	for _, asJSON := range []bool{false, true} {
-		t.Run(map[bool]string{false: "text", true: "json"}[asJSON], func(t *testing.T) {
+	for _, mode := range []string{"text", "json-flag", "global-json"} {
+		t.Run(mode, func(t *testing.T) {
 			resetJSONOut(t)
+			if mode == "global-json" {
+				jsonOutput = true
+			}
 			status := api.EnvironmentGitOpsStatusResponse{Source: api.EnvironmentGitSource{ID: "source", ApprovedRevisionID: "approved", AppliedRevisionID: "historical", Spec: api.EnvironmentGitSourceSpec{Mode: "report"}}}
 			body, err := json.Marshal(status)
 			if err != nil {
 				t.Fatal(err)
 			}
 			fake := authedFakeAPI(t, string(body), http.StatusOK)
-			args := []string{"explain", "shop", "production"}
-			if asJSON {
+			args := []string{"environments", "gitops", "explain", "shop", "production"}
+			if mode == "json-flag" {
 				args = append(args, "--json")
 			}
 			var out bytes.Buffer
-			code := captureStdoutSwap(t, &out, func() int { return cmdProjectsEnvironmentGitOps(args) })
+			code := captureStdoutSwap(t, &out, func() int { return cmdProjects(args) })
 			if code != 0 || fake.sawMethod != http.MethodGet || fake.sawPath != "/v1/projects/shop/environments/production/gitops" {
 				t.Fatalf("request=%s %s code=%d", fake.sawMethod, fake.sawPath, code)
 			}
-			if asJSON {
+			if mode != "text" {
 				var result api.EnvironmentGitOpsExplanation
 				if err := json.Unmarshal(out.Bytes(), &result); err != nil || !result.ReadOnly || result.Status != "reporting" || result.ServingRevisionID != "" {
 					t.Fatalf("unsafe explanation: %s %v", out.String(), err)

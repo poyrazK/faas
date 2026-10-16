@@ -23,7 +23,7 @@ func cmdProjectsEnvironmentGitOps(args []string) int {
 	}
 	switch args[0] {
 	case "explain":
-		return cmdEnvironmentGitOpsExplain(args[1:])
+		return cmdProjectsEnvironmentGitOpsExplain(args[1:])
 	case "status", "adoption-preview":
 		return cmdEnvironmentGitOpsRead(args[0], args[1:])
 	case "bind":
