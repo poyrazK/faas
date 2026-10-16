@@ -93,6 +93,7 @@ func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowe
 		"environment_git_sources":                 row.EnvironmentGitSources,
 		"environment_managed_fields":              row.EnvironmentManagedFields,
 		"environment_workload_graphs":             row.EnvironmentWorkloadGraphs,
+		"environment_workload_retirements":        row.EnvironmentWorkloadRetirements,
 		"feature_flag_versions":                   row.FeatureFlagVersions,
 		"invocation_environment_queue_admissions": row.InvocationEnvironmentQueueAdmissions,
 		"invocation_work_environment_admissions":  row.InvocationWorkEnvironmentAdmissions,

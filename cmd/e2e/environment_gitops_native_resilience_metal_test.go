@@ -143,6 +143,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 	j.assertGatewayBody(t, helloBody)
 	j.assertNoSupersededServing(t, pending.Source.Generation)
 	j.repairOverride(t, rolledBack)
+	j.runWorkloadRetirement(t)
 }
 
 func (j *nativeGitOpsJourney) addRevision(t *testing.T, sha, image string, concurrency int) {

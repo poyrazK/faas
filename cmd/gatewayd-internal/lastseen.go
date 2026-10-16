@@ -15,6 +15,11 @@ import (
 // Keep writes batched and leave headroom for the scheduler RPC.
 const lastSeenFlushInterval = 2 * time.Second
 
+// lastSeenRetryRetention bounds how long a touch whose report failed is kept
+// for retry (ADR-1344 §5 rule 5). It exceeds the longest plan idle timeout
+// (600 s), after which an old touch can no longer keep an instance warm.
+const lastSeenRetryRetention = 15 * time.Minute
+
 // schedFlushSink is gatewayd's production LastSeenSink. The handler Touches it
 // by the instance_id it proxied to on every 2xx (issue #168 — per-instance
 // attribution survives the multi-instance fan-out where multiple instances
@@ -119,9 +124,14 @@ func (s *schedFlushSink) Forget(instanceID string) {
 // failed report never wedges the hot path. The first per-schedd
 // error is returned to the caller so the FlushEvery loop sees the
 // failure, but later groups still issue their RPCs (a single
-// unreachable node should not block touches to siblings). The
-// instances themselves stay in the underlying store, so a
-// subsequent touch re-populates the buffer.
+// unreachable node should not block touches to siblings).
+//
+// Touches whose owner could not be resolved or whose report failed
+// are merged back into the buffer and retried on the next flush,
+// for up to lastSeenRetryRetention (ADR-1344 §5 rule 5). Dropping
+// them made a store outage erase the activity of every instance that
+// kept serving warm traffic through it, and the idle reaper then
+// parked those busy instances as soon as the store returned.
 //
 // Unknown instance ids (admin deleted, hard-deleted post-M7) are
 // silently dropped — schedd's ReportActivity would drop them
@@ -150,10 +160,12 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 		touches []state.InstanceTouch
 	}
 	groups := map[scheddgrpc.ScheddClient]*group{}
+	failed := map[string]bufferedInstanceTouch{}
 	for id, touch := range batch {
 		cli, err := s.router.ScheddForInstance(ctx, id)
 		if err != nil {
 			s.log.Warn("gatewayd: report activity resolve instance", "instance", id, "err", err)
+			failed[id] = touch
 			continue
 		}
 		if cli == nil {
@@ -189,7 +201,40 @@ func (s *schedFlushSink) Flush(ctx context.Context) error {
 			if firstErr == nil {
 				firstErr = err
 			}
+			for _, t := range g.touches {
+				failed[t.InstanceID] = batch[t.InstanceID]
+			}
 		}
 	}
+	s.requeue(failed)
 	return firstErr
+}
+
+// requeue merges touches whose report failed back into the buffer,
+// coalescing with any touch recorded since the flush began. Touches older
+// than lastSeenRetryRetention are dropped. A report that failed after
+// schedd applied it is retried too, which can over-count request_count; that
+// column only gates warm-snapshot eligibility (ADR-098), not billing.
+func (s *schedFlushSink) requeue(failed map[string]bufferedInstanceTouch) {
+	if len(failed) == 0 {
+		return
+	}
+	cutoff := s.nowFunc().Add(-lastSeenRetryRetention)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, touch := range failed {
+		if touch.lastRequest.Before(cutoff) {
+			continue
+		}
+		cur, ok := s.seen[id]
+		if !ok {
+			s.seen[id] = touch
+			continue
+		}
+		if touch.lastRequest.After(cur.lastRequest) {
+			cur.lastRequest = touch.lastRequest
+		}
+		cur.requestDelta += touch.requestDelta
+		s.seen[id] = cur
+	}
 }

@@ -6257,6 +6257,11 @@ func (s *PgStore) UpsertGitHubInstall(ctx context.Context, inst GitHubInstall) e
 		inst.SealedToken, inst.TokenExpiresAt, inst.SealedAt,
 		inst.AuditGithubLogin,
 	)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation &&
+		pgErr.ConstraintName == "github_installations_installation_id_uidx" {
+		return ErrConflict
+	}
 	return err
 }
 

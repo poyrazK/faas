@@ -2577,7 +2577,9 @@ type Store interface {
 	// UpsertGitHubInstall persists the OAuth handshake state for one
 	// account's GitHub App install (PR-C). Idempotent on
 	// (AccountID, InstallationID) so a retry of the OAuth
-	// flow doesn't crash on the unique-PK constraint. The account row
+	// flow doesn't crash on the unique-PK constraint.
+	// Returns ErrConflict if another account owns the installation;
+	// reconnecting must never transfer ownership implicitly. The account row
 	// itself must exist (the FK enforces this); pre-CASCADE deletes
 	// of an account surface as ErrNotFound here so the caller can
 	// distinguish "account doesn't exist" from a transient write

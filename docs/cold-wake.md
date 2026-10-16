@@ -115,7 +115,8 @@ snapshot, with its in-memory state (caches, sessions)
 intact. Requests still answer `x-faas-wake: restored`. A frozen instance
 holds no concurrency and is not billed; the dashboard shows it as
 `◌ sleeping`. It parks after 10 minutes, or sooner when the node needs the
-memory or you deploy again. Only deployments with a snapshot are frozen, so
+memory or you deploy again; on some nodes it is compressed in memory
+instead, and then resumes a little more slowly. Only deployments with a snapshot are frozen, so
 the first idle period after a deploy still parks. If your app declares an
 `after_restore` hook, it runs when the instance resumes, as after a restore;
 if it fails, the instance is discarded and the request restores from the

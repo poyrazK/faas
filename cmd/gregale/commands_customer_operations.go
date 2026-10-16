@@ -24,6 +24,7 @@ type customerOperationsClient interface {
 	GetAccountOperationEvents(context.Context, string, string, int64) (api.OperationEventsResponse, error)
 	GetOperationExecutions(context.Context, string, string, int, int) (api.OperationExecutionsResponse, error)
 	CancelOperation(context.Context, string, string, api.OperationCancellationRequest) (api.OperationResponse, error)
+	DecideOperationApproval(context.Context, string, string, string, api.OperationApprovalRequest) (api.OperationResponse, error)
 	RecoverOperation(context.Context, string, string, api.OperationRecoveryRequest) (api.OperationResponse, error)
 	RetryOperationDelivery(context.Context, string, string) (api.OperationResponse, error)
 	DownloadOperationArtifact(context.Context, string, string, string, io.Writer) (int64, error)
@@ -40,11 +41,13 @@ type customerOperationCommand struct {
 	preview                                                             bool
 	receipt                                                             string
 	recoveryFlags                                                       map[string]bool
+	step                                                                string
+	approval                                                            api.OperationApprovalRequest
 }
 
 func cmdCustomerOperations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|bindings|start|list|get|milestones|outcomes|outcome-summary|attention|attention-summary|events|executions|watch|download|cancel|recover|delivery|delivery-attempts|retry-delivery|types|inspect>", "customer-operations")
+		PrintUsage(os.Stderr, "usage: gregale customer-operations <doctor|definitions|validate|bindings|start|list|get|milestones|outcomes|outcome-summary|attention|attention-summary|events|executions|timeline|watch|download|cancel|signal|approve|recover|delivery|delivery-attempts|retry-delivery|types|inspect>", "customer-operations")
 		return 1
 	}
 	if args[0] == "outcomes" {
@@ -64,6 +67,12 @@ func cmdCustomerOperations(args []string) int {
 	}
 	if args[0] == "bindings" {
 		return cmdCustomerOperationBindings(args[1:])
+	}
+	if args[0] == "signal" {
+		return cmdCustomerOperationSignal(args[1:])
+	}
+	if args[0] == "timeline" {
+		return cmdCustomerOperationTimeline(args[1:])
 	}
 	if len(args) > 0 && (args[0] == "delivery" || args[0] == "delivery-attempts" || args[0] == "retry-delivery") {
 		return cmdCustomerOperationDelivery(args)
@@ -110,7 +119,7 @@ func cmdCustomerOperations(args []string) int {
 func parseCustomerOperationCommand(args []string) (customerOperationCommand, error) {
 	var c customerOperationCommand
 	if len(args) == 0 {
-		return c, fmt.Errorf("usage: gregale customer-operations <list|get|inspect|events|executions|watch|download|cancel|recover|retry-delivery> --app SLUG")
+		return c, fmt.Errorf("usage: gregale customer-operations <list|get|inspect|events|executions|watch|download|cancel|approve|recover|retry-delivery> --app SLUG")
 	}
 	c.verb = args[0]
 	fs := newFlagSet("customer-operations "+c.verb, flag.ContinueOnError)
@@ -140,6 +149,11 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 		fs.StringVar(&c.output, "output", "", "new local file path; existing files are preserved")
 	case "cancel":
 		fs.IntVar(&c.recovery.ExpectedGeneration, "expected-generation", 0, "observed operation generation")
+	case "approve":
+		fs.IntVar(&c.approval.ExpectedGeneration, "expected-generation", 0, "observed operation generation")
+		fs.StringVar(&c.step, "step", "", "declared approval step")
+		fs.StringVar(&c.approval.Decision, "decision", "", "approved or rejected")
+		fs.StringVar(&c.approval.Comment, "comment", "", "optional note recorded with the decision")
 	case "recover":
 		fs.StringVar(&c.receipt, "receipt-file", "", "private immutable recovery request; omit selectors to resume")
 		fs.BoolVar(&c.preview, "preview", false, "read the recovery plan without recording or executing a decision")
@@ -166,9 +180,9 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	}
 	if c.self {
 		switch c.verb {
-		case "get", "events", "watch", "download", "cancel":
+		case "get", "events", "watch", "download", "cancel", "approve":
 		default:
-			return c, fmt.Errorf("--self supports get, events, watch, download and cancel")
+			return c, fmt.Errorf("--self supports get, events, watch, download, cancel and approve")
 		}
 		if c.app != "" {
 			return c, fmt.Errorf("--self derives ownership from credentials; omit --app")
@@ -201,6 +215,10 @@ func parseCustomerOperationCommand(args []string) (customerOperationCommand, err
 	fs.Visit(func(f *flag.Flag) { c.recoveryFlags[f.Name] = true })
 	if (c.verb == "cancel" || c.verb == "recover" && (c.receipt == "" || c.preview || c.recoveryFlags["expected-generation"])) && c.recovery.ExpectedGeneration < 1 {
 		return c, fmt.Errorf("--expected-generation must be positive")
+	}
+	if c.verb == "approve" && (c.approval.ExpectedGeneration < 1 || strings.TrimSpace(c.step) == "" ||
+		c.approval.Decision != api.OperationApprovalApproved && c.approval.Decision != api.OperationApprovalRejected || len(c.approval.Comment) > api.OperationApprovalCommentMaxBytes) {
+		return c, fmt.Errorf("approve requires --expected-generation, --step and --decision approved|rejected; --comment is at most %d bytes", api.OperationApprovalCommentMaxBytes)
 	}
 	if c.verb == "recover" {
 		var err error
@@ -332,6 +350,8 @@ func runCustomerOperationCommand(ctx context.Context, client customerOperationsC
 		op, err = client.GetOperation(ctx, c.app, c.id)
 	case "cancel":
 		op, err = client.CancelOperation(ctx, c.app, c.id, api.OperationCancellationRequest{ExpectedGeneration: c.recovery.ExpectedGeneration})
+	case "approve":
+		op, err = client.DecideOperationApproval(ctx, c.app, c.id, c.step, c.approval)
 	case "recover":
 		op, err = client.RecoverOperation(ctx, c.app, c.id, c.recovery)
 	case "retry-delivery":
@@ -358,8 +378,31 @@ func renderCustomerOperation(out io.Writer, op api.OperationResponse, asJSON boo
 			return err
 		}
 	}
+	if _, err = fmt.Fprint(out, customerOperationStatusLabels(op)); err != nil {
+		return err
+	}
 	_, err = fmt.Fprintln(out)
 	return err
+}
+
+// customerOperationStatusLabels adds why work stopped or waits, and how much
+// of its limits it has used (ADR-1194, ADR-1196).
+func customerOperationStatusLabels(op api.OperationResponse) string {
+	var b strings.Builder
+	if op.FailureCode != "" {
+		fmt.Fprintf(&b, "\tfailure=%s", op.FailureCode)
+	}
+	if op.Waiting != nil {
+		fmt.Fprintf(&b, "\twaiting=%s:%s", op.Waiting.Kind, op.Waiting.Step)
+	}
+	if op.DeadlineAt != nil {
+		fmt.Fprintf(&b, "\tdeadline=%s", op.DeadlineAt.UTC().Format(time.RFC3339))
+	}
+	if op.Limits != nil && op.Limits.MaxExecutionSeconds > 0 && op.Usage != nil {
+		used := time.Duration(op.Usage.ExecutionMS) * time.Millisecond
+		fmt.Fprintf(&b, "\tbudget=%s/%ds", used.Round(time.Millisecond), op.Limits.MaxExecutionSeconds)
+	}
+	return b.String()
 }
 
 // Watching reports changed durable snapshots as NDJSON in JSON mode. A failed
