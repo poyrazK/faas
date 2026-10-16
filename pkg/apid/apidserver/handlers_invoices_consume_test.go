@@ -46,7 +46,7 @@ func (*consumeRefundProvider) Refund(_ context.Context, chargeID string, amountC
 		ProviderRefundID: "re_" + chargeID,
 		ChargeID:         chargeID,
 		AmountCents:      amountCents,
-		Currency:         "eur",
+		Currency:         "usd",
 		Status:           "succeeded",
 	}, nil
 }

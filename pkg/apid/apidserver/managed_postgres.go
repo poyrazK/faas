@@ -204,7 +204,10 @@ func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedp
 		return managedpostgres.UsageCeilings{}
 	}
 	const secondsPerBillingMonth = int64(31 * 24 * time.Hour / time.Second)
-	ceilings := managedpostgres.UsageCeilings{MaxMonthlyComputeUnitSeconds: max(limits.MonthlyComputeUnitSeconds, 0)}
+	ceilings := managedpostgres.UsageCeilings{}
+	if limits.MonthlyComputeUnitSeconds > 0 {
+		ceilings.MaxMonthlyComputeUnitSeconds = limits.MonthlyComputeUnitSeconds
+	}
 	if limits.StorageLimitBytes > 0 && limits.StorageLimitBytes <= math.MaxInt64/secondsPerBillingMonth {
 		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth
 	}

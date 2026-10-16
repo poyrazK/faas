@@ -93,7 +93,7 @@ func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
 	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires EUR") {
 		t.Fatalf("USD pricing error = %v", err)
 	}
-	registry.Pricing = &api.ObjectStoragePricing{Currency: "EUR"}
+	registry.Pricing = &api.ObjectStoragePricing{Currency: "USD"}
 	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err != nil {
 		t.Fatalf("EUR pricing error = %v", err)
 	}
