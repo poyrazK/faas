@@ -24,7 +24,7 @@ func TestPutPolicyStoresAllowUnmetered(t *testing.T) {
 		t.Fatalf("offers = %+v, %v", offers, err)
 	}
 	for body, want := range map[string]int{
-		`{"entries":[{"model_prefix":"veo-3.1-generate-001@4k","input_millicents_per_mtok":0,"output_millicents_per_mtok":0,"millicents_per_video_second":53543}]}`:    http.StatusNoContent,
+		`{"entries":[{"model_prefix":"veo-3.1-generate-001@4k","input_millicents_per_mtok":0,"output_millicents_per_mtok":0,"millicents_per_video_second":53543}]}`: http.StatusNoContent,
 		`{"entries":[{"model_prefix":"veo-3.1-generate-001","input_millicents_per_mtok":0,"output_millicents_per_mtok":0,"millicents_per_video_second":10000001}]}`: http.StatusBadRequest,
 	} {
 		if w := serve(service.PutPrices, acct, http.MethodPut, "/v1/outbound/integrations/x/ai-prices", integrationID, body); w.Code != want {
