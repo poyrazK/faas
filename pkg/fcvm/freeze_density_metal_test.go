@@ -8,11 +8,15 @@ package fcvm
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +31,9 @@ import (
 // moves anonymous memory out. FAAS_TEST_FREEZE_FROM_SNAPSHOT=1 restores every
 // VM from one snapshot first, as production wakes do: pages read since the
 // restore stay file-backed and reclaimable without swap.
+// FAAS_TEST_FREEZE_TRAFFIC (a duration) serves every VM a request mix for
+// that long before the freeze, so a restored VM writes into memory of its
+// own the way a serving one does (prod: 48-66 MB anonymous, ADR-906).
 func TestMetalFreezeDensity(t *testing.T) {
 	kernel, base, layer := metalImages(t)
 	if os.Getenv("FAAS_TEST_FREEZE_DENSITY") != "1" {
@@ -91,6 +98,13 @@ func TestMetalFreezeDensity(t *testing.T) {
 		}
 		get(t, hosts[i]+"/heavy")
 	}
+	if raw := os.Getenv("FAAS_TEST_FREEZE_TRAFFIC"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			t.Fatalf("FAAS_TEST_FREEZE_TRAFFIC=%q: %v", raw, err)
+		}
+		serveTraffic(t, hosts, d)
+	}
 	time.Sleep(3 * time.Second)
 	vmMB := func() (total int64) {
 		for _, id := range ids {
@@ -100,10 +114,21 @@ func TestMetalFreezeDensity(t *testing.T) {
 		}
 		return total
 	}
+	vmStatMB := func(key string) (total int64) {
+		for _, id := range ids {
+			if stat, err := readCgroupStat(cgroupRoot + "/" + ParentCgroupFor("scale") + "/" + PerInstanceScope(id)); err == nil {
+				total += stat[key] >> 20
+			}
+		}
+		return total
+	}
 	running, availRunning := vmMB(), memAvailableMB(t)
+	t.Logf("running: per VM %.1f MB anonymous, %.1f MB file", float64(vmStatMB("anon"))/float64(n), float64(vmStatMB("file"))/float64(n))
 
 	var freezeTimes []time.Duration
 	var swapped int64
+	var freedMB []int64
+	kept := 0
 	for _, id := range ids {
 		start := time.Now()
 		rep, err := m.Freeze(ctx, id, FreezeOptions{Reclaim: true})
@@ -112,12 +137,25 @@ func TestMetalFreezeDensity(t *testing.T) {
 		}
 		freezeTimes = append(freezeTimes, time.Since(start))
 		swapped += rep.SwappedBytes >> 20
+		// schedd keeps a compressed VM frozen only when this frees at least
+		// 16 MB and half its memory (pkg/sched/frozen_compress.go).
+		freed := rep.BeforeBytes - rep.AfterBytes
+		freedMB = append(freedMB, freed>>20)
+		if rep.BeforeBytes > 0 && freed >= 16<<20 && freed*2 >= rep.BeforeBytes {
+			kept++
+		}
 	}
 	time.Sleep(2 * time.Second)
 	frozen, availFrozen := vmMB(), memAvailableMB(t)
 	t.Logf("freeze: %d VMs, VM cgroups %d -> %d MB (%.1f -> %.1f per VM), %d MB to swap, host MemAvailable %d -> %d MB, freeze p50 %v max %v",
 		n, running, frozen, float64(running)/float64(n), float64(frozen)/float64(n), swapped, availRunning, availFrozen,
 		percentile(freezeTimes, 50), percentile(freezeTimes, 100))
+	// zswap (ADR-906 decision 6): the RAM the compressed pool takes and the
+	// memory it holds; both zero without zswap.
+	t.Logf("zswap pool: %d MB holding %d MB", meminfoMB(t, "Zswap:"), meminfoMB(t, "Zswapped:"))
+	sort.Slice(freedMB, func(i, j int) bool { return freedMB[i] < freedMB[j] })
+	t.Logf("freed per VM median %d MB, min %d MB; %d of %d would stay compressed under schedd's rule",
+		freedMB[n/2], freedMB[0], kept, n)
 
 	var firstByte, heavy []time.Duration
 	for i, id := range ids {
@@ -136,9 +174,89 @@ func TestMetalFreezeDensity(t *testing.T) {
 	t.Logf("thaw: first byte p50 %v p99 %v max %v; CPU-bound request p50 %v max %v; VM cgroups %d MB",
 		percentile(firstByte, 50), percentile(firstByte, 99), percentile(firstByte, 100),
 		percentile(heavy, 50), percentile(heavy, 100), vmMB())
+	if snap != nil {
+		// What a request would pay without the frozen tier: a snapshot
+		// restore of the same app, to its first byte and a CPU-bound request.
+		var restoreFirst, restoreHeavy []time.Duration
+		for i := 0; i < 3; i++ {
+			id := fmt.Sprintf("frz-ref-%d", i)
+			start := time.Now()
+			inst, err := m.Wake(ctx, WakeRequest{Instance: id, AccountID: "acct", AppID: "app-frz", Plan: "scale",
+				BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 1024, Snapshot: snap})
+			if err != nil {
+				t.Fatalf("reference restore %d: %v", i, err)
+			}
+			host := "http://" + inst.Lease.HostIP.String() + ":8080"
+			if _, err := firstResponse(host+"/", 30*time.Second); err != nil {
+				t.Fatalf("reference restore %d does not serve: %v", i, err)
+			}
+			restoreFirst = append(restoreFirst, time.Since(start))
+			start = time.Now()
+			get(t, host+"/heavy")
+			restoreHeavy = append(restoreHeavy, time.Since(start))
+			_ = m.Destroy(context.Background(), id)
+		}
+		t.Logf("reference snapshot restore: first byte p50 %v max %v; CPU-bound request p50 %v max %v",
+			percentile(restoreFirst, 50), percentile(restoreFirst, 100), percentile(restoreHeavy, 50), percentile(restoreHeavy, 100))
+	}
 	if frozen > running {
 		t.Fatalf("freezing grew the VMs: %d -> %d MB", running, frozen)
 	}
+}
+
+// serveTraffic serves every VM, four requests at a time, for d: JSON reads
+// (allocation churn, so young-generation GC) with a CPU-bound request every
+// 50th.
+func serveTraffic(t *testing.T, hosts []string, d time.Duration) {
+	t.Helper()
+	client := &http.Client{Timeout: 60 * time.Second}
+	deadline := time.Now().Add(d)
+	var wg sync.WaitGroup
+	var served, failed atomic.Int64
+	for _, host := range hosts {
+		for w := 0; w < 4; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; time.Now().Before(deadline); i++ {
+					path := "/"
+					if i%50 == 49 {
+						path = "/heavy"
+					}
+					resp, err := client.Get(host + path)
+					if err != nil {
+						failed.Add(1)
+						time.Sleep(100 * time.Millisecond)
+						continue
+					}
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+					served.Add(1)
+				}
+			}()
+		}
+	}
+	wg.Wait()
+	t.Logf("traffic: %d requests to %d VMs over %v", served.Load(), len(hosts), d)
+	if failed.Load() > 0 {
+		t.Fatalf("traffic: %d requests failed", failed.Load())
+	}
+}
+
+// meminfoMB reads one /proc/meminfo field in MB, or 0 when it is absent.
+func meminfoMB(t *testing.T, key string) int64 {
+	t.Helper()
+	raw, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == key {
+			kb, _ := strconv.ParseInt(f[1], 10, 64)
+			return kb >> 10
+		}
+	}
+	return 0
 }
 
 func get(t *testing.T, url string) {

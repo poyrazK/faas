@@ -27,9 +27,10 @@ class OperationDefinitionResponse:
     revision: str
     deployment_id: UUID
     spec: OperationDefinitionSpec
-    """Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment.
-    Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps. Ownership
-    comes from verified authentication. Production admission remains disabled pending qualification."""
+    """Resolved immutable contract for an HTTP handler or a named linear workflow from the same deployment.
+    Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps; steps are HTTP
+    actions, fixed timers or declared approvals, ending with an HTTP action. Ownership comes from verified
+    authentication. Production admission remains disabled pending qualification."""
     created_at: datetime.datetime
     release_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

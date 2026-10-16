@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -290,6 +291,19 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		}
 		if resumes != 1 || successes != 1 {
 			t.Fatalf("duplicate lifecycle events: %+v", events.Events)
+		}
+		// ADR-1195: one run spans both generations; its step attempts appear once.
+		var steps []string
+		for _, e := range readOperationTimeline(t, store.(state.OperationTimelineStore), f.account.ID, op.ID, 2) {
+			if e.Kind == api.OperationTimelineKindStep {
+				if e.Attempt.ExecutionID != run.ID || e.Attempt.Generation != 0 || e.Attempt.Logs != nil {
+					t.Fatalf("step attempt identity: %+v", e.Attempt)
+				}
+				steps = append(steps, fmt.Sprintf("%s/%d/%s", e.Attempt.Step, e.Attempt.Attempt, e.Attempt.Outcome))
+			}
+		}
+		if got := strings.Join(steps, " "); got != "collect/1/succeeded transform/1/failed transform/2/succeeded finish/1/succeeded" {
+			t.Fatalf("timeline step attempts = %s", got)
 		}
 
 		deliveries, err := store.ClaimDueAppWebhookDeliveries(ctx, 10, time.Now().Add(time.Second))

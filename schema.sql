@@ -4329,10 +4329,14 @@ BEGIN
     SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
     WHERE project_id = project FOR SHARE;
     IF NOT FOUND THEN
-        -- The project BEFORE DELETE guard already admitted this deletion.
-        -- FK cascades can remove the guard before dependent rows are cleaned.
-        -- A live project with missing evidence must still fail closed.
-        IF NOT EXISTS (SELECT 1 FROM projects WHERE id = project) THEN RETURN; END IF;
+        -- The project or account BEFORE DELETE guard already admitted this
+        -- deletion. FK cascades can remove the guard before dependent rows,
+        -- or before the project itself, are cleaned. A live project in a
+        -- live account with missing evidence must still fail closed.
+        IF NOT EXISTS (
+            SELECT 1 FROM projects p JOIN accounts a ON a.id = p.account_id
+            WHERE p.id = project
+        ) THEN RETURN; END IF;
         RAISE EXCEPTION 'project configuration guard is missing'
             USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
     END IF;
@@ -11053,6 +11057,24 @@ END $$;
 
 
 --
+-- Name: guard_customer_operation_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_customer_operation_webhook_routing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM inbound_webhook_endpoints WHERE id = NEW.endpoint_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = NEW.endpoint_id)
+       OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = NEW.endpoint_id) THEN
+        RAISE EXCEPTION 'endpoint already has another delivery mode' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_deployment_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14868,11 +14890,15 @@ BEGIN
     PERFORM 1 FROM inbound_webhook_endpoints WHERE id = endpoint FOR UPDATE;
     IF TG_TABLE_NAME = 'workflow_webhook_bindings' THEN
         IF EXISTS (SELECT 1 FROM workflow_callback_webhook_bindings WHERE endpoint_id = endpoint)
-           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint) THEN
+           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint)
+           OR EXISTS (SELECT 1 FROM customer_operation_webhook_bindings WHERE endpoint_id = endpoint) THEN
             RAISE EXCEPTION 'endpoint already has a callback or operation binding' USING ERRCODE = '23505';
         END IF;
     ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
         RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
+    ELSIF TG_TABLE_NAME = 'exclusive_work_trigger_bindings'
+          AND EXISTS (SELECT 1 FROM customer_operation_webhook_bindings WHERE endpoint_id = endpoint) THEN
+        RAISE EXCEPTION 'endpoint already starts a customer operation' USING ERRCODE = '23505';
     END IF;
     RETURN NEW;
 END;
@@ -23724,6 +23750,21 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_attempt_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_attempt_instances (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    attempt integer NOT NULL,
+    instance_id uuid NOT NULL,
+    placed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT customer_operation_attempt_instances_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_attempt_instances_generation_check CHECK ((generation > 0))
+);
+
+
+--
 -- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23793,7 +23834,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'waiting'::text, 'resumed'::text, 'approval_decided'::text, 'signal_received'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -23964,6 +24005,7 @@ CREATE TABLE public.customer_operations (
     execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
     workflow_run_id uuid,
     job_run_id uuid,
+    deadline_at timestamp with time zone,
     CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
     CONSTRAINT customer_operation_subject_valid CHECK (((NOT (record ? 'subject'::text)) OR COALESCE(((jsonb_typeof((record -> 'subject'::text)) = 'object'::text) AND ((((record -> 'subject'::text) - 'type'::text) - 'id'::text) = '{}'::jsonb) AND (jsonb_typeof(((record -> 'subject'::text) -> 'type'::text)) = 'string'::text) AND (((record -> 'subject'::text) ->> 'type'::text) ~ '^[a-z][a-z0-9-]{0,63}$'::text) AND (jsonb_typeof(((record -> 'subject'::text) -> 'id'::text)) = 'string'::text) AND ((octet_length(((record -> 'subject'::text) ->> 'id'::text)) >= 1) AND (octet_length(((record -> 'subject'::text) ->> 'id'::text)) <= 256)) AND (((record -> 'subject'::text) ->> 'id'::text) !~ '[\x01-\x1f\x7f]'::text)), false))),
     CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
@@ -23977,7 +24019,7 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
     CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
-    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
     CONSTRAINT customer_operations_workflow_record_check CHECK (((workflow_run_id IS NULL) OR (NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (workflow_run_id)::text))))
 );
 
@@ -24055,6 +24097,60 @@ CREATE TABLE public.customer_operation_stream_leases (
     account_id uuid NOT NULL,
     operation_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: customer_operation_webhook_binding_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.customer_operation_webhook_binding_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: customer_operation_webhook_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_webhook_bindings (
+    endpoint_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation_name text NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    event_types text[] DEFAULT '{}'::text[] NOT NULL,
+    version bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT customer_operation_webhook_bindings_event_types_check CHECK (((cardinality(event_types) <= 32) AND (array_position(event_types, NULL::text) IS NULL))),
+    CONSTRAINT customer_operation_webhook_bindings_operation_name_check CHECK ((operation_name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_webhook_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
+    CONSTRAINT customer_operation_webhook_bindings_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: customer_operation_webhook_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_webhook_receipts (
+    endpoint_id uuid NOT NULL,
+    provider_event_id text NOT NULL,
+    body_sha256 bytea NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    binding_version bigint NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_webhook_receipts_binding_version_check CHECK ((binding_version > 0)),
+    CONSTRAINT customer_operation_webhook_receipts_body_sha256_check CHECK ((octet_length(body_sha256) = 32)),
+    CONSTRAINT customer_operation_webhook_receipts_check CHECK ((expires_at > accepted_at)),
+    CONSTRAINT customer_operation_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256)))
 );
 
 
@@ -39913,6 +40009,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_attempt_instances customer_operation_attempt_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_attempt_instances
+    ADD CONSTRAINT customer_operation_attempt_instances_pkey PRIMARY KEY (operation_id, generation, attempt);
+
+
+--
 -- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40046,6 +40150,22 @@ ALTER TABLE ONLY public.customer_operation_result_blobs
 
 ALTER TABLE ONLY public.customer_operation_stream_leases
     ADD CONSTRAINT customer_operation_stream_leases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_pkey PRIMARY KEY (endpoint_id);
+
+
+--
+-- Name: customer_operation_webhook_receipts customer_operation_webhook_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_receipts
+    ADD CONSTRAINT customer_operation_webhook_receipts_pkey PRIMARY KEY (endpoint_id, provider_event_id);
 
 
 --
@@ -48058,6 +48178,20 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operation_webhook_bindings_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_webhook_bindings_tenant_idx ON public.customer_operation_webhook_bindings USING btree (account_id, platform_tenant_id);
+
+
+--
+-- Name: customer_operation_webhook_receipts_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_webhook_receipts_expiry_idx ON public.customer_operation_webhook_receipts USING btree (endpoint_id, expires_at);
+
+
+--
 -- Name: customer_operation_workflow_claim_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -48107,6 +48241,13 @@ CREATE INDEX customer_operations_account_subject_history_idx ON public.customer_
 
 
 --
+-- Name: customer_operations_active_deadline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_active_deadline_idx ON public.customer_operations USING btree (deadline_at, id) WHERE ((deadline_at IS NOT NULL) AND (state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text])));
+
+
+--
 -- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -48117,7 +48258,7 @@ CREATE INDEX customer_operations_definition_retention_idx ON public.customer_ope
 -- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'requires_reconciliation'::text]));
 
 
 --
@@ -55499,6 +55640,13 @@ CREATE TRIGGER customer_operation_subject_immutable BEFORE UPDATE OF record ON p
 
 
 --
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.customer_operation_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_customer_operation_webhook_routing();
+
+
+--
 -- Name: data_upstreams data_upstreams_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -60582,6 +60730,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_attempt_instances customer_operation_attempt_instanc_operation_id_generation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_attempt_instances
+    ADD CONSTRAINT customer_operation_attempt_instanc_operation_id_generation_fkey FOREIGN KEY (operation_id, generation) REFERENCES public.customer_operation_executions(operation_id, generation) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60755,6 +60911,46 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 ALTER TABLE ONLY public.customer_operation_stream_leases
     ADD CONSTRAINT customer_operation_stream_leases_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_receipts customer_operation_webhook_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_receipts
+    ADD CONSTRAINT customer_operation_webhook_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
 
 
 --

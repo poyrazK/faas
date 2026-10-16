@@ -18,8 +18,8 @@ from faas_sdk.models import (
     ApproveEnvironmentGitRevisionRequest,
     ApproveEnvironmentGitRevisionResponse,
     CreateEnvironmentGitSourceRequest,
-    EnvironmentGitOpsStatusResponse,
     EnvironmentGitOpsExplanation,
+    EnvironmentGitOpsStatusResponse,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
@@ -69,15 +69,28 @@ def test_gitops_explanation_preserves_unknown_serving_and_scoped_actions() -> No
         "source_freshness": "stale",
         "approved_revision_id": "approved",
         "applied_revision_id": "historical",
-        "workloads": [{
-            "resource": "workload/report", "app_id": "app", "execution_mode": "job",
-            "preparation": "complete", "qualification": "complete", "activation": "complete",
-            "serving": "unknown", "blocking_reasons": ["environment_serving_evidence_missing"],
-        }],
-        "issues": [{
-            "resource": "workload/report", "stage": "serving", "code": "scheduled_occurrence_unproven",
-            "message": "No current serving proof.", "actor": "customer", "action": "Inspect current scheduled task logs.",
-        }],
+        "workloads": [
+            {
+                "resource": "workload/report",
+                "app_id": "app",
+                "execution_mode": "job",
+                "preparation": "complete",
+                "qualification": "complete",
+                "activation": "complete",
+                "serving": "unknown",
+                "blocking_reasons": ["environment_serving_evidence_missing"],
+            }
+        ],
+        "issues": [
+            {
+                "resource": "workload/report",
+                "stage": "serving",
+                "code": "scheduled_occurrence_unproven",
+                "message": "No current serving proof.",
+                "actor": "customer",
+                "action": "Inspect current scheduled task logs.",
+            }
+        ],
     }
     explanation = EnvironmentGitOpsExplanation.from_dict(body)
     assert explanation.to_dict() == body

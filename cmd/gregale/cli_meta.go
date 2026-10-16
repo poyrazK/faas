@@ -1558,7 +1558,7 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
-			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}},
+			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for scripts; crons rm does not prompt", Bool: true}}},
 			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale crons run --app my-api --interactive", "gregale crons run <cron-id>"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a task, review and confirm one manual run, then follow its request", Bool: true},
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
@@ -3956,10 +3956,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "metrics",
 		DocSlug: "metrics",
-		Short:   "Per-app or account-wide metrics (slug defaults to linked context)",
+		Short:   "Per-app or account-wide metrics, or the service map (slug defaults to linked context)",
 		Flags: []cliFlag{
 			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
 			{Name: "account", Short: "account-wide roll-up"},
+			{Name: "services", Short: "service map of app-to-app calls (default range 1h)"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},
@@ -4154,8 +4155,18 @@ var cliCommands = []cliCommand{
 				{Name: "email-from", Value: "SENDER", Short: "sender address, or a display name with the address in angle brackets"},
 				{Name: "email-api-key-stdin", Short: "read the email provider API key from stdin (prompted on a terminal)"},
 				{Name: "authz", Value: "FILE", Short: "JSON file declaring custom roles and policies (applied on restart)"},
+				{Name: "events", Value: "on|off", Short: "publish user lifecycle events (auth.user.*) to Gregale's event bus", ClosedSet: []string{"on", "off"}},
+				{Name: "passkeys", Value: "on|off", Short: "let users sign in with a passkey", ClosedSet: []string{"on", "off"}},
+				{Name: "passkey-rp-id", Value: "DOMAIN", Short: "parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app's host"},
+				{Name: "brand-name", Value: "NAME", Short: "name shown on the hosted pages and in emails, or none for the site's host"},
+				{Name: "brand-color", Value: "#RRGGBB", Short: "#rrggbb accent colour for the hosted pages, or none"},
+				{Name: "brand-logo-url", Value: "URL", Short: "HTTPS URL of the logo on the hosted pages, or none"},
+				{Name: "captcha", Value: "PROVIDER", Short: "CAPTCHA on sign-up and sign-in: turnstile, hcaptcha or off", ClosedSet: []string{"turnstile", "hcaptcha", "off"}},
+				{Name: "captcha-site-key", Value: "KEY", Short: "the CAPTCHA provider's site key (public)"},
+				{Name: "captcha-secret-stdin", Short: "read the CAPTCHA provider's secret key from stdin (prompted on a terminal)"},
+				{Name: "activity-retention", Value: "DAYS", Short: "days to keep sign-in activity, or forever"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
-			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
+			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
 				{Name: "list", Short: "List the enabled providers", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "enable", Short: "Enable a provider, replacing its credentials", Positionals: []string{"<name>", "<provider>"}, Flags: []cliFlag{
@@ -4183,6 +4194,12 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "validate the file without importing"},
 				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 			}, Examples: []string{"gregale auth import shop-auth --file users.jsonl --dry-run", "printf '%s' \"$ADMIN_KEY\" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin"}},
+			{Name: "activity", Short: "List sign-ins, sign-ups and account changes, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "user", Value: "ID", Short: "only this user's activity (user ID)"},
+				{Name: "search", Value: "TEXT", Short: "an event such as login, or part of an email address"},
+				{Name: "limit", Value: "N", Short: "entries to show (1-100)"},
+				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+			}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --search login --admin-key-stdin"}},
 		},
 	},
 	{

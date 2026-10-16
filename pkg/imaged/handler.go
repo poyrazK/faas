@@ -118,6 +118,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
+	// serving vmmd cannot materialize; the post-switch imaged stages them.
+	deferLegacyParentBases bool
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -517,6 +520,14 @@ func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 // opt-in prevents a partially rolled-out fleet from queueing tasks forever.
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 	h.releasePhaseEnabled = enabled
+	return h
+}
+
+// WithLegacyParentDeferral is for the rolling pre-stage only. A child base
+// whose parent the serving (previous-release) vmmd cannot materialize is left
+// for the serving imaged, which stages it against the new vmmd before ready.
+func (h *Handler) WithLegacyParentDeferral(enabled bool) *Handler {
+	h.deferLegacyParentBases = enabled
 	return h
 }
 
@@ -3441,13 +3452,22 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// never be restored. Keeping it and discarding this capture would
 			// leave the deployment cold-booting on every wake, so retire it
 			// and publish the new capture instead.
-			if state.SnapshotDriveKey(stored) == "" && state.SnapshotDriveKey(snap) != "" {
+			//
+			// The same holds for a live row of another Firecracker version
+			// (ADR-1344 §6): no fleet-wide sweep retires it any more, and
+			// the node that just captured cannot restore it, so the newer
+			// capture replaces it.
+			unrestorable := state.SnapshotDriveKey(stored) == ""
+			otherFC := snap.FCVersion != "" && stored.FCVersion != snap.FCVersion
+			if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
 				}
 				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
-					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID)
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID,
+					"missing_drive", unrestorable, "retired_fc_version", stored.FCVersion,
+					"capture_fc_version", snap.FCVersion)
 				retired := stored.ID
 				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
@@ -4713,10 +4733,11 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 
 // --- F2: FC-version startup sweep ------------------------------------------
 
-// MarkFCSnapshotsStale is the F2 sweep body. It is invoked once at imaged
-// startup (cmd/imaged/main.go wires it) and never on a timer — a Firecracker
-// upgrade requires the operator to restart imaged, which matches the
-// "snapshots are cache, not truth" framing (ADR-005). Idempotent.
+// MarkFCSnapshotsStale marks every live snapshot of another Firecracker
+// version stale, fleet-wide. imaged startup no longer calls it (ADR-1344 §6):
+// imaged runs on every compute node, so a startup sweep let one upgraded node
+// retire every other node's warm snapshots in a rolling upgrade. It is for an
+// operator to run once the whole fleet is on fcVersion. Idempotent.
 //
 // Issue #470 / PR C / ADR-074: when n > 0, walk the just-marked-stale
 // rows and emit app.warm_snapshot_stale per affected app. The kind

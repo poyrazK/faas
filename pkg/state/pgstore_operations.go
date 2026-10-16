@@ -210,6 +210,20 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 		return Operation{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	op, created, err := s.admitOperationTx(ctx, tx, account, definition, tenant, admission, hint)
+	if err != nil || !created {
+		return op, created, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Operation{}, false, fmt.Errorf("state: commit operation admission: %w", err)
+	}
+	return op, true, nil
+}
+
+// admitOperationTx admits or replays one submission inside the caller's
+// transaction, so another durable receipt can commit with it (ADR-1193).
+// A replay performs no writes; the caller decides whether to commit.
+func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, definition, tenant pgtype.UUID, admission OperationAdmission, hint OperationDefinition) (Operation, bool, error) {
 	q := sqlc.New()
 	if hint.Spec.Workflow != "" {
 		if err := q.LockWorkflowRunAdmission(ctx, tx, hint.AppID); err != nil {
@@ -239,7 +253,8 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 		return Operation{}, false, mapErr(err)
 	}
 	limits := api.MustLimitsFor(api.Plan(plan))
-	now := time.Now().UTC()
+	// Postgres keeps microseconds; the returned Operation must equal the stored one.
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	op, inv, key, fingerprint, err := prepareOperationAdmission(def, admission, limits, now)
 	if err != nil {
 		return Operation{}, false, err
@@ -321,9 +336,6 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 	if err := operationPinsTx(ctx, tx, op); err != nil {
 		return Operation{}, false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Operation{}, false, fmt.Errorf("state: commit operation admission: %w", err)
-	}
 	return op, true, nil
 }
 
@@ -344,7 +356,7 @@ func insertOperationPG(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, op Opera
 			return err
 		}
 	}
-	if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{ID: id, AccountID: account, AppID: app, TenantID: tenant, DefinitionID: definition, InvocationID: invocation, WorkflowRunID: workflowID, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}}); err != nil {
+	if err := q.InsertCustomerOperation(ctx, tx, sqlc.InsertCustomerOperationParams{ID: id, AccountID: account, AppID: app, TenantID: tenant, DefinitionID: definition, InvocationID: invocation, WorkflowRunID: workflowID, JobRunID: mustPgUUID(op.JobRunID), State: string(op.State), Record: record, ExpiresAt: pgtype.Timestamptz{Time: op.ExpiresAt, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: op.CreatedAt, Valid: true}, DeadlineAt: operationPGTime(op.DeadlineAt)}); err != nil {
 		return fmt.Errorf("state: insert operation: %w", err)
 	}
 	if op.WorkflowRunID != "" {
