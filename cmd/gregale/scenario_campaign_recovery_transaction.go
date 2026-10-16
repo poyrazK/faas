@@ -27,6 +27,18 @@ type testCampaignRecoveryTransaction struct {
 	Removals      []testCampaignRecoveryRemoval    `json:"removals"`
 }
 
+// Receipts must remain readable by the same bounded JSON reader used on retry.
+func persistTestCampaignRecoveryTransaction(path string, tx testCampaignRecoveryTransaction) error {
+	body, err := json.MarshalIndent(tx, "", "  ")
+	if err != nil {
+		return err
+	}
+	if len(body)+1 > 8*1024*1024 {
+		return errors.New("recovery receipt exceeds 8 MiB; exclusion locks and checkpoints were not changed")
+	}
+	return persistTestCampaignProcess(path, tx)
+}
+
 func haltedTestCampaignCheckpoint(cp testCampaignCheckpoint, reason string) testCampaignCheckpoint {
 	cp.Halted = true
 	batches := make(map[string]testCampaignCheckpointBatch, len(cp.Batches))

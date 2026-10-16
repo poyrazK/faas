@@ -226,7 +226,7 @@ func prepareTestCampaignClaimRecovery(resolver *testCampaignBundleResolver) (tes
 		}
 	}
 	tx.Removals = append(tx.Removals, testCampaignRecoveryRemoval{resolver.Index.ClaimPath + ".lock", result.LockSHA256})
-	if err := persistTestCampaignProcess(resolver.Index.ClaimPath+".recovery.json", tx); err != nil {
+	if err := persistTestCampaignRecoveryTransaction(resolver.Index.ClaimPath+".recovery.json", tx); err != nil {
 		return tx, result, err
 	}
 	return tx, result, nil

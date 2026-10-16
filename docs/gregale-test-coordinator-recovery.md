@@ -103,7 +103,9 @@ reported only when the bound receipt's checkpoint and lock postconditions still
 hold. A replacement lock, changed checkpoint or changed claim blocks replay;
 recovery never restores old checkpoint contents to make a receipt match. Frozen
 checkpoints and transferred authority remain unchanged. These local receipts are
-not test results and are not included in portable bundles.
+not test results and are not included in portable bundles. Receipts are bounded
+to 8 MiB; recovery rejects larger transactions before changing checkpoints or
+exclusion locks.
 
 The portable gate kills recovery subprocesses after preparing the receipt,
 persisting the checkpoint, unlinking the runner lock and unlinking the claim

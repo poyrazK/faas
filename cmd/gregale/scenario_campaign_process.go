@@ -318,7 +318,7 @@ func prepareTestCampaignRunnerRecovery(directory string, plan testCampaignPolicy
 	tx := testCampaignRecoveryTransaction{SchemaVersion: 1, Kind: "runner", Scope: directory, Binding: testCampaignJSONHash(plan), Runner: &result,
 		Checkpoints: []testCampaignRecoveryCheckpoint{{directory, testCampaignJSONHash(cp), after}},
 		Removals:    []testCampaignRecoveryRemoval{{filepath.Join(directory, "runner.lock"), result.LockSHA256}}}
-	if err := persistTestCampaignProcess(filepath.Join(directory, "runner-recovery.json"), tx); err != nil {
+	if err := persistTestCampaignRecoveryTransaction(filepath.Join(directory, "runner-recovery.json"), tx); err != nil {
 		return tx, result, err
 	}
 	return tx, result, nil
