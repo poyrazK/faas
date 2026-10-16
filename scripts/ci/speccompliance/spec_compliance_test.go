@@ -73,6 +73,7 @@ const (
 	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
+	serviceMapFile                   = "service_map.go"                 // ADR-1131 account service map DTOs
 	applicationStandardsFile         = "application_standards.go"       // ADR-435 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
 	applicationStandardMutationsFile = "application_standard_mutations.go"
@@ -84,7 +85,6 @@ const (
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
 	imageRunsFile                    = "image_runs.go"           // ADR-1161 — docker-run-shaped image run DTOs
-	serviceMapFile                   = "service_map.go"          // ADR-750 account service map DTOs
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 )
@@ -196,6 +196,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/gitlab/disconnect":                                    true, // GitLab.com session + CSRF form
 	"POST /dashboard/install/connect":                               true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                    true, // ADR-379 HTML session inventory
+	"GET /dashboard/service-map":                                    true, // ADR-1131 HTML view of GET /v1/service-map
 	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
 	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
 	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
@@ -207,6 +208,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/auth/settings":                     true, // ADR-1190 session + CSRF typed Auth settings form
 	"POST /dashboard/apps/{slug}/auth/providers":                    true, // ADR-1190 session + CSRF OAuth provider form
 	"POST /dashboard/apps/{slug}/auth/providers/{provider}/disable": true, // ADR-1190 session + CSRF provider removal form
+	"POST /dashboard/apps/{slug}/auth/keys":                         true, // ADR-1190 session + CSRF standby signing key
+	"POST /dashboard/apps/{slug}/auth/keys/{id}/activate":           true, // ADR-1190 session + CSRF signing key activation
+	"POST /dashboard/apps/{slug}/auth/keys/{id}/revoke":             true, // ADR-1190 session + CSRF signing key revocation
 	"GET /dashboard/apps/{slug}/data-api/types/{id}":                true, // ADR-968 session-auth type download
 	"POST /dashboard/apps/{slug}/data-api/refresh":                  true, // ADR-968 session + CSRF contract refresh adapter
 	"POST /dashboard/apps/{slug}/data-api/{operation}":              true, // ADR-968 session + CSRF schema/type task adapter
@@ -247,7 +251,6 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
-	"GET /dashboard/service-map":                                    true, // ADR-750 HTML view of GET /v1/service-map
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -447,12 +450,19 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
-	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
-	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
-	"ListWorkflowScheduleOccurrencesOptions":          true, // client-only history query parameters; the occurrence response DTOs are in the public spec
-	"InboundWebhookEndpointRow":                       true,
-	"AppLogDrainRow":                                  true,
-	"QueueBindingRow":                                 true,
+	// ADR-1194: the decision payload delivered to the workflow, not an apid request or response.
+	"OperationApprovalPayload":  true,
+	"OperationApprovalDecision": true,
+	"OperationApprovalActor":    true,
+	// ADR-1193: the operation input delivered to the app, not an apid request or response.
+	"OperationWebhookInput":                  true,
+	"OperationWebhookEvent":                  true,
+	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                 true, // client-only history query parameters for the documented run list response
+	"ListWorkflowScheduleOccurrencesOptions": true, // client-only history query parameters; the occurrence response DTOs are in the public spec
+	"InboundWebhookEndpointRow":              true,
+	"AppLogDrainRow":                         true,
+	"QueueBindingRow":                        true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
@@ -1348,6 +1358,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
+		filepath.Join(root, "pkg", "api", "operation_timeline.go"), // ADR-1195 timeline DTOs
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),   // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"),  // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),    // ADR-1194 operation wait and approval DTOs
+		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

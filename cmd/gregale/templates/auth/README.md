@@ -38,9 +38,11 @@ Each signing key is its own secret; the newest `AUTH_JWT_SIGNER_<ID>` (its
 value is the Unix time it was activated) names the key that signs, and the
 others only verify. `gregale auth keys` rotates them. Configure sign-in
 providers, MFA and password rules with `gregale auth config` and
-`gregale auth providers`, which write `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*` and
-`GOTRUE_PASSWORD_*` secrets; `GOTRUE_SECURITY_CAPTCHA_*` can also be set
-directly. Any other `GOTRUE_*` secret stops startup because Gregale owns that
+`gregale auth providers`, which write `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`,
+`GOTRUE_PASSWORD_*`, `GOTRUE_PASSKEY_ENABLED` and `GOTRUE_SECURITY_CAPTCHA_*`
+secrets, and the hosted pages' `AUTH_UI_*` branding, `AUTH_CAPTCHA_SITE_KEY`,
+`AUTH_PASSKEY_RP_ID` and `AUTH_AUDIT_RETENTION_DAYS`. The front derives
+GoTrue's WebAuthn relying party from the Auth app's host. Any other `GOTRUE_*` secret stops startup because Gregale owns that
 setting. `GET /settings/v1` reports the running configuration without
 credentials.
 

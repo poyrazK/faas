@@ -17,7 +17,7 @@
   the app's environment scope, `version` = deployment tag or commit. The
   capability is `internal`, dark behind `FAAS_DATADOG_INTEGRATION_ENABLED=1`.
 - **Why:** Many target customers already run Datadog. Gregale's own
-  observability (ADR-740 service map, ADR-741 change timeline) covers what
+  observability (ADR-1131 service map, ADR-751 change timeline) covers what
   only the platform can see; customers who standardise on Datadog still need
   their app's logs and release events there. Today that takes a generic log
   drain whose JSON shape Datadog does not parse as a log message, plus

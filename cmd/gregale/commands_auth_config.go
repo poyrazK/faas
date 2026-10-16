@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,11 +19,11 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
-var authEmailSecrets = []string{"AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY"}
+var authEmailSecrets = authsettings.EmailSecrets
 
 // cmdAuthConfig shows the running app's settings, or changes them when any
 // setting flag is given. Secrets are write-only, so settings are read back
@@ -38,6 +39,17 @@ func cmdAuthConfig(args []string) int {
 	require := fs.String("password-require", "", "character classes every password needs: lower,upper,digit,symbol, or none")
 	leaked := fs.String("leaked-password-check", "", "on or off: refuse passwords found in known breaches (Have I Been Pwned)")
 	mfa := fs.String("mfa", "", "on or off: let users enrol an authenticator app (TOTP); enrolled users keep verifying when off")
+	passkeys := fs.String("passkeys", "", "on or off: let users sign in with a passkey")
+	passkeyRPID := fs.String("passkey-rp-id", "", "parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app's host")
+	extras := authHostedFlags{
+		name:            fs.String("brand-name", "", "name shown on the hosted pages and in emails, or none for the site's host"),
+		color:           fs.String("brand-color", "", "#rrggbb accent colour for the hosted pages, or none"),
+		logo:            fs.String("brand-logo-url", "", "HTTPS URL of the logo on the hosted pages, or none"),
+		captcha:         fs.String("captcha", "", "CAPTCHA on sign-up and sign-in: turnstile, hcaptcha or off"),
+		captchaSiteKey:  fs.String("captcha-site-key", "", "the CAPTCHA provider's site key (public)"),
+		captchaSecretIn: fs.Bool("captcha-secret-stdin", false, "read the CAPTCHA provider's secret key from stdin (prompted on a terminal)"),
+		retention:       fs.String("activity-retention", "", "days to keep sign-in activity, or forever"),
+	}
 	emailProvider := fs.String("email-provider", "", "HTTPS email provider: resend, postmark, or none to remove it")
 	emailFrom := fs.String("email-from", "", "sender address, or a display name with the address in angle brackets")
 	emailKeyStdin := fs.Bool("email-api-key-stdin", false, "read the email provider API key from stdin (prompted on a terminal)")
@@ -53,8 +65,18 @@ func cmdAuthConfig(args []string) int {
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	var change authsettings.Change
-	if err := parseAuthChange(given, &change, *siteURL, *redirects, *signup, *autoconfirm, *minLength, *require, *leaked, *mfa); err != nil {
+	if err := parseAuthChange(given, &change, *siteURL, *redirects, *signup, *autoconfirm, *minLength, *require, *leaked, *mfa, *passkeys); err != nil {
 		return printErr("Invalid Auth settings", err)
+	}
+	if err := extras.apply(given, &change); err != nil {
+		return printErr("Invalid Auth settings", err)
+	}
+	if given["passkey-rp-id"] {
+		rpID := *passkeyRPID
+		if rpID == "none" {
+			rpID = ""
+		}
+		change.PasskeyRPID = &rpID
 	}
 	set, unset, err := change.Secrets()
 	if err != nil {
@@ -102,7 +124,7 @@ func cmdAuthConfig(args []string) int {
 	return 0
 }
 
-func parseAuthChange(given map[string]bool, change *authsettings.Change, siteURL, redirects, signup, autoconfirm string, minLength int, require, leaked, mfa string) error {
+func parseAuthChange(given map[string]bool, change *authsettings.Change, siteURL, redirects, signup, autoconfirm string, minLength int, require, leaked, mfa, passkeys string) error {
 	if given["site-url"] {
 		change.SiteURL = &siteURL
 	}
@@ -129,16 +151,64 @@ func parseAuthChange(given map[string]bool, change *authsettings.Change, siteURL
 		}
 		change.PasswordRequire = &classes
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked-password-check": &change.LeakedPasswordCheck, "mfa": &change.MFA} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked-password-check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "passkeys": &change.Passkeys} {
 		if !given[name] {
 			continue
 		}
-		value := map[string]string{"signup": signup, "autoconfirm": autoconfirm, "leaked-password-check": leaked, "mfa": mfa}[name]
+		value := map[string]string{"signup": signup, "autoconfirm": autoconfirm, "leaked-password-check": leaked, "mfa": mfa, "passkeys": passkeys}[name]
 		on, err := parseOnOff(name, value)
 		if err != nil {
 			return err
 		}
 		*target = &on
+	}
+	return nil
+}
+
+// authHostedFlags are the hosted-page and activity settings.
+type authHostedFlags struct {
+	name, color, logo, captcha, captchaSiteKey, retention *string
+	captchaSecretIn                                       *bool
+}
+
+func (f authHostedFlags) apply(given map[string]bool, change *authsettings.Change) error {
+	clearable := func(flag string, value *string, target **string) {
+		if given[flag] {
+			v := *value
+			if v == "none" {
+				v = ""
+			}
+			*target = &v
+		}
+	}
+	clearable("brand-name", f.name, &change.UIName)
+	clearable("brand-color", f.color, &change.UIColor)
+	clearable("brand-logo-url", f.logo, &change.UILogoURL)
+	switch {
+	case given["captcha"] && *f.captcha == "off":
+		if given["captcha-site-key"] || *f.captchaSecretIn {
+			return errors.New("--captcha off takes no site key or secret")
+		}
+		change.Captcha = &authsettings.Captcha{}
+	case given["captcha"]:
+		secret, _, err := readRealtimeEndpointSecret("", *f.captchaSecretIn, "captcha-secret", "CAPTCHA secret key: ", api.AuthProviderSecretMaxBytes, true)
+		if err != nil {
+			return err
+		}
+		change.Captcha = &authsettings.Captcha{Provider: *f.captcha, SiteKey: *f.captchaSiteKey, Secret: secret}
+	case given["captcha-site-key"] || *f.captchaSecretIn:
+		return errors.New("--captcha-site-key and --captcha-secret-stdin need --captcha turnstile or hcaptcha")
+	}
+	if given["activity-retention"] {
+		days := 0
+		if *f.retention != "forever" {
+			n, err := strconv.Atoi(*f.retention)
+			if err != nil || n < 1 {
+				return errors.New("--activity-retention must be a number of days or forever")
+			}
+			days = n
+		}
+		change.ActivityRetentionDays = &days
 	}
 	return nil
 }
@@ -230,6 +300,25 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 		passwords += "; must include " + strings.Join(settings.Password.Required, ", ")
 	}
 	passwords += "; leaked-password check " + onOff(settings.Password.LeakedPasswordCheck)
+	branding := settings.Branding.Name
+	if settings.Branding.Color != nil {
+		branding += ", " + *settings.Branding.Color
+	}
+	if settings.Branding.LogoURL != nil {
+		branding += ", logo " + *settings.Branding.LogoURL
+	}
+	captchaState := "off"
+	if settings.Captcha != nil {
+		captchaState = settings.Captcha.Provider
+	}
+	retention := "forever"
+	if settings.Activity.RetentionDays != nil {
+		retention = fmt.Sprintf("%d days", *settings.Activity.RetentionDays)
+	}
+	passkeys := "off"
+	if settings.Passkeys.Enabled {
+		passkeys = "on, for " + settings.Passkeys.RPID
+	}
 	events := "off"
 	if settings.Events.Lifecycle {
 		events = "on (auth.user.* events from this app)"
@@ -237,6 +326,9 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	email := "not configured (email sign-in links and invitations fail)"
 	if settings.Email.Configured {
 		email = "configured"
+		if settings.Email.Provider != "" {
+			email = settings.Email.Provider + ", from " + settings.Email.From
+		}
 	}
 	keys := settings.Keys.Signing
 	if n := len(settings.Keys.Verifying); n > 0 {
@@ -246,7 +338,8 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"email delivery", email}, {"lifecycle events", events}, {"signing key", keys},
+		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"passkeys", passkeys}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
 	}

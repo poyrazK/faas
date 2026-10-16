@@ -158,8 +158,8 @@ func TestSchedFlushSink_EmptyBufferSkipsReport(t *testing.T) {
 	}
 }
 
-// adr: 1331
-// TestSchedFlushSink_RetriesFailedReport pins ADR-1331 §5 rule 5: a flush
+// adr: 1344
+// TestSchedFlushSink_RetriesFailedReport pins ADR-1344 §5 rule 5: a flush
 // error still surfaces to the caller, but the touches it carried are kept
 // and merged with newer ones, so activity seen during a store outage reaches
 // schedd once it recovers.
@@ -195,7 +195,7 @@ func TestSchedFlushSink_RetriesFailedReport(t *testing.T) {
 	}
 }
 
-// adr: 1331
+// adr: 1344
 // TestSchedFlushSink_RetriesUnresolvedInstance: a touch whose owning schedd
 // cannot be resolved (store unreachable) is retried, while an instance the
 // store reports gone is still dropped.
@@ -220,7 +220,7 @@ func TestSchedFlushSink_RetriesUnresolvedInstance(t *testing.T) {
 	}
 }
 
-// adr: 1331
+// adr: 1344
 // TestSchedFlushSink_RetryRetentionIsBounded: a failed touch older than
 // lastSeenRetryRetention is not retried.
 func TestSchedFlushSink_RetryRetentionIsBounded(t *testing.T) {

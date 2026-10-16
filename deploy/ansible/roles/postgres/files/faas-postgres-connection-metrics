@@ -15,7 +15,7 @@ set -- $values
 connections="${1:?missing connection count}"
 capacity="${2:?missing ordinary capacity}"
 
-# WAL archiving health (ADR-1331 §3). pg_stat_archiver covers the local
+# WAL archiving health (ADR-1344 §3). pg_stat_archiver covers the local
 # archive copy; the marker file is touched by archive_command after each
 # successful off-host push, which is otherwise best-effort and silent.
 archiver="$(psql -d faas -At -F ' ' -c "

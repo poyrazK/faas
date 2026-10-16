@@ -118,6 +118,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
+	// serving vmmd cannot materialize; the post-switch imaged stages them.
+	deferLegacyParentBases bool
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -517,6 +520,14 @@ func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 // opt-in prevents a partially rolled-out fleet from queueing tasks forever.
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 	h.releasePhaseEnabled = enabled
+	return h
+}
+
+// WithLegacyParentDeferral is for the rolling pre-stage only. A child base
+// whose parent the serving (previous-release) vmmd cannot materialize is left
+// for the serving imaged, which stages it against the new vmmd before ready.
+func (h *Handler) WithLegacyParentDeferral(enabled bool) *Handler {
+	h.deferLegacyParentBases = enabled
 	return h
 }
 
@@ -3443,7 +3454,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// and publish the new capture instead.
 			//
 			// The same holds for a live row of another Firecracker version
-			// (ADR-1331 §6): no fleet-wide sweep retires it any more, and
+			// (ADR-1344 §6): no fleet-wide sweep retires it any more, and
 			// the node that just captured cannot restore it, so the newer
 			// capture replaces it.
 			unrestorable := state.SnapshotDriveKey(stored) == ""
@@ -4723,7 +4734,7 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 // --- F2: FC-version startup sweep ------------------------------------------
 
 // MarkFCSnapshotsStale marks every live snapshot of another Firecracker
-// version stale, fleet-wide. imaged startup no longer calls it (ADR-1331 §6):
+// version stale, fleet-wide. imaged startup no longer calls it (ADR-1344 §6):
 // imaged runs on every compute node, so a startup sweep let one upgraded node
 // retire every other node's warm snapshots in a rolling upgrade. It is for an
 // operator to run once the whole fleet is on fcVersion. Idempotent.

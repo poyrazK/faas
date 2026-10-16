@@ -1,7 +1,7 @@
 from typing import Literal
 
 OperationRecoveryInspectionState = Literal[
-    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded"
+    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded", "waiting"
 ]
 
 OPERATION_RECOVERY_INSPECTION_STATE_VALUES: set[OperationRecoveryInspectionState] = {
@@ -11,6 +11,7 @@ OPERATION_RECOVERY_INSPECTION_STATE_VALUES: set[OperationRecoveryInspectionState
     "requires_reconciliation",
     "running",
     "succeeded",
+    "waiting",
 }
 
 

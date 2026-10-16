@@ -231,7 +231,7 @@ func TestRun_DispatchMetrics(t *testing.T) {
 	}
 }
 
-// --- service map (ADR-750) ---------------------------------------------------
+// --- service map (ADR-1131) ---------------------------------------------------
 
 func serviceMapServer(t *testing.T, payload api.ServiceMapResponse) (*string, *string) {
 	t.Helper()
@@ -262,6 +262,10 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		Edges: []api.ServiceMapEdge{{
 			CallerAppSlug: "public-api", TargetAppSlug: "billing",
 			Calls: 12040, Errors: 48, ErrorRatePct: 0.4, LatencyP50MS: 11.2, LatencyP95MS: 38,
+			ColdCalls: 9030, ColdCallPct: 75, SuggestWakeAhead: true,
+		}, {
+			CallerAppSlug: "billing", TargetAppSlug: "ledger",
+			Calls: 40, WakeAheadStarted: 10, WakeAheadUsed: 8,
 		}},
 	})
 	stdout := captureMetricsStdout(t)
@@ -278,11 +282,47 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		"public-api → billing",
 		"Calls:      12040 (errors 48, 0.40%)",
 		"p50=11.2ms p95=38.0ms",
-		"showing the 1 busiest edges",
+		"Woke:       9030 calls (75%) found the target parked",
+		"run `gregale wake-ahead public-api on` to restore billing while public-api wakes",
+		"Wake-ahead: 8 of 10 restores used",
+		"showing the 2 busiest edges",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\nfull: %s", want, out)
 		}
+	}
+}
+
+// Private TCP sessions get their own line; an edge with only TCP traffic
+// does not print empty HTTP call and latency lines.
+func TestCmdMetrics_Services_TCPSessions(t *testing.T) {
+	serviceMapServer(t, api.ServiceMapResponse{
+		Range: "1h", Source: "prometheus",
+		Edges: []api.ServiceMapEdge{{
+			CallerAppSlug: "public-api", TargetAppSlug: "billing",
+			Calls: 100, TCPSessions: 4,
+		}, {
+			CallerAppSlug: "billing", TargetAppSlug: "postgres",
+			TCPSessions: 30, TCPErrors: 2, TCPColdSessions: 5,
+		}},
+	})
+	stdout := captureMetricsStdout(t)
+
+	if code := cmdMetrics([]string{"--services"}); code != 0 {
+		t.Fatalf("metrics --services = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Calls:      100 (errors 0, 0.00%)",
+		"TCP:        4 sessions (errors 0, 0 woke the target)",
+		"billing → postgres\n  TCP:        30 sessions (errors 2, 5 woke the target)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\nfull: %s", want, out)
+		}
+	}
+	if n := strings.Count(out, "Calls:"); n != 1 {
+		t.Errorf("Calls lines = %d, want 1 (the TCP-only edge has none)\nfull: %s", n, out)
 	}
 }
 

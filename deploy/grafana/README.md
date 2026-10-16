@@ -56,8 +56,10 @@ The pause tiers. The **Frozen tier** row shows the fleet's frozen
 instances and their memory, thaw success and p95, frozen instances and
 memory by node, freeze attempts by outcome (`schedd_frozen_total`), thaws by
 outcome (`schedd_frozen_thaw_total`), frozen parks by reason
-(`schedd_frozen_parks_total`) and freeze and thaw latency
-(`vmmd_freeze_seconds`, `vmmd_thaw_seconds`). The **Quiet pause** row shows
+(`schedd_frozen_parks_total`), freeze and thaw latency
+(`vmmd_freeze_seconds`, `vmmd_thaw_seconds`), compressions of frozen
+instances under memory pressure (`schedd_frozen_compress_total`) and the
+zswap pool by node (`node_memory_Zswap_bytes`, ADR-906 decision 6). The **Quiet pause** row shows
 quiet-paused instances by node, pauses by outcome, resume latency and resume
 errors (`vmmd_quiet_*`), and CPU pressure (PSI) from node_exporter, the
 signal behind quiet pause's soft CPU guarantee. UID

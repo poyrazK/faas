@@ -17,7 +17,7 @@ T = TypeVar("T", bound="ServiceMapResponse")
 
 @_attrs_define
 class ServiceMapResponse:
-    """Account service map for `GET /v1/service-map` (ADR-750). `nodes` are
+    """Account service map for `GET /v1/service-map` (ADR-1131). `nodes` are
     the apps on at least one returned edge, sorted by slug; `edges` are
     sorted by `calls` descending. Degraded responses carry null `nodes`
     and `edges`.
@@ -26,7 +26,7 @@ class ServiceMapResponse:
 
     range_: str
     source: str
-    """"prometheus", or "degraded: <reason>" when the edge metrics could not be read."""
+    """"prometheus" or "degraded: <reason>"."""
     as_of: datetime.datetime
     truncated: bool
     nodes: list[ServiceMapNode] | None

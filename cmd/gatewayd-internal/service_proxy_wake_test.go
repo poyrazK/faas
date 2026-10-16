@@ -110,3 +110,15 @@ func TestServiceProxyWakerReportsUnknownApp(t *testing.T) {
 		t.Errorf("error = %q, want it to name the app", err.Error())
 	}
 }
+
+// The service proxy must evict a bridge-proved dead instance through the same
+// routing-cache eviction the public edge uses; without it the stopped
+// instance stays listed until the next replay and a call is never woken.
+func TestServiceEndpointEvictorUsesBackendEviction(t *testing.T) {
+	if serviceEndpointEvictor(gateway.NewPGBackend(nil, nil, nil)) == nil {
+		t.Fatal("PGBackend eviction was not wired into the service proxy")
+	}
+	if serviceEndpointEvictor(struct{}{}) != nil {
+		t.Fatal("a backend without per-instance eviction must yield nil")
+	}
+}

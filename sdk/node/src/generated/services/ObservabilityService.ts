@@ -302,7 +302,7 @@ export class ObservabilityService {
   }
   /**
    * Account service map of caller → target app edges.
-   * ADR-750 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+   * ADR-1131 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
    * otherwise 503 `service_map_unavailable`.
    *
    * Built from the unsampled service-proxy edge series. Both the

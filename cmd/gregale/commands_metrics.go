@@ -211,7 +211,7 @@ func renderAppsMetrics(w io.Writer, m api.AppsMetricsResponse) {
 	}
 }
 
-// cmdMetricsServices implements `gregale metrics --services` (ADR-750).
+// cmdMetricsServices implements `gregale metrics --services` (ADR-1131).
 func cmdMetricsServices(rng string) int {
 	client, err := authedClient()
 	if err != nil {
@@ -249,8 +249,21 @@ func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
 	_, _ = fmt.Fprintln(w)
 	for _, e := range m.Edges {
 		_, _ = fmt.Fprintf(w, "%s → %s\n", e.CallerAppSlug, e.TargetAppSlug)
-		_, _ = fmt.Fprintf(w, "  Calls:      %d (errors %d, %.2f%%)\n", e.Calls, e.Errors, e.ErrorRatePct)
-		_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms\n", e.LatencyP50MS, e.LatencyP95MS)
+		// An edge with only private TCP sessions has no HTTP calls to report.
+		if e.Calls > 0 || e.TCPSessions == 0 {
+			_, _ = fmt.Fprintf(w, "  Calls:      %d (errors %d, %.2f%%)\n", e.Calls, e.Errors, e.ErrorRatePct)
+			_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms\n", e.LatencyP50MS, e.LatencyP95MS)
+			_, _ = fmt.Fprintf(w, "  Woke:       %d calls (%.0f%%) found the target parked\n", e.ColdCalls, e.ColdCallPct)
+		}
+		if e.TCPSessions > 0 {
+			_, _ = fmt.Fprintf(w, "  TCP:        %d sessions (errors %d, %d woke the target)\n", e.TCPSessions, e.TCPErrors, e.TCPColdSessions)
+		}
+		if e.WakeAheadStarted > 0 {
+			_, _ = fmt.Fprintf(w, "  Wake-ahead: %d of %d restores used\n", e.WakeAheadUsed, e.WakeAheadStarted)
+		}
+		if e.SuggestWakeAhead {
+			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
+		}
 	}
 	if m.Truncated {
 		_, _ = fmt.Fprintf(w, "\n(showing the %d busiest edges; quieter edges were omitted)\n", len(m.Edges))

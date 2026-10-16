@@ -6,7 +6,7 @@ import (
 )
 
 // storeSettle holds liveness verdicts back after this process has seen the
-// store unavailable (ADR-1331 §5 rule 4).
+// store unavailable (ADR-1344 §5 rule 4).
 //
 // Liveness verdicts that compare a durable heartbeat timestamp with "now"
 // are only meaningful once every node has had a full window to write a

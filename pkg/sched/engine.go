@@ -585,7 +585,7 @@ type Engine struct {
 	// deadNodeSettle holds the dead-node sweep back after this schedd saw
 	// the store unavailable, until it has read the store without
 	// interruption for the staleness window, so a store outage cannot fail
-	// every running instance at once (ADR-1331 §5 rule 4).
+	// every running instance at once (ADR-1344 §5 rule 4).
 	deadNodeSettle storeSettle
 	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
 	// single per-tick decision policy the migrator + deadnode
@@ -1204,7 +1204,7 @@ func (e *Engine) WithDeadNodeReconcilerStalenessSeconds(seconds int) *Engine {
 
 // WithStoreOutageAtStartup holds the dead-node sweep for a full staleness
 // window of store access when this process saw the store unavailable before
-// the engine existed (ADR-1331 §5 rule 4): it waited for the database at
+// the engine existed (ADR-1344 §5 rule 4): it waited for the database at
 // boot, or waited for its lease through store errors. Every heartbeat is
 // then old because nobody could write one.
 func (e *Engine) WithStoreOutageAtStartup(outage bool) *Engine {
@@ -5931,7 +5931,7 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // verdict would terminate instances on a node that is merely slow.
 //
 // After this schedd saw the store unavailable, the sweep also waits until it
-// has read the store without interruption for the same window (ADR-1331 §5
+// has read the store without interruption for the same window (ADR-1344 §5
 // rule 4). After a store outage longer than 120 s every node's heartbeat is
 // old because nobody could write one; failing rows then would terminate
 // every running instance in the fleet, and vmmd would destroy the healthy

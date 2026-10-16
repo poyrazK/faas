@@ -33,6 +33,20 @@ func TestAuthTemplateSettingsContract(t *testing.T) {
 	if !reflect.DeepEqual(providers, authsettings.Providers) {
 		t.Fatalf("template providers %v, Go providers %v", providers, authsettings.Providers)
 	}
+	captcha := regexp.MustCompile(`(?s)export const captchaProviders = Object\.freeze\(\{(.*?)\n\}\)`).FindSubmatch(config)
+	if captcha == nil {
+		t.Fatal("captchaProviders not found in config.mjs")
+	}
+	var captchaNames []string
+	for _, m := range regexp.MustCompile(`(?m)^  ([a-z]+): \{`).FindAllSubmatch(captcha[1], -1) {
+		captchaNames = append(captchaNames, string(m[1]))
+	}
+	if !reflect.DeepEqual(captchaNames, authsettings.CaptchaProviders) {
+		t.Fatalf("template CAPTCHA providers %v, Go %v", captchaNames, authsettings.CaptchaProviders)
+	}
+	if !strings.Contains(string(config), "/"+authsettings.EmailFromPattern+"/.test(from)") {
+		t.Error("the email sender rule differs from the template's AUTH_EMAIL_FROM check")
+	}
 	for _, class := range authsettings.ClassOrder {
 		// The template writes the symbol class's single quote escaped.
 		literal := strings.ReplaceAll(authsettings.CharacterClasses[class], `'`, `\'`)
@@ -157,6 +171,7 @@ func TestAuthConfigShowsTheRunningSettings(t *testing.T) {
 	}
 	out.Reset()
 	jsonOutput = true
+	t.Cleanup(resetJSONOutput) // later tests expect text output
 	if code := cmdAuth([]string{"config", "shop-auth"}); code != 0 {
 		t.Fatal("show --json failed")
 	}
@@ -240,6 +255,67 @@ func TestAuthConfigEventsMintsThePublishOnlyKeyOnce(t *testing.T) {
 		}
 		if code := cmdAuth([]string{"config", "shop-auth", "--events", "off"}); code != 0 || sealed["AUTH_LIFECYCLE_EVENTS"] != "0" || minted != wantMinted {
 			t.Fatalf("events off = %d, minted %d", code, minted)
+		}
+	}
+}
+
+func TestAuthConfigPasskeys(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	if code := cmdAuth([]string{"config", "shop-auth", "--passkeys", "on", "--passkey-rp-id", "example.com"}); code != 0 {
+		t.Fatalf("config = %d", code)
+	}
+	if !reflect.DeepEqual(sealed, map[string]string{"GOTRUE_PASSKEY_ENABLED": "true", "AUTH_PASSKEY_RP_ID": "example.com"}) || *restarts != 1 {
+		t.Fatalf("sealed = %v", sealed)
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--passkey-rp-id", "none"}); code != 0 || !reflect.DeepEqual(*removed, []string{"AUTH_PASSKEY_RP_ID"}) {
+		t.Fatalf("none = %d, removed %v", code, *removed)
+	}
+	for _, bad := range [][]string{{"config", "shop-auth", "--passkeys", "yes"}, {"config", "shop-auth", "--passkey-rp-id", "https://example.com"}} {
+		if code := cmdAuth(bad); code == 0 {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}
+
+func TestAuthConfigBrandingCaptchaAndRetention(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	oldIn := osStdin
+	osStdin = strings.NewReader("1x0000000000000000000000000000000AA\n")
+	t.Cleanup(func() { osStdin = oldIn })
+	args := []string{"config", "shop-auth", "--brand-name", "Shop", "--brand-color", "#4F46E5", "--brand-logo-url", "https://cdn.example.com/logo.svg",
+		"--captcha", "turnstile", "--captcha-site-key", "1x00000000000000000000AA", "--captcha-secret-stdin", "--activity-retention", "90"}
+	if code := cmdAuth(args); code != 0 {
+		t.Fatalf("config = %d", code)
+	}
+	want := map[string]string{
+		"AUTH_UI_NAME": "Shop", "AUTH_UI_COLOR": "#4f46e5", "AUTH_UI_LOGO_URL": "https://cdn.example.com/logo.svg",
+		"GOTRUE_SECURITY_CAPTCHA_ENABLED": "true", "GOTRUE_SECURITY_CAPTCHA_PROVIDER": "turnstile",
+		"GOTRUE_SECURITY_CAPTCHA_SECRET": "1x0000000000000000000000000000000AA", "AUTH_CAPTCHA_SITE_KEY": "1x00000000000000000000AA",
+		"AUTH_AUDIT_RETENTION_DAYS": "90",
+	}
+	if !reflect.DeepEqual(sealed, want) || *restarts != 1 {
+		t.Fatalf("sealed = %v", sealed)
+	}
+	*removed = nil
+	if code := cmdAuth([]string{"config", "shop-auth", "--brand-logo-url", "none", "--captcha", "off", "--activity-retention", "forever"}); code != 0 {
+		t.Fatal("clearing failed")
+	}
+	sort.Strings(*removed)
+	if !reflect.DeepEqual(*removed, []string{"AUTH_AUDIT_RETENTION_DAYS", "AUTH_CAPTCHA_SITE_KEY", "AUTH_UI_LOGO_URL", "GOTRUE_SECURITY_CAPTCHA_PROVIDER", "GOTRUE_SECURITY_CAPTCHA_SECRET"}) || sealed["GOTRUE_SECURITY_CAPTCHA_ENABLED"] != "false" {
+		t.Fatalf("removed = %v, enabled = %q", *removed, sealed["GOTRUE_SECURITY_CAPTCHA_ENABLED"])
+	}
+	for _, bad := range [][]string{
+		{"config", "shop-auth", "--captcha", "off", "--captcha-site-key", "x"},
+		{"config", "shop-auth", "--captcha-site-key", "1x00000000000000000000AA"},
+		{"config", "shop-auth", "--activity-retention", "90d"},
+		{"config", "shop-auth", "--brand-color", "blue"},
+	} {
+		if code := cmdAuth(bad); code == 0 {
+			t.Errorf("%v accepted", bad)
 		}
 	}
 }

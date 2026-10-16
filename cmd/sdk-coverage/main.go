@@ -410,6 +410,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
+	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
+	"GET /v1/service-map": "GetServiceMap",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
@@ -426,8 +428,6 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/profiles/canary-checks/{deployment}": "ListProfileCanaryChecks",
 	"GET /v1/apps/{slug}/profiles/periodic-monitors":          "ListProfilePeriodicMonitors",
 	"GET /v1/deployments/{id}/canary/profile-gate":            "GetProfileCanaryGate",
-	// ADR-750: the hyphenated path segment has no derivable Go identifier.
-	"GET /v1/service-map": "GetServiceMap",
 	// ADR-566: financial preview routes use financial-domain client names.
 	"GET /v1/billing/costs":                                                    "GetFinancialCosts",
 	"GET /v1/billing/forecast":                                                 "GetFinancialForecast",
@@ -566,6 +566,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/operations":                                                   "ListAccountOperations",
 	"GET /v1/apps/{slug}/operations/{id}/events":                                       "GetAccountOperationEvents",
 	"GET /v1/apps/{slug}/operations/{id}/executions":                                   "GetOperationExecutions",
+	"GET /v1/apps/{slug}/operations/{id}/timeline":                                     "GetOperationTimeline",
+	"POST /v1/apps/{slug}/operations/{id}/signals":                                     "SignalOperation",
+	"POST /v1/apps/{slug}/operation-signals":                                           "SignalOperationsBySubject",
 	"POST /v1/apps/{slug}/operations/{id}/retry-delivery":                              "RetryOperationDelivery",
 	"GET /v1/apps/{slug}/operations/{id}/recovery-inspection":                          "InspectOperationRecovery",
 	"POST /v1/apps/{slug}/operations/{id}/recovery-preview":                            "PreviewOperationRecovery",
@@ -595,11 +598,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/runtime/operations/{id}/workflow-states/validate":                        "ValidateOperationWorkflowStates",
 	"GET /v1/apps/{slug}/operations/{id}":                                              "GetOperation",
 	"POST /v1/apps/{slug}/operations/{id}/cancel":                                      "CancelOperation",
+	"POST /v1/apps/{slug}/operations/{id}/approvals/{step}":                            "DecideOperationApproval",
 	"POST /v1/platform-tenant-self/customer-operations":                                "StartPlatformTenantSelfOperation",
 	"GET /v1/platform-tenant-self/customer-operations":                                 "ListPlatformTenantSelfOperations",
 	"GET /v1/platform-tenant-self/customer-operations/{id}":                            "GetPlatformTenantSelfOperation",
 	"GET /v1/platform-tenant-self/customer-operations/{id}/events":                     "GetPlatformTenantSelfOperationEvents",
 	"POST /v1/platform-tenant-self/customer-operations/{id}/cancel":                    "CancelPlatformTenantSelfOperation",
+	"POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}":          "DecidePlatformTenantSelfOperationApproval",
 	"POST /v1/apps/{slug}/operations":                                                  "SubmitExclusiveOperation",
 	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations":             "SubmitExclusiveOperation",
 	"POST /v1/platform-tenant-self/apps/{slug}/operations":                             "SubmitPlatformTenantExclusiveOperation",
@@ -1253,6 +1258,9 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "PutWebhookAutomationBinding",
 	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "GetWebhookAutomationBinding",
 	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":          "DeleteWebhookAutomationBinding",
+	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":              "PutOperationWebhookBinding",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":              "GetOperationWebhookBinding",
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":           "DeleteOperationWebhookBinding",
 	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}": "GetWebhookAutomationReceipt",
 	"GET /v1/apps/{slug}/inbound-webhooks":                                     "ListInboundWebhookEndpoints",
 	"POST /v1/apps/{slug}/inbound-webhooks":                                    "CreateInboundWebhookEndpoint",

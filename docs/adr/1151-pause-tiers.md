@@ -277,6 +277,9 @@ amendment under "Decision".)
   back to a release without the `frozen` state only after
   `schedd_frozen_instances` reads 0: an older schedd neither thaws nor parks
   a frozen row. The migration's down step parks any frozen rows left.
+- Hosts with the `zswap` role (ADR-906 decision 6) compress frozen VMs under
+  memory pressure instead of parking them; a compressed VM thaws more
+  slowly, as its pages fault back in, but still skips a snapshot restore.
 - Turning the tier on needs vmmd with `FreezeInstance` first. An older vmmd
   answers Unimplemented and the instance parks as before.
 - In the simulation, a request that finds no running VM waits 3.4 ms on

@@ -217,7 +217,6 @@ GetWorkflowEventsForRun
 GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
-GitHubInstallForAccountInstallation
 GithubInstallBindingForRepoBranch
 GithubInstallBindingForRepoBranchInstallation
 HasPaddleOverageMonth

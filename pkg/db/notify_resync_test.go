@@ -1,5 +1,5 @@
-// adr: 1331
-// notify_resync_test.go pins ADR-1331 §5 rule 3: pg_notify is not durable,
+// adr: 1344
+// notify_resync_test.go pins ADR-1344 §5 rule 3: pg_notify is not durable,
 // so a SubscribeWithResync consumer is told to reload after the LISTEN
 // connection is re-established and after one of its deliveries is dropped.
 
@@ -29,7 +29,7 @@ func expectResync(t *testing.T, ch <-chan Notification) {
 	}
 }
 
-// adr: 1331
+// adr: 1344
 func TestNotifyHubRequestResyncReachesOnlyResyncSubscribers(t *testing.T) {
 	h := quietHub()
 	resync := &hubSubscriber{channels: map[string]struct{}{"c": {}}, out: make(chan Notification, 4), resync: true}
@@ -45,7 +45,7 @@ func TestNotifyHubRequestResyncReachesOnlyResyncSubscribers(t *testing.T) {
 	}
 }
 
-// adr: 1331
+// adr: 1344
 // TestNotifyHubDroppedDeliveryQueuesResync: an overflowing resync subscriber
 // loses the notification but is told to reload as soon as it has room, even
 // if no further notification arrives for it.
@@ -67,7 +67,7 @@ func TestNotifyHubDroppedDeliveryQueuesResync(t *testing.T) {
 	expectResync(t, sub.out)
 }
 
-// adr: 1331
+// adr: 1344
 // TestNotifyHubPendingResyncPrecedesNextDelivery: a queued resync is
 // delivered ahead of the next notification, so the reload covers whatever
 // was dropped before it.
@@ -85,7 +85,7 @@ func TestNotifyHubPendingResyncPrecedesNextDelivery(t *testing.T) {
 	recv(t, sub.out, "next")
 }
 
-// adr: 1331
+// adr: 1344
 // TestNotifyHub_ResyncAfterBackendTerminated is the Postgres-backed check:
 // killing the hub's LISTEN backend makes a resync subscriber reload, while a
 // plain subscriber on the same hub sees no synthetic notification.
