@@ -399,7 +399,9 @@ in `pkg/api/limits.go`.
 2. The `auth` template, `gregale auth create|status`, and the migration
    overlay check. Signing-key rotation (`gregale auth keys`) and typed settings
    (`gregale auth config|providers` and the dashboard) followed, then
-   lifecycle events and the activity view.
+   lifecycle events and the activity view. The dashboard later gained email
+   delivery and signing-key rotation, with the CLI's rules shared through
+   `pkg/authsettings`.
 3. The `gregale_auth` schema and helpers, the verifier allowance, the
    `/authz/v1` API, declarative `AUTH_AUTHZ` roles and policies, and `--auth`
    for the Data API and edge JWT rules.

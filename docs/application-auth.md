@@ -62,8 +62,8 @@ assumed a role named `postgres`.
 
 `gregale auth config shop-auth` shows the running app's settings. Add flags to
 change them; the app restarts to apply the change. The dashboard's Auth page
-(`/dashboard/apps/shop-auth/auth`) shows and edits the same settings and
-providers.
+(`/dashboard/apps/shop-auth/auth`) shows and edits the same settings,
+providers and email delivery, and rotates signing keys.
 
 ```sh
 gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit
@@ -91,8 +91,9 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
 values that are public anyway or harmless: URLs, enabled providers, password
-rules, whether MFA, passkeys, CAPTCHA and email are on, the branding, the
-activity retention and the signing key IDs.
+rules, whether MFA, passkeys and CAPTCHA are on, the email provider and
+sender (never its API key), the branding, the activity retention and the
+signing key IDs.
 
 ### Sign-in providers
 
@@ -176,6 +177,11 @@ key sign and waits again. The step-by-step commands are `keys create` (standby)
 and `keys activate KEY_ID`. The previous key keeps verifying the tokens it
 signed, which expire within 600 seconds, so revoke it afterwards. Revoking a
 key that signs, or is being made the signer, is refused.
+
+The dashboard's Auth page lists the keys with their state. **Add a standby
+key**, wait until it shows as verifying (the page follows the restart), choose
+**Make it sign**, then **Revoke** the previous key ten minutes later. The page
+offers each step only when the running app is ready for it.
 
 To cut off a leaked key, rotate and revoke the old key at once. Its tokens stop
 verifying as soon as the Auth app restarts, and in Gregale's gateway, Data API

@@ -108,13 +108,16 @@ test('enabled providers get this app\'s callback, and settings report only publi
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
     signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
-    mfa: { totp: false }, email: { configured: false }, events: { lifecycle: false },
+    mfa: { totp: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
     branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
   assert.equal(runtimeConfig(env()).settings.mfa.totp, true)
+  const withEmail = runtimeConfig(env({ AUTH_EMAIL_PROVIDER: 'resend', AUTH_EMAIL_FROM: 'Shop <auth@shop.example.com>', AUTH_EMAIL_API_KEY: 're_sealed_key_1' })).settings
+  assert.deepEqual(withEmail.email, { configured: true, provider: 'resend', from: 'Shop <auth@shop.example.com>' })
+  assert.ok(!JSON.stringify(withEmail).includes('re_sealed_key_1'))
 })
 
 test('migrations lift the statement timeout for the release task only', () => {

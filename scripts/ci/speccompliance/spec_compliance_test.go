@@ -204,6 +204,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/auth/settings":                     true, // ADR-1190 session + CSRF typed Auth settings form
 	"POST /dashboard/apps/{slug}/auth/providers":                    true, // ADR-1190 session + CSRF OAuth provider form
 	"POST /dashboard/apps/{slug}/auth/providers/{provider}/disable": true, // ADR-1190 session + CSRF provider removal form
+	"POST /dashboard/apps/{slug}/auth/keys":                         true, // ADR-1190 session + CSRF standby signing key
+	"POST /dashboard/apps/{slug}/auth/keys/{id}/activate":           true, // ADR-1190 session + CSRF signing key activation
+	"POST /dashboard/apps/{slug}/auth/keys/{id}/revoke":             true, // ADR-1190 session + CSRF signing key revocation
 	"GET /dashboard/apps/{slug}/data-api/types/{id}":                true, // ADR-968 session-auth type download
 	"POST /dashboard/apps/{slug}/data-api/refresh":                  true, // ADR-968 session + CSRF contract refresh adapter
 	"POST /dashboard/apps/{slug}/data-api/{operation}":              true, // ADR-968 session + CSRF schema/type task adapter
