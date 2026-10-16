@@ -44,10 +44,11 @@ func (s *server) issueCSRFToken(w http.ResponseWriter, r *http.Request, acct sta
 
 	var tok string
 	var err error
-	if action == githubConnectAction {
+	switch action {
+	case githubConnectAction:
 		// Connect verifies its own named cookie, not the generic faas_csrf.
 		tok, err = issueConnectGithubToken(s, w, acct.ID)
-	} else if action == githubBindAction {
+	case githubBindAction:
 		tok, err = middleware.IssueForAuthenticatedNamed(s.sessions, action, acct.ID, githubBindCSRFCookie)
 		if err == nil {
 			http.SetCookie(w, &http.Cookie{
@@ -56,7 +57,7 @@ func (s *server) issueCSRFToken(w http.ResponseWriter, r *http.Request, acct sta
 				MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
 			})
 		}
-	} else {
+	default:
 		tok, err = middleware.IssueForAuthenticated(s.sessions, action, acct.ID)
 	}
 	if err != nil {
