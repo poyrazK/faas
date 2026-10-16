@@ -2144,6 +2144,8 @@ gregale ai logs <integration-id> --limit 20
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
 gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini
+gregale ai evaluate <route-id> --position 2 --judge <openai-id> --judge-model gpt-5 --canary-percent 10
+gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 ```
 
 ### ai policy
@@ -2305,6 +2307,36 @@ Resend a captured call to other integrations or models and compare status, token
 | `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] to replay on (repeat, at most 5) |  |
 | `--no-wait` | print the replay without waiting for results |  |
 | `--timeout <duration>` | how long to wait for results (default 3m) |  |
+
+### ai evaluate
+
+Judge a route target against the route&#39;s first target on recent captured calls, optionally starting a canary when it passes, or list and show evaluations
+
+`gregale ai evaluate [--position <N>] [--judge <INTEGRATION>] [--judge-model <MODEL>] [--sample <N>] [--max-loss-rate <N>] [--canary-percent <N>] [--no-wait] [--timeout <duration>] [list|show] <route-id|evaluation-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--position <N>` | the route target (2 to 5) to evaluate |  |
+| `--judge <INTEGRATION>` | the AI integration whose model judges the answers |  |
+| `--judge-model <MODEL>` | the judge model |  |
+| `--sample <N>` | captured calls to replay, 1 to 50 (default 20) |  |
+| `--max-loss-rate <N>` | pass when losses and errors are at most this percent of the sample (default 20) |  |
+| `--canary-percent <N>` | start a canary with this share of calls when the evaluation passes |  |
+| `--no-wait` | print the evaluation without waiting for its verdict |  |
+| `--timeout <duration>` | how long to wait for the verdict (default 30m) |  |
+
+### ai tokens
+
+List, create or revoke access tokens that let local development, CI or notebooks call the AI gateway as an app
+
+`gregale ai tokens [--app <SLUG>] [--name <NAME>] [--expires-in-hours <N>] [--integration <INTEGRATION>] <list|create|revoke> [<token-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | the app the token acts as |  |
+| `--name <NAME>` | token name for create |  |
+| `--expires-in-hours <N>` | token lifetime for create, 1 to 2160 (default 168) |  |
+| `--integration <INTEGRATION>` | limit the token to this AI integration (repeat) |  |
 
 ### ai logs
 

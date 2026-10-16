@@ -4778,6 +4778,89 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/ai-routes/{route}/evaluations:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose target is evaluated.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIEvaluations
+      summary: List an AI route's latest evaluations.
+      description: Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1360).
+      responses:
+        '200':
+          description: The route's evaluations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIEvaluationList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIEvaluation
+      summary: Evaluate an AI route target before a canary.
+      description: >-
+        Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured OpenAI chat
+        completions and Responses calls on the target and asks the judge model which answer is better, in a random order
+        (ADR-1360). The evaluation passes when losses and candidate errors are at most max_loss_rate percent of the sample;
+        a passing evaluation starts its canary, if it has one, unless the route already has an active canary or the target
+        changed. Candidate and judge calls are metered and capped under the caller evaluation. The first target's
+        integration needs request_log_content.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIEvaluationRequest' }
+      responses:
+        '202':
+          description: The pending evaluation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: The route reached its evaluations for the UTC day.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-evaluations/{evaluation}:
+    parameters:
+      - name: evaluation
+        in: path
+        required: true
+        description: UUID of the evaluation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIEvaluation
+      summary: Read an AI evaluation and its samples.
+      description: Requires MFA and read scope (ADR-1360). Evaluations are kept for 30 days.
+      responses:
+        '200':
+          description: The evaluation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/runs:
     parameters:
       - name: integration
@@ -4986,6 +5069,89 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/ai-access-tokens:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app the tokens act as.
+        schema: { type: string }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIAccessTokens
+      summary: List an app's AI gateway access tokens.
+      description: Requires MFA and read scope. Newest first, without their secrets (ADR-1360).
+      responses:
+        '200':
+          description: The app's tokens.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIAccessTokenList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIAccessToken
+      summary: Issue an AI gateway access token for an app.
+      description: >-
+        Requires MFA and deploy-write scope. A caller outside Gregale, such as local development, CI or a notebook, sets
+        its SDK's base URL to the AI gateway's public host and puts the token where the SDK puts its API key
+        (Authorization Bearer, x-api-key, x-goog-api-key or api-key). Its calls are the app's: the app's bindings,
+        guardrails, caps and content policy apply (ADR-1360). The secret is returned only in this response. An app holds
+        at most 20 live tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIAccessTokenRequest' }
+      responses:
+        '201':
+          description: The token and its secret.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedOutboundAIAccessToken' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has a live token with this name, or holds its most live tokens.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/ai-access-tokens/{token}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app the token acts as.
+        schema: { type: string }
+      - name: token
+        in: path
+        required: true
+        description: UUID of the access token.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [outbound]
+      operationId: revokeOutboundAIAccessToken
+      summary: Revoke an AI gateway access token.
+      description: Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1360).
+      responses:
+        '204': { description: Token revoked. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/outbound-bindings:
     get:
@@ -62231,6 +62397,139 @@ components:
         window_start: { type: string, format: date-time }
         baseline: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
         canary_stats: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
+    CreateOutboundAIEvaluationRequest:
+      type: object
+      description: >-
+        Evaluate a route target against the route's first target. Omitted settings take their defaults: a sample of 20
+        and a max_loss_rate of 20. canary, when set, must name the same target and starts if the evaluation passes.
+      required: [target, judge_integration_id, judge_model]
+      properties:
+        target: { type: integer, minimum: 2, maximum: 5, description: The 1-based route position evaluated. }
+        judge_integration_id: { type: string, format: uuid, description: One of the account's enabled AI integrations. }
+        judge_model: { type: string, minLength: 1, maxLength: 128 }
+        sample_size: { type: integer, minimum: 1, maximum: 50 }
+        max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
+        canary: { $ref: '#/components/schemas/PutOutboundAIRouteCanaryRequest' }
+    OutboundAIEvaluationTargetStats:
+      type: object
+      description: One side's total cost over the sample and mean time to first byte over the calls that reported one.
+      required: [cost_millicents, mean_ttfb_ms]
+      properties:
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+    OutboundAIEvaluationItem:
+      type: object
+      description: >-
+        One sample: a captured call of the first target and the candidate's replay of it. A judge error counts as a tie.
+        Output texts are redacted and cut to 4 KiB.
+      required: [log_id, verdict, candidate_status, candidate_cost_millicents, candidate_ttfb_ms, baseline_cost_millicents,
+        baseline_ttfb_ms, baseline_output_text, candidate_output_text]
+      properties:
+        log_id: { type: string, format: uuid }
+        verdict: { type: string, enum: [win, tie, loss, candidate_error, judge_error] }
+        candidate_status: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+        candidate_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        candidate_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        baseline_cost_millicents: { type: integer, format: int64, minimum: 0 }
+        baseline_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        baseline_output_text: { type: string }
+        candidate_output_text: { type: string }
+    OutboundAIEvaluation:
+      type: object
+      description: >-
+        An evaluation of a route target (ADR-1360). verdict is set when state is done, error_code when it is failed. items
+        are returned only when one evaluation is read.
+      required: [id, route_id, target, judge_integration_id, judge_model, sample_size, max_loss_rate, canary, state, verdict,
+        error_code, samples, wins, ties, losses, candidate_errors, judge_errors, baseline, candidate, canary_started,
+        created_at, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        route_id: { type: string, format: uuid }
+        target: { type: integer, minimum: 2, maximum: 5 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string }
+        sample_size: { type: integer, minimum: 1, maximum: 50 }
+        max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
+        canary:
+          oneOf:
+          - $ref: '#/components/schemas/PutOutboundAIRouteCanaryRequest'
+          - type: 'null'
+        state: { type: string, enum: [pending, running, done, failed] }
+        verdict:
+          oneOf:
+          - type: string
+            enum: [pass, fail]
+          - type: 'null'
+        error_code: { type: [string, 'null'] }
+        samples: { type: integer, minimum: 0 }
+        wins: { type: integer, minimum: 0 }
+        ties: { type: integer, minimum: 0 }
+        losses: { type: integer, minimum: 0 }
+        candidate_errors: { type: integer, minimum: 0 }
+        judge_errors: { type: integer, minimum: 0 }
+        baseline: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        candidate: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        canary_started: { type: boolean }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIEvaluationItem' }
+    OutboundAIEvaluationList:
+      type: object
+      description: A route's latest evaluations, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+    CreateOutboundAIAccessTokenRequest:
+      type: object
+      description: >-
+        Issue an access token for an app. expires_in_hours defaults to 168 (7 days). integration_ids narrows the token to
+        listed AI integrations bound to the app; empty allows every AI integration bound to the app and the account's
+        routes.
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+        expires_in_hours: { type: integer, minimum: 1, maximum: 2160 }
+        integration_ids:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    OutboundAIAccessToken:
+      type: object
+      description: An issued access token. prefix is the token's first 12 characters, to recognise it.
+      required: [id, name, app_id, prefix, integration_ids, expires_at, created_at, last_used_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        app_id: { type: string, format: uuid }
+        prefix: { type: string }
+        integration_ids:
+          type: array
+          items: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+    OutboundAIAccessTokenList:
+      type: object
+      description: An app's access tokens, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIAccessToken' }
+    CreatedOutboundAIAccessToken:
+      type: object
+      description: A new token with its secret, which is shown only once.
+      required: [access_token, token]
+      properties:
+        access_token: { $ref: '#/components/schemas/OutboundAIAccessToken' }
+        token: { type: string, pattern: '^ggai_[A-Za-z0-9_-]{43}$' }
     OutboundAIRouteList:
       type: object
       description: The account's AI routes.

@@ -359,6 +359,8 @@ export type { CreateObjectStorageComputeBindingRequest } from './CreateObjectSto
 export type { CreateObjectUploadRouteRequest } from './CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './CreateOrgRequest.js';
+export type { CreateOutboundAIAccessTokenRequest } from './CreateOutboundAIAccessTokenRequest.js';
+export type { CreateOutboundAIEvaluationRequest } from './CreateOutboundAIEvaluationRequest.js';
 export type { CreateOutboundAIReplayRequest } from './CreateOutboundAIReplayRequest.js';
 export type { CreateOutboundAIRouteRequest } from './CreateOutboundAIRouteRequest.js';
 export type { CreateOutboundCredentialKeyRequest } from './CreateOutboundCredentialKeyRequest.js';
@@ -384,6 +386,7 @@ export type { CreateTriggerBatchResponse } from './CreateTriggerBatchResponse.js
 export type { CreateTriggerRequest } from './CreateTriggerRequest.js';
 export type { CreateUDPListenerRequest } from './CreateUDPListenerRequest.js';
 export type { CreateWorkflowCallbackWebhookBindingRequest } from './CreateWorkflowCallbackWebhookBindingRequest.js';
+export type { CreatedOutboundAIAccessToken } from './CreatedOutboundAIAccessToken.js';
 export type { CronResponse } from './CronResponse.js';
 export type { CronRun } from './CronRun.js';
 export type { CustomDomainResponse } from './CustomDomainResponse.js';
@@ -1553,11 +1556,17 @@ export type { OrgMembershipExportResponse } from './OrgMembershipExportResponse.
 export type { OrgResponse } from './OrgResponse.js';
 export type { OrgSlug } from './OrgSlug.js';
 export type { OrgWithRole } from './OrgWithRole.js';
+export type { OutboundAIAccessToken } from './OutboundAIAccessToken.js';
+export type { OutboundAIAccessTokenList } from './OutboundAIAccessTokenList.js';
 export type { OutboundAIBudgetAlert } from './OutboundAIBudgetAlert.js';
 export type { OutboundAIBudgetAlertList } from './OutboundAIBudgetAlertList.js';
 export type { OutboundAIBudgetThresholdWebhookPayload } from './OutboundAIBudgetThresholdWebhookPayload.js';
 export type { OutboundAIContentBody } from './OutboundAIContentBody.js';
 export type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
+export type { OutboundAIEvaluation } from './OutboundAIEvaluation.js';
+export type { OutboundAIEvaluationItem } from './OutboundAIEvaluationItem.js';
+export type { OutboundAIEvaluationList } from './OutboundAIEvaluationList.js';
+export type { OutboundAIEvaluationTargetStats } from './OutboundAIEvaluationTargetStats.js';
 export type { OutboundAIModeration } from './OutboundAIModeration.js';
 export type { OutboundAIPriceCatalogResponse } from './OutboundAIPriceCatalogResponse.js';
 export type { OutboundAIPriceEntry } from './OutboundAIPriceEntry.js';

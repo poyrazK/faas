@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|routes|keys|alerts|logs|replay> ..."
+const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -52,6 +52,10 @@ func cmdAI(args []string) int {
 		return cmdAILogs(args[1:])
 	case "replay":
 		return cmdAIReplay(args[1:])
+	case "evaluate":
+		return cmdAIEvaluate(args[1:])
+	case "tokens":
+		return cmdAITokens(args[1:])
 	}
 	printCommandValidation(osStderr, "unknown ai subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)

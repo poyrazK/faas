@@ -44,8 +44,9 @@ func (b *MemoryBackend) ConfirmAIBatch(_ context.Context, id, providerBatchID st
 	defer b.mu.Unlock()
 	for _, state := range b.states {
 		if batch, ok := state.batches[id]; ok && !batch.open {
+			// As in Postgres, the first check waits one poll interval.
 			batch.open, batch.batch.ProviderBatchID = true, providerBatchID
-			batch.nextCheck = b.now()
+			batch.nextCheck = b.now().Add(api.OutboundAIBatchPollIntervalSeconds * time.Second)
 		}
 	}
 	return nil

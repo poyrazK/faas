@@ -45,6 +45,13 @@ metrics_addr = "127.0.0.1:9108"
 # gateway. Keep it equal to apid's ai_gateway_accounts.
 # FAAS_AI_GATEWAY_ACCOUNTS (comma-separated) overrides this setting.
 # ai_gateway_accounts = ["00000000-0000-0000-0000-000000000000"]
+#
+# ADR-1360 public listener for callers outside Gregale (local development,
+# CI, notebooks) that present an app's AI gateway access token. It serves
+# only /i/ and /r/ paths and must be a loopback address: Caddy terminates
+# TLS for the public host in front of it (public_edge role,
+# faas_ai_gateway_public_enabled and faas_ai_gateway_public_upstream).
+# public_listen_addr = "127.0.0.1:8097"
 
 # Required for managed integrations, including integrations customers create
 # through the API. Install a

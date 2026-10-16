@@ -789,6 +789,8 @@ var cliCommands = []cliCommand{
 			"gregale ai logs show <integration-id> <request-id>",
 			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
 			"gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini",
+			"gregale ai evaluate <route-id> --position 2 --judge <openai-id> --judge-model gpt-5 --canary-percent 10",
+			"gregale ai tokens create --app my-api --name laptop --expires-in-hours 24",
 		},
 		Subcommands: []cliSub{
 			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
@@ -866,6 +868,22 @@ var cliCommands = []cliCommand{
 				{Name: "target", Short: "<integration-id>[:<model>] to replay on (repeat, at most 5)", Value: "TARGET"},
 				{Name: "no-wait", Short: "print the replay without waiting for results", Bool: true},
 				{Name: "timeout", Short: "how long to wait for results (default 3m)", Value: "duration"},
+			}},
+			{Name: "evaluate", Short: "Judge a route target against the route's first target on recent captured calls, optionally starting a canary when it passes, or list and show evaluations", Positionals: []string{"[list|show]", "<route-id|evaluation-id>"}, Flags: []cliFlag{
+				{Name: "position", Short: "the route target (2 to 5) to evaluate", Value: "N"},
+				{Name: "judge", Short: "the AI integration whose model judges the answers", Value: "INTEGRATION"},
+				{Name: "judge-model", Short: "the judge model", Value: "MODEL"},
+				{Name: "sample", Short: "captured calls to replay, 1 to 50 (default 20)", Value: "N"},
+				{Name: "max-loss-rate", Short: "pass when losses and errors are at most this percent of the sample (default 20)", Value: "N"},
+				{Name: "canary-percent", Short: "start a canary with this share of calls when the evaluation passes", Value: "N"},
+				{Name: "no-wait", Short: "print the evaluation without waiting for its verdict", Bool: true},
+				{Name: "timeout", Short: "how long to wait for the verdict (default 30m)", Value: "duration"},
+			}},
+			{Name: "tokens", Short: "List, create or revoke access tokens that let local development, CI or notebooks call the AI gateway as an app", Positionals: []string{"<list|create|revoke>", "[<token-id>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "the app the token acts as", Value: "SLUG"},
+				{Name: "name", Short: "token name for create", Value: "NAME"},
+				{Name: "expires-in-hours", Short: "token lifetime for create, 1 to 2160 (default 168)", Value: "N"},
+				{Name: "integration", Short: "limit the token to this AI integration (repeat)", Value: "INTEGRATION"},
 			}},
 			{Name: "logs", Short: "Page the opt-in AI request log, newest first, or show one call's captured bodies", Positionals: []string{"[show]", "<integration-id>", "[<request-id>]"}, Flags: []cliFlag{
 				{Name: "limit", Short: "calls to show, 1 to 200", Value: "N"},

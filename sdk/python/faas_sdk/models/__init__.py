@@ -725,6 +725,8 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_access_token_request import CreateOutboundAIAccessTokenRequest
+from .create_outbound_ai_evaluation_request import CreateOutboundAIEvaluationRequest
 from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
@@ -780,6 +782,7 @@ from .create_trigger_request_config import CreateTriggerRequestConfig
 from .create_udp_listener_request import CreateUDPListenerRequest
 from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
+from .created_outbound_ai_access_token import CreatedOutboundAIAccessToken
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
 from .cron_response_suspended_reason import CronResponseSuspendedReason
@@ -3069,6 +3072,8 @@ from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_ai_access_token import OutboundAIAccessToken
+from .outbound_ai_access_token_list import OutboundAIAccessTokenList
 from .outbound_ai_budget_alert import OutboundAIBudgetAlert
 from .outbound_ai_budget_alert_budget import OutboundAIBudgetAlertBudget
 from .outbound_ai_budget_alert_list import OutboundAIBudgetAlertList
@@ -3085,6 +3090,13 @@ from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
 from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
 from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
 from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
+from .outbound_ai_evaluation import OutboundAIEvaluation
+from .outbound_ai_evaluation_item import OutboundAIEvaluationItem
+from .outbound_ai_evaluation_item_verdict import OutboundAIEvaluationItemVerdict
+from .outbound_ai_evaluation_list import OutboundAIEvaluationList
+from .outbound_ai_evaluation_state import OutboundAIEvaluationState
+from .outbound_ai_evaluation_target_stats import OutboundAIEvaluationTargetStats
+from .outbound_ai_evaluation_verdict_type_0 import OutboundAIEvaluationVerdictType0
 from .outbound_ai_moderation import OutboundAIModeration
 from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
@@ -5421,6 +5433,7 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateDevBridgeRequest",
     "CreateDevBridgeResponse",
+    "CreatedOutboundAIAccessToken",
     "CreateEdgeRuleListRequest",
     "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
@@ -5474,6 +5487,8 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundAIAccessTokenRequest",
+    "CreateOutboundAIEvaluationRequest",
     "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
@@ -7614,6 +7629,8 @@ __all__ = (
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAIAccessToken",
+    "OutboundAIAccessTokenList",
     "OutboundAIBudgetAlert",
     "OutboundAIBudgetAlertBudget",
     "OutboundAIBudgetAlertList",
@@ -7628,6 +7645,13 @@ __all__ = (
     "OutboundAIContentPolicyIban",
     "OutboundAIContentPolicyPaymentCard",
     "OutboundAIContentPolicySecret",
+    "OutboundAIEvaluation",
+    "OutboundAIEvaluationItem",
+    "OutboundAIEvaluationItemVerdict",
+    "OutboundAIEvaluationList",
+    "OutboundAIEvaluationState",
+    "OutboundAIEvaluationTargetStats",
+    "OutboundAIEvaluationVerdictType0",
     "OutboundAIModeration",
     "OutboundAIModerationAction",
     "OutboundAIModerationCategoriesItem",
