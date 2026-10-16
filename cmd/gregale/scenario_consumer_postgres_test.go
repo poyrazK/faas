@@ -322,7 +322,7 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart boo
 	if len(outages) > 0 {
 		outage = outages[0]
 	}
-	backend := startConsumerAcceptanceBackend(t, outage == "database-unavailable")
+	backend := startConsumerAcceptanceBackend(t, strings.Contains(outage, "database-unavailable"))
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	f := newCampaignFaultHistoryFixture(t)
@@ -432,103 +432,119 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart boo
 	}
 	frozen := campaignFaultFrozenBytes(t, []string{filepath.Join(root, "artifacts")})
 	work := filepath.Join(root, "work")
-	if outage != "" {
-		setOutage := func(active bool) {
-			if backend.databaseProxy != nil {
-				backend.databaseProxy.setOnline(!active)
-			} else {
-				delivery.mu.Lock()
-				delivery.unavailable = active
-				delivery.mu.Unlock()
+	if strings.HasPrefix(outage, "watch:") {
+		testConsumerPostgresCleanupWatch(t, strings.TrimPrefix(outage, "watch:"), backend, delivery, proxy.URL, root, manifestPath, work, journals, key)
+		if err := readTestCampaignJSON(filepath.Join(work, "checkpoint.json"), &f.cp); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-late:
+			if !isConflictAcceptance(err) {
+				t.Fatal("late creation was not fenced", err)
+			}
+		case <-ctx.Done():
+			t.Fatal("delayed creation did not finish")
+		}
+	} else {
+		if outage != "" {
+			setOutage := func(active bool) {
+				if backend.databaseProxy != nil {
+					backend.databaseProxy.setOnline(!active)
+				} else {
+					delivery.mu.Lock()
+					delivery.unavailable = active
+					delivery.mu.Unlock()
+				}
+			}
+			setOutage(true)
+			failed, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
+			if err == nil || failed.Complete || failed.Issue == nil || !failed.Issue.Retryable || len(failed.Faults) != 3 || len(failed.Sessions) != 3 {
+				t.Fatal("outage did not preserve unresolved recovery inventory")
+			}
+			for _, o := range failed.Faults {
+				if o.Consumers["customer"] != "unverified" || o.Registration != "unverified" {
+					t.Fatal("outage became resource absence")
+				}
+			}
+			if len(failed.Faults[0].Issues) != 1 || failed.Faults[0].Issues[0].Attempts != 3 {
+				t.Fatal("lookup retry budget was not enforced")
+			}
+			completion := testCampaignRecoveryCompletion{ResourceEvidenceComplete: true, KnownSessionsAbsent: true}
+			applyTestCampaignFaultCompletion(ctx, &completion, client, f.plan, f.cp, f.scenarios, work, true, resolver)
+			if completion.FaultResourcesVerified || completion.FaultResourcesAbsent || completion.RecoveryComplete {
+				t.Fatal("outage certified recovery completion")
+			}
+			delivery.mu.Lock()
+			cancels := delivery.cancels
+			keys := delivery.keys
+			delivery.mu.Unlock()
+			if cancels != 0 || keys != 1 {
+				t.Fatal("outage preflight mutated resources")
+			}
+			assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, true)
+			setOutage(false)
+		}
+		inspect, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, false)
+		if err != nil {
+			t.Fatal("read-only inspection", err)
+		}
+		pending := false
+		for _, o := range inspect.Faults {
+			if o.Consumers["customer"] == "pending" {
+				pending = true
 			}
 		}
-		setOutage(true)
-		failed, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
-		if err == nil || failed.Complete || failed.Issue == nil || !failed.Issue.Retryable || len(failed.Faults) != 3 || len(failed.Sessions) != 3 {
-			t.Fatal("outage did not preserve unresolved recovery inventory")
-		}
-		for _, o := range failed.Faults {
-			if o.Consumers["customer"] != "unverified" || o.Registration != "unverified" {
-				t.Fatal("outage became resource absence")
-			}
-		}
-		if len(failed.Faults[0].Issues) != 1 || failed.Faults[0].Issues[0].Attempts != 3 {
-			t.Fatal("lookup retry budget was not enforced")
-		}
-		completion := testCampaignRecoveryCompletion{ResourceEvidenceComplete: true, KnownSessionsAbsent: true}
-		applyTestCampaignFaultCompletion(ctx, &completion, client, f.plan, f.cp, f.scenarios, work, true, resolver)
-		if completion.FaultResourcesVerified || completion.FaultResourcesAbsent || completion.RecoveryComplete {
-			t.Fatal("outage certified recovery completion")
+		if !pending {
+			t.Fatal("unresolved creation was not pending")
 		}
 		delivery.mu.Lock()
-		cancels := delivery.cancels
-		keys := delivery.keys
+		if delivery.cancels != 0 {
+			t.Error("inspection cancelled creation")
+		}
 		delivery.mu.Unlock()
-		if cancels != 0 || keys != 1 {
-			t.Fatal("outage preflight mutated resources")
-		}
 		assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, true)
-		setOutage(false)
-	}
-	inspect, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, false)
-	if err != nil {
-		t.Fatal("read-only inspection", err)
-	}
-	pending := false
-	for _, o := range inspect.Faults {
-		if o.Consumers["customer"] == "pending" {
-			pending = true
+		for _, o := range inspect.Faults {
+			expected := "active"
+			if o.RunID == journals[1].RunID {
+				expected = "pending"
+			}
+			if o.Consumers["customer"] != expected {
+				t.Fatal("read-only inspection changed consumer state")
+			}
+		}
+		first, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
+		if err == nil || first.Complete {
+			t.Fatal("lost cancellation response certified completion")
+		}
+		if restart {
+			backend.restart(t, delivery)
+			// The current generation was revoked before the cancellation response loss.
+			assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, false)
+			proof, err := client.LookupScenarioTestConsumer(ctx, journals[1].RunID, "customer", req)
+			if err != nil || !validTestConsumerCancellation(proof, delayed) {
+				t.Fatal("cancellation proof did not survive restart")
+			}
+			delivery.releaseCreation()
+		}
+		select {
+		case err := <-late:
+			if createFirst && err != nil {
+				t.Fatal("creation should have committed first", err)
+			}
+			if !createFirst && !isConflictAcceptance(err) {
+				t.Fatal("late creation was not fenced", err)
+			}
+		case <-ctx.Done():
+			t.Fatal("delayed creation did not finish")
+		}
+		for i := 0; i < 2; i++ {
+			result, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
+			if err != nil || !result.Complete {
+				t.Fatal("recipient cleanup", err)
+			}
 		}
 	}
-	if !pending {
-		t.Fatal("unresolved creation was not pending")
-	}
-	delivery.mu.Lock()
-	if delivery.cancels != 0 {
-		t.Error("inspection cancelled creation")
-	}
-	delivery.mu.Unlock()
-	assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, true)
-	for _, o := range inspect.Faults {
-		expected := "active"
-		if o.RunID == journals[1].RunID {
-			expected = "pending"
-		}
-		if o.Consumers["customer"] != expected {
-			t.Fatal("read-only inspection changed consumer state")
-		}
-	}
-	first, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
-	if err == nil || first.Complete {
-		t.Fatal("lost cancellation response certified completion")
-	}
-	if restart {
-		backend.restart(t, delivery)
-		// The current generation was revoked before the cancellation response loss.
-		assertConsumerAcceptanceKey(t, backend, journals[2].Faults.Consumers["customer"].AppID, key, false)
-		proof, err := client.LookupScenarioTestConsumer(ctx, journals[1].RunID, "customer", req)
-		if err != nil || !validTestConsumerCancellation(proof, delayed) {
-			t.Fatal("cancellation proof did not survive restart")
-		}
-		delivery.releaseCreation()
-	}
-	select {
-	case err := <-late:
-		if createFirst && err != nil {
-			t.Fatal("creation should have committed first", err)
-		}
-		if !createFirst && !isConflictAcceptance(err) {
-			t.Fatal("late creation was not fenced", err)
-		}
-	case <-ctx.Done():
-		t.Fatal("delayed creation did not finish")
-	}
-	for i := 0; i < 2; i++ {
-		result, err := cleanupTestCampaignFaultHistory(ctx, client, f.plan, f.cp, f.scenarios, work, resolver, true)
-		if err != nil || !result.Complete {
-			t.Fatal("recipient cleanup", err)
-		}
-	}
+
 	t.Setenv("FAAS_API", proxy.URL)
 	t.Setenv("FAAS_TOKEN", backend.token)
 	args := []string{"--plan", filepath.Join(root, "artifacts", "plan.json"), "--policy", filepath.Join(root, "artifacts", "policy.yaml"), "--manifest", manifestPath, "--directory", work, "--handoff", filepath.Join(root, "bundle-index.json"), "--journal", "--faults", "--fault-history", "--execute"}

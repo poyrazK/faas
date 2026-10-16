@@ -408,3 +408,28 @@ handoff claim locks. After the watcher itself is interrupted following successfu
 lock recovery, use the ordinary explicit cleanup command to continue: it does not
 invent ownership evidence when its original runner lock is gone. Ctrl-C stops
 between operations; an already running bounded cleanup operation finishes first.
+
+### Cleanup watcher acceptance
+
+`make test-gregale-recovery-postgres` requires
+`TestScenarioConsumerPostgresCleanupWatch` and all four cases:
+`api-unavailable`, `database-unavailable`, `restart`, and `restart-in-flight`.
+The fixture uses the authenticated production API subprocess and PostgreSQL,
+with separate coordinator, tracked worker, and watcher processes. It kills the
+coordinator first, verifies the orphan worker still blocks cleanup, then kills
+the worker and checks the stable termination grace period.
+
+Transport outages must persist three generations of unverified fault/session
+inventory while the SQL credential oracle still sees the original key as usable.
+Restoring connectivity lets the surviving watcher finish, including recovery
+from a lost cancellation response. Killing the watcher between attempts instead
+requires explicit cleanup when its original runner lock is gone. Killing it
+after a cancellation commits but before the response arrives leaves stale
+runner/claim exclusion: another watcher must stop for manual inspection, then
+explicit `recover-claim --execute` and repeated cleanup safely finish.
+
+Every case checks revoked credentials, absent sessions and registrations,
+creation fencing, unchanged frozen bundle evidence, and no repeated fixture or
+key provisioning. Resource cleanup does not certify missing execution receipts.
+This is CLI/API/PostgreSQL recovery acceptance; it does not qualify VM lifecycle
+or native fault injection.

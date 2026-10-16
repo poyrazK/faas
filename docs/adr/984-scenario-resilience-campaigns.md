@@ -287,3 +287,11 @@ supply that proof. It reuses runner-lock recovery and full-history fault cleanup
 with finite attempts and existing bounded recovery I/O. Missing ownership proofs
 or claim exclusion remain manual recovery cases. Watch success establishes cleanup
 only, preserving all execution uncertainty and immutable evidence.
+
+Watcher acceptance now exercises real coordinator, tracked-worker and watcher
+process deaths against the production HTTP API and PostgreSQL. Both transport
+outages and interruption after a committed cancellation retain uncertainty until
+verified recovery. Missing original ownership evidence or stale claim exclusion
+requires explicit operator recovery; restarted watchers cannot waive either.
+The recovery gate requires every watcher case in addition to the portable,
+API-restart and database-outage consumer cases.
