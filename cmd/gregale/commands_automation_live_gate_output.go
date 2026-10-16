@@ -61,6 +61,12 @@ func writeAutomationLiveGateText(report automationLiveGateReport) error {
 			return err
 		}
 	}
+	if report.EvidenceAge != nil {
+		age := report.EvidenceAge
+		if _, err := fmt.Fprintf(osStdout, "Candidate evidence age: %.3f seconds (maximum %d seconds; evaluated %s; oldest run created %s)\n", age.AgeSeconds, age.MaxAgeSeconds, age.EvaluatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"), age.OldestRunCreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00")); err != nil {
+			return err
+		}
+	}
 	if len(report.Reasons) > 0 {
 		if _, err := fmt.Fprintf(osStdout, "Reasons: %s\n", strings.Join(report.Reasons, ", ")); err != nil {
 			return err

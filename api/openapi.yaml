@@ -69788,11 +69788,15 @@ components:
         run_id:
           type: string
           format: uuid
+        created_at:
+          type: string
+          format: date-time
+          description: Original linked verification creation time, when retained. Never refreshed by grouping or checking runs.
         result:
           type: string
           enum: [passed, failed, pending, not_started, unavailable]
           description: Result of the original run independently of target drift. Unavailable includes missing runs and terminal runs without a current assertion report.
-      description: Safe original run identity and recorded result only.
+      description: Safe original run identity, creation time and recorded result only.
     AutomationLiveSuiteSummary:
       type: object
       additionalProperties: false

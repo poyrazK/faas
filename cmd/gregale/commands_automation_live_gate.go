@@ -58,7 +58,7 @@ func parseAutomationLiveGate(args []string) (automationLiveGateOptions, error) {
 	if policyPath != "" {
 		policy, err := readAutomationGatePolicy(policyPath)
 		if err != nil {
-			return o, errors.New("could not read a valid coverage policy; use version 1 with distinct required_cases in a regular JSON file")
+			return o, errors.New("could not read a valid coverage policy; use version 1 or 2 with distinct required_cases and a valid version-specific age limit in a regular JSON file")
 		}
 		o.Coverage = &policy
 	}

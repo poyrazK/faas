@@ -41,8 +41,9 @@ type AutomationLiveSuiteCaseComparison struct {
 // Result describes the original linked run, independently of target drift.
 // An absent side means the case was not selected in that suite.
 type AutomationLiveSuiteObservation struct {
-	RunID  string `json:"run_id,omitempty"`
-	Result string `json:"result"`
+	RunID     string     `json:"run_id,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Result    string     `json:"result"`
 }
 
 func (c *Client) CompareAutomationLiveSuites(ctx context.Context, slug, name, suiteID, baselineID string) (AutomationLiveSuiteComparison, error) {

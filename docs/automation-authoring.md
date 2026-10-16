@@ -449,7 +449,7 @@ pinned CLI, reads existing suite evidence with an app-read token, preserves
 nonzero exit codes and uploads the JSON artifact even when the gate fails. It is
 opt-in and does not execute real actions. Use a CLI release containing this
 command or build the current source. This observation does not enforce publishing
-or deployment, impose a maximum report age, or certify cases that were never
+or deployment, impose a maximum age by default, or certify cases that were never
 selected. Retention still applies to suites and their linked run records.
 
 To require coverage even when both suites omit the same saved case, commit a
@@ -472,6 +472,39 @@ Whitespace and case-list order do not change the hash. Request-error reports
 retain policy provenance. Omitting `--policy` preserves the original strict gate
 behavior; it does not require coverage beyond the selected suites. The gate
 still performs only one comparison read and never starts or checks executions.
+
+To bound evidence age, use policy version 2:
+
+```json
+{"version":2,"required_cases":["paid-invoice","declined-payment"],"max_candidate_age_seconds":3600}
+```
+
+Version 2 requires a positive integer `max_candidate_age_seconds` (at most
+9,223,372,036 seconds, the representable duration range). Version 1 rejects this
+field and retains its existing semantics and canonical hash. The limit is part
+of the version 2 policy hash.
+
+Age is measured from the oldest candidate run's `created_at` to the CLI evaluation
+clock, conservatively covering the whole suite. Checking assertions, updating
+suite links, grouping old runs, or obtaining a fresh comparison does not reset age. The gate uses
+its own clock rather than the response's observation timestamp. An age strictly
+greater than the limit adds `candidate_evidence_stale`; a run creation timestamp in
+the future adds `candidate_evidence_future`. Either returns inconclusive (7),
+even if the old candidate contains failed assertions; all reasons remain visible.
+Exactly the allowed age is accepted, subject to every other gate requirement.
+The historical baseline is not age-limited.
+
+Missing timestamps (including older servers or unstarted/unavailable runs) add
+`candidate_evidence_age_unavailable` and return inconclusive (7).
+
+When at least one run timestamp is available, version 2 reports include `evidence_age` with `evaluated_at`,
+`oldest_run_created_at`, `age_seconds` and `max_age_seconds`. Human output shows
+the same age information. Missing timestamps still block the gate even when
+other retained timestamps allow a partial age observation. Request/protocol errors do not invent an age; they
+retain the selected policy and hash. Version 1 and gates without a policy omit
+age information. Keep the CI host clock synchronized; future timestamps fail
+closed without a clock-skew allowance. A long-running suite may need a larger
+age budget or a newly executed suite. The gate remains a single read.
 
 ### Share suite results with your team
 

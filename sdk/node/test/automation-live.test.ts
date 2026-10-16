@@ -6,7 +6,7 @@ import { FaaSClient, WorkflowsService } from '../src/index.js';
 
 test('suite comparison is an authenticated read with explicit candidate and baseline identities', async t => {
   const calls: string[] = [];
-  const view = { baseline: { id: 'baseline' }, candidate: { id: 'candidate' }, baseline_outdated: true, candidate_outdated: false, summary: { regressions: 1, unknown: 1 }, cases: [{ name: 'same-case', change: 'regression', baseline: { result: 'passed' }, candidate: { result: 'failed' } }] };
+  const view = { baseline: { id: 'baseline' }, candidate: { id: 'candidate' }, baseline_outdated: true, candidate_outdated: false, summary: { regressions: 1, unknown: 1 }, cases: [{ name: 'same-case', change: 'regression', baseline: { result: 'passed' }, candidate: { result: 'failed', created_at: '2026-10-15T09:00:00Z' } }] };
   const server = createServer((req, res) => {
     calls.push(req.method + ' ' + req.url);
     assert.equal(req.headers.authorization, 'Bearer token');

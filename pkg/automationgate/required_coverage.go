@@ -9,21 +9,30 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"time"
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// CoveragePolicy version 1 requires exact saved-case names in the candidate.
+// CoveragePolicy requires exact saved-case names in the candidate.
+// Version 2 additionally bounds candidate suite age.
 // RequiredCases is a set: its order does not affect the canonical hash.
 type CoveragePolicy struct {
-	Version       int      `json:"version"`
-	RequiredCases []string `json:"required_cases"`
+	Version                int      `json:"version"`
+	RequiredCases          []string `json:"required_cases"`
+	MaxCandidateAgeSeconds *int64   `json:"max_candidate_age_seconds,omitempty"`
 }
 
 func (p CoveragePolicy) Validate() error {
-	if p.Version != 1 || len(p.RequiredCases) == 0 || len(p.RequiredCases) > api.AutomationLiveSuiteMaxCases {
-		return errors.New("coverage policy requires version 1 and between 1 and 32 required cases")
+	if (p.Version != 1 && p.Version != 2) || len(p.RequiredCases) == 0 || len(p.RequiredCases) > api.AutomationLiveSuiteMaxCases {
+		return errors.New("coverage policy requires version 1 or 2 and between 1 and 32 required cases")
+	}
+	if p.Version == 1 && p.MaxCandidateAgeSeconds != nil {
+		return errors.New("age limits require policy version 2")
+	}
+	if p.Version == 2 && (p.MaxCandidateAgeSeconds == nil || *p.MaxCandidateAgeSeconds <= 0 || *p.MaxCandidateAgeSeconds > int64(time.Duration(1<<63-1)/time.Second)) {
+		return errors.New("version 2 requires a positive, representable max_candidate_age_seconds")
 	}
 	seen := make(map[string]bool)
 	for _, name := range p.RequiredCases {
@@ -61,6 +70,11 @@ func ParseCoveragePolicy(data []byte) (CoveragePolicy, error) {
 		switch name {
 		case "version":
 			err = d.Decode(&p.Version)
+		case "max_candidate_age_seconds":
+			err = d.Decode(&p.MaxCandidateAgeSeconds)
+			if err == nil && p.MaxCandidateAgeSeconds == nil {
+				return p, errors.New("age limit must be an integer")
+			}
 		case "required_cases":
 			err = d.Decode(&p.RequiredCases)
 		default:
@@ -84,7 +98,7 @@ func ParseCoveragePolicy(data []byte) (CoveragePolicy, error) {
 func (p CoveragePolicy) Hash() string {
 	names := append([]string(nil), p.RequiredCases...)
 	sort.Strings(names)
-	canonical, _ := json.Marshal(CoveragePolicy{Version: p.Version, RequiredCases: names})
+	canonical, _ := json.Marshal(CoveragePolicy{Version: p.Version, RequiredCases: names, MaxCandidateAgeSeconds: p.MaxCandidateAgeSeconds})
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:])
 }

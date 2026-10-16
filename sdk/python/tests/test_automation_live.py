@@ -159,7 +159,7 @@ def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
                 "name": "same-case",
                 "change": "unknown",
                 "baseline": {"result": "not_started"},
-                "candidate": {"result": "unavailable"},
+                "candidate": {"result": "unavailable", "created_at": "2026-10-15T09:00:00+00:00"},
             }
         ],
     }

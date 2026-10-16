@@ -31,9 +31,9 @@ class AutomationLiveSuiteCaseComparison:
     is incompatible even when a report is pending; absent evidence is unknown. Added and removed take precedence
     when only one suite selected the case."""
     baseline: AutomationLiveSuiteObservation | Unset = UNSET
-    """Safe original run identity and recorded result only."""
+    """Safe original run identity, creation time and recorded result only."""
     candidate: AutomationLiveSuiteObservation | Unset = UNSET
-    """Safe original run identity and recorded result only."""
+    """Safe original run identity, creation time and recorded result only."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

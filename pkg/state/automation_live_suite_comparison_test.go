@@ -34,6 +34,11 @@ func TestAutomationLiveSuiteComparisonAcrossDeployments(t *testing.T) {
 		if view.Cases[0].Baseline.Result != "passed" || view.Cases[0].Candidate.Result != "failed" || view.Baseline.ID != baseline.ID || uuid.MustParse(view.Candidate.DeploymentID) != uuid.MustParse(next.ID) {
 			t.Fatalf("comparison lost original identities/results: %+v", view)
 		}
+		for i, entry := range view.Cases {
+			if entry.Candidate.CreatedAt == nil || !entry.Candidate.CreatedAt.Equal(candidate.Cases[i].Verification.CreatedAt) || entry.Baseline.CreatedAt == nil || !entry.Baseline.CreatedAt.Equal(baseline.Cases[i].Verification.CreatedAt) {
+				t.Fatal("comparison lost original verification creation time", entry)
+			}
+		}
 		reverse, err := compare.CompareAutomationLiveSuites(t.Context(), app.ID, draft.Name, baseline.ID, candidate.ID)
 		if err != nil || reverse.Cases[0].Change != "recovery" || reverse.Cases[1].Change != "regression" {
 			t.Fatal("comparison direction was ignored", err)

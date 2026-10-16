@@ -43,7 +43,8 @@ error details are excluded.
 Policy reason codes are `candidate_target_mismatch`, `candidate_outdated`,
 `candidate_failed`, `regressions`, `candidate_incomplete`, `unknown_results`,
 `incompatible_cases`, `removed_cases` and (with a coverage policy)
-`required_cases_missing`. Request/protocol errors use
+`required_cases_missing`. Version 2 also reports `candidate_evidence_stale`,
+`candidate_evidence_future` and `candidate_evidence_age_unavailable`. Request/protocol errors use
 `authentication_required`, `request_failed`, `request_timed_out`,
 `invalid_response` or `interrupted`. The report retains every applicable policy
 reason; use `outcome` and `exit_code` for the final decision.
@@ -57,7 +58,7 @@ Missing suite groups produce request exit 4; a retained suite with missing linke
 run evidence is inconclusive (7).
 
 The gate is an observation of the selected evidence, not a publication receipt
-or an automatic deployment action. It does not impose a maximum report age or
+or an automatic deployment action. Without a version 2 policy it does not impose a maximum age or
 prove that omitted, never-selected cases were tested. Both suites and their run
 records remain subject to normal retention. Rerun the read-only gate after
 explicitly completing checks; intentional coverage or assertion changes require
@@ -75,3 +76,19 @@ The candidate must select every required case. Missing names return inconclusive
 its canonical SHA-256 hash and missing names. CI must make the policy file
 available locally (for example by checking out the reviewed commit first).
 Without `--policy`, the sample workflow only checks selected-suite coverage.
+
+To require recent evidence, upgrade the same file to version 2:
+
+```json
+{"version":2,"required_cases":["paid-invoice","declined-payment"],"max_candidate_age_seconds":3600}
+```
+
+Age runs from the oldest candidate run creation to the CLI clock. It covers the entire
+suite conservatively; fresh assertion checks or comparison reads cannot refresh
+old evidence. Stale or future-dated evidence returns inconclusive (7), taking
+precedence over old failures. Exactly the limit is allowed. Reports include
+`evidence_age` with the evaluation time, oldest run creation time, age in seconds and
+maximum age. The age limit participates in the policy hash. Version 1 hashes
+and behavior are unchanged. Keep the CI clock synchronized. Baseline age is not
+restricted. Missing timestamps (including an older server) return inconclusive
+with `candidate_evidence_age_unavailable`. These checks remain read-only.

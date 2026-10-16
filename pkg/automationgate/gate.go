@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -33,12 +34,13 @@ type Selection struct {
 }
 
 type Result struct {
-	Outcome              string   `json:"outcome"`
-	ExitCode             int      `json:"exit_code"`
-	Reasons              []string `json:"reasons"`
-	CandidatePassed      int      `json:"candidate_passed"`
-	CandidateFailed      int      `json:"candidate_failed"`
-	MissingRequiredCases []string `json:"missing_required_cases,omitempty"`
+	Outcome              string       `json:"outcome"`
+	ExitCode             int          `json:"exit_code"`
+	Reasons              []string     `json:"reasons"`
+	CandidatePassed      int          `json:"candidate_passed"`
+	CandidateFailed      int          `json:"candidate_failed"`
+	MissingRequiredCases []string     `json:"missing_required_cases,omitempty"`
+	EvidenceAge          *EvidenceAge `json:"evidence_age,omitempty"`
 }
 
 func (s Selection) Validate() error {
@@ -52,9 +54,16 @@ func (s Selection) Validate() error {
 }
 
 // Evaluate requires a coherent server comparison. A failure in an intended,
-// current candidate takes precedence over gaps in other cases. Wrong or outdated
-// targets are inconclusive regardless of the original candidate's verdicts.
+// current candidate with usable age evidence takes precedence over coverage gaps.
+// Wrong/outdated targets and unusable age evidence are inconclusive regardless
+// of the original candidate's verdicts.
 func Evaluate(s Selection, view api.AutomationLiveSuiteComparison) (Result, error) {
+	return EvaluateAt(s, view, time.Now().UTC())
+}
+
+// EvaluateAt uses the supplied evaluation clock, never the response observation
+// time, to prevent replaying an old comparison from refreshing evidence.
+func EvaluateAt(s Selection, view api.AutomationLiveSuiteComparison, now time.Time) (Result, error) {
 	if err := s.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -119,8 +128,9 @@ func Evaluate(s Selection, view api.AutomationLiveSuiteComparison) (Result, erro
 			result.Reasons = append(result.Reasons, "required_cases_missing")
 		}
 	}
+	ageBlocked := evaluateAge(s.Coverage, view.Cases, now, &result)
 	switch {
-	case targetBlocked:
+	case targetBlocked || ageBlocked:
 		result.Outcome, result.ExitCode = "inconclusive", ExitInconclusive
 	case result.CandidateFailed > 0:
 		result.Outcome, result.ExitCode = "failed", ExitFailed

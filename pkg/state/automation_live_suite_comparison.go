@@ -77,6 +77,10 @@ func liveSuiteObservation(c api.AutomationLiveSuiteCase) *api.AutomationLiveSuit
 	if c.RunID != "" && c.Verification == nil {
 		return result
 	}
+	if c.Verification != nil && !c.Verification.CreatedAt.IsZero() {
+		created := c.Verification.CreatedAt
+		result.CreatedAt = &created
+	}
 	switch {
 	case c.RunID == "":
 		result.Result = "not_started"
