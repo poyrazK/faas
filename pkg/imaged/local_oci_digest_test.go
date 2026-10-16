@@ -10,7 +10,8 @@ import (
 )
 
 func TestSourceBuildPinsManifestBeforeReleaseAdmission(t *testing.T) {
-	config := minimalConfigBytes()
+	rawLayer := []byte("source-build-layer")
+	config := minimalConfigBytes(rawLayer)
 	var document map[string]any
 	if err := json.Unmarshal(config, &document); err != nil {
 		t.Fatal(err)
@@ -20,11 +21,11 @@ func TestSourceBuildPinsManifestBeforeReleaseAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layer := gzipBytes(t, []byte("source-build-layer"))
-	manifest := minimalManifestBytes(digestFor(t, config), []string{digestFor(t, layer)})
+	layer := gzipBytes(t, rawLayer)
+	manifest := minimalManifestBytes(config, layer)
 	digest := digestFor(t, manifest)
 	archive := buildLocalOCIArchive(t, map[string][]byte{
-		"index.json": minimalIndexBytes(digest), blobPath(digest): manifest,
+		"index.json": minimalIndexBytes(manifest), blobPath(digest): manifest,
 		blobPath(digestFor(t, config)): config, blobPath(digestFor(t, layer)): layer,
 	})
 	ctx := context.Background()
@@ -49,7 +50,7 @@ func TestSourceBuildPinsManifestBeforeReleaseAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := New(store, &fakeNotifier{}, nil, &fakeBuilder{bytesOut: 128}, "", t.TempDir(), silentLogger())
-	if err := h.buildLocalOCIAppLayer(ctx, app, &dep, acct); err != nil {
+	if err := h.buildLocalOCIAppLayer(ctx, app, &dep, acct, nil); err != nil {
 		t.Fatal(err)
 	}
 	if dep.ImageDigest != digest {
@@ -64,7 +65,7 @@ func TestSourceBuildPinsManifestBeforeReleaseAdmission(t *testing.T) {
 func TestLocalOCIManifestDigestRejectsContentMismatch(t *testing.T) {
 	manifest := []byte(`{"schemaVersion":2}`)
 	digest := digestFor(t, manifest)
-	archive := buildLocalOCIArchive(t, map[string][]byte{"index.json": minimalIndexBytes(digest), blobPath(digest): append(manifest, ' ')})
+	archive := buildLocalOCIArchive(t, map[string][]byte{"index.json": minimalIndexBytes(manifest), blobPath(digest): append(manifest, ' ')})
 	if _, err := localOCIManifestDigest(archive); err == nil {
 		t.Fatal("accepted a manifest under a false content address")
 	}

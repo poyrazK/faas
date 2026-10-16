@@ -18,6 +18,7 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 	var generation, ruleID string
 	var nextGeneration int
 	var events []string
+	var clock *testLoadPhaseClock
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -29,6 +30,9 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 				return
 			}
 			nextGeneration++
+			if clock == nil || clock.phaseAt(time.Now()) != nextGeneration {
+				t.Errorf("install generation %d observed phase %d; want the phase boundary before the API mutation", nextGeneration, clock.phaseAt(time.Now()))
+			}
 			generation = "generation-" + string(rune('0'+nextGeneration))
 			if len(request.Rules) != 1 {
 				http.Error(w, "expected one rule", http.StatusBadRequest)
@@ -42,6 +46,9 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 				ExpiresAt: time.Now().Add(time.Minute), RulesInstalled: len(request.Rules), Generation: generation,
 			})
 		case http.MethodDelete:
+			if clock == nil || clock.phaseAt(time.Now()) != 1 {
+				t.Errorf("clear observed phase %d; want the fault phase until the API clears it", clock.phaseAt(time.Now()))
+			}
 			events = append(events, "clear")
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodGet:
@@ -64,7 +71,7 @@ func TestRunTestChaosScheduleChangesPlansAndCapturesPerPhaseMatches(t *testing.T
 		{Name: "fault", Duration: time.Second, Rules: []testChaosRule{fault}},
 		{Name: "recovery", Duration: time.Second},
 	}
-	clock := newTestLoadPhaseClock(len(phases))
+	clock = newTestLoadPhaseClock(len(phases))
 	started := time.Now()
 	result, err := runTestChaosSchedule(context.Background(), NewClient(server.URL, "test-token"), "0123456789abcdef0123456789abcdef", phases, clock, started)
 	if err != nil {

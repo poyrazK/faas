@@ -1,6 +1,6 @@
 import { classifyDataError, dataRequest, validatedRpc } from '@gregale/data'
 import type { Database } from './database.types.js'
-import type { notesClient } from './notes.js'
+import { noteInputFeedback, type notesClient } from './notes.js'
 
 export type NoteFormFields = Partial<Record<'body' | 'tags', string>>
 export type SavedNote = Pick<Database['api']['Tables']['notes']['Row'], 'id' | 'body' | 'priority' | 'version'>
@@ -45,6 +45,8 @@ export function createNoteForm(client: ReturnType<typeof notesClient>, options: 
         if (recovering) return { ...pending!, tag_names: [...pending!.tag_names] }
         try {
           const parsed = parseFields(value)
+          try { client.validateDraft(parsed.note_body) }
+          catch (error) { throw new FormError(noteInputFeedback(error) ?? { body: 'The note does not match the database input rules.' }) }
           const key = (options.createKey ?? (() => crypto.randomUUID()))()
           if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new Error('Invalid request key')
           return { ...parsed, idempotency_key: key }

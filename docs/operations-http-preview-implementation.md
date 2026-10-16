@@ -579,7 +579,9 @@ qualification is claimed from that attempt. Other builds remained running.
 Linux CI now explicitly enables the portable PostgreSQL/HTTP/SDK acceptance
 fixture in the existing API shard and builds its Node SDK first. This test uses
 a local HTTP bridge and does not qualify native VM lifecycle or activation.
-The exact-package state coverage floor remains 70%.
+The exact-package state coverage floor remained 70% here; it is now
+`STATE_EXACT_FLOOR` in `.claude/ci/coverage_floor.py` (67% from 2026-10-15
+until the untested state features merged that week gain tests).
 
 The final Python SDK reproduced identically across two isolated current-spec
 generator passes while preserving all seventeen handwritten helpers. Its unit

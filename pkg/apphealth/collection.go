@@ -19,12 +19,16 @@ type EvidenceStore interface {
 
 // Collect is shared by on-demand reads and the independent history collector.
 func Collect(ctx context.Context, store EvidenceStore, client *promql.Client, app state.App, metricsAllowed bool) api.AppHealthResponse {
-	e := Evidence{App: app, MetricsAllowed: metricsAllowed}
+	return CollectScope(ctx, store, client, app, metricsAllowed, api.DefaultEnvScope)
+}
+
+func CollectScope(ctx context.Context, store EvidenceStore, client *promql.Client, app state.App, metricsAllowed bool, scope string) api.AppHealthResponse {
+	e := Evidence{App: app, MetricsAllowed: metricsAllowed, Scope: evidenceScope(scope)}
 	collectDeployments(ctx, store, &e)
 	collectInstances(ctx, store, &e)
 	if e.MetricsAllowed && e.DeploymentsKnown {
 		var ids []string
-		for _, d := range servingDeployments(e.Live) {
+		for _, d := range servingDeploymentsInScope(e.Live, e.Scope) {
 			ids = append(ids, d.ID)
 		}
 		e.Metrics = appmetrics.FetchRequestHealth(ctx, client, app.ID, ids)
@@ -44,7 +48,7 @@ func collectDeployments(ctx context.Context, store EvidenceStore, e *Evidence) {
 	}
 	e.HistoryComplete = len(history) < api.AppHealthDeploymentHistoryLimit
 	for _, d := range history {
-		if d.Scope == "" || d.Scope == "default" {
+		if evidenceScope(d.Scope) == evidenceScope(e.Scope) {
 			e.Latest = &d
 			break
 		}

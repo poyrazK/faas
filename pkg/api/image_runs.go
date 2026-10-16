@@ -53,7 +53,21 @@ type CreateImageRunRequest struct {
 	TimeoutSec int `json:"timeout_sec,omitempty"`
 	// Pull is "missing" (default) or "always".
 	Pull string `json:"pull,omitempty"`
+	// Interactive holds the command until one client attaches to the run's
+	// task (ADR-1330); TTY gives it a pseudo-terminal. TTY requires
+	// Interactive.
+	Interactive bool `json:"interactive,omitempty"`
+	TTY         bool `json:"tty,omitempty"`
 }
+
+const (
+	// ImageRunAttachTimeoutSec is how long an interactive run's VM waits for
+	// its client to attach (ADR-1330).
+	ImageRunAttachTimeoutSec = 60
+	// ImageRunInteractiveMaxTimeoutSec is the session limit of an
+	// interactive run.
+	ImageRunInteractiveMaxTimeoutSec = 3600
+)
 
 // ImageRunResponse answers POST /v1/image-runs. Job names the runner job;
 // once Status is "queued", RunID addresses the run under /v1/jobs/{job}/runs.
@@ -66,6 +80,9 @@ type ImageRunResponse struct {
 	ImageDigest string   `json:"image_digest,omitempty"`
 	RunID       string   `json:"run_id,omitempty"`
 	Command     []string `json:"command,omitempty"`
+	// Attach is the one-time credential of an interactive run (ADR-1330),
+	// returned only in the response that created the run.
+	Attach *AppTaskAttachInfo `json:"attach,omitempty"`
 }
 
 // ResolveImageRunCommand applies Docker's rules: the argv is the effective

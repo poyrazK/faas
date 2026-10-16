@@ -3365,6 +3365,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
 		}
+		// A plan must refuse what the deploy would refuse. The deploy runs
+		// these manifest checks only after login, so --plan used to print
+		// an "apply this plan" for a manifest the deploy rejects (H10-67).
+		if *image == "" && !projectRequested && !*noTriggers {
+			if manifestErr := validateSingleAppManifestTargets(sourceDir, slug); manifestErr != nil {
+				return printErr("Invalid deploy manifest", manifestErr)
+			}
+		}
 		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
@@ -5070,6 +5078,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
+		if detail, unavailable := customDomainsRuntimeUnavailable(context.Background(), client); unavailable {
+			return printErr("Custom domains are unavailable", errors.New(detail))
+		}
 		d, err := client.CreateDomain(context.Background(), api.CreateCustomDomainRequest{Domain: *domain, AppID: *slug, Environment: *environment})
 		if err != nil {
 			return printErr("Could not add domain", err)
@@ -5409,7 +5420,7 @@ func formatCronCommand(c api.CronResponse) string {
 // can pass `--path ""` to clear the path without being re-defaulted
 // to `/`. The `--enable|--disable` pair is mutually exclusive;
 // --schedule is locally shape-checked (5 whitespace tokens) to match
-// the server's validCron so a bad expression fails fast.
+// the server's cron check so a bad expression fails fast.
 func cmdCronsUpdate(args []string) int {
 	fs := newFlagSet("crons-update", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose and edit an HTTP task")
@@ -5477,7 +5488,7 @@ func cmdCronsUpdate(args []string) int {
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
-	// server's validCron so a bad expression fails fast. We do NOT
+	// server's cron check so a bad expression fails fast. We do NOT
 	// validate field ranges — that's the scheduler's job.
 	if explicit["schedule"] && len(strings.Fields(*schedule)) != 5 {
 		PrintFail(os.Stderr, "Invalid --schedule %q (expected 5 fields, e.g. \"*/15 * * * *\")", *schedule)
@@ -6431,7 +6442,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	since := fs.String("since", "", "lookback duration (15m, 3d) or RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
 	status := fs.Int("status", 0, "only show HTTP requests with this status (100..599)")
-	route := fs.String("route", "", "only show HTTP requests for this route")
+	route := fs.String("route", "", "only show HTTP requests for this route label (METHOD /path)")
 	requestID := fs.String("request", "", "show one HTTP request by public request id or row id")
 	traceID := fs.String("trace", "", "show HTTP access logs correlated with this W3C trace id")
 	limit := fs.Int("limit", 100, "HTTP request page size (1..200)")
@@ -6647,6 +6658,10 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		PrintUsage(os.Stderr, "--trace must be a 32-character lowercase W3C trace id", "logs")
 		return 2
 	}
+	if err := validateHTTPLogRoute(*route); err != nil {
+		PrintUsage(os.Stderr, err.Error(), "logs")
+		return 2
+	}
 	if strings.TrimSpace(*requestID) != "" && strings.TrimSpace(*traceID) != "" {
 		PrintUsage(os.Stderr, "--request and --trace are mutually exclusive", "logs")
 		return 2
@@ -6852,6 +6867,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 		collector = newExplainCollector(slug, deployment)
 	}
 	printedLines := 0
+	parkedFallback := false
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
 		// when schedd's StreamAppLogs RPC isn't wired yet (the
@@ -6860,6 +6876,12 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 		// side). Move 3's `not_implemented` shape is dead code;
 		// removed.
 		if e.Event == "degraded" {
+			// A parked app has no running instance; show its newest
+			// retained logs instead of only naming the archive flags (H10-72).
+			if archive == nil && !follow && !jsonOutput && isNoRunningInstanceLogs(e.Data) {
+				parkedFallback = true
+				return true, 0
+			}
 			if jsonOutput {
 				_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
 			} else {
@@ -6891,6 +6913,9 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return true, 0
 		}
 		if e.Data != "" {
+			if archive != nil && !retainedLineMatches(e.Data, filter.Grep) {
+				return false, 0
+			}
 			printedLines++
 			line := e.Data
 			if !jsonOutput {
@@ -6908,6 +6933,9 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	}
 	if streamErr != nil {
 		return printErr("Stream closed", streamErr)
+	}
+	if parkedFallback {
+		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
 		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
@@ -7735,10 +7763,28 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	if d.Status == statusLive {
 		return renderSuccessfulDeployment(ctx, c, d, appSlug)
 	}
+	// A retracted deployment did not fail; say what happened and keep the
+	// build-cancelled exit code (H10-48).
+	switch d.Status {
+	case deploymentStatusCancelled:
+		PrintWarn(os.Stderr, "deployment %s was cancelled before it went live; the live release is unchanged", d.ID)
+		return 2
+	case deploymentStatusSuperseded:
+		PrintWarn(os.Stderr, "deployment %s was superseded by a newer deployment before it went live", d.ID)
+		return 2
+	}
+	// The SSE terminal frame can carry only the lifecycle status; a failed
+	// build then printed "Deploy failed: build exited 1" without the
+	// dep_install_failed hint, why and fix the deployment row has (H10-74).
+	if d.ErrorCode == "" {
+		d = deploymentWithReceipt(ctx, c, d)
+	}
 	if onFailure != nil {
 		onFailure(d, "", d.Error)
 	}
-	return renderDeployFailure(d)
+	code := renderDeployFailure(d)
+	printBuildFailureExcerpt(ctx, c, os.Stderr, appSlug, d)
+	return code
 }
 
 // terminalExitForBuild maps a polled terminal BuildResponse to a CLI

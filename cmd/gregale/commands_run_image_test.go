@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -161,6 +163,213 @@ func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
 			}
 			if !reflect.DeepEqual(pulls, []string{"always", "missing"}) {
 				t.Fatalf("pull policies = %q; only the first request may re-queue the image", pulls)
+			}
+		})
+	}
+}
+
+// adr: 1330
+func TestParseImageRunArgsInteractiveFlags(t *testing.T) {
+	cases := map[string]struct {
+		args             []string
+		interactive, tty bool
+		cmd              []string
+	}{
+		"-it":                    {args: []string{"-it", "--image", "alpine", "sh"}, interactive: true, tty: true, cmd: []string{"sh"}},
+		"-ti":                    {args: []string{"--image", "alpine", "-ti", "sh"}, interactive: true, tty: true, cmd: []string{"sh"}},
+		"-i -t":                  {args: []string{"-i", "-t", "--image", "alpine"}, interactive: true, tty: true},
+		"long flags":             {args: []string{"--interactive", "--tty", "--image", "alpine"}, interactive: true, tty: true},
+		"-i alone":               {args: []string{"-i", "--image", "alpine", "cat"}, interactive: true, cmd: []string{"cat"}},
+		"-it after the command":  {args: []string{"--image", "alpine", "ls", "-it"}, cmd: []string{"ls", "-it"}},
+		"-it after a terminator": {args: []string{"--image", "alpine", "--", "-it"}, cmd: []string{"-it"}},
+		"no interactive flags":   {args: []string{"--image", "alpine", "true"}, cmd: []string{"true"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			opts, ok := parseImageRunArgs(tc.args)
+			req := opts.request
+			var cmd []string
+			if req.Args != nil {
+				cmd = *req.Args
+			}
+			if !ok || req.Interactive != tc.interactive || req.TTY != tc.tty || !reflect.DeepEqual(cmd, tc.cmd) {
+				t.Fatalf("parse(%q) = interactive=%v tty=%v args=%q ok=%v", tc.args, req.Interactive, req.TTY, cmd, ok)
+			}
+		})
+	}
+
+	_, _, restore := swapIO(t)
+	defer restore()
+	for name, bad := range map[string][]string{
+		"tty without interactive": {"-t", "--image", "alpine"},
+		"interactive detached":    {"-i", "--detach", "--image", "alpine"},
+		"interactive -d":          {"-it", "-d", "--image", "alpine"},
+	} {
+		if _, ok := parseImageRunArgs(bad); ok {
+			t.Errorf("%s: parse(%q) accepted", name, bad)
+		}
+	}
+	previous := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = previous }()
+	if _, ok := parseImageRunArgs([]string{"-i", "--image", "alpine"}); ok {
+		t.Error("interactive with --json accepted")
+	}
+	if _, ok := parseImageRunArgs([]string{"--image", "alpine"}); !ok {
+		t.Error("--json without interactive rejected")
+	}
+}
+
+// interactiveImageRunServer fakes POST /v1/image-runs, the attach gateway
+// and cancellation for `gregale run -it --image`.
+type interactiveImageRunServer struct {
+	t         *testing.T
+	mu        sync.Mutex
+	request   api.CreateImageRunRequest
+	attempts  int
+	cancelled int
+	stdin     []string
+	attach    func(w http.ResponseWriter, r *http.Request, attempt int)
+}
+
+func (s *interactiveImageRunServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method + " " + r.URL.Path {
+	case "POST /v1/image-runs":
+		s.mu.Lock()
+		_ = json.NewDecoder(r.Body).Decode(&s.request)
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"status":"queued","job":"ir-0123","image":"docker.io/library/alpine:latest","image_status":"ready","run_id":"run-1",` +
+			`"command":["sh"],"attach":{"token":"tok","path":"/v1/jobs/ir-0123/runs/run-1/tasks/0/attach","subprotocol":"` + api.AppTaskAttachSubprotocol + `"}}`))
+	case "GET /v1/jobs/ir-0123/runs/run-1/tasks/0/attach":
+		if r.Header.Get(api.AppTaskAttachTokenHeader) != "tok" || r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "missing credentials", http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		s.attempts++
+		attempt := s.attempts
+		s.mu.Unlock()
+		s.attach(w, r, attempt)
+	case "POST /v1/jobs/ir-0123/runs/run-1/cancel":
+		s.mu.Lock()
+		s.cancelled++
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run_id":"run-1","cancelled":1}`))
+	default:
+		s.t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func writeAttachProblem(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	if status == http.StatusConflict {
+		w.Header().Set("Retry-After", "1")
+	}
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, `{"detail":%q,"status":%d}`, detail, status)
+}
+
+// adr: 1330
+func TestRunInteractiveImageRelaysSessionAndExitCode(t *testing.T) {
+	fake := &interactiveImageRunServer{t: t}
+	fake.attach = func(w http.ResponseWriter, r *http.Request, attempt int) {
+		if attempt == 1 {
+			writeAttachProblem(w, http.StatusConflict, "the task VM is still starting")
+			return
+		}
+		upgrader := websocket.Upgrader{Subprotocols: []string{api.AppTaskAttachSubprotocol}}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteMessage(websocket.BinaryMessage, []byte{api.AppTaskAttachAttached})
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			fake.mu.Lock()
+			fake.stdin = append(fake.stdin, string(msg))
+			fake.mu.Unlock()
+			if msg[0] == api.AppTaskAttachStdinClose {
+				_ = conn.WriteMessage(websocket.BinaryMessage, append([]byte{api.AppTaskAttachStdout}, []byte("hello from sh\n")...))
+				exit := 7
+				terminal, _ := api.EncodeAppTaskAttachTerminal(api.AppTaskAttachTerminalMessage{Status: api.AppTaskStatusFailed, ExitCode: &exit})
+				_ = conn.WriteMessage(websocket.BinaryMessage, terminal)
+				return
+			}
+		}
+	}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	out, readErr, restore := swapIO(t)
+	defer restore()
+	oldIn := osStdin
+	osStdin = strings.NewReader("echo hi\n")
+	defer func() { osStdin = oldIn }()
+
+	if got := cmdRunImage([]string{"-it", "--image", "alpine", "sh"}); got != 7 {
+		t.Fatalf("exit = %d, want the command's exit code 7 (stderr %q)", got, readErr())
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !fake.request.Interactive || fake.request.TTY {
+		t.Fatalf("request = %+v; want interactive without a tty when stdin is not a terminal", fake.request)
+	}
+	if !strings.Contains(readErr(), "stdin is not a terminal") {
+		t.Fatalf("stderr = %q; want the tty warning", readErr())
+	}
+	if fake.attempts != 2 || fake.cancelled != 0 {
+		t.Fatalf("attach attempts = %d cancels = %d; want a retry after 409 and no cancel", fake.attempts, fake.cancelled)
+	}
+	if len(fake.stdin) != 2 || fake.stdin[0] != string(append([]byte{api.AppTaskAttachStdin}, "echo hi\n"...)) ||
+		fake.stdin[1] != string([]byte{api.AppTaskAttachStdinClose}) {
+		t.Fatalf("client messages = %q", fake.stdin)
+	}
+	if out.String() != "hello from sh\n" {
+		t.Fatalf("stdout = %q", out.String())
+	}
+}
+
+// adr: 1330
+func TestRunInteractiveImageCancelsWhenItCannotAttach(t *testing.T) {
+	cases := map[string]int{
+		"old gateway":     http.StatusNotFound,
+		"session refused": http.StatusGone,
+	}
+	for name, status := range cases {
+		t.Run(name, func(t *testing.T) {
+			fake := &interactiveImageRunServer{t: t}
+			fake.attach = func(w http.ResponseWriter, _ *http.Request, _ int) {
+				writeAttachProblem(w, status, "the session cannot be attached")
+			}
+			srv := httptest.NewServer(fake)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			_, readErr, restore := swapIO(t)
+			defer restore()
+			oldIn := osStdin
+			osStdin = strings.NewReader("")
+			defer func() { osStdin = oldIn }()
+
+			if got := cmdRunImage([]string{"-i", "--image", "alpine", "sh"}); got == 0 {
+				t.Fatal("exit = 0 for a run that never attached")
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.attempts != 1 || fake.cancelled != 1 {
+				t.Fatalf("attach attempts = %d cancels = %d; want one attempt and the run cancelled", fake.attempts, fake.cancelled)
+			}
+			if stderr := readErr(); !strings.Contains(stderr, "cannot be attached") {
+				t.Fatalf("stderr = %q; want the gateway's detail", stderr)
 			}
 		})
 	}

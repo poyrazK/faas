@@ -89,7 +89,8 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			}
 			softRows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name
  FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name)
- WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name ~ 'deployment.*_id$'
+ WHERE c.table_schema='public' AND t.table_type='BASE TABLE'
+ AND (c.column_name ~ 'deployment.*_id$' OR c.table_name='environment_workload_retirements' AND c.column_name='deployment_ids')
  AND NOT EXISTS(SELECT 1 FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid JOIN pg_namespace ns ON ns.oid=child.relnamespace WHERE ns.nspname=c.table_schema AND child.relname=c.table_name)
  AND NOT (c.table_name='github_deployments' AND c.column_name='github_deployment_id')
  AND NOT EXISTS(SELECT 1 FROM pg_constraint f JOIN pg_class tab ON tab.oid=f.conrelid

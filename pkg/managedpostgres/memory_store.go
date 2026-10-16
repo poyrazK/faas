@@ -21,6 +21,7 @@ type MemoryStore struct {
 	usage                     map[usageKey]UsageRecord
 	restoreProofs             map[string]RestoreProof
 	creationReceipts          map[string]CreationReceipt
+	restoreVerifications      map[string]RestoreVerification
 	usageProgress             map[usageProgressKey]UsageProgress
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
@@ -38,6 +39,7 @@ func NewMemoryStore() *MemoryStore {
 		usage:                     map[usageKey]UsageRecord{},
 		restoreProofs:             map[string]RestoreProof{},
 		creationReceipts:          map[string]CreationReceipt{},
+		restoreVerifications:      map[string]RestoreVerification{},
 		usageProgress:             map[usageProgressKey]UsageProgress{},
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},

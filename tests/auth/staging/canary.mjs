@@ -154,6 +154,24 @@ export class AuthCanary extends Canary {
         requireValue((await this.json(authURL + '/auth/v1/token?grant_type=password', { method: 'POST', body: { email: this.email('bob'), password: this.password } })).status >= 400, 'banned_user_signed_in')
       })
 
+      await this.check('signing_key_rotation', async () => {
+        // Carol signs in under the first key; her token must outlive the rotation.
+        const carol = await this.signUp(authURL, 'carol')
+        const rotated = await this.exec(['auth', 'keys', 'rotate', auth.slug])
+        requireValue(/^[0-9A-F]{8}$/.test(rotated.id ?? '') && /^[0-9A-F]{8}$/.test(rotated.previous ?? '') && header(carol.access)?.kid === `gregale-${rotated.previous.toLowerCase()}`, 'rotation_receipt_invalid')
+        requireValue((await this.notes(apiURL, carol.access)).status === 200, 'previous_key_token_refused')
+        const fresh = await this.json(authURL + '/auth/v1/token?grant_type=password', { method: 'POST', body: { email: this.email('carol'), password: this.password } })
+        requireValue(fresh.status === 200 && header(fresh.data?.access_token)?.kid === rotated.kid, 'new_key_not_signing')
+        requireValue((await this.notes(apiURL, fresh.data.access_token)).status === 200, 'new_key_token_refused')
+        // Revoking the previous key cuts its unexpired tokens off: in the Auth
+        // app once it restarts, and in the Data API when its JWKS cache expires.
+        await this.exec(['auth', 'keys', 'revoke', auth.slug, rotated.previous])
+        await this.wait(() => this.json(authURL + '/auth/v1/user', { token: carol.access }), x => x.status === 401 || x.status === 403, 300_000)
+        await this.wait(() => this.notes(apiURL, carol.access), x => x.status === 401, 420_000)
+        this.report.key_rotation = { signing: rotated.id, revoked: rotated.previous }
+        await this.save()
+      })
+
       await this.check('park_and_wake_sign_in', async () => {
         const deployment = this.report.deployments.find(x => x.app === auth.slug)?.deployment_id
         const parked = await this.wait(() => this.request(`/v1/apps/${auth.slug}/instances`), xs => xs.some(x => x.state === 'PARKED' && x.deployment_id === deployment), 900_000)

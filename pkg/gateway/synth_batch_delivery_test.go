@@ -14,6 +14,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 1321 — batch delivery invokes once per dispatch batch and maps
+// batchItemFailures back to per-record results.
+
 func runBatchDelivery(t *testing.T, disp *fakeBatchDispatcher, req batchDispatchRequest) map[string]batchDispatchResult {
 	t.Helper()
 	body, _ := json.Marshal(req)

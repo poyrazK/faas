@@ -31,7 +31,7 @@ function keyMatches(hashes, header) {
   return hashes.reduce((found, hash) => timingSafeEqual(hash, presented) || found, false)
 }
 
-// signingKey picks the one ES256 key in AUTH_JWT_KEYS that signs. GoTrue
+// signingKey picks the one ES256 key in GOTRUE_JWT_KEYS that signs. GoTrue
 // accepts only its configured asymmetric methods, so HS256 is refused.
 export function signingKey(keys) {
   const jwk = JSON.parse(keys).find(key => Array.isArray(key.key_ops) && key.key_ops.includes('sign'))
@@ -171,6 +171,29 @@ async function importUsers(admin, users) {
   return { created, skipped: skipped.sort((a, b) => a.index - b.index) }
 }
 
+// activity reads GoTrue's audit log (sign-ins, sign-ups, password and
+// account changes), newest first, overall or for one user. search matches an
+// action exactly or an address in part. Pages carry no total, which would
+// count the whole log. GoTrue v2.197.0 leaves the log's IP address empty, so
+// none is returned. GoTrue records administrator actions (this API acting
+// as service_role) with the zero actor ID and the affected user in traits;
+// they are reported against that user, marked as an administrator's.
+const administratorID = '00000000-0000-0000-0000-000000000000'
+async function activity(query, params) {
+  const { page, perPage, search } = pageParams(params)
+  const user = params.get('user') ?? ''
+  if (user && !uuid.test(user)) throw new HTTPError(400, 'invalid_id')
+  const rows = await query(`SELECT id, created_at, payload->>'action' AS action,
+      CASE WHEN payload->>'actor_id' = $6 THEN 'administrator' ELSE 'user' END AS actor,
+      COALESCE(NULLIF(payload->'traits'->>'user_id', ''), NULLIF(payload->>'actor_id', $6)) AS user_id,
+      COALESCE(NULLIF(payload->'traits'->>'user_email', ''), CASE WHEN payload->>'actor_id' = $6 THEN NULL ELSE payload->>'actor_username' END) AS email
+    FROM auth.audit_log_entries
+    WHERE ($1 = '' OR payload->>'actor_id' = $1 OR payload->'traits'->>'user_id' = $1)
+      AND ($2 = '' OR payload->>'action' = $2 OR payload->>'actor_username' ILIKE $3 ESCAPE '\\' OR payload->'traits'->>'user_email' ILIKE $3 ESCAPE '\\')
+    ORDER BY created_at DESC, id LIMIT $4 OFFSET $5`, [user, search, likePattern(search), perPage + 1, (page - 1) * perPage, administratorID])
+  return { entries: rows.slice(0, perPage), more: rows.length > perPage, page, per_page: perPage }
+}
+
 // adminRoute returns [status, body] for one authorized request.
 export async function adminRoute({ pool, admin }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
@@ -224,6 +247,7 @@ export async function adminRoute({ pool, admin }, method, url, body) {
       : { rowCount: 0 }
     return [200, { deleted: true, organizations_deleted: rowCount }]
   }
+  if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)
     const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total

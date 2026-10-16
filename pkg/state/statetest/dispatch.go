@@ -61,6 +61,7 @@ var memDispatched = map[string]bool{
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
 	"IssueObjectMultipartURLCredential":                       true,
+	"JobRunAttachSession":                                     true,
 	"LatestParkedDeploymentForApp":                            true,
 	"ListAppErrorGroups":                                      true,
 	"ListAppErrorRequests":                                    true,
@@ -73,12 +74,14 @@ var memDispatched = map[string]bool{
 	"ListOutboundAppBindings":                                 true,
 	"ListQueueBindingConsumersForApp":                         true,
 	"ListQueueBindingsForApp":                                 true,
+	"ListRunningInstancesOnDeadNodes":                         true,
 	"ListTCPListenerTLSObservations":                          true,
 	"ListWorkflowScheduleCandidates":                          true,
 	"LiveDeploymentForScope":                                  true,
 	"ManagedPostgresAdmissionFenced":                          true,
 	"MigrateInstanceOwner":                                    true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                   true,
+	"NodeList":                                                true,
 	"ObserveNextWorkflowFailureEligibility":                   true,
 	"ProcessNextEventRecoveryExecutionNotification":           true,
 	"ProcessNextWorkflowRecoveryAutomaticBlockedNotification": true,
@@ -109,6 +112,8 @@ var memDispatched = map[string]bool{
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
+	"RouteAwakeMinutes":                                       true,
+	"RouteAwakeRouteMinutes":                                  true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -443,6 +448,15 @@ func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.Obj
 	return s.MemStore.IssueObjectMultipartURLCredential(p0, p1, p2, p3)
 }
 
+func (s *Mem) JobRunAttachSession(p0 context.Context, p1 string) (state.JobRunAttach, error) {
+	if o, ok := s.over.(interface {
+		JobRunAttachSession(context.Context, string) (state.JobRunAttach, error)
+	}); ok {
+		return o.JobRunAttachSession(p0, p1)
+	}
+	return s.MemStore.JobRunAttachSession(p0, p1)
+}
+
 func (s *Mem) LatestParkedDeploymentForApp(p0 context.Context, p1 string) (state.Deployment, error) {
 	if o, ok := s.over.(interface {
 		LatestParkedDeploymentForApp(context.Context, string) (state.Deployment, error)
@@ -551,6 +565,15 @@ func (s *Mem) ListQueueBindingsForApp(p0 context.Context, p1 string, p2 string) 
 	return s.MemStore.ListQueueBindingsForApp(p0, p1, p2)
 }
 
+func (s *Mem) ListRunningInstancesOnDeadNodes(p0 context.Context, p1 time.Time, p2 int) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListRunningInstancesOnDeadNodes(context.Context, time.Time, int) ([]state.Instance, error)
+	}); ok {
+		return o.ListRunningInstancesOnDeadNodes(p0, p1, p2)
+	}
+	return s.MemStore.ListRunningInstancesOnDeadNodes(p0, p1, p2)
+}
+
 func (s *Mem) ListTCPListenerTLSObservations(p0 context.Context, p1 string) ([]state.TCPListenerTLSObservation, error) {
 	if o, ok := s.over.(interface {
 		ListTCPListenerTLSObservations(context.Context, string) ([]state.TCPListenerTLSObservation, error)
@@ -603,6 +626,15 @@ func (s *Mem) MigrateInstanceOwnerWithRuntimeConfig(p0 context.Context, p1 strin
 		return o.MigrateInstanceOwnerWithRuntimeConfig(p0, p1, p2, p3, p4, p5)
 	}
 	return s.MemStore.MigrateInstanceOwnerWithRuntimeConfig(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) NodeList(p0 context.Context, p1 state.NodeLifecycle) ([]state.ComputeNode, error) {
+	if o, ok := s.over.(interface {
+		NodeList(context.Context, state.NodeLifecycle) ([]state.ComputeNode, error)
+	}); ok {
+		return o.NodeList(p0, p1)
+	}
+	return s.MemStore.NodeList(p0, p1)
 }
 
 func (s *Mem) ObserveNextWorkflowFailureEligibility(p0 context.Context, p1 time.Time) (bool, error) {
@@ -882,6 +914,24 @@ func (s *Mem) RouteAdviceThrottleExcess(p0 context.Context, p1 sqlc.RouteAdviceT
 		return o.RouteAdviceThrottleExcess(p0, p1)
 	}
 	return s.MemStore.RouteAdviceThrottleExcess(p0, p1)
+}
+
+func (s *Mem) RouteAwakeMinutes(p0 context.Context, p1 sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeMinutes(context.Context, sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeRouteMinutes(p0 context.Context, p1 sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeRouteMinutes(context.Context, sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeRouteMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeRouteMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {

@@ -19,6 +19,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -622,5 +624,28 @@ func TestCmdDeploysShow_URLFlagServerError(t *testing.T) {
 
 	if code := cmdDeploysShow([]string{"--url", showTestID}); code == 0 {
 		t.Errorf("cmdDeploysShow --url on server error = 0, want non-zero")
+	}
+}
+
+// TestDeployTerminalCancelledIsNotAFailure covers H10-48: a cancelled
+// deployment reached the deploy wait as "failed without a server reason", and
+// deploys status showed its stages with no outcome.
+func TestDeployTerminalCancelledIsNotAFailure(t *testing.T) {
+	_, readStderr, restore := swapIO(t)
+	code := terminalExitForDeploymentWithFailureContext(context.Background(), nil,
+		api.DeploymentResponse{ID: "dep-1", Status: deploymentStatusCancelled}, "my-app", nil)
+	stderr := readStderr()
+	restore()
+	if code != 2 {
+		t.Errorf("exit = %d, want 2 (the build-cancelled code)", code)
+	}
+	if !strings.Contains(stderr, "dep-1 was cancelled before it went live") || strings.Contains(stderr, "failed") {
+		t.Errorf("stderr = %q, want the cancellation, not a failure", stderr)
+	}
+
+	var out bytes.Buffer
+	renderDeployFailureIfPresent(&out, api.DeploymentResponse{ID: "dep-1", Status: deploymentStatusCancelled})
+	if !strings.Contains(out.String(), "Cancelled before it went live; the live release is unchanged.") {
+		t.Errorf("deploys status note = %q", out.String())
 	}
 }

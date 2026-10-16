@@ -1,0 +1,9 @@
+{
+  "name": "gregale-management-mcp-client-acceptance",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned real Codex client for model-free Gregale MCP acceptance",
+  "dependencies": {
+    "@openai/codex": "0.159.0-alpha.3"
+  }
+}

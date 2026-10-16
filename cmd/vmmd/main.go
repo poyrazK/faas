@@ -886,6 +886,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pmemBaseDir = cfg.PmemBaseDir
 	}
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
+		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
@@ -945,6 +946,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
+		WithRuntimeAdmissionNodeID(nodeID).
 		WithCaptureRunner(wire.ExecRunner{}).
 		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
@@ -984,6 +986,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// than silently handing its resources to the legacy allocator/reapers.
 	if err := recoverNative(ctx, mgr); err != nil {
 		return fmt.Errorf("vmmd: recover native ownership: %w", err)
+	}
+	// ADR-435: publish the same startup incarnation exposed by the native
+	// capability before accepting grants. Only this node's own registration is
+	// read/written here; inherited customer intent remains owned by apid/schedd.
+	if store != nil {
+		identity, err := mgr.RuntimeAdmissionIdentity()
+		if err != nil {
+			return fmt.Errorf("vmmd: native process identity: %w", err)
+		}
+		if err := registerRuntimeAdmissionIdentity(ctx, store, identity); err != nil {
+			return err
+		}
 	}
 	if cfg.NativeSnapshotPublicationRoot != "" {
 		go runNativeArtifactRetirementRecovery(ctx, mgr, nativeArtifactRetirementRecoveryInterval, log)
@@ -1175,11 +1189,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// an ungated sweep would have killed a customer's VM. A nil store
 	// (default-local / tests) means there is no durable view to gate
 	// on, so the sweep is skipped entirely rather than run blind.
-	// Journal-backed recovery retains quarantined VM/artifact ownership.
-	// The legacy reapers do not supply pinned exit or resource receipts and
-	// therefore cannot remove jails or clones behind that ownership.
+	var sourceSweep func(context.Context)
+	// Durable state alone cannot authorize source removal behind a journal
+	// quarantine. The native owner retains these leases until retirement.
+	if !cfg.NativeProcessRecovery {
+		sourceSweep = vmmdRuntimeSourceSweep(store, vmmdRuntimeSourceRoot(storageBackend), log)
+		if sourceSweep != nil {
+			sourceSweep(ctx)
+		}
+	}
+	// Legacy reapers cannot retire journal-owned resources.
 	if store != nil && !cfg.NativeProcessRecovery {
-		isLiveInstance := durableInstanceLive(store)
+		isLiveInstance := vmmdRuntimeSourceLiveness(store)
 		rep, err := fcvm.ReapOrphanedJails(ctx, fcvm.ReapOptions{
 			JailRoot: jailer.JailRoot(),
 			Runner:   wire.ExecRunner{},
@@ -1208,7 +1229,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
 			cloneRoot = cacheBackend.Root()
 		}
-		cloneGate := layerCloneOwnershipGate(durableInstanceLive(store), mgr, resourceJournal)
+		cloneGate := layerCloneOwnershipGate(vmmdRuntimeSourceLiveness(store), mgr, resourceJournal)
 		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath, os.TempDir()), cloneGate, mgr)
 		// ADR-191 amendment (H9-171): VMs that outlived their instance row.
 		go runLiveVMReap(ctx, log, mgr, store)
@@ -1233,7 +1254,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		sweepInterval = 30 * time.Second
 	}
 	liveness.Register(sweepLoopName, 3*sweepInterval)
-	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) })
+	go runParentMountSweep(sweepCtx, parentReg, cfg.ParentSweepInterval, log, func() { liveness.Beat(sweepLoopName) }, sourceSweep)
 	// Shutdown sweep — registered as a defer BEFORE the gRPC
 	// GracefulStop so a late RPC still gets serviced and the
 	// registry is empty when vmmd exits. Defers run LIFO, so
@@ -1411,6 +1432,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if identityRecvErr != nil {
 		log.Warn("vmmd: workload identity receiver unavailable", "err", identityRecvErr, "goos", runtime.GOOS)
 	} else {
+		identityRecv.UseMetrics(newWorkloadIdentityMetrics(ops.Registry()))
 		defer identityRecv.Close()
 	}
 	// ADR-989: apps reach managed outbound integrations through a loopback

@@ -1063,6 +1063,9 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 		log.Warn("gatewayd: bad deployment_route_changed payload", "err", err)
 		return db.DeploymentRouteChangedPayload{}, false
 	}
+	if admission, ok := inv.(interface{ InvalidateWorkloadAdmission(string) }); ok {
+		admission.InvalidateWorkloadAdmission(payload.AppID)
+	}
 	inv.InvalidateResponseCacheByApp(payload.AppID)
 	// Load the candidate target before publishing its 100% weight into this
 	// process. Reversing this order creates a small 503 window when the old

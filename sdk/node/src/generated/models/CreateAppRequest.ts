@@ -85,6 +85,10 @@ export type CreateAppRequest = {
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
   /**
+   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
+  /**
    * Upper bound on time-to-ready in seconds. 0 uses the plan default.
    */
   startup_deadline_s?: number;

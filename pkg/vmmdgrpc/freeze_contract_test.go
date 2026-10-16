@@ -58,11 +58,12 @@ func TestFreezeContractSchedToVMMD(t *testing.T) {
 		t.Fatalf("busy freeze reached schedd as %v; want problem code %s", err, api.CodeInstanceBusy)
 	}
 
-	if _, err := client.ThawInstance(t.Context(), "vm-a", false); err != nil || len(vmm.thaws) != 1 {
-		t.Fatalf("ThawInstance: %v, thaws %v", err, vmm.thaws)
+	result, err := client.ThawInstance(t.Context(), "vm-a", sched.ThawRequest{RunAfterRestore: true})
+	if err != nil || len(vmm.thaws) != 1 || !vmm.thawOpts[0].RunResumeHook || !result.AfterRestoreRan {
+		t.Fatalf("ThawInstance: %+v, %v, thaws %v %+v; want the resume hook run and confirmed", result, err, vmm.thaws, vmm.thawOpts)
 	}
 	vmm.thawErr = errors.New("thaw vm-a: instance is not live")
-	if _, err := client.ThawInstance(t.Context(), "vm-a", false); err == nil {
+	if _, err := client.ThawInstance(t.Context(), "vm-a", sched.ThawRequest{}); err == nil {
 		t.Fatal("a failed thaw reached schedd as success")
 	}
 }

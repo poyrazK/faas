@@ -34,6 +34,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -1620,12 +1621,15 @@ type LifecycleConfig struct {
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
-	StartupDeadlineS *int                      `yaml:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                      `yaml:"max_retries,omitempty"`
-	RequestTimeoutS  *int                      `yaml:"request_timeout_s,omitempty"`
-	StopGracePeriodS *int                      `yaml:"stop_grace_period_s,omitempty"`
-	StopSignal       *string                   `yaml:"stop_signal,omitempty"`
-	ServiceReplicas  *api.ServiceReplicas      `yaml:"service_replicas,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never.
+	Pause            *string              `yaml:"pause,omitempty"`
+	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
+	RequestTimeoutS  *int                 `yaml:"request_timeout_s,omitempty"`
+	StopGracePeriodS *int                 `yaml:"stop_grace_period_s,omitempty"`
+	StopSignal       *string              `yaml:"stop_signal,omitempty"`
+	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
 }
 
 // ToAPI returns the lifecycle portion of an app PATCH request.
@@ -1638,6 +1642,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Pause:            c.Pause,
 		Profiling:        c.Profiling,
 		Tracing:          c.Tracing,
 		StartupDeadlineS: c.StartupDeadlineS,
@@ -1651,7 +1656,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Profiling == nil && c.Tracing == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1674,6 +1679,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
 		m.BeforeCheckpoint = c.BeforeCheckpoint
+	}
+	if c.Pause != nil {
+		m.Pause = *c.Pause
 	}
 	if c.StartupDeadlineS != nil {
 		m.StartupDeadlineS = *c.StartupDeadlineS
@@ -1914,7 +1922,7 @@ func parseManifest(b []byte) (*Manifest, error) {
 }
 
 var (
-	yamlUnknownField = regexp.MustCompile(`^line (\d+): field (\S+) not found in type gregalemanifest\.(\w+)$`)
+	yamlUnknownField = regexp.MustCompile(`^line (\d+): field (\S+) not found in type (\w+)\.(\w+)$`)
 	yamlTypeMismatch = regexp.MustCompile("^line (\\d+): cannot unmarshal !!(\\w+) `([^`]*)` into (\\S+)$")
 )
 
@@ -1936,15 +1944,17 @@ func humanizeYAMLError(err error) error {
 
 func humanizeYAMLLine(raw string) string {
 	if m := yamlUnknownField.FindStringSubmatch(raw); m != nil {
+		pkg, typeName := m[3], m[4]
 		where := ""
-		if m[3] != "Manifest" {
-			where = " under " + manifestSectionForType(m[3])
+		keys := yamlKeys(reflect.TypeOf(Manifest{}))
+		if pkg != "gregalemanifest" || typeName != "Manifest" {
+			section, sectionType := manifestSectionForType(pkg, typeName)
+			where = " under " + section
+			keys = yamlKeys(sectionType)
 		}
 		msg := fmt.Sprintf("line %s: unknown key %q%s", m[1], m[2], where)
-		if m[3] == "Manifest" {
-			if near := nearestManifestKey(m[2]); near != "" {
-				msg += fmt.Sprintf("; did you mean %q?", near)
-			}
+		if near := nearestKey(m[2], keys); near != "" {
+			msg += fmt.Sprintf("; did you mean %q?", near)
 		}
 		return msg
 	}
@@ -1955,9 +1965,12 @@ func humanizeYAMLLine(raw string) string {
 }
 
 // manifestSectionForType names the top-level key whose value has the Go type
-// typeName ("FunctionConfig" -> "function:"), falling back to the type name
-// for deeper nesting.
-func manifestSectionForType(typeName string) string {
+// pkg.typeName ("FunctionConfig" -> "function:", hostingconfig.Config ->
+// "hosting:") and returns that type, falling back to the type name for deeper
+// nesting. The hosting section's type lives in another package, so a typo
+// there used to surface as "field health_path not found in type
+// hostingconfig.Config" (H10-76).
+func manifestSectionForType(pkg, typeName string) (string, reflect.Type) {
 	t := reflect.TypeOf(Manifest{})
 	for i := 0; i < t.NumField(); i++ {
 		ft := t.Field(i).Type
@@ -1965,27 +1978,46 @@ func manifestSectionForType(typeName string) string {
 			ft = ft.Elem()
 		}
 		key, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
-		if ft.Name() == typeName && key != "" && key != "-" {
-			return key + ":"
+		if ft.Name() == typeName && path.Base(ft.PkgPath()) == pkg && key != "" && key != "-" {
+			return key + ":", ft
 		}
 	}
-	return strings.ToLower(typeName)
+	return strings.ToLower(typeName), nil
 }
 
-// nearestManifestKey suggests a top-level key within two edits of name.
-func nearestManifestKey(name string) string {
-	best, bestDistance := "", 3
-	t := reflect.TypeOf(Manifest{})
+// yamlKeys lists the yaml keys a struct type accepts.
+func yamlKeys(t reflect.Type) []string {
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
+	}
+	keys := make([]string, 0, t.NumField())
 	for i := 0; i < t.NumField(); i++ {
 		key, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
-		if key == "" || key == "-" {
-			continue
+		if key != "" && key != "-" {
+			keys = append(keys, key)
 		}
+	}
+	return keys
+}
+
+// nearestKey suggests a key within two edits of name, or one that name
+// extends with a suffix ("health_path" -> "health").
+func nearestKey(name string, keys []string) string {
+	best, bestDistance := "", 3
+	for _, key := range keys {
 		if d := editDistance(name, key); d < bestDistance {
 			best, bestDistance = key, d
 		}
 	}
-	return best
+	if best != "" {
+		return best
+	}
+	for _, key := range keys {
+		if strings.HasPrefix(name, key+"_") {
+			return key
+		}
+	}
+	return ""
 }
 
 func editDistance(a, b string) int {

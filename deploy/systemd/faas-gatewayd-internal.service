@@ -47,7 +47,7 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/run/faas /var/lib/faas/log-drains /var/lib/faas/egress-meter /var/lib/faas/consumer-usage
+ReadWritePaths=/run/faas /var/lib/faas/log-drains /var/lib/faas/egress-meter /var/lib/faas/consumer-usage /var/lib/faas/wake-ahead
 
 [Install]
 WantedBy=multi-user.target

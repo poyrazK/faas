@@ -1237,6 +1237,9 @@ type Handler struct {
 	// / InvalidateAll) and is wired by the db.Notify handler in
 	// commit 14.
 	responseCache *ResponseCache
+	// contentObserver compares anonymous GET responses on routes without a
+	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
 	// one background wake + origin fetch repopulates the entry.
@@ -1421,6 +1424,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// ratelimit.go::bucket.pinned).
 		routeConsumerLimiter: NewLimiterWithLRU(EdgeRuleConsumerCacheCap),
 		accountLimiter:       NewLimiter(),
+		contentObserver:      newContentObserver(api.RouteContentObserverMaxURLs),
 		gate:                 NewWakeGate(api.WakeQueueCap, time.Duration(api.WakeQueueTTLSeconds)*time.Second),
 		admissionQueue: newWakeAdmissionQueue(
 			api.GatewayWakeAdmissionParallelism,
@@ -5879,6 +5883,16 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	workloadAdmissionScope := app.Scope
+	if app.PinnedDeploymentScope != "" {
+		workloadAdmissionScope = app.PinnedDeploymentScope
+	}
+	// Authenticated candidate verification has its own exact-attempt guard.
+	// Ordinary requests are fenced before any edge/cache response can serve.
+	if !deploymentSmoke && !h.workloadAdmissionOpen(w, r, app.ID, workloadAdmissionScope) {
+		return
+	}
+
 	// ADR-847: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
@@ -6544,6 +6558,13 @@ haveApp:
 		// stash, the gate-failure path would have to
 		// re-run the matcher (the rule was already
 		// resolved above, no point doing it twice).
+	} else if !deploymentSmoke && rule == nil && sidecarName == "" && h.contentObserver != nil && contentObservable(r) {
+		// No cache rule: observe whether this anonymous GET response repeats
+		// (ADR-1188). The tee only hashes; observe() records the outcome once
+		// the origin response is complete.
+		tee := newContentTee(w, h.contentObserver, app.ID, r)
+		w = tee
+		r = r.WithContext(withContentTee(r.Context(), tee))
 	}
 
 	// Resolve a selector when sidecarName != "". Existing sidecar selectors
@@ -6744,6 +6765,9 @@ haveApp:
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"
 	}
+	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
+		return
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -6851,6 +6875,9 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		// A thaw prefers the frozen instance this session is pinned to
+		// (ADR-1151): its in-memory state is why the app keeps affinity.
+		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
 		var cancelWakePage context.CancelFunc
 		showWakePage := acceptsWakePage(r)
 		if showWakePage {
@@ -7880,6 +7907,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentTag:                        target.DeploymentTag,
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
+				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if r.Context().Value(suppressFinancialUsageKey{}) == true {
