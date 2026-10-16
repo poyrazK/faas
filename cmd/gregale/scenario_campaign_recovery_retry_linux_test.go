@@ -4,10 +4,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type campaignRecoveryRetryConfig struct {
@@ -297,5 +302,87 @@ func TestCampaignRecoveryGuardProtocol(t *testing.T) {
 	second, err := os.Stat(path)
 	if err != nil || !os.SameFile(first, second) {
 		t.Fatal("guard inode was replaced on release")
+	}
+}
+
+func TestCampaignRecoveryStatProcess(t *testing.T) {
+	if os.Getenv("GREGALE_TEST_STAT_PROCESS") != "1" {
+		return
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func TestCampaignRecoveryProcessReapedDuringStatRead(t *testing.T) {
+	// adr: 984 — a reaped task can disappear between opening procfs and reading it; ESRCH is absence, not ambiguous liveness.
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	command := exec.Command(executable, "-test.run=^TestCampaignRecoveryStatProcess$", "-test.timeout=30s")
+	command.Env = append(os.Environ(), "GREGALE_TEST_STAT_PROCESS=1")
+	command.Stdin = reader
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = command.Process.Kill() }()
+	identity, err := readTestCampaignProcessIdentity(command.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := os.Open(fmt.Sprintf("/proc/%d/stat", command.Process.Pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stat.Close()
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var beforeReason string
+	for {
+		state, reason := probeTestCampaignProcess(identity)
+		if state == "terminated" {
+			beforeReason = reason
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("killed process did not exit")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := command.Wait(); err == nil {
+		t.Fatal("process was not killed")
+	}
+	state, afterReason := probeTestCampaignProcess(identity)
+	if state != "terminated" || beforeReason == afterReason {
+		t.Fatalf("expected stable termination with changed diagnostic after reaping: %s %q %q", state, beforeReason, afterReason)
+	}
+	before := testCampaignClaimAssessment{Recoverable: true, Owner: testCampaignProcessStatus{PID: identity.PID, Status: "terminated", Reason: beforeReason}, ClaimSHA256: "claim", LockSHA256: "lock"}
+	after := before
+	after.Owner.Reason = afterReason
+	if testCampaignClaimRecoveryStamp(before) != testCampaignClaimRecoveryStamp(after) {
+		t.Fatal("reaping changed the terminal proof fingerprint")
+	}
+	after.ClaimSHA256 = "replacement"
+	if testCampaignClaimRecoveryStamp(before) == testCampaignClaimRecoveryStamp(after) {
+		t.Fatal("claim mutation was ignored by recovery fingerprint")
+	}
+	_, err = io.ReadAll(stat)
+	if !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("expected procfs reaping error, got %v", err)
+	}
+	if !testCampaignProcessGone(err) {
+		t.Fatal("reaped task was treated as unverifiable")
+	}
+	for _, other := range []error{syscall.EACCES, syscall.EIO, errors.New("invalid process stat")} {
+		if testCampaignProcessGone(other) {
+			t.Fatalf("ambiguous lookup error was accepted as absence: %v", other)
+		}
 	}
 }

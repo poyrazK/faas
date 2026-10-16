@@ -29,6 +29,7 @@ REQUIRED = {
     "TestCampaignRecoveryClaimGuards",
     "TestCampaignRecoveryRetryAfterProcessDeath",
     "TestCampaignRecoveryGuardProtocol",
+    "TestCampaignRecoveryProcessReapedDuringStatRead",
 }
 GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
 

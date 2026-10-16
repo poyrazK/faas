@@ -201,13 +201,34 @@ func inspectTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaig
 	return result, nil
 }
 
+// Reaping a zombie changes the diagnostic reason, not the terminal identity
+// proof. Preserve every binding and status while excluding only descriptions
+// from the read/recheck fingerprint.
+func testCampaignClaimRecoveryStamp(result testCampaignClaimAssessment) string {
+	result.Owner.Reason = ""
+	result.Work = append([]testCampaignClaimWorkStatus(nil), result.Work...)
+	for i := range result.Work {
+		if result.Work[i].Runner == nil {
+			continue
+		}
+		runner := *result.Work[i].Runner
+		runner.Coordinator.Reason = ""
+		runner.Workers = append([]testCampaignProcessStatus(nil), runner.Workers...)
+		for j := range runner.Workers {
+			runner.Workers[j].Reason = ""
+		}
+		result.Work[i].Runner = &runner
+	}
+	return testCampaignJSONHash(result)
+}
+
 func prepareTestCampaignClaimRecovery(resolver *testCampaignBundleResolver) (testCampaignRecoveryTransaction, testCampaignClaimAssessment, error) {
 	result, err := inspectTestCampaignClaim(resolver)
 	if err != nil || !result.Recoverable {
 		return testCampaignRecoveryTransaction{}, result, err
 	}
 	fresh, err := inspectTestCampaignClaim(resolver)
-	if err != nil || !fresh.Recoverable || testCampaignJSONHash(fresh) != testCampaignJSONHash(result) {
+	if err != nil || !fresh.Recoverable || testCampaignClaimRecoveryStamp(fresh) != testCampaignClaimRecoveryStamp(result) {
 		return testCampaignRecoveryTransaction{}, result, errors.New("claim or process evidence changed during recovery")
 	}
 	tx := testCampaignRecoveryTransaction{SchemaVersion: 1, Kind: "claim", Scope: resolver.Index.ClaimPath, Binding: testCampaignJSONHash(resolver.Index), Claim: &result}

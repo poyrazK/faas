@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func testCampaignProcessDomain() (string, string, error) {
@@ -82,6 +83,13 @@ func readTestCampaignProcessIdentity(pid int) (testCampaignProcessIdentity, erro
 	return identity, nil
 }
 
+// procfs returns ESRCH when a task is reaped after its stat file was opened;
+// a lookup after reaping returns ENOENT. Both prove absence in the verified PID
+// domain. Permission, I/O and parsing errors remain unverifiable.
+func testCampaignProcessGone(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH)
+}
+
 func probeTestCampaignProcess(identity testCampaignProcessIdentity) (string, string) {
 	boot, namespace, err := testCampaignProcessDomain()
 	start, parseErr := strconv.ParseUint(identity.Start, 10, 64)
@@ -90,7 +98,7 @@ func probeTestCampaignProcess(identity testCampaignProcessIdentity) (string, str
 		return "unverifiable", "process domain or start identity cannot be verified on this host"
 	}
 	current, state, err := readTestCampaignProcessStat(identity.PID)
-	if os.IsNotExist(err) {
+	if testCampaignProcessGone(err) {
 		return "terminated", "recorded PID no longer exists in the original process domain"
 	}
 	if err != nil {
