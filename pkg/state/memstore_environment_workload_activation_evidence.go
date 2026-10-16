@@ -86,11 +86,11 @@ func (m *MemStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context,
 		graph.DefinitionDigest != revision.Digest || graph.PlanHash != plan.Hash {
 		return nil, nil
 	}
-	evidence := m.environmentWorkloadActivationEvidenceLocked(memory, graph)
+	evidence := m.environmentWorkloadActivationEvidenceLocked(memory, graph, true)
 	return &evidence, nil
 }
 
-func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environmentGitOpsMemory, graph EnvironmentWorkloadGraph) EnvironmentWorkloadActivationEvidence {
+func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environmentGitOpsMemory, graph EnvironmentWorkloadGraph, diagnostics ...bool) EnvironmentWorkloadActivationEvidence {
 	activeTargets := m.environmentGraphActiveReleaseTargetsLocked(memory.source, graph)
 	activatedCandidates, hasCandidates := true, false
 	for _, member := range graph.Members {
@@ -195,6 +195,20 @@ func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environme
 		environmentWorkloadServingReceiptMatches(receipt, graph, releaseID,
 			m.environmentServingGatewayNamesLocked(), activeTargets) && m.environmentWorkloadServingWeightsMatchLocked(memory.source, graph, activeTargets)
 	applyEnvironmentWorkloadServingEvidence(&evidence, serving)
+	if len(diagnostics) > 0 && diagnostics[0] {
+		evidence.Workloads, _ = environmentWorkloadProgress(graph, captures, restores, smokes, configs, frameworkReady, jobSmokes, activeTargets, serving,
+			func(member EnvironmentWorkloadGraphMember) (string, string, error) {
+				deployment, exists := m.deployments[member.CandidateDeploymentID]
+				if !exists || deployment.AppID != member.AppID {
+					return "", "", nil
+				}
+				build := m.builds[deployment.BuildID]
+				if build.DeploymentID != deployment.ID {
+					return string(deployment.Status), "", nil
+				}
+				return string(deployment.Status), string(build.Status), nil
+			})
+	}
 	return evidence
 }
 

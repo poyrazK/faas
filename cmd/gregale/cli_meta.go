@@ -422,7 +422,7 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 		"environments config set", "environments config apply",
 		"environments queues get", "environments queues set",
 		"environments routes set", "environments policies set",
-		"environments gitops status", "environments gitops bind",
+		"environments gitops status", "environments gitops explain", "environments gitops bind",
 		"environments gitops rebind", "environments gitops unbind",
 		"environments gitops review", "environments gitops approve",
 		"environments gitops plan",
@@ -4720,8 +4720,9 @@ var cliCommands = []cliCommand{
 					{Name: "get", Short: "Read queue definitions and their workload revision as JSON", Positionals: []string{"<project>", "<stage>", "<workload>"}, Examples: []string{"gregale projects environments queues get shop staging shop-worker"}},
 					{Name: "set", Short: "Replace queue definitions from JSON containing expected_revision and bindings; [] removes all stage bindings", Positionals: []string{"<project>", "<stage>", "<workload>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "JSON queue configuration file (choose --file or --stdin)"}, {Name: "stdin", Short: "read JSON queue configuration from stdin"}}, Examples: []string{"gregale projects environments queues set shop staging shop-worker --file queues.json"}},
 				}},
-				{Name: "gitops", Short: "Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)", Subcommands: []cliSub{
+				{Name: "gitops", Short: "Review Git definitions, adopt owned fields, and inspect reconciliation", Subcommands: []cliSub{
 					{Name: "status", Positionals: []string{"<project>", "<environment>"}, Short: "Inspect the source and recent reconciliation attempts"},
+					{Name: "explain", Positionals: []string{"<project>", "<environment>"}, Short: "Explain recorded workload progress and safe next actions", Flags: []cliFlag{{Name: "json", Short: "Output the read-only assessment as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops explain shop production"}},
 					{Name: "bind", Positionals: []string{"<project>", "<environment>"}, Short: "Bind the verified project repository to a definition", Flags: []cliFlag{
 						{Name: "manifest-path", Value: "PATH", Short: "Environment definition path in Git"},
 						{Name: "provider", Value: "PROVIDER", Short: "github (default) or gitlab"},

@@ -573,7 +573,9 @@ export type { EnvironmentFieldOwnershipRequest } from './EnvironmentFieldOwnersh
 export type { EnvironmentFieldOwnershipResponse } from './EnvironmentFieldOwnershipResponse.js';
 export type { EnvironmentGitOpsChange } from './EnvironmentGitOpsChange.js';
 export type { EnvironmentGitOpsChangedWebhookPayload } from './EnvironmentGitOpsChangedWebhookPayload.js';
+export type { EnvironmentGitOpsDiagnostic } from './EnvironmentGitOpsDiagnostic.js';
 export type { EnvironmentGitOpsEnvironment } from './EnvironmentGitOpsEnvironment.js';
+export type { EnvironmentGitOpsExplanation } from './EnvironmentGitOpsExplanation.js';
 export type { EnvironmentGitOpsOverrideRequest } from './EnvironmentGitOpsOverrideRequest.js';
 export type { EnvironmentGitOpsPlan } from './EnvironmentGitOpsPlan.js';
 export type { EnvironmentGitOpsProjectSlug } from './EnvironmentGitOpsProjectSlug.js';
@@ -596,6 +598,7 @@ export type { EnvironmentRouteContract } from './EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './EnvironmentServiceBinding.js';
 export type { EnvironmentWorkload } from './EnvironmentWorkload.js';
 export type { EnvironmentWorkloadActivationEvidence } from './EnvironmentWorkloadActivationEvidence.js';
+export type { EnvironmentWorkloadProgress } from './EnvironmentWorkloadProgress.js';
 export type { EnvironmentWorkloadRetirement } from './EnvironmentWorkloadRetirement.js';
 export type { EnvironmentWorkloadRetirementImpact } from './EnvironmentWorkloadRetirementImpact.js';
 export type { EnvironmentWorkloadSource } from './EnvironmentWorkloadSource.js';

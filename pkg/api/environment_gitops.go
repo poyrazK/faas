@@ -47,6 +47,7 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
+	Explanation         *EnvironmentGitOpsExplanation          `json:"explanation,omitempty"`
 	WorkloadRetirements []EnvironmentWorkloadRetirement        `json:"workload_retirements,omitempty"`
 	Source              EnvironmentGitSource                   `json:"source"`
 	Runs                []EnvironmentGitOpsRun                 `json:"runs"`
@@ -58,26 +59,27 @@ type EnvironmentGitOpsStatusResponse struct {
 // candidate graph. It reports committed evidence only; it grants no activation
 // or serving authority.
 type EnvironmentWorkloadActivationEvidence struct {
-	GraphID                                string `json:"graph_id"`
-	SourceID                               string `json:"source_id"`
-	EnvironmentID                          string `json:"environment_id"`
-	RevisionID                             string `json:"revision_id"`
-	DefinitionDigest                       string `json:"definition_digest"`
-	Generation                             int64  `json:"generation"`
-	IntentVersion                          int64  `json:"intent_version"`
-	PlanHash                               string `json:"plan_hash"`
-	GraphPhase                             string `json:"graph_phase"`
-	GraphErrorCode                         string `json:"graph_error_code,omitempty"`
-	ArtifactsPrepared                      bool   `json:"artifacts_prepared"`
-	Candidates                             int    `json:"candidates"`
-	RetainedWorkloadsRecorded              int    `json:"retained_workloads_recorded"`
-	CapturesRecorded                       int    `json:"captures_recorded"`
-	GuestConfigAcknowledgementsRecorded    int    `json:"guest_config_acknowledgements_recorded"`
-	RestoresRecorded                       int    `json:"restores_recorded"`
-	SmokesRecorded                         int    `json:"smokes_recorded"`
-	JobSmokesRecorded                      int    `json:"job_smokes_recorded"`
-	FrameworkReadyAcknowledgementsRecorded int    `json:"framework_ready_acknowledgements_recorded"`
-	Qualified                              bool   `json:"qualified"`
+	Workloads                              []EnvironmentWorkloadProgress `json:"workloads,omitempty"`
+	GraphID                                string                        `json:"graph_id"`
+	SourceID                               string                        `json:"source_id"`
+	EnvironmentID                          string                        `json:"environment_id"`
+	RevisionID                             string                        `json:"revision_id"`
+	DefinitionDigest                       string                        `json:"definition_digest"`
+	Generation                             int64                         `json:"generation"`
+	IntentVersion                          int64                         `json:"intent_version"`
+	PlanHash                               string                        `json:"plan_hash"`
+	GraphPhase                             string                        `json:"graph_phase"`
+	GraphErrorCode                         string                        `json:"graph_error_code,omitempty"`
+	ArtifactsPrepared                      bool                          `json:"artifacts_prepared"`
+	Candidates                             int                           `json:"candidates"`
+	RetainedWorkloadsRecorded              int                           `json:"retained_workloads_recorded"`
+	CapturesRecorded                       int                           `json:"captures_recorded"`
+	GuestConfigAcknowledgementsRecorded    int                           `json:"guest_config_acknowledgements_recorded"`
+	RestoresRecorded                       int                           `json:"restores_recorded"`
+	SmokesRecorded                         int                           `json:"smokes_recorded"`
+	JobSmokesRecorded                      int                           `json:"job_smokes_recorded"`
+	FrameworkReadyAcknowledgementsRecorded int                           `json:"framework_ready_acknowledgements_recorded"`
+	Qualified                              bool                          `json:"qualified"`
 	// Activated reflects exact active release-set membership for every graph
 	// member; it does not prove that serving has converged.
 	Activated bool `json:"activated"`

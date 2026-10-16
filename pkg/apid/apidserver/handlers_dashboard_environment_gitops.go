@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -63,6 +64,8 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		return data, err
 	}
 	setEnvironmentGitOpsDashboardFreshness(&data, time.Now().UTC())
+	explanation := gitopsdiagnostics.Assess(*data.Status, time.Now().UTC())
+	data.Status.Explanation = &explanation
 	for _, run := range runs {
 		view := dashboard.EnvironmentGitOpsRunView{Run: run}
 		var plan api.EnvironmentGitOpsPlan

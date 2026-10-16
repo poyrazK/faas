@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 )
 
 func TestGitOpsDashboardSupportsGitLabBindingAndProviderControls(t *testing.T) {
@@ -30,6 +32,25 @@ func TestGitOpsDashboardSupportsGitLabBindingAndProviderControls(t *testing.T) {
 		} else if !strings.Contains(body, `value="protected_branch"`) || !strings.Contains(body, `name="prune"`) || !strings.Contains(body, "Continuous enforcement is unavailable") {
 			t.Fatalf("GitLab trust controls or production gate missing: %s", body)
 		}
+	}
+}
+
+func TestGitOpsDashboardExplainsReportModeWithoutClaimingServing(t *testing.T) {
+	status := api.EnvironmentGitOpsStatusResponse{Source: api.EnvironmentGitSource{ID: "source", ApprovedRevisionID: "approved", AppliedRevisionID: "historical", Spec: api.EnvironmentGitSourceSpec{Mode: "report"}}}
+	explanation := diagnostics.Assess(status, time.Now().UTC())
+	status.Explanation = &explanation
+	explanation.Issues = append(explanation.Issues, api.EnvironmentGitOpsDiagnostic{Message: "<script>untrusted</script>", Actor: "operator", Action: "Inspect the recorded attempt."})
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "", Page{Title: "GitOps", Body: "environment_gitops", Data: EnvironmentGitOpsData{Project: "shop", Environment: "production", Status: &status}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Why this revision is reporting", "does not apply changes", "Serving revision:", "unknown", "Inspect the recorded attempt."} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("missing diagnostic %q", want)
+		}
+	}
+	if strings.Contains(rec.Body.String(), "<script>untrusted") {
+		t.Fatal("diagnostic bypassed HTML escaping")
 	}
 }
 

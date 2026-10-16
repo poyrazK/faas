@@ -57666,10 +57666,158 @@ components:
       required:
       - source
       - revision
+    EnvironmentGitOpsExplanation:
+      type: object
+      description: Read-only assessment of recorded source, graph and workload facts. Unknown or historical evidence never grants
+        readiness or execution authority.
+      properties:
+        read_only:
+          type: boolean
+        assessed_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - unknown
+          - blocked
+          - progressing
+          - reporting
+          - serving
+          - degraded
+        summary:
+          type: string
+        source_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        intent_version:
+          type: integer
+          format: int64
+        source_freshness:
+          type: string
+          enum:
+          - unknown
+          - stale
+          - fresh
+        observed_commit_sha:
+          type: string
+        approved_revision_id:
+          type: string
+        applied_revision_id:
+          type: string
+        serving_revision_id:
+          type: string
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitOpsDiagnostic'
+        workloads:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentWorkloadProgress'
+      required:
+      - read_only
+      - assessed_at
+      - status
+      - summary
+      - source_id
+      - generation
+      - intent_version
+      - source_freshness
+      - issues
+      - workloads
+    EnvironmentGitOpsDiagnostic:
+      type: object
+      description: A recognized blocker with a responsible actor and a safe next action. Unrecognized upstream errors are redacted.
+      properties:
+        resource:
+          type: string
+        stage:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        actor:
+          type: string
+          enum:
+          - customer
+          - operator
+          - controller
+        action:
+          type: string
+      required:
+      - stage
+      - code
+      - message
+      - actor
+      - action
+    EnvironmentWorkloadProgress:
+      type: object
+      description: Read-only progress for one exact reviewed graph member. Serving remains unknown without current whole-graph
+        convergence proof.
+      properties:
+        resource:
+          type: string
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        job_id:
+          type: string
+        execution_mode:
+          type: string
+        build_status:
+          type: string
+        preparation:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        qualification:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        activation:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        serving:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        blocking_reasons:
+          type: array
+          items:
+            type: string
+      required:
+      - resource
+      - app_id
+      - execution_mode
+      - preparation
+      - qualification
+      - activation
+      - serving
+      - blocking_reasons
     EnvironmentGitOpsStatusResponse:
       type: object
       description: Source authority, current workload qualification evidence, and the twenty most recent durable reconciliation attempts.
       properties:
+        explanation:
+          $ref: '#/components/schemas/EnvironmentGitOpsExplanation'
         approval:
           $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
         workload_retirements:
@@ -57800,6 +57948,10 @@ components:
       type: object
       description: Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
       properties:
+        workloads:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentWorkloadProgress'
         graph_id:
           type: string
           format: uuid

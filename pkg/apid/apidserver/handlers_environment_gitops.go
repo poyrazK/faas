@@ -6,9 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
+	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -236,6 +238,8 @@ func (s *server) getEnvironmentGitOps(w http.ResponseWriter, r *http.Request, ac
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
+	explanation := gitopsdiagnostics.Assess(response, time.Now().UTC())
+	response.Explanation = &explanation
 	writeJSON(w, http.StatusOK, response)
 }
 

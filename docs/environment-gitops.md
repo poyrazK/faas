@@ -25,6 +25,32 @@ The opt-in apid reporter has a separate PostgreSQL journey for API variables, ro
 
 ## Try review and reporting
 
+Use `gregale projects environments gitops explain shop production` for a
+read-only explanation of the current recorded state, or add `--json` for
+automation. The existing status API includes the same assessment under
+`explanation`, and the GitOps dashboard shows its workload progress and actions.
+Observed Git commits, approved revision IDs, historical applied revision IDs,
+and currently proven serving revision IDs are shown separately. They are not
+interchangeable: an applied ID alone never establishes current serving.
+
+Each current graph member reports artifact/build preparation, qualification,
+active release membership and serving proof. Stages are `complete`, `pending`,
+`failed` or `unknown`. A recorded successful build does not satisfy native smoke
+or a scheduled occurrence. Individual serving remains unknown until the exact
+whole graph has current convergence evidence; this does not assert that every
+individual workload has stopped. Missing candidate rows or missing current
+graphs stay unknown rather than becoming ready. Stale generation, revision,
+environment or intent evidence is excluded.
+
+Source freshness requires recent polling and verification timestamps; absent
+or future timestamps remain unknown. A provider outage can coexist with valid
+serving proof, which is reported as degraded. Report mode explicitly records
+drift without applying it. Blockers name a responsible customer, controller or
+operator and a safe next action. Unrecognized upstream error text is redacted.
+Reading an explanation returns exit status zero even when progress is blocked;
+automation must inspect the diagnostic status. This command neither retries
+work nor approves, adopts, activates, rolls back or enables production gates.
+
 Use an existing GitHub-linked project and registered environment. Start in `report` mode with manual approval and pruning disabled:
 
 ```sh

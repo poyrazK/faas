@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
+const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
 
 func cmdProjectsEnvironmentGitOps(args []string) int {
 	if len(args) == 0 {
@@ -22,6 +22,8 @@ func cmdProjectsEnvironmentGitOps(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "explain":
+		return cmdEnvironmentGitOpsExplain(args[1:])
 	case "status", "adoption-preview":
 		return cmdEnvironmentGitOpsRead(args[0], args[1:])
 	case "bind":
@@ -70,7 +72,7 @@ func environmentGitOpsOutput(result any, err error) int {
 		return printErr("Environment GitOps request failed", err)
 	}
 	// Review and adoption receipts must preserve the hash and generation for
-	// a subsequent explicit action. All commands emit portable JSON.
+	// a subsequent explicit action. These responses emit portable JSON.
 	return jsonOut(writeJSON(result))
 }
 

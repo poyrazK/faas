@@ -1148,6 +1148,11 @@ from .environment_git_ops_changed_webhook_payload_previous_status import (
 )
 from .environment_git_ops_changed_webhook_payload_status import EnvironmentGitOpsChangedWebhookPayloadStatus
 from .environment_git_ops_changed_webhook_payload_version import EnvironmentGitOpsChangedWebhookPayloadVersion
+from .environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
+from .environment_git_ops_diagnostic_actor import EnvironmentGitOpsDiagnosticActor
+from .environment_git_ops_explanation import EnvironmentGitOpsExplanation
+from .environment_git_ops_explanation_source_freshness import EnvironmentGitOpsExplanationSourceFreshness
+from .environment_git_ops_explanation_status import EnvironmentGitOpsExplanationStatus
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
 from .environment_git_ops_plan import EnvironmentGitOpsPlan
 from .environment_git_ops_run import EnvironmentGitOpsRun
@@ -1180,6 +1185,11 @@ from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
 from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
+from .environment_workload_progress import EnvironmentWorkloadProgress
+from .environment_workload_progress_activation import EnvironmentWorkloadProgressActivation
+from .environment_workload_progress_preparation import EnvironmentWorkloadProgressPreparation
+from .environment_workload_progress_qualification import EnvironmentWorkloadProgressQualification
+from .environment_workload_progress_serving import EnvironmentWorkloadProgressServing
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
@@ -5872,6 +5882,11 @@ __all__ = (
     "EnvironmentGitOpsChangedWebhookPayloadPreviousStatus",
     "EnvironmentGitOpsChangedWebhookPayloadStatus",
     "EnvironmentGitOpsChangedWebhookPayloadVersion",
+    "EnvironmentGitOpsDiagnostic",
+    "EnvironmentGitOpsDiagnosticActor",
+    "EnvironmentGitOpsExplanation",
+    "EnvironmentGitOpsExplanationSourceFreshness",
+    "EnvironmentGitOpsExplanationStatus",
     "EnvironmentGitOpsOverrideRequest",
     "EnvironmentGitOpsPlan",
     "EnvironmentGitOpsRun",
@@ -5904,6 +5919,11 @@ __all__ = (
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
     "EnvironmentWorkloadActivationEvidence",
+    "EnvironmentWorkloadProgress",
+    "EnvironmentWorkloadProgressActivation",
+    "EnvironmentWorkloadProgressPreparation",
+    "EnvironmentWorkloadProgressQualification",
+    "EnvironmentWorkloadProgressServing",
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",

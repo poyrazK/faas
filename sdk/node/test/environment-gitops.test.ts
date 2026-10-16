@@ -1,6 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FaaSClient, ProjectsService } from '../src/index.js';
+import type { EnvironmentGitOpsExplanation } from '../src/index.js';
+
+test('GitOps status carries scoped diagnostics without inventing serving', async () => {
+  const explanation: EnvironmentGitOpsExplanation = {
+    read_only: true, assessed_at: '2026-10-16T12:00:00Z', status: 'blocked', summary: 'Waiting for current serving proof.',
+    source_id: 'source', generation: 3, intent_version: 5, source_freshness: 'stale',
+    approved_revision_id: 'approved', applied_revision_id: 'historical',
+    workloads: [{ resource: 'workload/report', app_id: 'app', execution_mode: 'job', preparation: 'complete',
+      qualification: 'complete', activation: 'complete', serving: 'unknown', blocking_reasons: ['environment_serving_evidence_missing'] }],
+    issues: [{ resource: 'workload/report', stage: 'serving', code: 'scheduled_occurrence_unproven', message: 'No current serving proof.',
+      actor: 'customer', action: 'Inspect current scheduled task logs.' }],
+  };
+  const client = new FaaSClient('https://api.example.test', { token: 'token', fetch: async (_input, init) => {
+    assert.equal(init?.method, 'GET');
+    return Response.json({ source: {}, runs: [], explanation });
+  } });
+  try {
+    const status = await ProjectsService.getEnvironmentGitOps({ slug: 'shop', environment: 'production' });
+    assert.deepEqual(status.explanation, explanation);
+    assert.equal(status.explanation?.serving_revision_id, undefined);
+  } finally { client.uninstall(); }
+});
 
 test('GitOps candidate plan keeps read-only observation metadata', async () => {
   const sha = 'a'.repeat(40);

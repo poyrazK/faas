@@ -29,6 +29,21 @@
       <p><a href="/dashboard/projects/{{.Project}}">← Project</a></p>
       {{if .Status}}
         {{$source := .Status.Source}}
+        {{with .Status.Explanation}}
+        <section>
+          <h2>Why this revision is {{.Status}}</h2>
+          <p>{{.Summary}}</p>
+          <p>Observed commit: <code>{{if .ObservedCommitSHA}}{{.ObservedCommitSHA}}{{else}}unknown{{end}}</code> · source freshness: {{.SourceFreshness}}<br>
+            Approved revision: <code>{{if .ApprovedRevisionID}}{{.ApprovedRevisionID}}{{else}}unknown{{end}}</code><br>
+            Applied revision: <code>{{if .AppliedRevisionID}}{{.AppliedRevisionID}}{{else}}unknown{{end}}</code><br>
+            Serving revision: <code>{{if .ServingRevisionID}}{{.ServingRevisionID}}{{else}}unknown{{end}}</code></p>
+          {{if .Workloads}}<table><thead><tr><th>Workload</th><th>Artifact/build</th><th>Qualification</th><th>Activation</th><th>Serving</th></tr></thead><tbody>
+          {{range .Workloads}}<tr><td><code>{{.Resource}}</code></td><td>{{.Preparation}}{{if .BuildStatus}} · build {{.BuildStatus}}{{end}}</td><td>{{.Qualification}}</td><td>{{.Activation}}</td><td>{{.Serving}}</td></tr>{{end}}
+          </tbody></table>{{end}}
+          {{range .Issues}}<p>{{if .Resource}}<code>{{.Resource}}</code> · {{end}}<code>{{.Code}}</code>: {{.Message}}<br><strong>{{.Actor}}</strong>: {{.Action}}</p>{{end}}
+          <p class="muted">Read-only assessment at {{.AssessedAt.Format "2006-01-02 15:04:05 MST"}}. Unknown or missing evidence does not establish readiness. Execution gates remain separate.</p>
+        </section>
+        {{end}}
         <section>
           <h2>Git source</h2>
           <dl>

@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EnvironmentWorkloadProgress } from './EnvironmentWorkloadProgress.js';
 /**
  * Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
  */
 export type EnvironmentWorkloadActivationEvidence = {
+  workloads?: Array<EnvironmentWorkloadProgress>;
   graph_id: string;
   source_id: string;
   environment_id: string;

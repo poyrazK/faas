@@ -19,6 +19,7 @@ from faas_sdk.models import (
     ApproveEnvironmentGitRevisionResponse,
     CreateEnvironmentGitSourceRequest,
     EnvironmentGitOpsStatusResponse,
+    EnvironmentGitOpsExplanation,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
@@ -54,6 +55,34 @@ def test_gitlab_source_request_round_trip() -> None:
     )
     assert request.to_dict()["provider"] == "gitlab"
     assert request.to_dict()["repository"] == "team/subgroup/service"
+
+
+def test_gitops_explanation_preserves_unknown_serving_and_scoped_actions() -> None:
+    body = {
+        "read_only": True,
+        "assessed_at": "2026-10-16T12:00:00+00:00",
+        "status": "blocked",
+        "summary": "Waiting for current serving proof.",
+        "source_id": "source",
+        "generation": 3,
+        "intent_version": 5,
+        "source_freshness": "stale",
+        "approved_revision_id": "approved",
+        "applied_revision_id": "historical",
+        "workloads": [{
+            "resource": "workload/report", "app_id": "app", "execution_mode": "job",
+            "preparation": "complete", "qualification": "complete", "activation": "complete",
+            "serving": "unknown", "blocking_reasons": ["environment_serving_evidence_missing"],
+        }],
+        "issues": [{
+            "resource": "workload/report", "stage": "serving", "code": "scheduled_occurrence_unproven",
+            "message": "No current serving proof.", "actor": "customer", "action": "Inspect current scheduled task logs.",
+        }],
+    }
+    explanation = EnvironmentGitOpsExplanation.from_dict(body)
+    assert explanation.to_dict() == body
+    assert "serving_revision_id" not in explanation.to_dict()
+    assert explanation.workloads[0].serving == "unknown"
 
 
 def test_reviewed_authority_and_override_identity() -> None:
