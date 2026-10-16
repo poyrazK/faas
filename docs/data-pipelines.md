@@ -7,7 +7,8 @@ only to operator-approved staging accounts on Hobby, Pro, or Scale.
 
 ## Connect and read
 
-Prepare a private file containing a PostgreSQL URL with `sslmode=verify-full`,
+Prepare a private file containing a PostgreSQL URL with an explicit nonempty
+username/password and `sslmode=verify-full`,
 then restrict it to your user (`chmod 600 source-url.txt`). Supply the file path,
 not the credential itself, to the CLI:
 
@@ -93,7 +94,10 @@ the configured finite retention backstop can invalidate the slot during a long
 pause or outage. Schema changes, invalidated slots, or proven drift result in
 `resync_required`, stop replication, and deny mirror reads. Explicit `resync`
 starts a new generation and replaces only the preceding generation's owned
-tables. It can interrupt reads and requires enough time for a full new copy.
+tables. It can interrupt reads and requires enough time for a full new copy. Existing
+Data API queries may return no rows while the new generation denies reads.
+After a schema change, run `gregale data-api refresh orders-data --wait` and
+regenerate the client types before using new columns.
 
 Verification is limited to 10,000 rows and 16 MiB per selected table. Equality
 is reported only when the source WAL position remains stable and acknowledged

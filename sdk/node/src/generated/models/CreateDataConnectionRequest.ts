@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Source registration containing a verified-TLS PostgreSQL URL for sealing.
+ */
 export type CreateDataConnectionRequest = {
   name: string;
   /**

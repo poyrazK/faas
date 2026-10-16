@@ -11,6 +11,8 @@ T = TypeVar("T", bound="CreateDataPipelineRequest")
 
 @_attrs_define
 class CreateDataPipelineRequest:
+    """Selected public tables, dedicated destination and explicitly authorized JWT readers."""
+
     name: str
     source_connection_id: UUID
     database_id: UUID

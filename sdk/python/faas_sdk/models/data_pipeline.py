@@ -17,6 +17,8 @@ T = TypeVar("T", bound="DataPipeline")
 
 @_attrs_define
 class DataPipeline:
+    """Managed replication intent with bounded, revision-specific worker observations."""
+
     observed_revision: int
     """Intent revision covered by the latest observation."""
     observation_fresh: bool

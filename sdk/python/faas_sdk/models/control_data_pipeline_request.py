@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ControlDataPipelineRequest")
 
 @_attrs_define
 class ControlDataPipelineRequest:
+    """Optimistic revision fence and requested pipeline lifecycle action."""
+
     expected_revision: int
     action: ControlDataPipelineRequestAction
 

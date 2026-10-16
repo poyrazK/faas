@@ -50910,25 +50910,25 @@ paths:
   /v1/data/connections:
     get:
       operationId: listDataConnections
-      summary: List registered data sources without credentials
+      summary: List sealed PostgreSQL pipeline source identities
       tags:
       - data_pipelines
       responses:
         '200':
-          description: List registered data sources without credentials
+          description: Account-owned source identities with credentials omitted.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataConnectionList'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by listDataConnections after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
     post:
       operationId: createDataConnection
-      summary: Register an encrypted PostgreSQL source
+      summary: Seal a credential for a PostgreSQL pipeline source
       tags:
       - data_pipelines
       parameters:
@@ -50941,13 +50941,13 @@ paths:
               $ref: '#/components/schemas/CreateDataConnectionRequest'
       responses:
         '201':
-          description: Register an encrypted PostgreSQL source
+          description: Registered source identity and its initial credential revision.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataConnection'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by createDataConnection after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
@@ -50960,9 +50960,10 @@ paths:
       schema:
         type: string
         format: uuid
+      description: Sealed source connection to rotate or remove.
     put:
       operationId: rotateDataConnection
-      summary: Rotate credentials without changing source identity
+      summary: Replace the credential of a PostgreSQL pipeline source
       tags:
       - data_pipelines
       requestBody:
@@ -50973,27 +50974,27 @@ paths:
               $ref: '#/components/schemas/RotateDataConnectionRequest'
       responses:
         '200':
-          description: Rotate credentials without changing source identity
+          description: Source identity with an incremented credential revision.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataConnection'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by rotateDataConnection after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
     delete:
       operationId: deleteDataConnection
-      summary: Delete a source after its pipelines are cleaned up
+      summary: Remove an unused PostgreSQL pipeline source
       tags:
       - data_pipelines
       responses:
         '204':
-          description: Delete a source after its pipelines are cleaned up
+          description: Unused sealed source credential has been removed.
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by deleteDataConnection after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
@@ -51001,25 +51002,25 @@ paths:
   /v1/data/pipelines:
     get:
       operationId: listDataPipelines
-      summary: List managed data pipelines
+      summary: List managed PostgreSQL table mirrors
       tags:
       - data_pipelines
       responses:
         '200':
-          description: List managed data pipelines
+          description: Bounded account-owned pipeline intent and observation history.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataPipelineList'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by listDataPipelines after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
     post:
       operationId: createDataPipeline
-      summary: Request initial copying and continuous PostgreSQL replication
+      summary: Start a managed PostgreSQL table mirror
       tags:
       - data_pipelines
       parameters:
@@ -51032,13 +51033,13 @@ paths:
               $ref: '#/components/schemas/CreateDataPipelineRequest'
       responses:
         '202':
-          description: Request initial copying and continuous PostgreSQL replication
+          description: Durable replication intent accepted for asynchronous reconciliation.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataPipeline'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by createDataPipeline after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
@@ -51051,20 +51052,21 @@ paths:
       schema:
         type: string
         format: uuid
+      description: Managed table mirror whose progress to inspect.
     get:
       operationId: getDataPipeline
-      summary: Read pipeline intent and observed progress
+      summary: Read synchronization progress for a PostgreSQL table mirror
       tags:
       - data_pipelines
       responses:
         '200':
-          description: Read pipeline intent and observed progress
+          description: Current desired action and the most recent replication observation.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataPipeline'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by getDataPipeline after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
@@ -51077,9 +51079,10 @@ paths:
       schema:
         type: string
         format: uuid
+      description: Managed table mirror receiving the lifecycle request.
     post:
       operationId: controlDataPipeline
-      summary: Request a revision-checked pipeline action
+      summary: Change managed PostgreSQL table mirror intent
       tags:
       - data_pipelines
       requestBody:
@@ -51090,13 +51093,13 @@ paths:
               $ref: '#/components/schemas/ControlDataPipelineRequest'
       responses:
         '202':
-          description: Request a revision-checked pipeline action
+          description: Updated intent revision accepted for worker reconciliation.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DataPipeline'
         default:
-          description: Authentication, ownership, validation, quota or pipeline availability error
+          description: Problem returned by controlDataPipeline after account, credential or pipeline validation.
           content:
             application/problem+json:
               schema:
@@ -51612,6 +51615,7 @@ components:
 
   schemas:
     DataConnection:
+      description: Credential-free source identity retained by the pipeline catalog.
       type: object
       additionalProperties: false
       required:
@@ -51635,6 +51639,7 @@ components:
           type: string
           format: date-time
     DataConnectionList:
+      description: Account-scoped registered PostgreSQL source identities.
       type: object
       additionalProperties: false
       required:
@@ -51645,6 +51650,7 @@ components:
           items:
             $ref: '#/components/schemas/DataConnection'
     CreateDataConnectionRequest:
+      description: Source registration containing a verified-TLS PostgreSQL URL for sealing.
       type: object
       additionalProperties: false
       required:
@@ -51662,6 +51668,7 @@ components:
           description: PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and
             addresses must be operator-qualified.
     RotateDataConnectionRequest:
+      description: Revision-checked replacement credential for the same source database identity.
       type: object
       additionalProperties: false
       required:
@@ -51676,9 +51683,10 @@ components:
           type: string
           maxLength: 8192
           writeOnly: true
-          description: PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and
+          description: Replacement verified-TLS URL with an explicit password for the existing source host, database and username.
             addresses must be operator-qualified.
     CreateDataPipelineRequest:
+      description: Selected public tables, dedicated destination and explicitly authorized JWT readers.
       type: object
       additionalProperties: false
       required:
@@ -51716,6 +51724,7 @@ components:
           maxItems: 32
           uniqueItems: true
     ControlDataPipelineRequest:
+      description: Optimistic revision fence and requested pipeline lifecycle action.
       type: object
       additionalProperties: false
       required:
@@ -51735,6 +51744,7 @@ components:
           - verify
           - delete
     DataPipeline:
+      description: Managed replication intent with bounded, revision-specific worker observations.
       type: object
       additionalProperties: false
       required:
@@ -51846,6 +51856,7 @@ components:
           type: string
           format: date-time
     DataPipelineList:
+      description: Bounded history of account-scoped managed data pipeline records.
       type: object
       additionalProperties: false
       required:

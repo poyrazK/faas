@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Credential-free source identity retained by the pipeline catalog.
+ */
 export type DataConnection = {
   id: string;
   name: string;

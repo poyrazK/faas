@@ -48,7 +48,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a source after its pipelines are cleaned up
+    """Remove an unused PostgreSQL pipeline source
 
     Args:
         id (UUID):
@@ -77,7 +77,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a source after its pipelines are cleaned up
+    """Remove an unused PostgreSQL pipeline source
 
     Args:
         id (UUID):
@@ -101,7 +101,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a source after its pipelines are cleaned up
+    """Remove an unused PostgreSQL pipeline source
 
     Args:
         id (UUID):
@@ -128,7 +128,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a source after its pipelines are cleaned up
+    """Remove an unused PostgreSQL pipeline source
 
     Args:
         id (UUID):

@@ -134,7 +134,11 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 			close(writerReady)
 			return
 		}
-		defer func() { _ = conn.Close(context.Background()) }()
+		defer func() {
+			closing, stop := context.WithTimeout(context.WithoutCancel(writerCtx), 2*time.Second)
+			defer stop()
+			_ = conn.Close(closing)
+		}()
 		if _, err = conn.Exec(writerCtx, `INSERT INTO public.orders VALUES(2000,'concurrent',0)`); err != nil {
 			writerDone <- err
 			close(writerReady)

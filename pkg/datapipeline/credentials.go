@@ -21,6 +21,11 @@ func ConnectionIdentity(raw string) (string, error) {
 	if err != nil {
 		return "", ErrInvalid
 	}
+	// Never inherit a control-plane or subscriber-process password.
+	password, present := u.User.Password()
+	if !present || password == "" {
+		return "", ErrInvalid
+	}
 	port := u.Port()
 	if port == "" {
 		port = "5432"

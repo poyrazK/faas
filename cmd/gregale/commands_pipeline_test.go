@@ -102,3 +102,16 @@ func TestPipelineWaitRequiresFreshHealthAndConclusiveVerification(t *testing.T) 
 		t.Fatal("mismatched replica passed")
 	}
 }
+
+func TestPipelineWaitAcceptsDurableCleanupAfterHealthExpires(t *testing.T) {
+	p := api.DataPipeline{ID: uuid.NewString(), State: "deleted", DesiredState: "deleted", Revision: 3, ObservedRevision: 3}
+	reader := &pipelineStatusReader{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := waitDataPipeline(ctx, reader, p, "deleted", time.Millisecond); err != nil || reader.calls != 0 {
+		t.Fatal("completed cleanup was treated as stale live health")
+	}
+	if _, err := waitDataPipeline(ctx, reader, p, "live", time.Millisecond); err == nil {
+		t.Fatal("wait for an impossible live state did not fail")
+	}
+}

@@ -2,10 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Revision-checked replacement credential for the same source database identity.
+ */
 export type RotateDataConnectionRequest = {
   expected_revision: number;
   /**
-   * PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and addresses must be operator-qualified.
+   * Replacement verified-TLS URL with an explicit password for the existing source host, database and username. addresses must be operator-qualified.
    */
   connection_url: string;
 };

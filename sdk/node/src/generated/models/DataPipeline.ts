@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Managed replication intent with bounded, revision-specific worker observations.
+ */
 export type DataPipeline = {
   /**
    * Intent revision covered by the latest observation.

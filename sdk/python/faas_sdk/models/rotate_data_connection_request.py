@@ -10,10 +10,12 @@ T = TypeVar("T", bound="RotateDataConnectionRequest")
 
 @_attrs_define
 class RotateDataConnectionRequest:
+    """Revision-checked replacement credential for the same source database identity."""
+
     expected_revision: int
     connection_url: str
-    """PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and addresses must
-    be operator-qualified."""
+    """Replacement verified-TLS URL with an explicit password for the existing source host, database and username.
+    addresses must be operator-qualified."""
 
     def to_dict(self) -> dict[str, Any]:
         expected_revision = self.expected_revision

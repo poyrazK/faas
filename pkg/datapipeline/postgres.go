@@ -214,7 +214,13 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 	if revision <= 0 {
 		return Pipeline{}, ErrInvalid
 	}
-	if p.Revision != revision || p.DesiredState == "deleted" {
+	if p.Revision != revision {
+		return Pipeline{}, ErrConflict
+	}
+	if p.DesiredState == "deleted" {
+		if action == "delete" {
+			return p, nil
+		}
 		return Pipeline{}, ErrConflict
 	}
 	arg := sqlc.PipelineControlParams{AccountID: account, ID: id, Revision: revision, DesiredState: p.DesiredState, VerifyRequested: p.VerifyRequested, State: p.State}

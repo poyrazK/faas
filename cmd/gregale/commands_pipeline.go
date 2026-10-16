@@ -273,6 +273,13 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
+		// Cleanup is a terminal durable receipt; deleted rows are no longer polled.
+		if p.State == "deleted" {
+			if expected == "deleted" && p.ObservedRevision == p.Revision && p.Revision > 0 {
+				return p, nil
+			}
+			return p, errors.New("pipeline has been deleted")
+		}
 		if (p.State == expected && p.ObservationFresh) || (expected == "verified" && p.ObservationFresh && p.Verification == "passed") {
 			return p, nil
 		}

@@ -28,7 +28,7 @@ func problem(w http.ResponseWriter, err error) {
 	p := api.NewProblem(status, code, http.StatusText(status), detail).WithDocs("https://gregale.dev/docs/data-pipelines")
 	var quota *datapipeline.QuotaError
 	if errors.As(err, &quota) {
-		p.WithLimit(quota.Limit, quota.Observed)
+		p = p.WithLimit(quota.Limit, quota.Observed)
 	}
 	api.WriteProblem(w, p)
 }

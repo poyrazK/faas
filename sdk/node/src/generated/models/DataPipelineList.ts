@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DataPipeline } from './DataPipeline.js';
+/**
+ * Bounded history of account-scoped managed data pipeline records.
+ */
 export type DataPipelineList = {
   items: Array<DataPipeline>;
 };

@@ -60,11 +60,12 @@ def sync_detailed(
     body: CreateDataPipelineRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DataPipeline | Problem]:
-    """Request initial copying and continuous PostgreSQL replication
+    """Start a managed PostgreSQL table mirror
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataPipelineRequest):
+        body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
+            explicitly authorized JWT readers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -92,11 +93,12 @@ def sync(
     body: CreateDataPipelineRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> DataPipeline | Problem | None:
-    """Request initial copying and continuous PostgreSQL replication
+    """Start a managed PostgreSQL table mirror
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataPipelineRequest):
+        body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
+            explicitly authorized JWT readers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,11 +121,12 @@ async def asyncio_detailed(
     body: CreateDataPipelineRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DataPipeline | Problem]:
-    """Request initial copying and continuous PostgreSQL replication
+    """Start a managed PostgreSQL table mirror
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataPipelineRequest):
+        body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
+            explicitly authorized JWT readers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,11 +152,12 @@ async def asyncio(
     body: CreateDataPipelineRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> DataPipeline | Problem | None:
-    """Request initial copying and continuous PostgreSQL replication
+    """Start a managed PostgreSQL table mirror
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataPipelineRequest):
+        body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
+            explicitly authorized JWT readers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

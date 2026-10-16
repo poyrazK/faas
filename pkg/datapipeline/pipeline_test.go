@@ -37,6 +37,11 @@ func testService(t *testing.T) (*Service, *PostgresStore, *age.X25519Identity, s
 func TestConnectionCustodyRotationAndTenantIsolation(t *testing.T) {
 	s, store, key, account := testService(t)
 	ctx := context.Background()
+	for _, raw := range []string{"postgres://reader@db.example/orders?sslmode=verify-full", "postgres://reader:@db.example/orders?sslmode=verify-full"} {
+		if _, e := s.CreateConnection(ctx, account, api.CreateDataConnectionRequest{Name: "implicit-password", ConnectionURL: raw}); !errors.Is(e, ErrInvalid) {
+			t.Fatal("source accepted an inherited password")
+		}
+	}
 	raw := "postgres://reader:sentinel-secret@db.example/orders?sslmode=verify-full"
 	c, err := s.CreateConnection(ctx, account, api.CreateDataConnectionRequest{Name: "orders", ConnectionURL: raw})
 	if err != nil {
@@ -222,5 +227,29 @@ func TestVerificationRetryAndObservationFreshness(t *testing.T) {
 	current, err = store.Get(ctx, account, p.ID)
 	if err != nil || current.ObservationFresh {
 		t.Fatal("stale health observation reported fresh")
+	}
+}
+
+func TestPipelineDeleteRetryRecoversExistingIntent(t *testing.T) {
+	s, store, _, account := testService(t)
+	ctx := context.Background()
+	c, err := s.CreateConnection(ctx, account, api.CreateDataConnectionRequest{Name: "source", ConnectionURL: "postgres://r:p@db.example/db?sslmode=verify-full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Create(ctx, account, api.CreateDataPipelineRequest{Name: "orders", SourceConnectionID: c.ID, DatabaseID: uuid.NewString(), Tables: []string{"orders"}, ReadSubjects: []string{"alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := store.Control(ctx, account, p.ID, p.Revision, "delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := store.Control(ctx, account, p.ID, requested.Revision, "delete")
+	if err != nil || retry.Revision != requested.Revision || retry.DesiredState != "deleted" {
+		t.Fatal("lost delete acknowledgement could not recover", err)
+	}
+	if _, err = store.Control(ctx, account, p.ID, p.Revision, "delete"); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale delete fence bypassed")
 	}
 }

@@ -62,11 +62,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: RotateDataConnectionRequest,
 ) -> Response[DataConnection | Problem]:
-    """Rotate credentials without changing source identity
+    """Replace the credential of a PostgreSQL pipeline source
 
     Args:
         id (UUID):
-        body (RotateDataConnectionRequest):
+        body (RotateDataConnectionRequest): Revision-checked replacement credential for the same
+            source database identity.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -94,11 +95,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: RotateDataConnectionRequest,
 ) -> DataConnection | Problem | None:
-    """Rotate credentials without changing source identity
+    """Replace the credential of a PostgreSQL pipeline source
 
     Args:
         id (UUID):
-        body (RotateDataConnectionRequest):
+        body (RotateDataConnectionRequest): Revision-checked replacement credential for the same
+            source database identity.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,11 +123,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: RotateDataConnectionRequest,
 ) -> Response[DataConnection | Problem]:
-    """Rotate credentials without changing source identity
+    """Replace the credential of a PostgreSQL pipeline source
 
     Args:
         id (UUID):
-        body (RotateDataConnectionRequest):
+        body (RotateDataConnectionRequest): Revision-checked replacement credential for the same
+            source database identity.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,11 +154,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: RotateDataConnectionRequest,
 ) -> DataConnection | Problem | None:
-    """Rotate credentials without changing source identity
+    """Replace the credential of a PostgreSQL pipeline source
 
     Args:
         id (UUID):
-        body (RotateDataConnectionRequest):
+        body (RotateDataConnectionRequest): Revision-checked replacement credential for the same
+            source database identity.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

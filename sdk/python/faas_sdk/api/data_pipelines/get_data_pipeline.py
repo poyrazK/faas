@@ -52,7 +52,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DataPipeline | Problem]:
-    """Read pipeline intent and observed progress
+    """Read synchronization progress for a PostgreSQL table mirror
 
     Args:
         id (UUID):
@@ -81,7 +81,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DataPipeline | Problem | None:
-    """Read pipeline intent and observed progress
+    """Read synchronization progress for a PostgreSQL table mirror
 
     Args:
         id (UUID):
@@ -105,7 +105,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DataPipeline | Problem]:
-    """Read pipeline intent and observed progress
+    """Read synchronization progress for a PostgreSQL table mirror
 
     Args:
         id (UUID):
@@ -132,7 +132,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DataPipeline | Problem | None:
-    """Read pipeline intent and observed progress
+    """Read synchronization progress for a PostgreSQL table mirror
 
     Args:
         id (UUID):

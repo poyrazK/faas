@@ -60,11 +60,12 @@ def sync_detailed(
     body: CreateDataConnectionRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DataConnection | Problem]:
-    """Register an encrypted PostgreSQL source
+    """Seal a credential for a PostgreSQL pipeline source
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataConnectionRequest):
+        body (CreateDataConnectionRequest): Source registration containing a verified-TLS
+            PostgreSQL URL for sealing.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -92,11 +93,12 @@ def sync(
     body: CreateDataConnectionRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> DataConnection | Problem | None:
-    """Register an encrypted PostgreSQL source
+    """Seal a credential for a PostgreSQL pipeline source
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataConnectionRequest):
+        body (CreateDataConnectionRequest): Source registration containing a verified-TLS
+            PostgreSQL URL for sealing.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,11 +121,12 @@ async def asyncio_detailed(
     body: CreateDataConnectionRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DataConnection | Problem]:
-    """Register an encrypted PostgreSQL source
+    """Seal a credential for a PostgreSQL pipeline source
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataConnectionRequest):
+        body (CreateDataConnectionRequest): Source registration containing a verified-TLS
+            PostgreSQL URL for sealing.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,11 +152,12 @@ async def asyncio(
     body: CreateDataConnectionRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> DataConnection | Problem | None:
-    """Register an encrypted PostgreSQL source
+    """Seal a credential for a PostgreSQL pipeline source
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateDataConnectionRequest):
+        body (CreateDataConnectionRequest): Source registration containing a verified-TLS
+            PostgreSQL URL for sealing.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

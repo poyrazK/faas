@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Selected public tables, dedicated destination and explicitly authorized JWT readers.
+ */
 export type CreateDataPipelineRequest = {
   name: string;
   source_connection_id: string;

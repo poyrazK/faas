@@ -14,6 +14,8 @@ T = TypeVar("T", bound="DataConnectionList")
 
 @_attrs_define
 class DataConnectionList:
+    """Account-scoped registered PostgreSQL source identities."""
+
     items: list[DataConnection]
 
     def to_dict(self) -> dict[str, Any]:

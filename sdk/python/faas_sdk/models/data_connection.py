@@ -12,6 +12,8 @@ T = TypeVar("T", bound="DataConnection")
 
 @_attrs_define
 class DataConnection:
+    """Credential-free source identity retained by the pipeline catalog."""
+
     id: UUID
     name: str
     revision: int

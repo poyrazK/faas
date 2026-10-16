@@ -16,9 +16,9 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DataPipelinesService {
   /**
-   * List registered data sources without credentials
-   * @returns DataConnectionList List registered data sources without credentials
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
+   * List sealed PostgreSQL pipeline source identities
+   * @returns DataConnectionList Account-owned source identities with credentials omitted.
+   * @returns Problem Problem returned by listDataConnections after account, credential or pipeline validation.
    * @throws ApiError
    */
   public static listDataConnections(): CancelablePromise<DataConnectionList | Problem> {
@@ -28,9 +28,9 @@ export class DataPipelinesService {
     });
   }
   /**
-   * Register an encrypted PostgreSQL source
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
-   * @returns DataConnection Register an encrypted PostgreSQL source
+   * Seal a credential for a PostgreSQL pipeline source
+   * @returns Problem Problem returned by createDataConnection after account, credential or pipeline validation.
+   * @returns DataConnection Registered source identity and its initial credential revision.
    * @throws ApiError
    */
   public static createDataConnection({
@@ -56,15 +56,18 @@ export class DataPipelinesService {
     });
   }
   /**
-   * Rotate credentials without changing source identity
-   * @returns DataConnection Rotate credentials without changing source identity
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
+   * Replace the credential of a PostgreSQL pipeline source
+   * @returns DataConnection Source identity with an incremented credential revision.
+   * @returns Problem Problem returned by rotateDataConnection after account, credential or pipeline validation.
    * @throws ApiError
    */
   public static rotateDataConnection({
     id,
     requestBody,
   }: {
+    /**
+     * Sealed source connection to rotate or remove.
+     */
     id: string,
     requestBody: RotateDataConnectionRequest,
   }): CancelablePromise<DataConnection | Problem> {
@@ -79,13 +82,16 @@ export class DataPipelinesService {
     });
   }
   /**
-   * Delete a source after its pipelines are cleaned up
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
+   * Remove an unused PostgreSQL pipeline source
+   * @returns Problem Problem returned by deleteDataConnection after account, credential or pipeline validation.
    * @throws ApiError
    */
   public static deleteDataConnection({
     id,
   }: {
+    /**
+     * Sealed source connection to rotate or remove.
+     */
     id: string,
   }): CancelablePromise<Problem> {
     return __request(OpenAPI, {
@@ -97,9 +103,9 @@ export class DataPipelinesService {
     });
   }
   /**
-   * List managed data pipelines
-   * @returns DataPipelineList List managed data pipelines
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
+   * List managed PostgreSQL table mirrors
+   * @returns DataPipelineList Bounded account-owned pipeline intent and observation history.
+   * @returns Problem Problem returned by listDataPipelines after account, credential or pipeline validation.
    * @throws ApiError
    */
   public static listDataPipelines(): CancelablePromise<DataPipelineList | Problem> {
@@ -109,9 +115,9 @@ export class DataPipelinesService {
     });
   }
   /**
-   * Request initial copying and continuous PostgreSQL replication
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
-   * @returns DataPipeline Request initial copying and continuous PostgreSQL replication
+   * Start a managed PostgreSQL table mirror
+   * @returns Problem Problem returned by createDataPipeline after account, credential or pipeline validation.
+   * @returns DataPipeline Durable replication intent accepted for asynchronous reconciliation.
    * @throws ApiError
    */
   public static createDataPipeline({
@@ -137,14 +143,17 @@ export class DataPipelinesService {
     });
   }
   /**
-   * Read pipeline intent and observed progress
-   * @returns DataPipeline Read pipeline intent and observed progress
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
+   * Read synchronization progress for a PostgreSQL table mirror
+   * @returns DataPipeline Current desired action and the most recent replication observation.
+   * @returns Problem Problem returned by getDataPipeline after account, credential or pipeline validation.
    * @throws ApiError
    */
   public static getDataPipeline({
     id,
   }: {
+    /**
+     * Managed table mirror whose progress to inspect.
+     */
     id: string,
   }): CancelablePromise<DataPipeline | Problem> {
     return __request(OpenAPI, {
@@ -156,15 +165,18 @@ export class DataPipelinesService {
     });
   }
   /**
-   * Request a revision-checked pipeline action
-   * @returns Problem Authentication, ownership, validation, quota or pipeline availability error
-   * @returns DataPipeline Request a revision-checked pipeline action
+   * Change managed PostgreSQL table mirror intent
+   * @returns Problem Problem returned by controlDataPipeline after account, credential or pipeline validation.
+   * @returns DataPipeline Updated intent revision accepted for worker reconciliation.
    * @throws ApiError
    */
   public static controlDataPipeline({
     id,
     requestBody,
   }: {
+    /**
+     * Managed table mirror receiving the lifecycle request.
+     */
     id: string,
     requestBody: ControlDataPipelineRequest,
   }): CancelablePromise<Problem | DataPipeline> {

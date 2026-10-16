@@ -14,6 +14,8 @@ T = TypeVar("T", bound="DataPipelineList")
 
 @_attrs_define
 class DataPipelineList:
+    """Bounded history of account-scoped managed data pipeline records."""
+
     items: list[DataPipeline]
 
     def to_dict(self) -> dict[str, Any]:

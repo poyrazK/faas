@@ -62,11 +62,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ControlDataPipelineRequest,
 ) -> Response[DataPipeline | Problem]:
-    """Request a revision-checked pipeline action
+    """Change managed PostgreSQL table mirror intent
 
     Args:
         id (UUID):
-        body (ControlDataPipelineRequest):
+        body (ControlDataPipelineRequest): Optimistic revision fence and requested pipeline
+            lifecycle action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -94,11 +95,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ControlDataPipelineRequest,
 ) -> DataPipeline | Problem | None:
-    """Request a revision-checked pipeline action
+    """Change managed PostgreSQL table mirror intent
 
     Args:
         id (UUID):
-        body (ControlDataPipelineRequest):
+        body (ControlDataPipelineRequest): Optimistic revision fence and requested pipeline
+            lifecycle action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,11 +123,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ControlDataPipelineRequest,
 ) -> Response[DataPipeline | Problem]:
-    """Request a revision-checked pipeline action
+    """Change managed PostgreSQL table mirror intent
 
     Args:
         id (UUID):
-        body (ControlDataPipelineRequest):
+        body (ControlDataPipelineRequest): Optimistic revision fence and requested pipeline
+            lifecycle action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,11 +154,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ControlDataPipelineRequest,
 ) -> DataPipeline | Problem | None:
-    """Request a revision-checked pipeline action
+    """Change managed PostgreSQL table mirror intent
 
     Args:
         id (UUID):
-        body (ControlDataPipelineRequest):
+        body (ControlDataPipelineRequest): Optimistic revision fence and requested pipeline
+            lifecycle action.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

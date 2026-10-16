@@ -10,6 +10,8 @@ T = TypeVar("T", bound="CreateDataConnectionRequest")
 
 @_attrs_define
 class CreateDataConnectionRequest:
+    """Source registration containing a verified-TLS PostgreSQL URL for sealing."""
+
     name: str
     connection_url: str
     """PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and addresses must
