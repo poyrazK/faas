@@ -515,6 +515,21 @@ routing. Promotion is a deliberate metadata write; it never starts workflows or
 checks assertions. It requires a token with deploy-write scope. Reading the head,
 history or gate requires app-read scope.
 
+In the dashboard, select a retained live suite and open **Named baselines**.
+Enter a baseline name to view its current receipt, policy and promotion history.
+Review the version 2 policy and choose **Preview promotion** to see qualification,
+blocking reasons, missing required cases and original-run age. This preview only
+reads recorded evidence. New names initially suggest all selected cases and a
+one-hour age limit; review these defaults for your release process.
+
+A passing preview offers a separate confirmation showing the exact suite,
+target and expected baseline revision. Confirming promotes through the same
+backend checks as the CLI. If the result is uncertain, retry the same form to
+preserve its promotion UUID and intent. A conflict requires reviewing the current
+head and preparing a new preview. The panel also provides a CI command for the
+selected candidate; select a different suite from the baseline before using it.
+Opening or refreshing the panel never promotes, starts runs or checks assertions.
+
 After explicitly running and checking a retained suite, promote it with a version
 2 policy. Use a new UUID for each deliberate promotion, and preserve it for retries:
 

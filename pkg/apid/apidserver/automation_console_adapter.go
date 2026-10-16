@@ -57,7 +57,7 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	next := accountHandler(handler)
 	scopes := api.ScopesReadSurface
 	switch operation.Kind {
-	case "live-suite-start", "live-suite-advance", "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
+	case "baseline-promote", "live-suite-start", "live-suite-advance", "live-start", "live-check", "save-tests", "run-tests", "save", "publish", "check", "enabled", "run", "resume", "cancel", "bind-webhook", "unbind-webhook":
 		scopes = api.ScopesDeployWriteSurface
 		next = h.server.requireVerifiedEmail(next)
 	}
@@ -82,6 +82,8 @@ func setAutomationConsolePaths(r *http.Request, slug string, operation automatio
 	r.SetPathValue("run_id", operation.RunID)
 	r.SetPathValue("suite_id", operation.RunID)
 	r.SetPathValue("baseline_id", operation.BaselineID)
+	r.SetPathValue("baseline", operation.BaselineName)
+	r.SetPathValue("promotion_id", operation.PromotionID)
 	if operation.EndpointID != "" {
 		r.SetPathValue("id", operation.EndpointID)
 	}
@@ -106,6 +108,12 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodPut, named, h.server.saveAutomationDraft
 	case "live-list":
 		return http.MethodGet, named + "/live-verifications", h.server.listAutomationLiveVerifications
+	case "baseline-get":
+		return http.MethodGet, named + "/live-baselines/" + url.PathEscape(op.BaselineName), h.server.getAutomationLiveBaseline
+	case "baseline-history":
+		return http.MethodGet, named + "/live-baselines/" + url.PathEscape(op.BaselineName) + "/history", h.server.getAutomationLiveBaselineHistory
+	case "baseline-promote":
+		return http.MethodPut, named + "/live-baselines/" + url.PathEscape(op.BaselineName) + "/promotions/" + url.PathEscape(op.PromotionID), h.server.promoteAutomationLiveBaseline
 	case "live-suite-list":
 		return http.MethodGet, named + "/live-suites", h.server.listAutomationLiveSuites
 	case "live-suite-start":

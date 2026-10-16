@@ -1,6 +1,9 @@
 package dashboard
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/automationgate"
+)
 
 type AutomationConsoleItem struct {
 	Name, URL, Source         string
@@ -36,6 +39,7 @@ type AutomationConsoleData struct {
 	LiveSuite                                                *api.AutomationLiveSuite
 	LiveSuiteBaselineID, LiveSuiteComparisonError            string
 	LiveSuiteComparison                                      *api.AutomationLiveSuiteComparison
+	Baseline                                                 *AutomationBaselineForm
 	LiveProgress                                             *AutomationLiveProgress
 	TestEditorMode                                           string
 	TestCaseIndex, TestAssertionIndex                        int
@@ -145,4 +149,15 @@ type AutomationConsoleResume struct {
 	Number                    int
 	PreviousStatus, CreatedAt string
 	Steps                     []string
+}
+
+// AutomationBaselineForm contains only retained evidence and promotion intent.
+type AutomationBaselineForm struct {
+	Name, Error, Policy, PromotionID, Command string
+	Revision                                  int64
+	Head                                      *api.AutomationLiveBaseline
+	History                                   *api.AutomationLiveBaselineHistory
+	Request                                   *api.PromoteAutomationLiveBaselineRequest
+	Preview                                   *automationgate.Result
+	Ready                                     bool
 }

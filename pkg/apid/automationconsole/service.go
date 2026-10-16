@@ -27,6 +27,7 @@ type Operation struct {
 	Kind, Name, RunID, Key, Step string
 	EndpointID, EventID          string
 	BaselineID                   string
+	BaselineName, PromotionID    string
 	Version                      int64
 	Body                         any
 }
@@ -110,6 +111,10 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 		s.continueLiveSuite(w, r, scope, data)
 		return
 	}
+	if action := r.PathValue("action"); action == "preview-baseline" || action == "promote-baseline" {
+		s.baselineAction(w, r, scope, data)
+		return
+	}
 	version, err := strconv.ParseInt(r.PostFormValue("expected_version"), 10, 64)
 	if err != nil || version < 0 {
 		s.invalid(w, r, scope, data, "Reload the automation to read its current draft version.")
@@ -156,6 +161,7 @@ func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, da
 	setupTestEditor(&data)
 	s.inspectLive(r, scope, &data)
 	s.inspectLiveSuites(r, scope, &data)
+	s.inspectBaseline(r, scope, &data)
 	if failure := s.inspectIngress(r, scope, &data); failure != nil {
 		status, data.Error = failure.Status, "The selected webhook endpoint or receipt is unavailable for this automation."
 	}
