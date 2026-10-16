@@ -245,3 +245,53 @@ and recovery timers are never restored as fresh proof. Confirmation diagnostics 
 showing pending recovery only while its boundary is satisfied. This option adds no
 requests, endpoint, schema changes or delivery actions, and does not change other
 rate-risk metrics. Aggregate count recovery still does not certify delivery success.
+
+## CLI watch
+
+The delivery-health command exposes the same total and reason conditions:
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch \
+  --deadline-window 5m \
+  --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 \
+  --deadline-expired-threshold 1 --deadline-expired-recovery 0 \
+  --deadline-upcoming-reason subscription_paused=10 \
+  --deadline-upcoming-reason-recovery subscription_paused=2 \
+  --deadline-sustain 1m --deadline-recovery-sustain 2m \
+  --interval 5s --timeout 10m --confirmation-progress \
+  --checkpoint ./delivery-health.json --alerts-json
+```
+
+Use `--deadline-expired-reason REASON=N` and
+`--deadline-expired-reason-recovery REASON=N` for expired reason conditions. Reason
+flags are repeatable for different known keys; duplicates within one flag are
+rejected. Warning zero disables a condition; recovery zero explicitly requires
+zero. Omitted recovery settings default to warning minus one. Recovery entries
+require an enabled warning for the same cohort and reason; total settings do not
+supply reason defaults. The expired count covers all expired deadlines, independently
+of the horizon.
+
+Every deadline flag requires `--watch`, a valid `--deadline-window` and at least
+one positive total or reason warning. The horizon accepts whole milliseconds
+100ms..24h. Warning and recovery durations independently default to one minute and
+accept 100ms..24h; explicit zero durations are invalid. Counts use the same exact
+integer bound as the Go options. Existing watch freshness and timeout limits apply.
+Invalid deadline combinations are rejected before authentication, polling or
+checkpoint preparation. Other delivery-health thresholds may be enabled alongside
+the deadline conditions.
+
+Final text output includes each deadline condition's state, last observed count,
+warning and inclusive recovery boundaries, and confirmation diagnostics. With
+`--confirmation-progress`, these details also print after every observation. The
+last count is not fresh proof when state is unknown; inspect confirmation reasons.
+Lifecycle alerts remain on stderr, including with `--alerts-json`. Omit live text
+progress with global `--json`; the final JSON result includes conditions, evidence
+and confirmations. This command does not send notifications itself.
+
+Existing `--checkpoint`, `--resume`, `--ack-inbox` and offline alert queue commands
+apply without a second checkpoint format. Checkpoints are persisted before alerts
+are emitted. Resume with the same effective horizon, enabled counts, recovery
+boundaries and durations; repeatable flag order does not matter. Resume never
+credits downtime or saved confirmation timers. A failed read stays unknown and
+cannot clear an incident. The CLI does not fall back to sampled counts or take
+recovery actions.

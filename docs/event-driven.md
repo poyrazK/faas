@@ -3391,3 +3391,18 @@ content verification return 409 on a mismatch before acceptance/comparison. The
 outbox always supplies this guard, preserves the producer key, and bounds retries
 to an immutable window shorter than normal acceptance retention. See
 [the application outbox guide](event-outbox.md) for setup, recovery and limitations.
+
+
+### Deadline count alerts from the CLI
+
+`events subscription-delivery-health --watch` supports total upcoming/expired
+counts, waiting-reason counts and separate recovery boundaries:
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+```
+
+Use repeatable `--deadline-upcoming-reason REASON=N` and
+`--deadline-expired-reason REASON=N`, with matching `-reason-recovery` flags for
+inclusive recovery counts. Existing checkpoint/resume and JSON alert delivery
+apply. See [CLI configuration, validation and recovery semantics](event-subscription-deadline-window.md#cli-watch).
