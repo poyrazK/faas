@@ -576,6 +576,12 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(unused) != 2 {
 		t.Fatal("missing unused reservation guard downgrade")
 	}
+	// Main's account-purge successor must participate in the round trip too.
+	accountPurgeRaw, err := migrations.FS.ReadFile("20261016084512417_clone_guard_account_purge_order.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountPurge := strings.SplitN(string(accountPurgeRaw), "-- +goose Down", 2)
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -598,6 +604,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
         )::text`
 	var before, after string
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, accountPurge[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, unused[1]); err != nil {
@@ -628,6 +637,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, unused[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, accountPurge[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {

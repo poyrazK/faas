@@ -1,7 +1,7 @@
 -- +goose Up
 ALTER TABLE event_subscriptions ADD COLUMN IF NOT EXISTS acknowledgment_lease_seconds integer NOT NULL DEFAULT 0 CHECK (acknowledgment_lease_seconds BETWEEN 0 AND 300);
-CREATE TABLE IF NOT EXISTS public.event_delivery_acknowledgments (
- invocation_id uuid PRIMARY KEY REFERENCES public.invocations(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS event_delivery_acknowledgments (
+ invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
  attempt integer NOT NULL CHECK (attempt > 0),
  replay_generation bigint NOT NULL CHECK (replay_generation >= 0),
  token_digest bytea NOT NULL CHECK (octet_length(token_digest) = 32),
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS public.event_delivery_acknowledgments (
 );
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.enqueue_event_fanout() RETURNS trigger
+CREATE OR REPLACE FUNCTION enqueue_event_fanout() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE existing_type text;

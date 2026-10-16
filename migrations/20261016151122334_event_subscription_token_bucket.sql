@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE public.event_subscription_delivery_controls
+ALTER TABLE event_subscription_delivery_controls
  ADD COLUMN IF NOT EXISTS rate_enabled boolean NOT NULL DEFAULT false,
  ADD COLUMN IF NOT EXISTS rate_interval_ms bigint NOT NULL DEFAULT 1000 CHECK(rate_interval_ms BETWEEN 10 AND 3600000),
  ADD COLUMN IF NOT EXISTS rate_burst bigint NOT NULL DEFAULT 1 CHECK(rate_burst BETWEEN 1 AND 100),
@@ -8,10 +8,10 @@ ALTER TABLE public.event_subscription_delivery_controls
  ADD COLUMN IF NOT EXISTS rate_refilled_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK(isfinite(rate_refilled_at)),
  ADD COLUMN IF NOT EXISTS rate_revision bigint NOT NULL DEFAULT 0 CHECK(rate_revision>=0),
  ADD COLUMN IF NOT EXISTS rate_sequence bigint NOT NULL DEFAULT 0 CHECK(rate_sequence>=0);
-CREATE TABLE IF NOT EXISTS public.event_subscription_rate_commands (
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
- subscription_id uuid NOT NULL REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS event_subscription_rate_commands (
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ subscription_id uuid NOT NULL REFERENCES event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE,
  command_id uuid NOT NULL,
  sequence bigint NOT NULL CHECK(sequence>0),
  request jsonb NOT NULL CHECK(jsonb_typeof(request)='object'),
@@ -20,9 +20,9 @@ CREATE TABLE IF NOT EXISTS public.event_subscription_rate_commands (
  retain_until timestamptz NOT NULL CHECK(isfinite(retain_until) AND retain_until>recorded_at),
  PRIMARY KEY(subscription_id,command_id), UNIQUE(subscription_id,sequence)
 );
-CREATE INDEX IF NOT EXISTS event_subscription_rate_commands_expiry_idx ON public.event_subscription_rate_commands(retain_until);
+CREATE INDEX IF NOT EXISTS event_subscription_rate_commands_expiry_idx ON event_subscription_rate_commands(retain_until);
 
-CREATE OR REPLACE FUNCTION public.event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamp with time zone) RETURNS text
+CREATE OR REPLACE FUNCTION event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamp with time zone) RETURNS text
     LANGUAGE sql STABLE
     AS $$
 SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
@@ -41,8 +41,8 @@ $$;
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE public.event_subscription_rate_commands;
-CREATE OR REPLACE FUNCTION public.event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamp with time zone) RETURNS text
+DROP TABLE event_subscription_rate_commands;
+CREATE OR REPLACE FUNCTION event_subscription_delivery_waiting_reason(account uuid, app uuid, subscription text, observed_at timestamp with time zone) RETURNS text
     LANGUAGE sql STABLE
     AS $$
 SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
@@ -56,5 +56,5 @@ SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
  LEFT JOIN event_subscription_circuit_breakers b ON b.subscription_id=c.subscription_id AND b.account_id=c.account_id AND b.app_id=c.app_id
  WHERE c.account_id=account AND c.app_id=app AND c.subscription_id::text=subscription),'');
 $$;
-ALTER TABLE public.event_subscription_delivery_controls DROP COLUMN rate_enabled, DROP COLUMN rate_interval_ms, DROP COLUMN rate_burst, DROP COLUMN rate_credit_ms, DROP COLUMN rate_refilled_at, DROP COLUMN rate_revision, DROP COLUMN rate_sequence;
+ALTER TABLE event_subscription_delivery_controls DROP COLUMN rate_enabled, DROP COLUMN rate_interval_ms, DROP COLUMN rate_burst, DROP COLUMN rate_credit_ms, DROP COLUMN rate_refilled_at, DROP COLUMN rate_revision, DROP COLUMN rate_sequence;
 -- +goose StatementEnd

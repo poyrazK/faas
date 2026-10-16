@@ -131,7 +131,6 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 	if policyErr == nil {
 		claim.policy = stored.recoveryPolicy()
 		options.RetryPolicy = claim.policy
-		options.Backoff = 0
 	} else if !errors.Is(policyErr, sql.ErrNoRows) {
 		return eventOutboxClaim{}, zero, eventOutboxStoreError(ctx)
 	}
