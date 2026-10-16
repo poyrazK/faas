@@ -7269,38 +7269,6 @@ $$;
 
 
 --
--- Name: account_billing_connections; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.account_billing_connections (
-    account_id uuid NOT NULL,
-    provider text NOT NULL,
-    sealed_secret bytea NOT NULL,
-    key_last4 text NOT NULL,
-    livemode boolean NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    api_url text,
-    collection text DEFAULT 'none'::text NOT NULL,
-    days_until_due integer DEFAULT 30 NOT NULL,
-    automatic_tax boolean DEFAULT false NOT NULL,
-    CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
-    CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
-    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
-    CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
-    CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
-    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
-);
-
-
---
--- Name: TABLE account_billing_connections; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.account_billing_connections IS 'Sealed credentials for exporting usage statements to the account''s own payment provider; only key_last4 and livemode are ever returned.';
-
-
---
 -- Name: environment_workload_qualification_requests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20482,6 +20450,38 @@ CREATE TABLE public.account_async_quota (
 
 
 --
+-- Name: account_billing_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_billing_connections (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    sealed_secret bytea NOT NULL,
+    key_last4 text NOT NULL,
+    livemode boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    api_url text,
+    collection text DEFAULT 'none'::text NOT NULL,
+    days_until_due integer DEFAULT 30 NOT NULL,
+    automatic_tax boolean DEFAULT false NOT NULL,
+    CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
+    CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
+    CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
+    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
+);
+
+
+--
+-- Name: TABLE account_billing_connections; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_billing_connections IS 'Sealed credentials for exporting usage statements to the account''s own payment provider; only key_last4 and livemode are ever returned.';
+
+
+--
 -- Name: account_credits; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24845,63 +24845,6 @@ CREATE TABLE public.deployment_revision_pins (
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
-
---
--- Name: usage_statement_invoice_exports; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.usage_statement_invoice_exports (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    source_kind text NOT NULL,
-    statement_id uuid NOT NULL,
-    provider text NOT NULL,
-    customer text NOT NULL,
-    status text DEFAULT 'creating'::text NOT NULL,
-    provider_invoice_id text,
-    currency text NOT NULL,
-    amount_minor bigint NOT NULL,
-    livemode boolean NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    payment_status text,
-    amount_paid_minor bigint,
-    amount_remaining_minor bigint,
-    due_at timestamp with time zone,
-    paid_at timestamp with time zone,
-    hosted_invoice_url text,
-    status_synced_at timestamp with time zone,
-    next_status_sync_at timestamp with time zone,
-    overdue_notified_at timestamp with time zone,
-    collection text DEFAULT 'none'::text NOT NULL,
-    days_until_due integer DEFAULT 30 NOT NULL,
-    automatic_tax boolean DEFAULT false NOT NULL,
-    CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
-    CONSTRAINT usage_statement_invoice_exports_collection_chk CHECK (((collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text])) AND ((days_until_due >= 1) AND (days_until_due <= 365)))),
-    CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
-    CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
-    CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (((hosted_invoice_url IS NULL) OR ((char_length(hosted_invoice_url) <= 2048) AND (hosted_invoice_url ~~ 'https://%'::text)))),
-    CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
-    CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
-    CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
-    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
-    CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
-);
-
-
---
--- Name: TABLE usage_statement_invoice_exports; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.usage_statement_invoice_exports IS 'One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.';
-
-
---
--- Name: COLUMN usage_statement_invoice_exports.payment_status; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.usage_statement_invoice_exports.payment_status IS 'Stripe invoice status last read by apid (ADR-1302); NULL until the first sync.';
 
 
 --
@@ -38115,6 +38058,63 @@ CREATE VIEW public.usage_monthly AS
         END) AS builder_seconds
    FROM public.usage_minutes
   GROUP BY account_id, app_id, (date_trunc('month'::text, minute));
+
+
+--
+-- Name: usage_statement_invoice_exports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.usage_statement_invoice_exports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    statement_id uuid NOT NULL,
+    provider text NOT NULL,
+    customer text NOT NULL,
+    status text DEFAULT 'creating'::text NOT NULL,
+    provider_invoice_id text,
+    currency text NOT NULL,
+    amount_minor bigint NOT NULL,
+    livemode boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    payment_status text,
+    amount_paid_minor bigint,
+    amount_remaining_minor bigint,
+    due_at timestamp with time zone,
+    paid_at timestamp with time zone,
+    hosted_invoice_url text,
+    status_synced_at timestamp with time zone,
+    next_status_sync_at timestamp with time zone,
+    overdue_notified_at timestamp with time zone,
+    collection text DEFAULT 'none'::text NOT NULL,
+    days_until_due integer DEFAULT 30 NOT NULL,
+    automatic_tax boolean DEFAULT false NOT NULL,
+    CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
+    CONSTRAINT usage_statement_invoice_exports_collection_chk CHECK (((collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text])) AND ((days_until_due >= 1) AND (days_until_due <= 365)))),
+    CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
+    CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (((hosted_invoice_url IS NULL) OR ((char_length(hosted_invoice_url) <= 2048) AND (hosted_invoice_url ~~ 'https://%'::text)))),
+    CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
+    CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
+    CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: TABLE usage_statement_invoice_exports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.usage_statement_invoice_exports IS 'One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.';
+
+
+--
+-- Name: COLUMN usage_statement_invoice_exports.payment_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.usage_statement_invoice_exports.payment_status IS 'Stripe invoice status last read by apid (ADR-1302); NULL until the first sync.';
 
 
 --
