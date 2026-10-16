@@ -11228,6 +11228,24 @@ const (
 	RouteContentMaxUncacheableShare = 0.5
 )
 
+// RouteCacheRule checks existing cache rules from refill evidence (ADR-1199).
+// On a route with a cache rule the gateway compares each body it stores with
+// the previous one for the URL. A changed body stored no later than the
+// rule's max-age plus RouteContentStaleLagShare of it (at least
+// RouteContentStaleMinLag) is a stale refill: the content almost certainly
+// changed while the cached copy was still being served. A rule is stale when
+// at least RouteCacheRuleMinRefills refills were observed and more than
+// RouteCacheRuleMaxStaleShare of them were stale, and too short when none was
+// stale and the measured safe max-age is at least RouteCacheRuleTooShortFactor
+// times the rule's.
+const (
+	RouteContentStaleLagShare    = 0.1
+	RouteContentStaleMinLag      = 5 * time.Second
+	RouteCacheRuleMinRefills     = 20
+	RouteCacheRuleMaxStaleShare  = 0.05
+	RouteCacheRuleTooShortFactor = 2
+)
+
 // RouteInsight bounds proactive route insights (ADR-1198): every
 // RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
 // ran in the last RouteInsightWindow. An insight no evaluation has observed

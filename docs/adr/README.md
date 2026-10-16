@@ -999,6 +999,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1188: Learned cacheability](1188-learned-cacheability.md) — compare anonymous GET bodies with the previous response per URL to measure whether a route is safe to cache, and for how long
 - [ADR-1189: Safe Deploy and scheduled prewarm on by default](1189-safe-releases-and-prewarm-on-by-default.md) — the control-plane role provisions the Safe Deploy token pair and schedd runs the prewarm drain
 - [ADR-1198: Proactive route insights](1198-proactive-route-insights.md) — apid records routes that keep apps awake or are safe to cache, and notifies app webhooks of each transition
+- [ADR-1199: Route evidence — cache rules and awake sources](1199-route-evidence-cache-rules-and-awake-sources.md) — the gateway observes cache rule refills so stale or too-short rules become insights, and the awake report credits route probes and prewarm
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage

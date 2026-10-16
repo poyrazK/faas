@@ -21,6 +21,7 @@ func RoutesFromStats(rows []sqlc.RouteAdviceRouteStatsRow) []RouteStats {
 				First: row.ContentFirst, Uncacheable: row.ContentUncacheable,
 				Same:    []int64{row.ContentSame60, row.ContentSame300, row.ContentSame3600},
 				Changed: []int64{row.ContentChanged60, row.ContentChanged300, row.ContentChanged3600},
+				Stale:   row.ContentStale,
 			},
 		})
 	}

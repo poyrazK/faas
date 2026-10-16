@@ -17,7 +17,8 @@ my-api was awake 96% of the last 168h 0m: 161h 2m running, 41.5 GB-h, 9 wakes. I
 ROUTE            REQUESTS  WAKES  AWAKE     SHARE  PATTERN      WITHOUT IT
 GET /health         10079      1  152h 40m  95%    every ~60s   -149h 12m awake, +212 wakes
 POST /orders          412      8  6h 3m     4%     irregular    no change
-Unattributed                      2h 19m    1%     probes, prewarm, min instances, cron, queue
+Scheduled prewarm       3         1h 30m    1%
+Unattributed                      49m       0%     min instances, cron, queue, waitUntil
 
 Suggestions
   GET /health is called about every 1m0s by anonymous clients and keeps my-api awake. Serve it from the edge cache (`gregale routes advise my-api` drafts the rule): a cached response never wakes the app.
@@ -38,13 +39,17 @@ retention (default window 7 days).
 - Each awake minute is credited to the requests of the latest minute that
   still keeps the app awake. When several routes were called in that minute,
   the minute is split by request count.
+- Minutes no request explains are credited to Gregale's own reasons to keep
+  the app awake: **route probes** your route health selectors send during a
+  canary ([synthetic probes](route-health.md); kept for a day) and
+  **scheduled prewarm**. Customer requests always come first.
 - **Without it** recomputes your awake time as if that route's requests had
-  never arrived, with all other requests unchanged. `+N wakes` means your
-  other routes would find the app parked N more times; each of those requests
-  waits for a wake.
-- **Unattributed** time is awake time no recorded request explains:
-  [synthetic probes](route-health.md), scheduled prewarm, minimum instances,
-  queue, cron and `waitUntil` work.
+  never arrived, with all other requests, probes and prewarms unchanged.
+  `+N wakes` means your other routes would find the app parked N more times;
+  each of those requests waits for a wake.
+- **Unattributed** time is awake time nothing recorded explains: minimum
+  instances, queue, cron and `waitUntil` work. With minimum instances set the
+  app never parks, and the report says so.
 
 Figures are estimates at minute resolution. The report covers your ten
 busiest routes; the rest appear as "Other routes".

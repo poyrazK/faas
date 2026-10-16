@@ -4933,7 +4933,9 @@ type Querier interface {
 	// that is not first in its window is a wake the cache would have avoided.
 	// The content_* counts are learned cacheability (ADR-1188): how observed
 	// anonymous GET bodies compared with the previous response for their URL,
-	// bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s).
+	// bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s). content_stale
+	// counts refills under a cache rule whose body changed within the rule's
+	// max-age (ADR-1199).
 	RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error)
 	// Requests one consumer sent above a per-minute allowance on one route.
 	RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg RouteAdviceThrottleExcessParams) (int64, error)
@@ -4949,6 +4951,11 @@ type Querier interface {
 	// whatever it returns. Requests the gateway answered itself (cache hits, edge
 	// answers, auth rejections) carry no deployment, instance or wake.
 	RouteAwakeRouteMinutes(ctx context.Context, db DBTX, arg RouteAwakeRouteMinutesParams) ([]RouteAwakeRouteMinutesRow, error)
+	// Wakes and keep-alives that are not customer requests (ADR-1199), per minute
+	// and source: synthetic route probes the app answered without a 5xx or an
+	// auth rejection (ADR-847; probe observations are pruned after a day), and
+	// scheduled prewarms that admitted instances.
+	RouteAwakeSourceMinutes(ctx context.Context, db DBTX, arg RouteAwakeSourceMinutesParams) ([]RouteAwakeSourceMinutesRow, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.

@@ -1241,7 +1241,8 @@ type Handler struct {
 	// commit 14.
 	responseCache *ResponseCache
 	// contentObserver compares anonymous GET responses on routes without a
-	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	// cache rule (ADR-1188) and the bodies a cache rule stores (ADR-1199);
+	// only the outcome reaches request telemetry.
 	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
@@ -6563,6 +6564,11 @@ haveApp:
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
+		if h.contentObserver != nil && contentObservable(r) {
+			// Compare the body this miss stores with the previous one for the
+			// URL, so the rule's max-age can be checked (ADR-1199).
+			r = r.WithContext(withContentTee(r.Context(), newRefillObserver(cw, h.contentObserver, app.ID, r, rule)))
+		}
 		defer func() {
 			// Proxy aborts unwind through this defer after a partial body has
 			// been written. Preserve the abort without caching those bytes.

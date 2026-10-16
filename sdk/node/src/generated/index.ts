@@ -2440,6 +2440,7 @@ export type { RouteAssignedCheck } from './models/RouteAssignedCheck.js';
 export type { RouteAssignment } from './models/RouteAssignment.js';
 export type { RouteAwakeResponse } from './models/RouteAwakeResponse.js';
 export type { RouteAwakeRoute } from './models/RouteAwakeRoute.js';
+export type { RouteAwakeSource } from './models/RouteAwakeSource.js';
 export type { RouteAwakeSuggestion } from './models/RouteAwakeSuggestion.js';
 export type { RouteAwakeWhatIf } from './models/RouteAwakeWhatIf.js';
 export type { RouteBudgetRequirement } from './models/RouteBudgetRequirement.js';

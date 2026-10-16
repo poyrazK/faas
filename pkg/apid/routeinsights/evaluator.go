@@ -151,14 +151,14 @@ func (e *Evaluator) evaluateApp(ctx context.Context, accountID, appID string, no
 
 func (e *Evaluator) findings(ctx context.Context, acct state.Account, app state.App, limits api.Limits, now time.Time) ([]Finding, error) {
 	since := now.Add(-api.RouteInsightWindow)
-	awake, routes, err := routeawake.Load(ctx, e.Store, acct.ID, app.ID, since, now)
+	data, err := routeawake.Load(ctx, e.Store, acct.ID, app.ID, since, now)
 	if err != nil {
 		return nil, err
 	}
 	out := KeptAwake(routeawake.Analyze(routeawake.Inputs{
 		App: app.Slug, From: since, Until: now,
 		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), RAMMB: app.RAMMB,
-		Awake: awake, Routes: routes,
+		Awake: data.Awake, Routes: data.Routes, Sources: data.Sources,
 	}))
 	stats, err := e.Store.RouteAdviceRouteStats(ctx, sqlc.RouteAdviceRouteStatsParams{
 		AppID: pgUUID(app.ID), AccountID: pgUUID(acct.ID), SinceAt: timestamptz(since), UntilAt: timestamptz(now),
@@ -173,9 +173,15 @@ func (e *Evaluator) findings(ctx context.Context, acct state.Account, app state.
 	}
 	existing := make([]routeadvisor.ExistingRule, 0, len(rules))
 	for _, rule := range rules {
-		existing = append(existing, routeadvisor.ExistingRule{Kind: string(rule.Kind), Path: rule.MatchPath, Methods: rule.MatchMethods})
+		e := routeadvisor.ExistingRule{Kind: string(rule.Kind), Path: rule.MatchPath, Methods: rule.MatchMethods, Enabled: rule.Enabled, Priority: rule.Priority}
+		if rule.Action.Cache != nil {
+			e.MaxAgeSeconds = rule.Action.Cache.MaxAgeSeconds
+		}
+		existing = append(existing, e)
 	}
-	return append(out, Cacheable(app.Slug, routeadvisor.RoutesFromStats(stats), existing)...), nil
+	advised := routeadvisor.RoutesFromStats(stats)
+	out = append(out, Cacheable(app.Slug, advised, existing)...)
+	return append(out, CacheRules(advised, existing)...), nil
 }
 
 func (e *Evaluator) upsert(ctx context.Context, accountID, appID string, f Finding, now time.Time) error {
