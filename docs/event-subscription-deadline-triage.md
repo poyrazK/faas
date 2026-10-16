@@ -127,6 +127,11 @@ this helper with `--limit`, `--cursor`, a human table and global `--json` output
 It accepts one saved Go/CLI alert object and preserves full continuation tokens.
 See [CLI investigation](event-deadline-alert-investigation.md#cli-investigation).
 
+Add `--explain` (Go option `Explain: true`) with a page limit at most 50 to read
+one acceptance-guarded batch of current blocker diagnostics. Per-row diagnostic
+clocks and missing/error states remain separate from triage observations. See
+[blocker explanations](event-deadline-alert-investigation.md#blocker-explanations).
+
 Node consumers can use `investigateEventDeadlineAlert(checkpoint, reference, options)`
 with an exact retained incident/sequence pair. It derives the query from validated
 checkpoint policy and returns one current page with separate notification and

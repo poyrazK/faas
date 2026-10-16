@@ -1362,3 +1362,11 @@ maps a Go/CLI count or ratio alert to one read-only page of current deadline tri
 It preserves reason filters, scope checks and opaque pagination, returning a separate
 alert reference and current observation timestamps. It does not reconstruct historical
 membership or perform recovery actions. See [investigation usage and limits](../../docs/event-deadline-alert-investigation.md).
+
+Set `EventDeadlineInvestigationOptions{Limit: 25, Explain: true}` to add one
+acceptance-guarded blocker batch within the same five-second read budget. Explanation
+mode requires a page limit at most 50 and preserves one result per triage row,
+including unavailable/replaced evidence and independent read errors. Diagnostic
+timestamps and ordering-blocker identities remain separate from triage observations.
+Check `Explanations.ReadComplete` for read coverage. See
+[blocker explanation semantics](../../docs/event-deadline-alert-investigation.md#blocker-explanations).

@@ -16,21 +16,25 @@ import (
 )
 
 func cmdEventsDeadlineAlertInvestigate(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "explain")
 	fs := newFlagSet("events deadline-alert-investigate", flag.ContinueOnError)
 	file := fs.String("alert-file", "", "saved single Go/CLI lifecycle alert JSON object (maximum 64 KiB)")
 	limit := fs.Int("limit", api.EventSubscriptionDeadlinePageDefault, "current recipients per page (1..100; default 50)")
 	cursor := fs.String("cursor", "", "opaque next_cursor from the same app, alert selection and page size")
+	explain := fs.Bool("explain", false, "read acceptance-guarded blocker explanations (requires limit 1..50)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 || *file == "" || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events deadline-alert-investigate <app> --alert-file PATH [--limit 50] [--cursor CURSOR]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events deadline-alert-investigate <app> --alert-file PATH [--limit 50] [--cursor CURSOR] [--explain]", "events")
 		return 1
 	}
 	query := api.EventSubscriptionDeadlineQuery{Limit: *limit, Cursor: *cursor}
 	if strings.TrimSpace(positional[0]) == "" || *limit < 1 || query.Validate() != nil {
 		return printErr("Invalid investigation options", fmt.Errorf("require an app, limit 1..100 and a bounded cursor"))
+	}
+	if *explain && *limit > api.EventRecipientBlockerBatchMax {
+		return printErr("Invalid explanation options", fmt.Errorf("--explain requires --limit 1..%d", api.EventRecipientBlockerBatchMax))
 	}
 	alert, err := readDeadlineInvestigationAlert(*file)
 	if err != nil {
@@ -42,14 +46,20 @@ func cmdEventsDeadlineAlertInvestigate(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	out, err := client.InvestigateEventDeadlineAlert(ctx, positional[0], alert, api.EventDeadlineInvestigationOptions{Limit: *limit, Cursor: *cursor})
+	out, err := client.InvestigateEventDeadlineAlert(ctx, positional[0], alert, api.EventDeadlineInvestigationOptions{Limit: *limit, Cursor: *cursor, Explain: *explain})
 	if err != nil {
 		return printErr("Deadline alert investigation failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(out))
+		if code := jsonOut(writeJSON(out)); code != 0 {
+			return code
+		}
+	} else {
+		printDeadlineAlertInvestigation(out)
 	}
-	printDeadlineAlertInvestigation(out)
+	if out.Explanations != nil && !out.Explanations.ReadComplete {
+		return 1
+	}
 	return 0
 }
 
@@ -109,10 +119,35 @@ func printDeadlineAlertInvestigation(out api.EventDeadlineInvestigation) {
 	} else {
 		printDeadlineInvestigationRecipients(p.Recipients)
 	}
+	if out.Explanations != nil {
+		printDeadlineInvestigationExplanations(out.Explanations)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Has more: %t\n", p.HasMore)
 	if p.HasMore {
 		_, _ = fmt.Fprintf(osStdout, "Next cursor: %q\nContinue with the same app, alert file and --limit %d; supply this quoted value as --cursor.\n", p.NextCursor, q.Limit)
 	}
+}
+
+func printDeadlineInvestigationExplanations(explanations *api.EventDeadlineExplanations) {
+	_, _ = fmt.Fprintf(osStdout, "Explanations: selected triage page | attempted %d | rows %d | read complete %t\n", explanations.Attempted, len(explanations.Items), explanations.ReadComplete)
+	_, _ = fmt.Fprintln(osStdout, "Diagnostic observations are separate reads; routing settlement does not establish handler completion")
+	for _, item := range explanations.Items {
+		_, _ = fmt.Fprintf(osStdout, "  Source %q | event %q | accepted %s\n", item.Query.Source, item.Query.ID, item.Query.ExpectedAcceptedAt.Format(time.RFC3339Nano))
+		_, _ = fmt.Fprintf(osStdout, "    Diagnostic observation: %s | status %s | reason %s | routing state %s\n", deadlineExplanationStamp(item.ObservedAt), oneLine(item.Status), oneLine(item.Reason), oneLine(item.RoutingState))
+		if r := item.Routing; r != nil {
+			_, _ = fmt.Fprintf(osStdout, "    Waiting reason: %s | target available %t | capacity scope %s | next attempt %s | lease until %s\n", oneLine(r.WaitingReason), r.TargetAvailable, oneLine(r.CapacityScope), deadlineExplanationStamp(r.NextAttemptAt), deadlineExplanationStamp(r.LeaseUntil))
+			if b := r.OrderingBlocker; b != nil {
+				_, _ = fmt.Fprintf(osStdout, "    Ordering blocker: source %q | event %q | subscription %q | accepted %s | state %s | next attempt %s\n", b.EventSource, b.EventID, b.SubscriptionID, b.AcceptedAt.Format(time.RFC3339Nano), oneLine(b.State), deadlineExplanationStamp(b.NextAttemptAt))
+			}
+		}
+	}
+}
+
+func deadlineExplanationStamp(at *time.Time) string {
+	if at == nil {
+		return "-"
+	}
+	return at.Format(time.RFC3339Nano)
 }
 
 func printDeadlineInvestigationRecipients(rows []api.EventSubscriptionDeadlineRecipient) {

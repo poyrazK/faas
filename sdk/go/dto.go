@@ -615,4 +615,8 @@ type (
 	EventDeadlineInvestigationOptions = api.EventDeadlineInvestigationOptions
 	EventDeadlineAlertReference       = api.EventDeadlineAlertReference
 	EventDeadlineInvestigation        = api.EventDeadlineInvestigation
+	EventDeadlineExplanations         = api.EventDeadlineExplanations
+	EventDeadlineExplanation          = api.EventDeadlineExplanation
+	EventDeadlineRoutingExplanation   = api.EventDeadlineRoutingExplanation
+	EventDeadlineOrderingExplanation  = api.EventDeadlineOrderingExplanation
 )

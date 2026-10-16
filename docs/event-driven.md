@@ -3424,6 +3424,7 @@ raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
 
 ```sh
 gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
+gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
 gregale --json events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --cursor 'NEXT_CURSOR'
 ```
 
@@ -3432,3 +3433,9 @@ matching cohort, lists delivery identities/deadlines/waiting reasons and keeps a
 notification time separate from current triage observation. It is read-only, bounded
 to one page and does not acknowledge or replay anything. See
 [file format, pagination and observation semantics](event-deadline-alert-investigation.md#cli-investigation).
+
+`--explain` adds one acceptance-guarded blocker batch for pages of at most 50 rows,
+within the same read budget. It reports ordering blockers, current waiting reasons,
+capacity scope, target availability and scheduling metadata with separate diagnostic
+timestamps and explicit unavailable/error states. See
+[blocker explanations](event-deadline-alert-investigation.md#blocker-explanations).

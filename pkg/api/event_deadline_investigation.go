@@ -13,6 +13,8 @@ import (
 type EventDeadlineInvestigationOptions struct {
 	Limit  int
 	Cursor string
+	// Explain reads one acceptance-guarded blocker batch; requires a page limit <=50.
+	Explain bool
 }
 
 // EventDeadlineAlertReference correlates a triage read with a supplied Go alert.
@@ -30,14 +32,16 @@ type EventDeadlineAlertReference struct {
 // EventDeadlineInvestigation contains current retained pending identities, not
 // historical incident membership or evidence that any delivery recovered.
 type EventDeadlineInvestigation struct {
-	Alert      EventDeadlineAlertReference    `json:"alert"`
-	Membership string                         `json:"membership"`
-	ReadOnly   bool                           `json:"read_only"`
-	Query      EventSubscriptionDeadlineQuery `json:"query"`
-	Page       EventSubscriptionDeadlinePage  `json:"page"`
+	Alert        EventDeadlineAlertReference    `json:"alert"`
+	Membership   string                         `json:"membership"`
+	ReadOnly     bool                           `json:"read_only"`
+	Query        EventSubscriptionDeadlineQuery `json:"query"`
+	Page         EventSubscriptionDeadlinePage  `json:"page"`
+	Explanations *EventDeadlineExplanations     `json:"explanations,omitempty"`
 }
 
-// InvestigateEventDeadlineAlert performs one read-only triage request. It never
+// InvestigateEventDeadlineAlert performs one read-only triage request and, with
+// Explain, at most one blocker batch within the same read budget. It never
 // automatically paginates, fetches payloads, acknowledges alerts or retries work.
 func (c *Client) InvestigateEventDeadlineAlert(ctx context.Context, app string, alert EventDeliveryHealthAlert, options EventDeadlineInvestigationOptions) (EventDeadlineInvestigation, error) {
 	var out EventDeadlineInvestigation
@@ -59,6 +63,12 @@ func (c *Client) InvestigateEventDeadlineAlert(ctx context.Context, app string, 
 	}
 	out.Alert = EventDeadlineAlertReference{Metric: alert.Metric, AppID: strings.ToLower(alert.AppID), SubscriptionID: strings.ToLower(alert.SubscriptionID), IncidentID: alert.IncidentID, Sequence: alert.Sequence, Transition: alert.Transition, AlertAt: alert.At.UTC()}
 	out.Membership, out.ReadOnly, out.Query, out.Page = "current_at_triage_observation", true, query, page
+	if options.Explain {
+		out.Explanations, err = c.explainDeadlineInvestigation(ctx, out)
+		if err != nil {
+			return EventDeadlineInvestigation{}, fmt.Errorf("explain deadline recipients: %w", err)
+		}
+	}
 	return out, nil
 }
 
@@ -102,6 +112,9 @@ func deadlineInvestigationQuery(metric string, o EventDeadlineInvestigationOptio
 	q := EventSubscriptionDeadlineQuery{Limit: o.Limit, Cursor: o.Cursor}
 	if q.Limit == 0 {
 		q.Limit = EventSubscriptionDeadlinePageDefault
+	}
+	if o.Explain && q.Limit > EventRecipientBlockerBatchMax {
+		return q, ErrValidation(fmt.Sprintf("explanations require a page limit of at most %d", EventRecipientBlockerBatchMax))
 	}
 	if within, expired, reason, ok := deadlineCountWindow(metric); ok {
 		q.WaitingReason = reason

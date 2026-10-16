@@ -7,6 +7,10 @@ reasons, scheduling metadata and continuation details. It does not fetch payload
 retry/replay/cancel work, acknowledge notifications, update checkpoints or send
 messages.
 
+Set `EventDeadlineInvestigationOptions.Explain=true`, or use CLI `--explain`, to
+read optional acceptance-guarded [blocker explanations](#blocker-explanations) for
+the selected page.
+
 ```go
 // alert is an EventDeliveryHealthAlert loaded from a saved Go/CLI alert stream.
 result, err := client.InvestigateEventDeadlineAlert(ctx, "orders", alert,
@@ -104,8 +108,9 @@ mutation against them.
 
 ## Bounds, pagination and validation
 
-`Limit` defaults to 50 and accepts 1..100; zero selects the default. Each invocation
-makes at most one GET with the existing five-second read context budget, shortened
+`Limit` defaults to 50 and accepts 1..100; zero selects the default. Explanation
+mode requires 1..50. Each invocation makes at most one GET, plus an optional blocker
+batch, with the existing shared five-second read context budget, shortened
 by the caller's deadline/cancellation. Errors return no partial investigation.
 The HTTP transport may retain its normal retry policy within that context. A row
 bound does not bound database rows scanned or response field byte sizes.
@@ -135,10 +140,10 @@ are performed. See [triage coverage and retention semantics](event-subscription-
 ## CLI investigation
 
 ```sh
-gregale events deadline-alert-investigate orders \\
+gregale events deadline-alert-investigate orders \
   --alert-file ./deadline-alert.json --limit 25
 
-gregale --json events deadline-alert-investigate orders \\
+gregale --json events deadline-alert-investigate orders \
   --alert-file ./deadline-alert.json --limit 25
 ```
 
@@ -175,7 +180,7 @@ When `Has more` is true, text output prints the **full quoted cursor**, without
 abbreviation. Continue with the same app, file and limit:
 
 ```sh
-gregale events deadline-alert-investigate orders \\
+gregale events deadline-alert-investigate orders \
   --alert-file ./deadline-alert.json --limit 25 --cursor 'OPAQUE_NEXT_CURSOR'
 ```
 
@@ -185,3 +190,89 @@ time, and `page.window_at` / `page.observed_at` for the independent triage clock
 No input alert, acknowledgment inbox or checkpoint is changed. The command neither
 accumulates all pages nor performs recovery actions. Existing live membership,
 ratio-numerator-only and later-page expiry semantics above continue to apply.
+
+## Blocker explanations
+
+```sh
+gregale events deadline-alert-investigate orders \
+  --alert-file ./deadline-alert.json --limit 25 --explain
+
+gregale --json events deadline-alert-investigate orders \
+  --alert-file ./deadline-alert.json --limit 25 --explain --cursor 'OPAQUE_NEXT_CURSOR'
+```
+
+Go callers set `EventDeadlineInvestigationOptions{Limit: 25, Explain: true}`.
+The root API client and standalone Go SDK expose the same option and explanation
+types. Node and Python retain their existing single-page investigation helpers;
+this option belongs to the Go/CLI workflow.
+
+Explanation mode requires a normalized page limit of at most 50, validated before
+HTTP. Defaults remain 50; explicit SDK zero selects that default. The helper first
+validates the normal triage page, then submits at most one read-only
+`POST /v1/events/recipient-blockers` batch. Each query carries the exact source,
+event ID, subscription and `expected_accepted_at` from that triage row. The batch
+endpoint independently enforces its existing authorization; the page grants no
+additional access. An empty page makes no batch request.
+
+The GET and optional POST share the existing five-second context budget, shortened
+by caller cancellation/deadline. Normal transport retries remain within it. The
+helper neither walks additional pages nor follows ordering-blocker chains.
+Whole-request transport/API errors and cancellation return no investigation.
+
+The optional `explanations` object contains `coverage="selected_triage_page"`,
+`attempted`, `read_complete` and one item per triage row in the same order.
+`attempted` counts queries submitted in the batch, not successful reads or database
+rows scanned. Each item preserves its requested acceptance guard and distinguishes:
+
+| Status | Meaning |
+| --- | --- |
+| `available` | Valid current pending/processing routing evidence |
+| `not_waiting` | Routing is now enqueued, filtered or failed; handler success is not established |
+| `unavailable` | Receipt, capture, recipient or routing evidence is unavailable |
+| `acceptance_replaced` | The retained source/ID belongs to a different acceptance; no replacement evidence is returned |
+| `read_error` | An individual lookup failed/timed out, or returned invalid/mismatched evidence |
+| `unsupported_recipient` | The row cannot fit the existing blocker query bounds |
+| `not_read` | Adding the query would exceed the existing 64 KiB batch body budget |
+
+The blocker endpoint limits identity fields to 256 bytes. Longer triage identities
+remain in the original page and receive `unsupported_recipient/blocker_query_bounds`.
+Request sizing uses the actual JSON encoding, including escaping. Rows that do not
+fit are marked `not_read/request_body_budget`, while later rows may still fit.
+The helper never splits these into additional batches or silently drops them.
+
+`read_complete` is false for any failed, invalid, unsupported or unread row. It is
+true when every row received a valid scoped response, including valid unavailable
+or replaced-acceptance responses. It describes reads only, never complete usable
+evidence, an exhaustive backlog or successful delivery. An empty page has no items,
+zero attempts and `read_complete=true`, without establishing recovery.
+
+Valid items retain their own `observed_at`. Batch items are independent snapshots,
+separate from `page.observed_at`, `page.window_at` and the saved alert notification
+time. Routing state, waiting reason and scheduling metadata can change after the
+triage read. The helper does not require the new reason to match the earlier page
+filter or claim that both reads describe one atomic observation. Regressing
+diagnostic timestamps are rejected as invalid evidence.
+
+Available routing projections contain the observed waiting reason, target
+availability, capacity scope, next retry and lease timestamps, plus optional
+ordering-blocker identity, state and retry time. The ordering blocker can belong
+to another subscription in the same lane. The result omits payloads, resolved
+work keys, server URLs and unrelated fields. These labels describe observed
+constraints and do not prove a unique cause or authorize recovery actions.
+
+Batch query echoes, result identities, application scope, acceptance timestamps,
+status/reason combinations, waiting reasons, capacity scope, ordering metadata and
+scheduling timestamps must validate before projection. Missing/extra batch items
+invalidate correlation for all submitted rows. In a matching-length batch, reordered
+or mismatched echoes, simultaneous result/error values and malformed evidence produce
+errors for the affected rows while other valid items remain available. Unvalidated
+recipient metadata is never returned. Error rows have no diagnostic timestamp or routing
+projection; the triage observation is never substituted as diagnostic evidence.
+
+CLI text prints the independent diagnostic clocks and full quoted identities,
+including ordering-blocker subscription IDs. Global JSON includes the same optional
+explanation structure. If `read_complete=false`, the CLI writes the result and exits
+1 so scripts can inspect each item; valid unavailable/replaced evidence alone does
+not cause an incomplete-read exit. A normal request failure writes the command error.
+Preserve app, alert and limit for cursor continuation; repeat `--explain` to explain
+that next page too. No subscription control or delivery is changed.
