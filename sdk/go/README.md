@@ -1339,3 +1339,8 @@ Set `DeadlineWindow.UpcomingReasons` and/or `.ExpiredReasons` to known-reason co
 maps for independent sustained incidents, such as `subscription_paused: 10`. These
 reuse the existing aggregate read and retain total-alert compatibility. See
 [reason-specific deadline alerts](../../docs/event-subscription-deadline-window.md#alerts-for-selected-waiting-reasons).
+
+Delivery-health `Confirmations` now explain rate/deadline warning and recovery
+sustain, growth baseline waits, resume requirements and notification capacity.
+Entries join conditions by metric and add no requests or checkpoint proof. See
+[confirmation diagnostics](../../docs/event-delivery-confirmation-progress.md).

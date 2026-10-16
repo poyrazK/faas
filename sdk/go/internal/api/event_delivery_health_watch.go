@@ -405,6 +405,8 @@ func collectDeliveryHealthConditions(out *EventDeliveryHealthWatchResult, condit
 		out.Conditions = append(out.Conditions, condition.EventDeliveryHealthCondition)
 		if condition.Metric == "capacity_command_receipt_budget_used_slots" || condition.Metric == "capacity_command_receipt_budget_full_seconds" {
 			out.Confirmations = append(out.Confirmations, deliveryHealthReceiptBudgetConfirmation(condition, out.queueFull))
+		} else if deliveryRateRiskMetric(condition.Metric) {
+			out.Confirmations = append(out.Confirmations, deliveryHealthRateRiskConfirmation(out, condition))
 		}
 	}
 	if out.Checkpoint != nil {

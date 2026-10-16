@@ -187,3 +187,7 @@ transitions must stay visible. Total and reason alerts can fire together for the
 same underlying work and remain separate incidents. The observed reason identifies
 its partition, not a unique root cause. Use the triage `waiting_reason` filter to
 investigate current identities.
+
+The Go watch also exposes [confirmation progress](event-delivery-confirmation-progress.md)
+for these conditions, including pending sustain, growth baselines, resume evidence
+and notification-outbox blockage.

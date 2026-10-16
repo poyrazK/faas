@@ -129,3 +129,7 @@ sustained count alerts and matching relative-window/reason triage filters.
 Deadline-window count alerts can also select independent upcoming/expired
 waiting-reason thresholds. See [reason-specific configuration and recovery
 semantics](event-subscription-deadline-window.md#alerts-for-selected-waiting-reasons).
+
+The Go watch also exposes [confirmation progress](event-delivery-confirmation-progress.md)
+for these conditions, including pending sustain, growth baselines, resume evidence
+and notification-outbox blockage.
