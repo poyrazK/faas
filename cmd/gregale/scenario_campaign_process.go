@@ -292,56 +292,68 @@ func inspectTestCampaignRunnerLockBound(directory, planHash string, cp testCampa
 	return result, nil
 }
 
-func releaseTestCampaignRunnerLock(directory string, plan testCampaignPolicyPlan) (testCampaignLockAssessment, error) {
-	guardPath := filepath.Join(directory, "runner-recovery.lock")
-	guard, err := os.OpenFile(guardPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return testCampaignLockAssessment{}, err
-	}
-	_ = guard.Close()
-	defer func() { _ = os.Remove(guardPath) }()
+func prepareTestCampaignRunnerRecovery(directory string, plan testCampaignPolicyPlan) (testCampaignRecoveryTransaction, testCampaignLockAssessment, error) {
 	var cp testCampaignCheckpoint
 	if err := readTestCampaignJSON(filepath.Join(directory, "checkpoint.json"), &cp); err != nil {
-		return testCampaignLockAssessment{}, err
+		return testCampaignRecoveryTransaction{}, testCampaignLockAssessment{}, err
 	}
 	if cp.SchemaVersion != 1 || cp.PlanSHA256 != testCampaignJSONHash(plan) || !testCampaignCheckpointLineageMatches(cp, plan) || cp.Batches == nil {
-		return testCampaignLockAssessment{}, errors.New("checkpoint binding changed")
+		return testCampaignRecoveryTransaction{}, testCampaignLockAssessment{}, errors.New("checkpoint binding changed")
 	}
 	result, err := inspectTestCampaignRunnerLock(directory, plan, cp)
 	if err != nil || !result.Recoverable {
-		return result, err
+		return testCampaignRecoveryTransaction{}, result, err
 	}
 	// Once the coordinator and all tracked workers have terminated, no writer
 	// can extend the inventory. Recheck bindings before changing the checkpoint.
 	check, err := inspectTestCampaignRunnerLock(directory, plan, cp)
 	if err != nil || !check.Recoverable || check.LockSHA256 != result.LockSHA256 || check.Records != result.Records {
-		return result, errors.New("process evidence changed during recovery")
+		return testCampaignRecoveryTransaction{}, result, errors.New("process evidence changed during recovery")
 	}
 	var current testCampaignCheckpoint
 	if err := readTestCampaignJSON(filepath.Join(directory, "checkpoint.json"), &current); err != nil || testCampaignJSONHash(current) != result.Checkpoint {
-		return result, errors.New("checkpoint changed during recovery")
+		return testCampaignRecoveryTransaction{}, result, errors.New("checkpoint changed during recovery")
 	}
-	cp.Halted = true
-	for id, batch := range cp.Batches {
-		if batch.Status == "running" {
-			batch.Status, batch.Reason = "uncertain", "coordinator terminated; reconcile journal and report evidence before continuing"
-			cp.Batches[id] = batch
+	after := haltedTestCampaignCheckpoint(cp, "coordinator terminated; reconcile journal and report evidence before continuing")
+	tx := testCampaignRecoveryTransaction{SchemaVersion: 1, Kind: "runner", Scope: directory, Binding: testCampaignJSONHash(plan), Runner: &result,
+		Checkpoints: []testCampaignRecoveryCheckpoint{{directory, testCampaignJSONHash(cp), after}},
+		Removals:    []testCampaignRecoveryRemoval{{filepath.Join(directory, "runner.lock"), result.LockSHA256}}}
+	if err := persistTestCampaignProcess(filepath.Join(directory, "runner-recovery.json"), tx); err != nil {
+		return tx, result, err
+	}
+	return tx, result, nil
+}
+
+func releaseTestCampaignRunnerLock(directory string, plan testCampaignPolicyPlan) (testCampaignLockAssessment, error) {
+	release, err := acquireTestCampaignRecoveryGuard(filepath.Join(directory, "runner-recovery.lock"))
+	if err != nil {
+		return testCampaignLockAssessment{}, err
+	}
+	defer release()
+	if _, err := os.Lstat(filepath.Join(directory, "runner.lock")); os.IsNotExist(err) {
+		tx, err := readFinishedTestCampaignRecovery(filepath.Join(directory, "runner-recovery.json"), "runner", directory, testCampaignJSONHash(plan))
+		if err != nil {
+			return testCampaignLockAssessment{}, err
 		}
+		if tx.Runner == nil || !tx.Runner.Recoverable {
+			return testCampaignLockAssessment{}, errors.New("invalid runner recovery receipt")
+		}
+		result := *tx.Runner
+		if err := finishTestCampaignRecovery(tx); err != nil {
+			return result, err
+		}
+		result.Released = true
+		return result, nil
 	}
-	// Halt is durable before removing the exclusion lock. Recovery never runs
-	// workloads, deletes resources, adopts receipts, or refunds attempted cost.
-	if err := persistTestCampaignProcess(filepath.Join(directory, "checkpoint.json"), cp); err != nil {
+	tx, result, err := prepareTestCampaignRunnerRecovery(directory, plan)
+	if err != nil || !result.Recoverable {
 		return result, err
 	}
-	var lock testCampaignRunnerLock
-	if err := readTestCampaignJSON(filepath.Join(directory, "runner.lock"), &lock); err != nil || testCampaignJSONHash(lock) != result.LockSHA256 {
-		return result, errors.New("runner lock changed during recovery")
-	}
-	if err := os.Remove(filepath.Join(directory, "runner.lock")); err != nil {
+	if err := finishTestCampaignRecovery(tx); err != nil {
 		return result, err
 	}
 	result.Released = true
-	return result, testCampaignSyncDirectory(directory)
+	return result, nil
 }
 
 func cmdTestCampaignRecoverLock(args []string) int {

@@ -201,70 +201,79 @@ func inspectTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaig
 	return result, nil
 }
 
-func releaseTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaignClaimAssessment, error) {
-	path := resolver.Index.ClaimPath + ".recovery.lock"
-	guard, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return testCampaignClaimAssessment{}, err
-	}
-	_ = guard.Close()
-	defer func() { _ = os.Remove(path) }()
+func prepareTestCampaignClaimRecovery(resolver *testCampaignBundleResolver) (testCampaignRecoveryTransaction, testCampaignClaimAssessment, error) {
 	result, err := inspectTestCampaignClaim(resolver)
 	if err != nil || !result.Recoverable {
-		return result, err
+		return testCampaignRecoveryTransaction{}, result, err
 	}
 	fresh, err := inspectTestCampaignClaim(resolver)
 	if err != nil || !fresh.Recoverable || testCampaignJSONHash(fresh) != testCampaignJSONHash(result) {
-		return result, errors.New("claim or process evidence changed during recovery")
+		return testCampaignRecoveryTransaction{}, result, errors.New("claim or process evidence changed during recovery")
 	}
-	// The claim lock stays in place throughout local lock repair. All owners and
-	// workers are dead, so no compliant mutator can acquire either authority.
+	tx := testCampaignRecoveryTransaction{SchemaVersion: 1, Kind: "claim", Scope: resolver.Index.ClaimPath, Binding: testCampaignJSONHash(resolver.Index), Claim: &result}
 	for _, row := range result.Work {
-		if row.Runner == nil {
-			continue
+		var cp testCampaignCheckpoint
+		if err := readTestCampaignJSON(filepath.Join(row.Directory, "checkpoint.json"), &cp); err != nil || testCampaignJSONHash(cp) != row.Checkpoint {
+			return tx, result, errors.New("checkpoint changed during recovery")
 		}
-		if !row.Frozen {
-			var cp testCampaignCheckpoint
-			if err := readTestCampaignJSON(filepath.Join(row.Directory, "checkpoint.json"), &cp); err != nil || testCampaignJSONHash(cp) != row.Checkpoint {
-				return result, errors.New("checkpoint changed during recovery")
-			}
-			cp.Halted = true
-			for id, batch := range cp.Batches {
-				if batch.Status == "running" {
-					batch.Status = "uncertain"
-					batch.Reason = "handoff owner terminated; reconcile before continuing"
-					cp.Batches[id] = batch
-				}
-			}
-			if err := persistTestCampaignProcess(filepath.Join(row.Directory, "checkpoint.json"), cp); err != nil {
-				return result, err
-			}
+		after := cp
+		if row.Runner != nil && !row.Frozen {
+			after = haltedTestCampaignCheckpoint(cp, "handoff owner terminated; reconcile before continuing")
 		}
-		var lock testCampaignRunnerLock
-		runnerPath := filepath.Join(row.Directory, "runner.lock")
-		if err := readTestCampaignJSON(runnerPath, &lock); err != nil || testCampaignJSONHash(lock) != row.Runner.LockSHA256 {
-			return result, errors.New("runner lock changed during recovery")
-		}
-		if err := os.Remove(runnerPath); err != nil {
-			return result, err
-		}
-		if err := testCampaignSyncDirectory(row.Directory); err != nil {
-			return result, err
+		tx.Checkpoints = append(tx.Checkpoints, testCampaignRecoveryCheckpoint{row.Directory, row.Checkpoint, after})
+		if row.Runner != nil {
+			tx.Removals = append(tx.Removals, testCampaignRecoveryRemoval{filepath.Join(row.Directory, "runner.lock"), row.Runner.LockSHA256})
 		}
 	}
+	tx.Removals = append(tx.Removals, testCampaignRecoveryRemoval{resolver.Index.ClaimPath + ".lock", result.LockSHA256})
+	if err := persistTestCampaignProcess(resolver.Index.ClaimPath+".recovery.json", tx); err != nil {
+		return tx, result, err
+	}
+	return tx, result, nil
+}
+
+func releaseTestCampaignClaim(resolver *testCampaignBundleResolver) (testCampaignClaimAssessment, error) {
+	release, err := acquireTestCampaignRecoveryGuard(resolver.Index.ClaimPath + ".recovery.lock")
+	if err != nil {
+		return testCampaignClaimAssessment{}, err
+	}
+	defer release()
+	if _, err := os.Lstat(resolver.Index.ClaimPath + ".lock"); os.IsNotExist(err) {
+		if err := resolver.requireClaim(true); err != nil {
+			return testCampaignClaimAssessment{}, err
+		}
+		tx, err := readFinishedTestCampaignRecovery(resolver.Index.ClaimPath+".recovery.json", "claim", resolver.Index.ClaimPath, testCampaignJSONHash(resolver.Index))
+		if err != nil {
+			return testCampaignClaimAssessment{}, err
+		}
+		if tx.Claim == nil || !tx.Claim.Recoverable {
+			return testCampaignClaimAssessment{}, errors.New("invalid claim recovery receipt")
+		}
+		var claim testCampaignBundleClaim
+		if err := readTestCampaignJSON(resolver.Index.ClaimPath, &claim); err != nil || testCampaignJSONHash(claim) != tx.Claim.ClaimSHA256 {
+			return testCampaignClaimAssessment{}, errors.New("claim changed since recovery")
+		}
+		result := *tx.Claim
+		if err := finishTestCampaignRecovery(tx); err != nil {
+			return result, err
+		}
+		result.Released = true
+		return result, nil
+	}
+	tx, result, err := prepareTestCampaignClaimRecovery(resolver)
+	if err != nil || !result.Recoverable {
+		return result, err
+	}
+	// Exclusion still belongs to the verified dead owner until the final step.
 	var claim testCampaignBundleClaim
-	var lock testCampaignClaimLock
 	if err := readTestCampaignJSON(resolver.Index.ClaimPath, &claim); err != nil || testCampaignJSONHash(claim) != result.ClaimSHA256 {
 		return result, errors.New("claim changed during recovery")
 	}
-	if err := readTestCampaignJSON(resolver.Index.ClaimPath+".lock", &lock); err != nil || testCampaignJSONHash(lock) != result.LockSHA256 {
-		return result, errors.New("claim lock changed during recovery")
-	}
-	if err := os.Remove(resolver.Index.ClaimPath + ".lock"); err != nil {
+	if err := finishTestCampaignRecovery(tx); err != nil {
 		return result, err
 	}
 	result.Released = true
-	return result, testCampaignSyncDirectory(filepath.Dir(resolver.Index.ClaimPath))
+	return result, nil
 }
 
 func cmdTestCampaignRecoverClaim(args []string) int {

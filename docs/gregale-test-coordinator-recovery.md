@@ -81,3 +81,32 @@ The recovery gate includes actual owner-kill cases during an imported run,
 cleanup blocked at the deletion API, and re-export blocked after publishing its
 frozen bundle. It also checks legacy/foreign owners, nonce mismatches, missing
 worker identities, and live runners in other registered work directories.
+
+## If the recovery process itself crashes
+
+On Linux, recovery guards now use kernel advisory locks on stable files. Process
+exit, including SIGKILL, releases the exclusion automatically. The marker files
+remain in place: do not delete or replace them. Their stable inode prevents two
+recoverers from locking different files, and their presence blocks older binaries
+that used file creation alone for exclusion. Empty or unrecognized legacy guard
+files remain unverifiable and block recovery.
+
+Before changing any checkpoint, recovery durably records a transaction receipt:
+`runner-recovery.json` in the work directory, or `<claim-path>.recovery.json`
+next to the shared claim. The receipt binds the operation, original lock hashes,
+checkpoint hashes and expected checkpoint contents. Recovery halts mutable work
+before unlinking its exclusion locks, and removes the claim lock last.
+
+Retry the same command with `--execute` after an interrupted recovery. Retries
+recheck current ownership. If the final lock was already removed, completion is
+reported only when the bound receipt's checkpoint and lock postconditions still
+hold. A replacement lock, changed checkpoint or changed claim blocks replay;
+recovery never restores old checkpoint contents to make a receipt match. Frozen
+checkpoints and transferred authority remain unchanged. These local receipts are
+not test results and are not included in portable bundles.
+
+The portable gate kills recovery subprocesses after preparing the receipt,
+persisting the checkpoint, unlinking the runner lock and unlinking the claim
+lock. It verifies automatic guard release, safe completion on retry, repeatable
+completion checks, preservation of assertion evidence, and rejection of new
+owners or changed checkpoints.
