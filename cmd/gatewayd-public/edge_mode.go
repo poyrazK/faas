@@ -76,13 +76,15 @@ func parsePublicEdgeMode(raw string) (publicEdgeMode, error) {
 	}
 }
 
-// allowedRoles is the box-role gate: a compute-only box may run
-// gatewayd-public only as a compute-node edge.
-func (m publicEdgeMode) allowedRoles() []role.Role {
+// requireRole exposes the normal gateway's literal guard to the unit-template
+// source cross-check. The optional compute edge has its own service identity.
+func (m publicEdgeMode) requireRole(observed role.Role) error {
 	if m == edgeModeCompute {
-		return []role.Role{role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly}
+		return role.Require("gatewayd-public-edge", observed,
+			role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly)
 	}
-	return []role.Role{role.RoleSingleBox, role.RoleControlPlane}
+	return role.Require("gatewayd-public", observed,
+		role.RoleSingleBox, role.RoleControlPlane)
 }
 
 // edgeMetrics are the compute-edge series, served on the control listener.
