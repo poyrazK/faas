@@ -100,7 +100,9 @@ func TestServiceProxyDoesNotWakeForDeadReplica(t *testing.T) {
 	}
 }
 
-// A body that cannot be replayed is not retried after a frozen refusal.
+// A body that cannot be replayed is not retried after a frozen refusal. The
+// proxy buffers declared-length bodies up to ServiceProxyReplayBodyMaxBytes
+// (ADR-1133), so the body here streams with no declared length.
 func TestServiceProxyFrozenRetryNeedsReplayableBody(t *testing.T) {
 	var frozen atomic.Bool
 	var wakes, forwards atomic.Int32
@@ -109,6 +111,7 @@ func TestServiceProxyFrozenRetryNeedsReplayableBody(t *testing.T) {
 	})
 	frozen.Store(true)
 	req := httptest.NewRequest(http.MethodPost, "http://gateway/v1/internal/services/orders/charge", strings.NewReader(`{"amount":1}`))
+	req.ContentLength = -1
 	req.GetBody = nil
 	req.Header.Set(ServiceProxyCallerAppHeader, "app-client")
 	rec := httptest.NewRecorder()

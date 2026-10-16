@@ -13670,7 +13670,7 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 			if op.CurrentInvocationID != inv.ID {
 				return 0, ErrOperationStaleAttempt
 			}
-			if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+			if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 				return 0, err
 			}
 		}
@@ -13763,7 +13763,7 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 	inv.CompletedAt = &now
 	outcome := OutcomeSuccess
 	inv.Outcome = &outcome
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return err
 	}
 	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
@@ -13928,7 +13928,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		outcome := failOpts.Outcome
 		inv.Outcome = &outcome
 	}
-	if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+	if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 		return err
 	}
 	if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
@@ -13998,7 +13998,7 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return err
 	}
 	m.setInvocationLocked(id, inv)
@@ -14025,7 +14025,7 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return "", err
 	}
 	m.setInvocationLocked(id, inv)
@@ -26598,7 +26598,7 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
-		if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+		if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 			return nil, err
 		}
 		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {

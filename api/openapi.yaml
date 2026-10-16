@@ -12250,6 +12250,47 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/timeline:
+    get:
+      tags: [operations]
+      operationId: getOperationTimeline
+      summary: Read one chronological history of an operation.
+      description: Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step attempts and completion delivery attempts by time (ADR-1195). Each source pages after its own position, so pages never skip or repeat a record while the operation runs. Attempt entries are snapshots at read time. HTTP attempts carry an instance log window for the archived log route; workflow step attempts do not. Platform tenants read events instead.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - in: query
+        name: limit
+        description: Maximum timeline entries in this page.
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: cursor
+        description: Operation-bound continuation cursor from next_cursor.
+        required: false
+        schema: {type: string, maxLength: 512}
+      responses:
+        '200':
+          description: Chronological timeline page with a continuation cursor while records remain.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationTimelineResponse'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/operations/{id}/executions:
     get:
       tags: [operations]
@@ -32998,6 +33039,93 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Endpoint whose future verified events start a customer operation.
+    put:
+      tags: [inbound_webhooks]
+      operationId: putOperationWebhookBinding
+      summary: Route a verified endpoint to a customer operation (ADR-1193).
+      description: |
+        One binding per endpoint, owned by the same app. The platform tenant is
+        the operation owner; it must be active and linked to the app through an
+        active tenant surface, and it is never derived from provider payload.
+        The named operation must exist on the environment's live deployment;
+        every event resolves it again and admission pins it. expected_version is
+        zero for creation and the returned version for updates.
+        take_over_delivery must be true. Automation and managed exclusive
+        operation bindings must be removed first. An empty event_types list
+        admits every verified event; other types are acknowledged as ignored.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        description: Explicit delivery takeover, operation, owner and event selection.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOperationWebhookBindingRequest' }
+      responses:
+        '200':
+          description: Saved operation binding with its new revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationWebhookBindingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: 'The platform tenant is suspended.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Binding revision (operation_webhook_binding_conflict) or routing mode conflict (inbound_webhook_routing_conflict).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { description: 'Request body exceeds 4 KiB.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [inbound_webhooks]
+      operationId: getOperationWebhookBinding
+      summary: Inspect an endpoint's customer operation binding.
+      description: Returns the bound operation, owner, event selection and revision.
+      responses:
+        '200':
+          description: Current operation binding for this endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationWebhookBindingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [inbound_webhooks]
+      operationId: deleteOperationWebhookBinding
+      summary: Stop starting customer operations from future webhook events.
+      description: Operations already admitted through the endpoint, and their event receipts, are retained.
+      parameters:
+        - name: expected_version
+          description: Current operation binding revision returned by a previous read or update.
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204': { description: Operation binding removed; future events use ordinary delivery. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Binding revision conflict (operation_webhook_binding_conflict).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}:
     get:
       tags: [inbound_webhooks]
@@ -33053,6 +33181,11 @@ paths:
         fanout work. Paused, unpublished or type-unmatched events are durably ignored;
         content filters are evaluated by the scheduler. Provider retries return the
         original receipt; changed content for the same event ID returns 409.
+        An operation-bound endpoint (ADR-1193) admits one customer operation per
+        provider event, owned by the binding's platform tenant, with input
+        {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
+        preview admission or an unavailable operation returns 503 with
+        Retry-After so the provider retries.
       security: []
       parameters:
         - name: Stripe-Signature
@@ -42413,6 +42546,68 @@ paths:
         '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/service-map:
+    get:
+      tags: [observability]
+      operationId: getServiceMap
+      summary: Account service map of caller → target app edges.
+      description: |
+        ADR-1131 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+        otherwise 503 `service_map_unavailable`.
+
+        Built from the unsampled service-proxy edge series. Both the
+        caller and the target are constrained to the account's apps.
+        Edges are ranked by call volume and capped at 500
+        (`truncated: true`). Latency percentiles cover successful calls
+        only. Prometheus failure returns 200 with null `nodes`/`edges`
+        and `source: "degraded: <reason>"`, as `/v1/apps/metrics` does.
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d]
+            default: 1h
+          description: "Observation window. Default `1h`."
+      responses:
+        '200':
+          description: The service map.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceMapResponse' }
+              example:
+                range: "1h"
+                source: "prometheus"
+                as_of: "2026-10-08T13:00:00Z"
+                truncated: false
+                nodes:
+                  - { app_id: "0f8fad5b-d9cb-469f-a165-70867728950e", app_slug: "billing", wake_ahead_enabled: false }
+                  - { app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", app_slug: "public-api", wake_ahead_enabled: false }
+                edges:
+                  - caller_app_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+                    caller_app_slug: "public-api"
+                    target_app_id: "0f8fad5b-d9cb-469f-a165-70867728950e"
+                    target_app_slug: "billing"
+                    calls: 12040
+                    errors: 48
+                    error_rate_pct: 0.4
+                    latency_p50_ms: 11.2
+                    latency_p95_ms: 38.0
+                    cold_calls: 9030
+                    cold_call_pct: 75.0
+                    suggest_wake_ahead: true
+                    wake_ahead_started: 0
+                    wake_ahead_used: 0
+                    tcp_sessions: 0
+                    tcp_errors: 0
+                    tcp_cold_sessions: 0
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/invocations/{id}:
     get:
       tags: [invocations]
@@ -47139,7 +47334,7 @@ paths:
         name: state
         description: Business state filter.
         required: false
-        schema: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+        schema: {type: string, enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation]}
       - name: subject_type
         description: Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
         in: query
@@ -47640,6 +47835,91 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/signals:
+    post:
+      tags:
+      - operations
+      operationId: signalOperation
+      summary: Deliver a named event to an operation that waits for it.
+      description: Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for. signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns the original receipt, a different event or payload under it conflicts. A signal that arrives before its wait is held until the wait starts. Settled operations take no new signals.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationSignalRequest'
+      responses:
+        '200':
+          description: The delivery receipt; duplicate marks a repeat of an earlier signal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSignalReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operation-signals:
+    post:
+      tags:
+      - operations
+      operationId: signalOperationsBySubject
+      summary: Deliver a named event to every active operation about one business subject.
+      description: Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named definition in the scope whose subject matches, oldest first; more is a limit error. Operations that settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationSubjectSignalRequest'
+      responses:
+        '200':
+          description: One receipt per operation reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSubjectSignalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/operations/{id}/cancel:
     post:
       tags:
@@ -47679,6 +47959,50 @@ paths:
           $ref: '#/components/responses/OperationGone'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/approvals/{step}:
+    post:
+      tags:
+      - operations
+      operationId: decideOperationApproval
+      summary: Decide an account approval on waiting work (ADR-1194).
+      description: Requires deploy:write and MFA. Only a step whose definition names the account approver. The same decision is idempotent; a different one conflicts. Rejection settles the operation failed with approval_rejected.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - name: step
+        in: path
+        required: true
+        description: Approval step declared by the operation definition.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationApprovalRequest'
+      responses:
+        '200':
+          description: The decision is recorded; the operation resumes or settles approval_rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -47724,7 +48048,7 @@ paths:
         in: query
         schema:
           type: string
-          enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]
+          enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation]
       - name: limit
         description: Maximum summaries in this page.
         in: query
@@ -47963,6 +48287,49 @@ paths:
           $ref: '#/components/responses/OperationGone'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}:
+    post:
+      tags:
+      - operations
+      operationId: decidePlatformTenantSelfOperationApproval
+      summary: Decide this customer's approval on its waiting operation (ADR-1194).
+      description: Requires platform_tenant:operations:manage. Only a step whose definition names the customer approver, on the customer's own operation. The same decision is idempotent; a different one conflicts.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - name: step
+        in: path
+        required: true
+        description: Approval step that the definition assigns to the customer.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationApprovalRequest'
+      responses:
+        '200':
+          description: The customer's decision is recorded; its operation resumes or settles approval_rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -54255,7 +54622,7 @@ components:
       properties:
         operation_id: {type: string, format: uuid}
         generation: {type: integer, minimum: 1}
-        state: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+        state: {type: string, enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation]}
         failure_code: {type: string}
         cancellation_requested: {type: boolean}
         execution_kind: {type: string, enum: [http, workflow, job]}
@@ -56646,8 +57013,9 @@ components:
           description: Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a public stable ID appropriate for customer-visible history.
     OperationDefinitionSpec:
       description: >-
-        Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment.
-        Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps.
+        Resolved immutable contract for an HTTP handler or a named linear workflow from the same deployment.
+        Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps; steps
+        are HTTP actions, fixed timers or declared approvals, ending with an HTTP action.
         Ownership comes from verified authentication. Production admission remains disabled pending qualification.
       type: object
       additionalProperties: false
@@ -56660,6 +57028,14 @@ components:
       - output_schema
       - progress_stages
       properties:
+        approvals:
+          type: array
+          maxItems: 64
+          description: ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
+          items:
+            $ref: '#/components/schemas/OperationApprovalSpec'
+        limits:
+          $ref: '#/components/schemas/OperationLimits'
         milestones:
           type: object
           maxProperties: 16
@@ -56867,7 +57243,7 @@ components:
       required: [operation_id, business_state, operation_expires_at, observed_at, state, attempts, last_response_code]
       properties:
         operation_id: { type: string, format: uuid }
-        business_state: { type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation] }
+        business_state: { type: string, enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation] }
         operation_expires_at: { type: string, format: date-time }
         observed_at: { type: string, format: date-time }
         state: { type: string }
@@ -56908,6 +57284,70 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/OperationDeliveryAttempt' }
         next_cursor: { type: string, maxLength: 512 }
+    OperationTimelineResponse:
+      description: Chronological page merged from operation events, attempts and completion deliveries.
+      type: object
+      additionalProperties: false
+      required: [operation_id, state, generation, entries]
+      properties:
+        operation_id: { type: string, format: uuid }
+        state:
+          type: string
+          enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]
+        generation: { type: integer, minimum: 1 }
+        entries:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OperationTimelineEntry' }
+        events_expired:
+          description: Event history was pruned before the operation; attempts and deliveries remain.
+          type: boolean
+        next_cursor: { type: string, maxLength: 512 }
+    OperationTimelineEntry:
+      description: One timeline record; kind selects which of event, attempt or delivery is present.
+      type: object
+      additionalProperties: false
+      required: [at, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string, enum: [event, attempt, step_attempt, delivery_attempt] }
+        event: { $ref: '#/components/schemas/OperationEvent' }
+        attempt: { $ref: '#/components/schemas/OperationTimelineAttempt' }
+        delivery: { $ref: '#/components/schemas/OperationDeliveryAttempt' }
+    OperationTimelineAttempt:
+      description: One HTTP execution or workflow step attempt as read; a running attempt is not re-emitted when it ends.
+      type: object
+      additionalProperties: false
+      required: [execution_id, attempt, outcome, started_at]
+      properties:
+        generation:
+          description: Execution generation of an HTTP attempt. Step attempts omit it because recovery resumes the same workflow run.
+          type: integer
+          minimum: 1
+        execution_id: { type: string, format: uuid }
+        step: { type: string, maxLength: 63 }
+        attempt: { type: integer, minimum: 1 }
+        outcome: { type: string, enum: [running, succeeded, retry, failed, dead_letter, cancelled, unknown] }
+        http_status: { type: integer }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+        logs: { $ref: '#/components/schemas/OperationAttemptLogs' }
+    OperationAttemptLogs:
+      description: Instance log window of an HTTP attempt. Lines other requests wrote on the same instance during the window interleave.
+      type: object
+      additionalProperties: false
+      required: [instance_id, since, archive_dates, correlation]
+      properties:
+        instance_id: { type: string, format: uuid }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        archive_dates:
+          type: array
+          maxItems: 7
+          items: { type: string, format: date }
+        correlation: { type: string, enum: [instance_window] }
     OperationDeliveryRetryRequest:
       description: Stable retry identity and the observed dead delivery generation; explicit generation zero is valid.
       type: object
@@ -57082,6 +57522,108 @@ components:
         next_attempt_at:
           type: string
           format: date-time
+    OperationApprovalSpec:
+      description: Declares a workflow callback step as an approval decided by the account or the operation's customer.
+      type: object
+      additionalProperties: false
+      required: [step, approver]
+      properties:
+        step: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+        approver: { type: string, enum: [account, customer] }
+    OperationWaitingState:
+      description: Why a waiting operation holds no execution. until is the timer's wake time or the approval deadline.
+      type: object
+      required: [kind, step, since]
+      properties:
+        kind: { type: string, enum: [timer, approval, event] }
+        step: { type: string }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        approver: { type: string, enum: [account, customer] }
+        event: { type: string, maxLength: 63, description: The event an event wait expects (ADR-1197). }
+    OperationSignalRequest:
+      description: One named event for an operation (ADR-1197).
+      type: object
+      additionalProperties: false
+      required: [signal_id, event]
+      properties:
+        signal_id: { type: string, minLength: 1, maxLength: 128, description: Idempotency key for this delivery, per operation. }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+        payload: { description: 'JSON delivered as the wait step''s output; at most 64 KiB.' }
+    OperationSubjectSignalRequest:
+      description: One named event for every active operation of a definition about one business subject (ADR-1197).
+      type: object
+      additionalProperties: false
+      required: [scope, operation, subject, signal_id, event]
+      properties:
+        scope: { type: string }
+        operation: { type: string, maxLength: 64 }
+        subject: { $ref: '#/components/schemas/OperationSubject' }
+        signal_id: { type: string, minLength: 1, maxLength: 128 }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+        payload: { description: 'JSON each reached operation''s wait step receives as its output; at most 64 KiB.' }
+    OperationSignalReceipt:
+      description: One signal delivery. waiting reports whether the operation was waiting for this event; otherwise the run holds it for a later wait.
+      type: object
+      additionalProperties: false
+      required: [operation_id, signal_id, event, duplicate, waiting]
+      properties:
+        operation_id: { type: string, format: uuid }
+        signal_id: { type: string }
+        event: { type: string }
+        duplicate: { type: boolean }
+        waiting: { type: boolean }
+    OperationSubjectSignalResponse:
+      description: Receipts for the operations a subject signal reached.
+      type: object
+      additionalProperties: false
+      required: [delivered]
+      properties:
+        delivered:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/OperationSignalReceipt' }
+    OperationApprovalRequest:
+      description: One approval decision for the operation's current generation.
+      type: object
+      additionalProperties: false
+      required: [expected_generation, decision]
+      properties:
+        expected_generation: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [approved, rejected] }
+        comment: { type: string, maxLength: 1024, description: Recorded with the decision in the operation history. }
+    OperationLimits:
+      description: ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take only a deadline, and job definitions take none.
+      type: object
+      additionalProperties: false
+      properties:
+        deadline_seconds:
+          description: Wall clock from acceptance, including waits, retries and recovery.
+          type: integer
+          minimum: 1
+          maximum: 2592000
+        max_attempts:
+          description: Automatic attempts of one HTTP execution.
+          type: integer
+          minimum: 1
+          maximum: 25
+        max_execution_seconds:
+          description: HTTP attempt runtime summed across generations.
+          type: integer
+          minimum: 1
+          maximum: 604800
+    OperationUsage:
+      description: What an Operation with limits has consumed. A running attempt is added when it ends.
+      type: object
+      additionalProperties: false
+      required: [execution_ms, attempts]
+      properties:
+        execution_ms:
+          type: integer
+          minimum: 0
+        attempts:
+          type: integer
+          minimum: 0
     OperationResponse:
       description: Customer business work; execution recovery and delivery retain independent semantics.
       type: object
@@ -57112,6 +57654,7 @@ components:
           enum:
           - accepted
           - running
+          - waiting
           - succeeded
           - failed
           - cancelled
@@ -57130,6 +57673,17 @@ components:
           type: boolean
         failure_code:
           type: string
+          description: Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it (ADR-1196).
+        waiting:
+          $ref: '#/components/schemas/OperationWaitingState'
+        limits:
+          $ref: '#/components/schemas/OperationLimits'
+        deadline_at:
+          type: string
+          format: date-time
+          description: Absolute deadline fixed at acceptance; waits, retries and recovery count against it.
+        usage:
+          $ref: '#/components/schemas/OperationUsage'
         latest_sequence:
           type: integer
           minimum: 0
@@ -57176,6 +57730,7 @@ components:
           enum:
           - accepted
           - running
+          - waiting
           - succeeded
           - failed
           - cancelled
@@ -65198,6 +65753,92 @@ components:
       description: "Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."
       type: string
       enum: [http, https]
+
+    ServiceMapResponse:
+      description: |
+        Account service map for `GET /v1/service-map` (ADR-1131). `nodes` are
+        the apps on at least one returned edge, sorted by slug; `edges` are
+        sorted by `calls` descending. Degraded responses carry null `nodes`
+        and `edges`.
+      type: object
+      required: [range, source, as_of, nodes, edges, truncated]
+      properties:
+        range: { type: string }
+        source: { type: string, description: '"prometheus" or "degraded: <reason>".' }
+        as_of: { type: string, format: date-time }
+        truncated: { type: boolean }
+        nodes:
+          type: [array, "null"]
+          items: { $ref: '#/components/schemas/ServiceMapNode' }
+        edges:
+          type: [array, "null"]
+          items: { $ref: '#/components/schemas/ServiceMapEdge' }
+
+    ServiceMapNode:
+      description: One app that appears on at least one service map edge.
+      type: object
+      required: [app_id, app_slug, wake_ahead_enabled]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        wake_ahead_enabled:
+          type: boolean
+          description: "The app's opt-in to restore the services it calls while it wakes (ADR-977)."
+
+    ServiceMapEdge:
+      description: |
+        Unsampled calls for one caller → target pair. `errors` are final 5xx
+        responses after proxy retries; identity and authorization failures
+        are excluded. Latency covers successful calls, including routing,
+        wake, and forwarding time. Private TCP sessions on the same pair are
+        reported in the `tcp_*` fields; a pair with only TCP traffic has zero
+        `calls` and zero latency.
+      type: object
+      required: [caller_app_id, caller_app_slug, target_app_id, target_app_slug, calls, errors, error_rate_pct, latency_p50_ms, latency_p95_ms, cold_calls, cold_call_pct, suggest_wake_ahead, wake_ahead_started, wake_ahead_used, tcp_sessions, tcp_errors, tcp_cold_sessions]
+      properties:
+        caller_app_id: { type: string }
+        caller_app_slug: { type: string }
+        target_app_id: { type: string }
+        target_app_slug: { type: string }
+        calls: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+        error_rate_pct: { type: number }
+        latency_p50_ms: { type: number }
+        latency_p95_ms: { type: number }
+        cold_calls:
+          type: integer
+          format: int64
+          description: Calls that found the target parked and waited for it to restore (ADR-196).
+        cold_call_pct:
+          type: number
+          description: "`cold_calls` as a percentage of `calls`."
+        suggest_wake_ahead:
+          type: boolean
+          description: |
+            The caller has not opted into wake-ahead (ADR-977) and its calls
+            mostly wake the target: at least 20 cold calls in the window,
+            making up at least half of the edge's calls. Private TCP sessions
+            count as calls (ADR-1134).
+        wake_ahead_started:
+          type: integer
+          format: int64
+          description: Wake-aheads (ADR-977) the caller's wakes started for this target in the window.
+        wake_ahead_used:
+          type: integer
+          format: int64
+          description: Of those, the wake-aheads whose target was called while they were fresh.
+        tcp_sessions:
+          type: integer
+          format: int64
+          description: Private TCP sessions (ADR-576) from the caller to the target in the window, excluding identity, authorization and plan session-limit refusals.
+        tcp_errors:
+          type: integer
+          format: int64
+          description: Of those, the sessions that failed after authorization (no replica, wake failure, unreachable guest, or an error while connected).
+        tcp_cold_sessions:
+          type: integer
+          format: int64
+          description: Of those, the sessions that found the target parked and waited for it to restore.
 
     ServiceReliabilityPolicy:
       description: "Caller-owned timeout and retry settings for one declared internal dependency. Omitted numeric fields inherit gateway defaults; max_attempts=1 disables retry. POST/PATCH replay also requires an Idempotency-Key honored by the target."
@@ -91322,6 +91963,37 @@ components:
         filter: { type: object, additionalProperties: true }
         version: { type: integer, format: int64, minimum: 1 }
         updated_at: { type: string, format: date-time }
+    PutOperationWebhookBindingRequest:
+      description: Bind a verified provider endpoint to a customer operation with revision control (ADR-1193).
+      type: object
+      additionalProperties: false
+      required: [expected_version, operation, platform_tenant_id, take_over_delivery]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        scope: { type: string, minLength: 1, maxLength: 64, description: Environment scope; defaults to default. }
+        operation: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$', description: Operation name resolved on the scope's live deployment for each event. }
+        platform_tenant_id: { type: string, format: uuid, description: Operation owner fixed by this binding. }
+        event_types:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          description: Exact event types to admit; empty admits every verified event.
+          items: { type: string, pattern: '^[a-z][a-z0-9_.]{0,255}$' }
+        take_over_delivery: { type: boolean, enum: [true] }
+    OperationWebhookBindingResponse:
+      description: Bound operation, owner, event selection and current endpoint binding revision.
+      type: object
+      required: [endpoint_id, app_id, scope, operation, platform_tenant_id, event_types, version, created_at, updated_at]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        operation: { type: string }
+        platform_tenant_id: { type: string, format: uuid }
+        event_types: { type: array, items: { type: string } }
+        version: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     WebhookAutomationReceiptResponse:
       description: Durable provider event routing decision and automation admission progress.
       type: object
@@ -91341,11 +92013,15 @@ components:
 
     InboundWebhookReceiptResponse:
       type: object
-      description: Returned only after the verified event has a committed durable invocation row.
+      description: |
+        Returned only after the verified event has a committed durable invocation
+        row or, for an operation-bound endpoint, a committed operation and event
+        receipt; receipt_id is then the operation ID. ignored means a verified
+        event outside the operation binding's event_types created no work.
       required: [receipt_id, status, duplicate, accepted_at]
       properties:
         receipt_id: { type: string, format: uuid }
-        status: { type: string, enum: [accepted] }
+        status: { type: string, enum: [accepted, ignored] }
         duplicate: { type: boolean, description: True when this endpoint already accepted the same provider event ID. }
         accepted_at: { type: string, format: date-time }
 
