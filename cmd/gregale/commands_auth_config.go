@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -57,10 +57,11 @@ func cmdAuthConfig(args []string) int {
 	events := fs.String("events", "", "on or off: publish user lifecycle events (auth.user.*) to Gregale's event bus")
 	sso := fs.String("sso", "", "on or off: organization single sign-on (SAML); manage identity providers with `gregale auth sso`")
 	sms := authSMSFlags{
-		provider: fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
-		account:  fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
-		sender:   fs.String("sms-sender", "", "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"),
-		secretIn: fs.Bool("sms-secret-stdin", false, "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"),
+		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
+		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
+		sender:    fs.String("sms-sender", "", "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"),
+		secretIn:  fs.Bool("sms-secret-stdin", false, "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"),
+		countries: fs.String("sms-countries", "", "country calling codes phone sign-in may text, comma-separated (1,44,49), or all"),
 	}
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -174,8 +175,8 @@ func ensureAuthSAMLKey(ctx context.Context, client *api.Client, app, scope strin
 // authSMSFlags are phone sign-in's settings. The provider's secret comes
 // only from stdin or a terminal prompt.
 type authSMSFlags struct {
-	provider, account, sender *string
-	secretIn                  *bool
+	provider, account, sender, countries *string
+	secretIn                             *bool
 }
 
 func (f authSMSFlags) apply(given map[string]bool, change *authsettings.Change) error {
@@ -193,6 +194,13 @@ func (f authSMSFlags) apply(given map[string]bool, change *authsettings.Change) 
 		change.SMS = &authsettings.SMS{Provider: *f.provider, Account: *f.account, Sender: *f.sender, Secret: secret}
 	case given["sms-account"] || given["sms-sender"] || *f.secretIn:
 		return errors.New("--sms-account, --sms-sender and --sms-secret-stdin need --sms PROVIDER")
+	}
+	if given["sms-countries"] {
+		codes := []string{}
+		if *f.countries != "all" {
+			codes = strings.Split(*f.countries, ",")
+		}
+		change.SMSCountries = &codes
 	}
 	return nil
 }
@@ -416,7 +424,10 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	}
 	phone := "off"
 	if settings.Phone.Enabled {
-		phone = "on, through " + settings.Phone.Provider
+		phone = "on, through " + settings.Phone.Provider + "; texts any country"
+		if len(settings.Phone.Countries) > 0 {
+			phone = "on, through " + settings.Phone.Provider + "; texts only +" + strings.Join(settings.Phone.Countries, ", +")
+		}
 	}
 	keys := settings.Keys.Signing
 	if n := len(settings.Keys.Verifying); n > 0 {

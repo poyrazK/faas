@@ -137,6 +137,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--captcha turnstile\|hcaptcha\|off`, `--captcha-site-key`, `--captcha-secret-stdin` | A CAPTCHA on sign-up, sign-in and password reset (see CAPTCHA). |
 | `--activity-retention DAYS\|forever` | How long sign-in activity is kept (see Manage users). |
 | `--sms PROVIDER\|off`, `--sms-account`, `--sms-sender`, `--sms-secret-stdin` | Phone sign-in by text message (see Phone sign-in). |
+| `--sms-countries CODES\|all` | The countries phone sign-in may text (see Phone sign-in). |
 | `--sso on\|off` | Organization single sign-on with SAML (see Organization single sign-on). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
@@ -215,8 +216,18 @@ app secret to change it. In your own pages, use
 `@gregale/auth`. Numbers need their country code (`+447700900123`).
 
 Anyone can make the Auth app text any number, which costs you money and
-attracts SMS pumping fraud. Turn on CAPTCHA with phone sign-in: it protects
-sending a code. GoTrue also sends at most 30 messages an hour per running
+attracts SMS pumping fraud, where bots make apps text premium numbers abroad.
+Turn on CAPTCHA with phone sign-in: it protects sending a code. Also limit
+the countries the app texts to those you serve, by calling code:
+
+```sh
+gregale auth config shop-auth --sms-countries 1,44,49
+```
+
+The Auth app then refuses to text, or to add as a phone or MFA factor, any
+number outside those countries, answering `sms_country_not_allowed` before
+anything is sent. `1` covers the United States, Canada and the other North
+American numbering plan countries. `--sms-countries all` removes the limit. GoTrue also sends at most 30 messages an hour per running
 instance and one code a minute per number. Codes last five minutes; set
 `GOTRUE_SMS_OTP_EXP` (seconds) to change that. `--sms off` turns phone sign-in off and
 removes the provider's credentials; changing provider removes the previous

@@ -38,6 +38,7 @@
 <label>Account (Twilio account SID or Vonage API key)<input name="sms_account" autocomplete="off" spellcheck="false" maxlength="256"></label>
 <label>Sender (Twilio messaging or Verify service SID, MessageBird originator, Textlocal sender or Vonage from)<input name="sms_sender" autocomplete="off" spellcheck="false" maxlength="256"></label>
 <label>Secret (auth token, access key, API key or API secret; required whenever you change SMS)<input name="sms_secret" type="password" autocomplete="off" maxlength="4096"></label>
+<label>Countries it may text: calling codes such as 1,44,49 (empty for every country)<input name="sms_countries" autocomplete="off" spellcheck="false" maxlength="250" pattern="[0-9, +]*"></label>
 </fieldset>
 <label>Keep sign-in activity for this many days (empty keeps it forever)<input name="activity_retention_days" type="number" min="1" max="3650"></label>
 <label>Organization single sign-on (SAML)<select name="sso"><option value="off">Off</option><option value="on">On (register identity providers with gregale auth sso add)</option></select></label>
@@ -401,7 +402,7 @@
       captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',
       activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
       sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
-      sso: settings.sso?.enabled ? 'on' : 'off',
+      sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','),
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()

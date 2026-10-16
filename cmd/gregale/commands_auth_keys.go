@@ -389,8 +389,9 @@ type authPublicSettings struct {
 		RetentionDays *int `json:"retention_days"`
 	} `json:"activity"`
 	Phone struct {
-		Enabled  bool   `json:"enabled"`
-		Provider string `json:"provider"`
+		Enabled   bool     `json:"enabled"`
+		Provider  string   `json:"provider"`
+		Countries []string `json:"countries"`
 	} `json:"phone"`
 	SSO struct {
 		Enabled  bool   `json:"enabled"`

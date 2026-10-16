@@ -3,6 +3,7 @@ package authsettings
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -25,6 +26,7 @@ var smsFields = map[string]struct{ account, sender, secret string }{
 }
 
 const (
+	secretSMSCountries = "AUTH_SMS_COUNTRIES"
 	secretPhoneEnabled = "GOTRUE_EXTERNAL_PHONE_ENABLED"
 	secretSMSProvider  = "GOTRUE_SMS_PROVIDER"
 	smsValueMaxBytes   = 256
@@ -37,6 +39,28 @@ const (
 // API key, and Secret the Twilio auth token, MessageBird access key,
 // Textlocal API key or Vonage API secret.
 type SMS struct{ Provider, Account, Sender, Secret string }
+
+var callingCode = regexp.MustCompile(`^[1-9][0-9]{0,2}$`)
+
+// smsCountries validates country calling codes (44, not +44) and joins them
+// as the template's AUTH_SMS_COUNTRIES reads them.
+func smsCountries(codes []string) (string, error) {
+	if len(codes) > api.AuthSMSMaxCountries {
+		return "", fmt.Errorf("at most %d SMS countries are allowed; got %d", api.AuthSMSMaxCountries, len(codes))
+	}
+	seen, out := map[string]bool{}, []string{}
+	for _, code := range codes {
+		code = strings.TrimPrefix(strings.TrimSpace(code), "+")
+		if !callingCode.MatchString(code) {
+			return "", fmt.Errorf("SMS country %q must be a country calling code such as 1, 44 or 49", code)
+		}
+		if !seen[code] {
+			seen[code] = true
+			out = append(out, code)
+		}
+	}
+	return strings.Join(out, ","), nil
+}
 
 // SMSSecretPrefix is the secret-name prefix of one provider's settings.
 func SMSSecretPrefix(provider string) string {
