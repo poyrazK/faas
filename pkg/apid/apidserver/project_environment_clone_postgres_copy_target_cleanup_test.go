@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func (p *cloneSnapshotProvider) copyCleanupIdentity(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyTargetRequest) (managedpostgres.SnapshotCopyTargetIdentity, error) {
@@ -97,11 +98,11 @@ func cloneCopyCleanupCompensation(t *testing.T, f *cloneCoordinatorFixture, s *c
 	t.Helper()
 	op := f.lease.Operation
 	var err error
-	f.lease.Operation, err = s.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = s.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.store = s
+	f.srv.store = statetest.NewPg(s)
 }
 
 func TestPGClonePostgresSnapshotCopyTargetCleanupRecoversUnknownCreationAndLostReplies(t *testing.T) {
@@ -131,7 +132,7 @@ func TestPGClonePostgresSnapshotCopyTargetCleanupRecoversUnknownCreationAndLostR
 		t.Fatalf("lost identity pin dispatched DELETE: %v", err)
 	}
 	p.beforeCopyDelete = func(ctx context.Context, r managedpostgres.SnapshotCopyTargetRequest) error {
-		row, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, f.lease, sourceID)
+		row, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, f.lease, sourceID)
 		if err != nil {
 			return err
 		}
@@ -149,10 +150,10 @@ func TestPGClonePostgresSnapshotCopyTargetCleanupRecoversUnknownCreationAndLostR
 	if err := f.pool.QueryRow(t.Context(), "select count(*) from managed_postgres_databases where account_id=$1 and state<>'deleted'", f.lease.Operation.AccountID).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("unknown deletion released quota: %d %v", count, err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestPGClonePostgresSnapshotCopyTargetCleanupRecoversUnknownCreationAndLostR
 	if err == nil || p.copyDeletes != 1 || p.copyDeletionObservations != 1 {
 		t.Fatalf("lost retirement commit: %v", err)
 	}
-	r, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
+	r, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
 	if err != nil || r.State != "retired" || r.DeletionObservedAt.IsZero() {
 		t.Fatalf("durable retirement: %+v %v", r, err)
 	}
@@ -184,7 +185,7 @@ func TestPGClonePostgresSnapshotCopyTargetCleanupCoordinatorOrdersInputRetiremen
 	cloneCopyCleanupCompensation(t, &f, store)
 	p.copyDeletePending = true
 	p.forkDeleteReady = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.copyDeletes != 1 || p.copyDeletionObservations != 1 || p.forkDeletes != 0 || p.deletes != 0 {
 		t.Fatalf("pending target released immutable input: %v", err)
 	}
@@ -197,18 +198,18 @@ func TestPGClonePostgresSnapshotCopyTargetCleanupCoordinatorOrdersInputRetiremen
 		t.Fatal(err)
 	}
 	p.beforeForkDelete = func(ctx context.Context, _ managedpostgres.SnapshotRestoreDeletionRequest) error {
-		r, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, f.lease, sourceID)
+		r, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(ctx, f.lease, sourceID)
 		if err == nil && r.State != "retired" {
 			err = state.ErrConflict
 		}
 		return err
 	}
 	p.copyDeletePending = false
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || p.forkDeletes != 1 || p.deletes != 1 || p.copyCreates != 1 {
 		t.Fatalf("ordered input disposal: %v", err)
 	}
-	r, err := store.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
+	r, err := store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
 	if err != nil || r.State != "retired" {
 		t.Fatalf("retired target lost after input deletion: %+v %v", r, err)
 	}
@@ -230,7 +231,7 @@ func TestPGClonePostgresSnapshotCopyTargetCleanupUndispatchedReservationUsesNoPr
 	if err != nil || !complete || p.copyCreates+p.copyCleanupFinds+p.copyDeletes+p.copyDeletionObservations != 0 {
 		t.Fatalf("undispatched reservation used provider: %v %v", complete, err)
 	}
-	r, err = store.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
+	r, err = store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), f.lease, sourceID)
 	if err != nil || r.State != "retired" || !r.DeletionStartedAt.IsZero() || r.ProviderResourceID != "" {
 		t.Fatalf("local retirement: %+v %v", r, err)
 	}

@@ -56,7 +56,16 @@ class StorageReleasePolicyContracts(unittest.TestCase):
 
         def handle(request):
             captured.append(request)
-            return httpx.Response(404, json={"type": "about:blank", "title": "Not found", "status": 404, "code": "not_found", "detail": "Upgrade the server."})
+            return httpx.Response(
+                404,
+                json={
+                    "type": "about:blank",
+                    "title": "Not found",
+                    "status": 404,
+                    "code": "not_found",
+                    "detail": "Upgrade the server.",
+                },
+            )
 
         body = SetObjectStorageBindingReleasePolicyRequest.from_dict(
             {"mode": "enforce", "expected_revision": 0, "object_storage_requirements": {"ASSETS": "write"}}

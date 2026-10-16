@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// ADR-1239: native escalation is an owner-only, revision-checked browser setting.
+// ADR-1439: native escalation is an owner-only, revision-checked browser setting.
 func TestNativeApplicationEscalationDashboardPostgres(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "native-escalation-settings")

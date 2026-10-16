@@ -18,6 +18,9 @@ func (s *server) requestPinnedServiceAbort(w http.ResponseWriter, r *http.Reques
 	}
 	updated, auditID, err := store.RequestServiceRolloutAbort(r.Context(), app.ID, candidate.ID, predecessor.ID, reason)
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, state.ErrServiceRolloutInvalid):
 			api.WriteProblem(w, api.ErrRolloutStateInvalid("current"))

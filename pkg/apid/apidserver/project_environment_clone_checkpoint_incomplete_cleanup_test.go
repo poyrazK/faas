@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"strings"
 )
 
@@ -31,11 +32,11 @@ func incompleteCheckpointCleanupFixture(t *testing.T, phase string) (*cloneCoord
 			t.Fatal(err)
 		}
 		if phase != "adopted" {
-			p, _, _, err := f.srv.cloneCommonCheckpointPlan(t.Context(), f.lease, store)
+			p, _, _, err := f.srv.cloneCommonCheckpointPlan(t.Context(), f.lease, statetest.NewPg(store))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = store.ReserveProjectEnvironmentCloneCheckpointRelease(t.Context(), f.lease, p, d.adoption.Receipt); err != nil {
+			if _, err = store.PgStore.ReserveProjectEnvironmentCloneCheckpointRelease(t.Context(), f.lease, p, d.adoption.Receipt); err != nil {
 				t.Fatal(err)
 			}
 			if phase == "requested" {
@@ -80,7 +81,7 @@ func TestPGCloneCheckpointIncompleteCleanupRecovery(t *testing.T) {
 					break
 				}
 			}
-			if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), stale, id); !errors.Is(err, state.ErrConflict) {
+			if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), stale, id); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("stale cleanup", err)
 			}
 			var completed, deleted, held, snapshots int
@@ -145,7 +146,7 @@ func TestPGCloneCheckpointIncompleteCleanupProvenance(t *testing.T) {
 			if _, err := f.pool.Exec(t.Context(), sql, f.lease.Operation.ID); err != nil {
 				t.Fatal("tamper fixture", err)
 			}
-			if err := store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+			if err := store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("corrupt adoption authorized cleanup", err)
 			}
 			var completed int
@@ -169,7 +170,7 @@ func TestPGCloneCheckpointIncompleteCleanupReleaseRewind(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), "update project_environment_clone_checkpoint_releases set state='planned',requested_at=null,observation_sha256=null,released_at=null where operation_id=$1", f.lease.Operation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("rewound release authorized cleanup", err)
 	}
 }
@@ -195,7 +196,7 @@ func TestPGCloneCheckpointIncompleteCleanupGuard(t *testing.T) {
 			t.Fatal("unproved target mutation bypassed source hold", err)
 		}
 	}
-	if err := store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); err != nil {
 		t.Fatal("journal-backed compensation blocked", err)
 	}
 	_, err := f.pool.Exec(t.Context(), "update object_buckets set state='provisioning' where id=$1", targetID)
@@ -231,7 +232,7 @@ func TestPGCloneCheckpointIncompleteCleanupGuardMigration(t *testing.T) {
 			break
 		}
 	}
-	if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); err != nil {
+	if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); err != nil {
 		t.Fatal(err)
 	}
 	tx, err = f.pool.Begin(t.Context())

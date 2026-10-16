@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1238: native reminders share safe labels and authenticated issue links.
+// ADR-1438: native reminders share safe labels and authenticated issue links.
 func TestApplicationSlackMessagesUseSafeLabelsAndIssueLinks(t *testing.T) {
 	for _, kind := range []string{"created", "regressed", "impact_threshold_reached", "frequency_threshold_reached", "application_reminder", "application_escalation"} {
 		t.Run(kind, func(t *testing.T) {

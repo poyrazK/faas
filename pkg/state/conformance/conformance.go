@@ -80,6 +80,7 @@ func Run(t *testing.T, open Open) {
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
 		{"github_deployment_promotion_fences_stale_revisions", testGitHubDeploymentPromotionFence},
+		{"github_installation_ownership_is_exclusive", testGitHubInstallationOwnership},
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
@@ -90,8 +91,10 @@ func Run(t *testing.T, open Open) {
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"usage_rollup_merges_minutes", testUsageRollup},
+		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
@@ -164,6 +167,7 @@ func Run(t *testing.T, open Open) {
 		{"mirror_rule_update_rejects_oversized_redaction_list", testMirrorRuleUpdateRejectsOversizedRedactionList},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"app_task_lifecycle_pins_deployment_and_fences_replay", testAppTaskLifecycle},
+		{"app_task_attach_session_is_atomic_and_lease_fenced", testAppTaskAttachSession},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"workflow_run_creation_is_idempotent_and_quota_safe", testWorkflowRunCreateIdempotency},
 		{"workflow_concurrency_limit_queues_and_releases_runs", testWorkflowConcurrencyLimitQueues},
@@ -184,9 +188,13 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
+		{"job_task_log_target_is_scoped_and_tracks_the_instance", testJobTaskLogTarget},
+		{"job_run_attach_session_is_atomic_scoped_and_never_replayed", testJobRunAttach},
+		{"image_run_runner_jobs_are_cached_hidden_and_evicted", testImageRunJobs},
 		{"exclusive_operation_work_history_is_account_scoped", testExclusiveOperationWorkHistory},
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
@@ -1003,8 +1011,29 @@ func testAppDeletionClaim(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
+	usageMinute := time.Now().UTC().Truncate(time.Minute).Add(-time.Hour)
+	const usageMBSeconds = int64(264 * 60)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, uuid.NewString(), usageMinute,
+		usageMBSeconds, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage before purge: %v", err)
+	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	// ADR-1162: the purge keeps the app's usage rows; they are the
+	// account's billing evidence for the month.
+	usage, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, usageMinute)
+	if err != nil {
+		t.Fatalf("UsageByMonth after purge: %v", err)
+	}
+	var retained int64
+	for _, row := range usage {
+		if row.AppID == fx.App.ID {
+			retained += row.MBSeconds
+		}
+	}
+	if retained != usageMBSeconds {
+		t.Fatalf("purged app usage = %d mb_seconds, want %d retained", retained, usageMBSeconds)
 	}
 	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
@@ -3932,6 +3961,55 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	}
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
+	}
+}
+
+// testFrozenInstanceState pins ADR-1151's FROZEN state: an idle VM kept
+// paused in memory. It is listed with the resident instances (the reaper parks
+// it after FrozenTTL; `gregale ps` shows it), holds no serving concurrency, is
+// left out of the ram_mb+8 node usage (admission books its measured memory),
+// and thaws back to RUNNING.
+func testFrozenInstanceState(t *testing.T, fx *Fixture) {
+	ins, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, ins.ID, string(state.StateRunning), string(state.StateFrozen)); err != nil {
+		t.Fatalf("freeze RUNNING -> FROZEN: %v", err)
+	}
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil || got != 0 {
+		t.Errorf("ConcurrencyForDeployment = %d, %v; want 0 (frozen holds no concurrency)", got, err)
+	}
+	if got, err := fx.Store.CountLiveInstancesByDeployment(fx.Ctx, fx.Deployment.ID); err != nil || got != 0 {
+		t.Errorf("CountLiveInstancesByDeployment = %d, %v; want 0", got, err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, fx.Node.ID); err != nil || got != 0 {
+		t.Errorf("ComputeNodeUsedMB = %d, %v; want 0 (frozen is charged measured memory, not ram_mb+8)", got, err)
+	}
+	listed := func(rows []state.Instance) bool {
+		for _, row := range rows {
+			if row.ID == ins.ID {
+				return row.State == string(state.StateFrozen)
+			}
+		}
+		return false
+	}
+	if all, err := fx.Store.ListAllInstances(fx.Ctx); err != nil || !listed(all) {
+		t.Errorf("ListAllInstances does not list the frozen instance (err %v)", err)
+	}
+	type activeLister interface {
+		ListActiveInstancesForApp(ctx context.Context, appID string, limit int) ([]state.Instance, error)
+	}
+	if lister, ok := fx.Store.(activeLister); ok {
+		if active, err := lister.ListActiveInstancesForApp(fx.Ctx, fx.App.ID, 100); err != nil || !listed(active) {
+			t.Errorf("ListActiveInstancesForApp (the `ps` read) does not list the frozen instance (err %v)", err)
+		}
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, ins.ID, string(state.StateFrozen), string(state.StateRunning)); err != nil {
+		t.Fatalf("thaw FROZEN -> RUNNING: %v", err)
+	}
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil || got != 1 {
+		t.Errorf("ConcurrencyForDeployment after thaw = %d, %v; want 1", got, err)
 	}
 }
 

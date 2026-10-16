@@ -32,6 +32,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -67,8 +68,7 @@ var jobRunIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 func cmdJobs(args []string) int {
 	parent, _ := lookupCliCommand("jobs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs <overview|defaults|list|add|info|update|rm|next|run|runs|status|occurrences|wait|results|cancel|tasks|attempts|retry|replay-failed|artifact-url|artifact-download|artifacts|logs|registry> [args]", "jobs")
-		return 1
+		return cmdJobsOverview(nil)
 	}
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
@@ -84,6 +84,8 @@ func cmdJobs(args []string) int {
 		return cmdJobsRm(rest)
 	case "next":
 		return cmdJobsNext(rest)
+	case "resume":
+		return resumeRecordedRun("job", rest)
 	case "run":
 		return cmdJobsRun(rest)
 	case subRuns:
@@ -476,6 +478,7 @@ func cmdJobsRun(args []string) int {
 		return cmdJobsRunInteractive()
 	}
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
+	savedJob := fs.Bool("saved-job", false, "use the Job name and omitted run settings from local jobs defaults; excludes a positional Job name")
 	waitReady := fs.Bool("wait-ready", false, "wait for selected image preparation before submitting")
 	imageWaitTimeout := fs.Duration("image-wait-timeout", 5*time.Minute, "image preparation deadline; requires --wait-ready")
 	imagePollInterval := fs.Duration("image-poll-interval", 2*time.Second, "image polling interval; requires --wait-ready")
@@ -509,6 +512,9 @@ func cmdJobsRun(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
 		return 1
 	}
+	if *savedJob && fs.NArg() != 0 {
+		return printErr("Conflicting Job selectors", fmt.Errorf("use --saved-job without a positional Job name, or omit --saved-job and supply the name"))
+	}
 	imageOptions := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "image-wait-timeout" || f.Name == "image-poll-interval" {
@@ -518,7 +524,9 @@ func cmdJobsRun(args []string) int {
 	if err := validateAllJobArtifacts(fs, *allArtifacts); err != nil {
 		return printErr("Invalid artifact filter", err)
 	}
-	name, defaultsErr := applyJobRunDefaults(fs, fs.Arg(0), tasks, results, waitReady, len(*inputFlags) > 0 || *manifestURI != "" || *manifestSHA256 != "", includes, excludes, *allArtifacts)
+	sources := jobRunSettingSources(fs, *allArtifacts)
+	localDefaults := jobRunPreviewDefaults{}
+	name, defaultsErr := applyJobRunDefaults(fs, fs.Arg(0), tasks, results, waitReady, len(*inputFlags) > 0 || *manifestURI != "" || *manifestSHA256 != "", includes, excludes, *allArtifacts, sources, &localDefaults)
 	if defaultsErr != nil {
 		return printErr("Could not apply Job defaults", defaultsErr)
 	}
@@ -666,7 +674,8 @@ func cmdJobsRun(args []string) int {
 		req.TaskTimeoutSec = &t
 	}
 	if *dryRun {
-		return previewJobRun(name, req, *wait, collectResults, *waitTimeout, *pollInterval, *outDir, defaultResultsParent, patterns, exclusions, *waitReady, *imageWaitTimeout, *imagePollInterval)
+		finishJobRunSettingSources(sources, req, *results, outDirSet, collectResults)
+		return previewJobRun(name, req, *wait, collectResults, *waitTimeout, *pollInterval, *outDir, defaultResultsParent, patterns, exclusions, *waitReady, *imageWaitTimeout, *imagePollInterval, sources, localDefaults)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -691,6 +700,7 @@ func cmdJobsRun(args []string) int {
 	if err != nil {
 		return printRunSubmissionError("Run failed", err, recoveryCLI()+" jobs runs "+recoveryArgument(name), false)
 	}
+	rememberAcceptedJob(name, run)
 	if collectResults {
 		if defaultResultsParent != "" {
 			*outDir = defaultResultsParent
@@ -748,9 +758,9 @@ func cmdJobsRuns(args []string) int {
 	}
 	name := fs.Arg(0)
 	if name == "" {
-		defaults, path, err := readJobDefaults()
+		defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "runs", "my-job"})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		name = defaults.Job
 		if !jsonOutput {
@@ -798,13 +808,8 @@ func cmdJobsRuns(args []string) int {
 			if *status == "succeeded" {
 				printSucceededJobArtifactCommands(osStdout, name, items)
 			}
-			if *failedOnly || *status == "failed" || *status == "dead_letter" {
-				_, _ = fmt.Fprintln(osStdout, "Inspect failed tasks (POSIX shells):")
-				for _, run := range items {
-					if jobRunIDPattern.MatchString(run.ID) {
-						_, _ = fmt.Fprintf(osStdout, "  %s jobs tasks %s %s --failed-only\n  %s jobs logs %s %s --failed-only\n", recoveryCLI(), recoveryArgument(name), recoveryArgument(run.ID), recoveryCLI(), recoveryArgument(name), recoveryArgument(run.ID))
-					}
-				}
+			if *failedOnly || *status == "failed" || *status == "dead_letter" || *status == "queued" || *status == "running" {
+				printJobHistoryNextSteps(osStdout, name, items)
 			}
 		}
 		if next > *offset {
@@ -893,17 +898,33 @@ func cmdJobsCancel(args []string) int {
 	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsCancelInteractive()
 	}
+	fs := newFlagSet("jobs cancel", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "inspect cancellation target and effects without cancelling")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	args = fs.Args()
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id> [--dry-run]", "jobs")
 		return 1
 	}
 	if !jobRunIDPattern.MatchString(args[1]) {
 		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id>   (run-id is uuid v4)", "jobs")
 		return 1
 	}
+	if *dryRun && !jobSlugPattern.MatchString(args[0]) {
+		return printErr("Invalid cancellation target", errors.New("preview requires a valid Job name and exact run UUID"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *dryRun {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return previewJobCancel(readCtx, client, args[0], args[1])
 	}
 	resp, err := client.CancelJobRun(context.Background(), args[0], args[1])
 	if err != nil {
@@ -928,6 +949,7 @@ func cmdJobsTasks(args []string) int {
 	excludes := registerJobsMultiFlag(fs, "exclude", "repeatable artifact-name glob to omit; exclusions take precedence")
 	artifactsOnly := fs.Bool("artifacts-only", false, "scan task pages for valid manifests containing artifacts")
 	failedOnly := fs.Bool("failed-only", false, "show failed, timeout, and oom tasks across all pages")
+	unsuccessfulOnly := fs.Bool("unsuccessful-only", false, "show failed, timeout, oom, and cancelled tasks across all pages")
 	all := fs.Bool("all", false, "read all task pages from the starting offset")
 	limit := fs.Int("limit", 0, "task page size (1..200; omitted uses server default)")
 	offset := fs.Int("offset", 0, "starting task offset")
@@ -936,6 +958,9 @@ func cmdJobsTasks(args []string) int {
 	}
 	patterns := []string(*includes)
 	exclusions := []string(*excludes)
+	if *failedOnly && *unsuccessfulOnly {
+		return printErr("Conflicting task filters", errors.New("use --failed-only or --unsuccessful-only separately"))
+	}
 	if err := validateJobArtifactExcludes(exclusions); err != nil {
 		return printErr("Invalid artifact filter", err)
 	}
@@ -959,13 +984,13 @@ func cmdJobsTasks(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale jobs tasks [JOB] [RUN_ID|latest] [--failed-only] [--artifacts-only] [--all] [--limit N] [--offset N]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs tasks [JOB] [RUN_ID|latest] [--failed-only | --unsuccessful-only] [--artifacts-only] [--all] [--limit N] [--offset N]", "jobs")
 		return 1
 	}
 	if len(args) == 0 {
-		defaults, path, err := readJobDefaults()
+		defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "tasks", "my-job"})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		args = []string{defaults.Job}
 		if !jsonOutput {
@@ -1015,7 +1040,7 @@ func cmdJobsTasks(args []string) int {
 		}
 	}
 	var out api.ListJobTasksResponse
-	if *failedOnly || *all || *artifactsOnly {
+	if *failedOnly || *unsuccessfulOnly || *all || *artifactsOnly {
 		pageLimit := *limit
 		if !limitSet {
 			pageLimit = 200
@@ -1026,6 +1051,15 @@ func cmdJobsTasks(args []string) int {
 	}
 	if err != nil {
 		return printErr("Request failed", err)
+	}
+	if *unsuccessfulOnly {
+		filtered := make([]api.JobTaskResponse, 0)
+		for _, task := range out.Tasks {
+			if jobTaskRetryStatus(task.Status) {
+				filtered = append(filtered, task)
+			}
+		}
+		out.Tasks = filtered
 	}
 	manifests := map[int]jobresult.Manifest{}
 	if *artifactsOnly {
@@ -1056,16 +1090,26 @@ func cmdJobsTasks(args []string) int {
 		return jsonOut(writeNDJSON(out.Tasks))
 	}
 	if *artifactsOnly {
-		return renderJobTasksWithArtifacts(args[0], runID, out.Tasks, manifests, *offset, *failedOnly, patterns, exclusions)
+		statusFilter := ""
+		if *failedOnly {
+			statusFilter = "failed, timeout, or oom states"
+		} else if *unsuccessfulOnly {
+			statusFilter = "failed, timeout, oom, or cancelled states"
+		}
+		return renderJobTasksWithArtifacts(args[0], runID, out.Tasks, manifests, *offset, statusFilter, patterns, exclusions)
 	}
 
+	if *unsuccessfulOnly && len(out.Tasks) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No failed, timed-out, out-of-memory, or cancelled tasks found for Job %s run %s. Task states may still change.\n", args[0], runID)
+		return 0
+	}
 	if *failedOnly && len(out.Tasks) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No failed, timed-out, or out-of-memory tasks found for Job %s run %s. Task states may still change.\n", args[0], runID)
 		return 0
 	}
 	renderJobTasksTable(osStdout, out.Tasks)
 	printFailedJobTaskLogs(osStdout, args[0], runID, out.Tasks)
-	if !*all && !*failedOnly && out.NextOffset > *offset {
+	if !*all && !*failedOnly && !*unsuccessfulOnly && out.NextOffset > *offset {
 		limitArg := ""
 		if limitSet {
 			limitArg = fmt.Sprintf(" --limit %d", *limit)
@@ -1088,11 +1132,15 @@ func cmdJobsAttempts(args []string) int {
 	args = remaining
 	fs := newFlagSet("jobs attempts", flag.ContinueOnError)
 	failedOnly := fs.Bool("failed-only", false, "show only failed, timeout, and oom retained attempts")
+	unsuccessfulOnly := fs.Bool("unsuccessful-only", false, "show failed, timeout, oom, and cancelled retained attempts")
 	all := fs.Bool("all", false, "read all retained attempt pages")
 	limit := fs.Int("limit", 0, "history page size (1..200; omitted uses server default)")
 	offset := fs.Int("offset", 0, "starting history offset")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *failedOnly && *unsuccessfulOnly {
+		return printErr("Conflicting attempt filters", errors.New("use --failed-only or --unsuccessful-only separately"))
 	}
 	limitSet := false
 	fs.Visit(func(f *flag.Flag) {
@@ -1105,14 +1153,14 @@ func cmdJobsAttempts(args []string) int {
 	}
 	args = fs.Args()
 	if (taskSet && len(args) > 2) || (!taskSet && len(args) != 3) {
-		PrintUsage(os.Stderr, "usage: gregale jobs attempts [JOB] [RUN_ID|latest] --task N [--all] [--limit N] [--offset N] [--failed-only], or jobs attempts JOB RUN_ID|latest TASK_INDEX", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs attempts [JOB] [RUN_ID|latest] --task N [--all] [--limit N] [--offset N] [--failed-only | --unsuccessful-only], or jobs attempts JOB RUN_ID|latest TASK_INDEX", "jobs")
 		return 1
 	}
 	if taskSet {
 		if len(args) == 0 {
-			defaults, path, err := readJobDefaults()
+			defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "attempts", "my-job", "latest", "--task", taskFlag})
 			if err != nil {
-				return printErr("Could not read Job defaults", err)
+				return printJobDefaultsSelectionError("Could not read Job defaults", err)
 			}
 			args = []string{defaults.Job}
 			if !jsonOutput {
@@ -1156,10 +1204,10 @@ func cmdJobsAttempts(args []string) int {
 	if err != nil {
 		return printErr("Request failed", err)
 	}
-	if *failedOnly {
+	if *failedOnly || *unsuccessfulOnly {
 		filtered := make([]api.JobTaskAttemptResponse, 0)
 		for _, attempt := range out.Attempts {
-			if attempt.Status == "failed" || attempt.Status == "timeout" || attempt.Status == "oom" {
+			if (*unsuccessfulOnly && jobTaskRetryStatus(attempt.Status)) || (*failedOnly && (attempt.Status == "failed" || attempt.Status == "timeout" || attempt.Status == "oom")) {
 				filtered = append(filtered, attempt)
 			}
 		}
@@ -1177,27 +1225,34 @@ func cmdJobsAttempts(args []string) int {
 			return printErr("Output failed", err)
 		}
 		if jobSlugPattern.MatchString(args[0]) && attempt.RunID == runID && attempt.TaskIndex == taskIdx && attempt.Attempt > 0 {
-			if _, err := fmt.Fprintf(osStdout, "  Retained output (POSIX shells): %s jobs logs %s %s %d --attempt %d\n", recoveryCLI(), recoveryArgument(args[0]), recoveryArgument(runID), taskIdx, attempt.Attempt); err != nil {
+			command := savedNameSuggestionCommand([]string{"jobs", "logs", args[0], runID, strconv.Itoa(taskIdx), "--attempt", strconv.Itoa(attempt.Attempt)})
+			if _, err := fmt.Fprintf(osStdout, "  Retained output (POSIX shells): %s\n", command); err != nil {
 				return printErr("Output failed", err)
 			}
 			if manifest, err := jobresult.Validate(attempt.OutputManifest); err == nil && len(manifest.Artifacts) > 0 {
-				if _, err := fmt.Fprintf(osStdout, "  Recorded artifacts (metadata only; POSIX shells): %s jobs artifacts %s %s %d --attempt %d\n", recoveryCLI(), recoveryArgument(args[0]), recoveryArgument(runID), taskIdx, attempt.Attempt); err != nil {
+				command := savedNameSuggestionCommand([]string{"jobs", "artifacts", args[0], runID, strconv.Itoa(taskIdx), "--attempt", strconv.Itoa(attempt.Attempt)})
+				if _, err := fmt.Fprintf(osStdout, "  Recorded artifacts (metadata only; POSIX shells): %s\n", command); err != nil {
 					return printErr("Output failed", err)
 				}
 			}
 		}
 	}
 	if out.NextOffset > *offset {
-		limitArg := ""
+		commandArgs := []string{"jobs", "attempts", args[0], runID, strconv.Itoa(taskIdx)}
 		if limitSet {
-			limitArg = fmt.Sprintf(" --limit %d", *limit)
+			commandArgs = append(commandArgs, "--limit", strconv.Itoa(*limit))
 		}
 		if *failedOnly {
-			limitArg += " --failed-only"
+			commandArgs = append(commandArgs, "--failed-only")
+		} else if *unsuccessfulOnly {
+			commandArgs = append(commandArgs, "--unsuccessful-only")
 		}
-		_, _ = fmt.Fprintf(osStdout, "Next retained-attempt page (POSIX shells):\n  %s jobs attempts %s %s %d%s --offset %d\n", recoveryCLI(), recoveryArgument(args[0]), recoveryArgument(runID), taskIdx, limitArg, out.NextOffset)
+		commandArgs = append(commandArgs, "--offset", strconv.Itoa(out.NextOffset))
+		_, _ = fmt.Fprintf(osStdout, "Next retained-attempt page (POSIX shells):\n  %s\n", savedNameSuggestionCommand(commandArgs))
 	}
-	if *failedOnly && len(out.Attempts) == 0 {
+	if *unsuccessfulOnly && len(out.Attempts) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No failed, timed-out, out-of-memory, or cancelled attempts found in fetched history for run %s task %d starting at offset %d. Active or expired attempts may not appear.\n", runID, taskIdx, *offset)
+	} else if *failedOnly && len(out.Attempts) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No failed, timed-out, or out-of-memory attempts found in fetched history for run %s task %d starting at offset %d. Active or expired attempts may not appear.\n", runID, taskIdx, *offset)
 	} else if *all && len(out.Attempts) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No retained attempts found for run %s task %d starting at offset %d. Active or expired attempts may not appear.\n", runID, taskIdx, *offset)
@@ -1211,6 +1266,7 @@ func cmdJobsReplayFailed(args []string) int {
 		return cmdJobsReplayFailedInteractive()
 	}
 	fs := newFlagSet("jobs replay-failed", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "read source tasks and preview replay without creating a run")
 	results := fs.Bool("results", false, "wait for recovery success and collect outputs into ./results/JOB/NEW_RUN_ID")
 	allArtifacts := fs.Bool("all-artifacts", false, "ignore saved artifact filters; requires --results")
 	includes := registerJobsMultiFlag(fs, "include", "artifact-name glob; requires --results")
@@ -1223,13 +1279,13 @@ func cmdJobsReplayFailed(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed [JOB] [RUN_ID|latest] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
 		return 1
 	}
 	if len(args) == 0 {
-		defaults, path, err := readJobDefaults()
+		defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "replay-failed", "my-job", "latest", "--dry-run"})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		args = []string{defaults.Job}
 		if !jsonOutput {
@@ -1241,6 +1297,9 @@ func cmdJobsReplayFailed(args []string) int {
 	}
 	if (args[1] == "latest" && !jobSlugPattern.MatchString(args[0])) || (args[1] != "latest" && !jobRunIDPattern.MatchString(args[1])) {
 		return printErr("Invalid replay target", fmt.Errorf("use jobs replay-failed [JOB] [RUN_ID|latest]; provide a valid Job name and run UUID"))
+	}
+	if *dryRun && !jobSlugPattern.MatchString(args[0]) {
+		return printErr("Invalid replay target", errors.New("preview requires a valid Job name"))
 	}
 	if err := validateAllJobArtifacts(fs, *allArtifacts); err != nil {
 		return printErr("Invalid artifact filter", err)
@@ -1298,9 +1357,18 @@ func cmdJobsReplayFailed(args []string) int {
 		}
 		args[1] = selected
 	}
+	if *dryRun {
+		return previewJobReplay(requestCtx, client, args[0], args[1], jobRecoveryPreviewOptions{
+			Wait: waitRequested, CollectResults: *results, WaitTimeout: *waitTimeout, PollInterval: *interval,
+			ResultsParent: resultsParent, Include: []string(*includes), Exclude: []string(*excludes),
+		})
+	}
 	run, err := client.ReplayFailedJobRun(requestCtx, args[0], args[1])
 	if err != nil {
 		return printRunSubmissionError("Replay failed", err, recoveryCLI()+" jobs runs "+recoveryArgument(args[0]), false)
+	}
+	if run.ID != args[1] {
+		rememberAcceptedJob(args[0], run)
 	}
 	if waitRequested {
 		if run.ID == args[1] {
@@ -1397,6 +1465,7 @@ func cmdJobsRetry(args []string) int {
 	}
 	args = remaining
 	fs := newFlagSet("jobs retry", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "read task state and preview retry without starting another attempt")
 	results := fs.Bool("results", false, "wait for success and collect outputs into ./results/JOB/RUN_ID")
 	allArtifacts := fs.Bool("all-artifacts", false, "ignore saved artifact filters; requires --results")
 	includes := registerJobsMultiFlag(fs, "include", "artifact-name glob; requires --results")
@@ -1414,9 +1483,9 @@ func cmdJobsRetry(args []string) int {
 	}
 	if taskSet {
 		if len(args) == 0 {
-			defaults, path, err := readJobDefaults()
+			defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "retry", "my-job", "latest", "--task", taskFlag, "--dry-run"})
 			if err != nil {
-				return printErr("Could not read Job defaults", err)
+				return printJobDefaultsSelectionError("Could not read Job defaults", err)
 			}
 			args = []string{defaults.Job}
 			if !jsonOutput {
@@ -1439,6 +1508,9 @@ func cmdJobsRetry(args []string) int {
 	if err != nil || taskIdx < 0 {
 		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
 		return 1
+	}
+	if *dryRun && !jobSlugPattern.MatchString(args[0]) {
+		return printErr("Invalid retry target", errors.New("preview requires a valid Job name"))
 	}
 	if err := validateAllJobArtifacts(fs, *allArtifacts); err != nil {
 		return printErr("Invalid artifact filter", err)
@@ -1504,9 +1576,18 @@ func cmdJobsRetry(args []string) int {
 		}
 		inspected.Close()
 	}
+	if *dryRun {
+		return previewJobRetry(requestCtx, client, args[0], args[1], taskIdx, jobRecoveryPreviewOptions{
+			Wait: waitRequested, CollectResults: *results, WaitTimeout: *waitTimeout, PollInterval: *interval,
+			ResultsParent: resultsParent, Include: []string(*includes), Exclude: []string(*excludes),
+		})
+	}
 	resp, err := client.RetryJobTask(requestCtx, args[0], args[1], taskIdx)
 	if err != nil {
 		return printErr("Retry failed", err)
+	}
+	if resp.Run.ID == args[1] && resp.Task.RunID == args[1] && resp.Task.TaskIndex == taskIdx {
+		rememberAcceptedJob(args[0], resp.Run)
 	}
 	if waitRequested {
 		if resp.Run.ID != args[1] || resp.Task.RunID != args[1] || resp.Task.TaskIndex != taskIdx {
@@ -1536,25 +1617,25 @@ func cmdJobsRetry(args []string) int {
 }
 
 // cmdJobsLogs implements `gregale jobs logs <name> <run-id>
-// <task-index> [--max-bytes N]`. Tails stdout/stderr via vmmd (same path the
-// dashboard uses for live app logs). Truncated=true means the
-// tail was capped at MaxBytes; re-fetch with --max-bytes N for
-// more. Empty LogContent with Truncated=false means the task
-// never produced output (common for OOM-killed tasks).
+// <task-index> [--max-bytes N] [--follow]`. Without --follow it prints the
+// task's stored output tail: Truncated=true means the tail was capped at
+// MaxBytes (re-fetch with --max-bytes N for more), and empty LogContent with
+// Truncated=false means the task produced no output. --follow streams the
+// task's output live until it finishes (ADR-1163).
 func cmdJobsLogs(args []string) int {
 	for _, arg := range args {
 		if arg == "--interactive" || arg == "-interactive" || strings.HasPrefix(arg, "--interactive=") || strings.HasPrefix(arg, "-interactive=") {
 			return cmdJobsLogsInteractiveArgs(args)
 		}
 	}
-	failedArgs, failedOnly, failedErr := splitJobFailedLogsFlag(args)
+	failedArgs, failedOnly, unsuccessfulOnly, filtersProvided, failedErr := splitJobLogsStateFlags(args)
 	if failedErr != nil {
 		return printErr("Invalid failed logs arguments", failedErr)
 	}
-	if failedOnly {
-		return cmdJobsFailedLogs(failedArgs)
+	if failedOnly || unsuccessfulOnly {
+		return cmdJobsFilteredLogs(failedArgs, unsuccessfulOnly)
 	}
-	args = failedArgs
+	args, follow := splitJobLogFollow(failedArgs)
 	taskArgs, taskFlag, taskSet, err := splitJobLogTask(args)
 	if err != nil {
 		return printErr("Invalid task selection", err)
@@ -1564,15 +1645,24 @@ func cmdJobsLogs(args []string) int {
 		return printErr("Invalid retained attempt", err)
 	}
 	positionals, maxBytes, maxBytesSet, ok := parseJobsLogsArgs(logArgs)
+	if follow && ok && !taskSet && len(positionals) != 3 {
+		return printErr("Invalid follow arguments", fmt.Errorf("--follow streams one task; select it with --task N or JOB RUN_ID TASK_INDEX"))
+	}
+	if ok && !taskSet && attempt == 0 && !filtersProvided && len(positionals) <= 2 {
+		if !jsonOutput {
+			_, _ = fmt.Fprintln(osStderr, "No task selected; showing current logs for failed, timed-out, out-of-memory, and cancelled tasks. Use --task N to inspect one task.")
+		}
+		return cmdJobsFilteredLogs(logArgs, true)
+	}
 	if !ok || (!taskSet && len(positionals) != 3) || (taskSet && len(positionals) > 2) {
 		PrintUsage(os.Stderr, "usage: gregale jobs logs [JOB] [RUN_ID|latest] --task N [--max-bytes N] [--attempt N], or jobs logs JOB RUN_ID|latest TASK_INDEX", "jobs")
 		return 1
 	}
 	if taskSet {
 		if len(positionals) == 0 {
-			defaults, path, err := readJobDefaults()
+			defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "logs", "my-job", "latest", "--task", taskFlag})
 			if err != nil {
-				return printErr("Could not read Job defaults", err)
+				return printJobDefaultsSelectionError("Could not read Job defaults", err)
 			}
 			positionals = []string{defaults.Job}
 			if !jsonOutput {
@@ -1599,6 +1689,9 @@ func cmdJobsLogs(args []string) int {
 	if attempt > 0 && !jobSlugPattern.MatchString(positionals[0]) {
 		return printErr("Invalid Job name", fmt.Errorf("--attempt requires a valid Job name"))
 	}
+	if follow && (attempt > 0 || maxBytesSet || jsonOutput) {
+		return printErr("Invalid follow arguments", fmt.Errorf("--follow streams the current attempt; it cannot be combined with --attempt, --max-bytes or --json"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -1618,6 +1711,9 @@ func cmdJobsLogs(args []string) int {
 	}
 	if attempt > 0 {
 		return readRetainedJobAttemptLogs(ctx, client, positionals[0], runID, taskIdx, attempt, maxBytes)
+	}
+	if follow {
+		return followJobTaskLogsCommand(client, positionals[0], runID, taskIdx)
 	}
 	logs, err := client.GetJobTaskLogsWithMaxBytes(ctx, positionals[0], runID, taskIdx, maxBytes)
 	if err != nil {

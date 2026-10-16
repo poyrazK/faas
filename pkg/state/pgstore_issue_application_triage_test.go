@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1237: native issue response lifecycle, authorization and delivery fencing.
+// ADR-1437: native issue response lifecycle, authorization and delivery fencing.
 func TestPg_ApplicationIssueResponseLifecycleAndSlack(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	account, app := seedPgAccountAndApp(t, s, ctx)

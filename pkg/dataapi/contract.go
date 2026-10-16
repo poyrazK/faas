@@ -20,7 +20,17 @@ type Column struct {
 	Insertable bool   `json:"insertable"`
 	Updatable  bool   `json:"updatable"`
 }
+type PrimaryKey struct {
+	Columns    []string `json:"columns"`
+	Filterable bool     `json:"filterable"`
+}
+type Concurrency struct {
+	Column string `json:"column"`
+	Kind   string `json:"kind"`
+}
 type Table struct {
+	PrimaryKey    *PrimaryKey     `json:"primary_key,omitempty"`
+	Concurrency   *Concurrency    `json:"concurrency,omitempty"`
 	Schema        string          `json:"schema"`
 	Name          string          `json:"name"`
 	View          bool            `json:"view"`
@@ -63,7 +73,7 @@ type Snapshot struct {
 	Composites []Composite         `json:"composites,omitempty"`
 }
 
-// Version 1 stays byte-compatible when serialized; versions 2 and 3 require the
+// Version 1 stays byte-compatible when serialized; versions 2 through 4 require the
 // composites array even for schemas without any standalone composite types.
 func (s Snapshot) MarshalJSON() ([]byte, error) {
 	type snapshot Snapshot
@@ -153,7 +163,7 @@ func validateShape(raw json.RawMessage) error {
 		if _, present := root["composites"]; present {
 			return errors.New("composite metadata requires snapshot version 2")
 		}
-	case 2, 3:
+	case 2, 3, 4:
 		if _, err := requiredFields(raw, "composites"); err != nil {
 			return err
 		}
@@ -200,6 +210,19 @@ func validateShape(raw json.RawMessage) error {
 				}
 			}
 			if group.key == "tables" {
+				for _, metadata := range []struct {
+					name   string
+					fields []string
+				}{{"primary_key", []string{"columns", "filterable"}}, {"concurrency", []string{"column", "kind"}}} {
+					if value, present := entry[metadata.name]; present {
+						if version < 4 {
+							return errors.New("row metadata requires snapshot version 4")
+						}
+						if _, err := requiredFields(value, metadata.fields...); err != nil {
+							return err
+						}
+					}
+				}
 				var relationships []json.RawMessage
 				if json.Unmarshal(entry["relationships"], &relationships) != nil {
 					return errors.New("invalid relationship metadata")
@@ -217,7 +240,7 @@ func validateShape(raw json.RawMessage) error {
 
 func validateSnapshot(snapshot Snapshot) error {
 	invalid := errors.New("invalid normalized schema snapshot")
-	if snapshot.Version < 1 || snapshot.Version > 3 || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil || (snapshot.Version >= 2 && snapshot.Composites == nil) {
+	if snapshot.Version < 1 || snapshot.Version > 4 || len(snapshot.Schemas) == 0 || snapshot.Tables == nil || snapshot.Functions == nil || snapshot.Enums == nil || (snapshot.Version >= 2 && snapshot.Composites == nil) {
 		return invalid
 	}
 	schemas := map[string]bool{}
@@ -238,7 +261,7 @@ func validateSnapshot(snapshot Snapshot) error {
 		names[key] = true
 		relations[key] = table
 		shadowed[key] = true
-		if snapshot.Version == 3 {
+		if snapshot.Version >= 3 {
 			var keys []struct {
 				Name string `json:"foreignKeyName"`
 			}
@@ -255,6 +278,38 @@ func validateSnapshot(snapshot Snapshot) error {
 				return invalid
 			}
 			columns[column.Name] = true
+		}
+		if table.PrimaryKey != nil {
+			if table.View || len(table.PrimaryKey.Columns) == 0 || len(table.PrimaryKey.Columns) > 16 {
+				return invalid
+			}
+			keyColumns := map[string]bool{}
+			for _, name := range table.PrimaryKey.Columns {
+				if !columns[name] || keyColumns[name] {
+					return invalid
+				}
+				keyColumns[name] = true
+				for _, column := range table.Columns {
+					if column.Name == name && column.Nullable {
+						return invalid
+					}
+				}
+			}
+		}
+		if table.Concurrency != nil {
+			if table.View || table.PrimaryKey == nil || table.Concurrency.Kind != "integer_version" || !columns[table.Concurrency.Column] {
+				return invalid
+			}
+			for _, name := range table.PrimaryKey.Columns {
+				if name == table.Concurrency.Column {
+					return invalid
+				}
+			}
+			for _, column := range table.Columns {
+				if column.Name == table.Concurrency.Column && (column.Nullable || column.Type != "number") {
+					return invalid
+				}
+			}
 		}
 	}
 	names = map[string]bool{}

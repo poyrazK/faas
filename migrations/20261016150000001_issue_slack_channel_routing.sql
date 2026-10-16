@@ -1,24 +1,60 @@
 -- +goose Up
-CREATE TABLE public.issue_slack_routing_policies (
+CREATE TABLE IF NOT EXISTS public.issue_slack_routing_policies (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  installation_revision bigint NOT NULL CHECK(installation_revision>0),
  rules jsonb NOT NULL CHECK(jsonb_typeof(rules)='array' AND jsonb_array_length(rules)<=20)
 );
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN routing_revision bigint NOT NULL DEFAULT 0 CHECK(routing_revision>=0);
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN routing_rule_key text NOT NULL DEFAULT '' CHECK(routing_rule_key='' OR routing_rule_key ~ '^[a-z0-9][a-z0-9-]{0,47}$');
-ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_slack_routing_snapshot CHECK((activity_id IS NOT NULL OR (routing_revision=0 AND routing_rule_key='')) AND (routing_rule_key='' OR routing_revision>0));
-ALTER TABLE public.issue_team_slack_threads ADD COLUMN channel_id text;
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS routing_revision bigint NOT NULL DEFAULT 0 CHECK(routing_revision>=0);
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS routing_rule_key text NOT NULL DEFAULT '' CHECK(routing_rule_key='' OR routing_rule_key ~ '^[a-z0-9][a-z0-9-]{0,47}$');
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_deliveries'::regclass AND conname='issue_slack_routing_snapshot') THEN
+  ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_slack_routing_snapshot CHECK((activity_id IS NOT NULL OR (routing_revision=0 AND routing_rule_key='')) AND (routing_rule_key='' OR routing_revision>0));
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+ALTER TABLE public.issue_team_slack_threads ADD COLUMN IF NOT EXISTS channel_id text;
+
 UPDATE public.issue_team_slack_threads t SET channel_id=COALESCE(
  (SELECT d.channel_id FROM public.issue_team_slack_deliveries d WHERE d.destination_id=t.destination_id AND d.destination_revision=t.destination_revision AND d.incident_id=t.incident_id ORDER BY d.delivery_seq LIMIT 1),
- (SELECT dst.channel_id FROM public.issue_team_slack_destinations dst WHERE dst.id=t.destination_id));
+ (SELECT dst.channel_id FROM public.issue_team_slack_destinations dst WHERE dst.id=t.destination_id)) WHERE t.channel_id IS NULL;
+
 ALTER TABLE public.issue_team_slack_threads ALTER COLUMN channel_id SET NOT NULL;
-ALTER TABLE public.issue_team_slack_threads ADD CONSTRAINT issue_slack_thread_channel CHECK(channel_id ~ '^[CG][A-Z0-9]{8,31}$');
-ALTER TABLE public.issue_team_slack_threads DROP CONSTRAINT issue_team_slack_threads_pkey;
-ALTER TABLE public.issue_team_slack_threads ADD PRIMARY KEY(destination_id,destination_revision,incident_id,channel_id);
-DROP INDEX public.issue_team_slack_delivery_thread;
-CREATE INDEX issue_team_slack_delivery_thread ON public.issue_team_slack_deliveries(destination_id,destination_revision,incident_id,channel_id,delivery_seq);
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_threads'::regclass AND conname='issue_slack_thread_channel') THEN
+  ALTER TABLE public.issue_team_slack_threads ADD CONSTRAINT issue_slack_thread_channel CHECK(channel_id ~ '^[CG][A-Z0-9]{8,31}$');
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_threads'::regclass AND conname='issue_team_slack_threads_pkey' AND position('channel_id' in pg_get_constraintdef(oid))>0) THEN
+  ALTER TABLE public.issue_team_slack_threads DROP CONSTRAINT IF EXISTS issue_team_slack_threads_pkey;
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_threads'::regclass AND contype='p') THEN
+  ALTER TABLE public.issue_team_slack_threads ADD PRIMARY KEY(destination_id,destination_revision,incident_id,channel_id);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+DROP INDEX IF EXISTS public.issue_team_slack_delivery_thread;
+
+CREATE INDEX IF NOT EXISTS issue_team_slack_delivery_thread ON public.issue_team_slack_deliveries(destination_id,destination_revision,incident_id,channel_id,delivery_seq);
+
 
 CREATE OR REPLACE VIEW public.issue_slack_delivery_sources AS
 SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id,
@@ -49,8 +85,7 @@ LEFT JOIN public.app_issues i ON i.id=COALESCE(act.issue_id,rem.issue_id)
 LEFT JOIN public.issue_application_slack_policies ap ON ap.app_id=a.id
 LEFT JOIN public.issue_application_reminder_policies rp ON rp.app_id=a.id
 LEFT JOIN public.issue_application_triage tr ON tr.issue_id=i.id
-LEFT JOIN public.issue_application_escalation_policies ep ON ep.app_id=a.id
-;
+LEFT JOIN public.issue_application_escalation_policies ep ON ep.app_id=a.id;
 
 -- +goose Down
 -- +goose StatementBegin

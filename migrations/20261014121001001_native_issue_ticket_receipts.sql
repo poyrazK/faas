@@ -1,6 +1,5 @@
 -- +goose Up
--- +goose StatementBegin
-CREATE TABLE public.native_issue_ticket_receipts (
+CREATE TABLE IF NOT EXISTS public.native_issue_ticket_receipts (
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  request_id uuid NOT NULL,
  app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
@@ -20,8 +19,8 @@ CREATE TABLE public.native_issue_ticket_receipts (
         (state='linked' AND ticket_url<>'' AND provider_id<>'' AND link_id IS NOT NULL)),
  CHECK (state<>'dispatching' OR (claim_id IS NOT NULL AND recover_after IS NOT NULL))
 );
-CREATE INDEX native_issue_ticket_receipts_issue_idx ON public.native_issue_ticket_receipts(issue_id);
--- +goose StatementEnd
+
+CREATE INDEX IF NOT EXISTS native_issue_ticket_receipts_issue_idx ON public.native_issue_ticket_receipts(issue_id);
 
 -- +goose Down
 -- +goose StatementBegin

@@ -1,6 +1,5 @@
 -- +goose Up
--- +goose StatementBegin
-CREATE TABLE public.issue_tracker_auto_sync (
+CREATE TABLE IF NOT EXISTS public.issue_tracker_auto_sync (
  link_id uuid PRIMARY KEY REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -19,8 +18,8 @@ CREATE TABLE public.issue_tracker_auto_sync (
  next_check_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX issue_tracker_auto_sync_due_idx ON public.issue_tracker_auto_sync(next_check_at,link_id) WHERE enabled AND outcome IN ('matched','pending','applied','error');
--- +goose StatementEnd
+
+CREATE INDEX IF NOT EXISTS issue_tracker_auto_sync_due_idx ON public.issue_tracker_auto_sync(next_check_at,link_id) WHERE enabled AND outcome IN ('matched','pending','applied','error');
 
 -- +goose Down
 -- +goose StatementBegin

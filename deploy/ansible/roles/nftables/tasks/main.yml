@@ -142,6 +142,22 @@
   changed_when: false
   when: fwd_dropin.changed
 
+# The raw TCP/UDP public port range must not be handed out as ephemeral
+# source ports, or gatewayd-public cannot bind those listeners.
+- name: nftables — install raw ingress reserved-ports sysctl drop-in
+  ansible.builtin.copy:
+    src: 91-faas-reserved-ports.conf
+    dest: /etc/sysctl.d/91-faas-reserved-ports.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: reserved_ports_dropin
+
+- name: nftables — apply reserved-ports sysctl  # noqa: no-handler (applied before gatewayd-public binds its listeners)
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/91-faas-reserved-ports.conf
+  changed_when: false
+  when: reserved_ports_dropin.changed
+
 - name: nftables — load the pinned Cloudflare origin ranges
   ansible.builtin.set_fact:
     faas_cloudflare_ipv4_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/files/cloudflare-ips-v4.txt').splitlines() }}"

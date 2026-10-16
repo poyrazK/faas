@@ -31,3 +31,54 @@ SELECT count(*) FILTER (WHERE routing_state='pending')::bigint AS pending_recipi
  count(*) FILTER (WHERE routing_state='processing')::bigint AS processing_recipients,
  min(accepted_at) FILTER (WHERE routing_state='pending')::timestamptz AS oldest_pending_at
 FROM event_routing_backlog WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventSubscriptionCapacitySet :exec
+INSERT INTO event_subscription_delivery_controls(subscription_id,account_id,app_id,max_pending_deliveries,updated_at)
+VALUES (sqlc.arg(subscription_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(max_pending_deliveries)::integer,sqlc.arg(now_at)::timestamptz)
+ON CONFLICT(subscription_id) DO UPDATE SET max_pending_deliveries=excluded.max_pending_deliveries,updated_at=excluded.updated_at
+WHERE event_subscription_delivery_controls.account_id=excluded.account_id AND event_subscription_delivery_controls.app_id=excluded.app_id;
+
+-- name: EventSubscriptionCapacityOverride :one
+SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND subscription_id::text=sqlc.arg(subscription_id)::text),0)::integer AS max_pending_deliveries;
+
+-- name: EventSubscriptionCapacityAccount :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR SHARE;
+
+-- name: EventSubscriptionCapacityCommandGet :one
+SELECT * FROM event_subscription_capacity_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND command_id=sqlc.arg(command_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionCapacityCommandsCount :one
+SELECT count(*)::bigint FROM event_subscription_capacity_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionCapacityCommandsExpire :exec
+DELETE FROM event_subscription_capacity_commands WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until<=sqlc.arg(now_at)::timestamptz;
+
+-- name: EventSubscriptionCapacityCommandInsert :exec
+INSERT INTO event_subscription_capacity_commands(subscription_id,command_id,account_id,app_id,request,receipt,recorded_at,retain_until)
+VALUES(sqlc.arg(subscription_id)::uuid,sqlc.arg(command_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(request)::jsonb,sqlc.arg(receipt)::jsonb,sqlc.arg(recorded_at)::timestamptz,sqlc.arg(retain_until)::timestamptz);
+
+-- name: PruneEventSubscriptionCapacityCommands :execrows
+WITH expired AS (
+ SELECT subscription_id,command_id FROM event_subscription_capacity_commands WHERE retain_until<=sqlc.arg(now_at)::timestamptz
+ ORDER BY retain_until,subscription_id,command_id FOR UPDATE SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
+)
+DELETE FROM event_subscription_capacity_commands c USING expired e WHERE c.subscription_id=e.subscription_id AND c.command_id=e.command_id;
+
+-- name: ListEventSubscriptionCapacityCommands :many
+SELECT * FROM event_subscription_capacity_commands
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid
+ AND retain_until>sqlc.arg(now_at)::timestamptz AND recorded_at<=sqlc.arg(now_at)::timestamptz
+ AND (sqlc.arg(outcome)::text='any' OR receipt->>'outcome'=sqlc.arg(outcome)::text)
+ AND (NOT sqlc.arg(has_after)::boolean OR (recorded_at,command_id)<(sqlc.arg(after_recorded_at)::timestamptz,sqlc.arg(after_command_id)::uuid))
+ORDER BY recorded_at DESC,command_id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventSubscriptionCapacityCommandBudget :one
+SELECT count(*)::bigint AS retained_receipts,min(retain_until)::timestamptz AS earliest_expiry_at
+FROM event_subscription_capacity_commands
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid
+ AND retain_until>sqlc.arg(observed_at)::timestamptz;

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE public.issue_tracker_callback_diagnostics (
+CREATE TABLE IF NOT EXISTS public.issue_tracker_callback_diagnostics (
  app_id uuid PRIMARY KEY REFERENCES public.issue_tracker_linear_connections(app_id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  connection_revision bigint NOT NULL CHECK(connection_revision>0),
@@ -11,6 +11,7 @@ CREATE TABLE public.issue_tracker_callback_diagnostics (
  last_verified_at timestamptz,
  last_rejected_at timestamptz
 );
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

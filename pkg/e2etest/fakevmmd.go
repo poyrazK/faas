@@ -625,6 +625,21 @@ func (s *FakeVMMD) UpdateEgressAllowlist(_ context.Context, req *vmmdpb.UpdateEg
 	return &vmmdpb.UpdateEgressAllowlistAck{}, nil
 }
 
+// UpdateAppEgressPolicy models delivery and the exact revision echo. Privileged
+// admitted-runtime RPCs remain unsupported by this portable transport fake.
+func (s *FakeVMMD) UpdateAppEgressPolicy(ctx context.Context, req *vmmdpb.UpdateAppEgressPolicyRequest) (*vmmdpb.UpdateAppEgressPolicyAck, error) {
+	if req == nil || req.GetRevision() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "positive policy revision required")
+	}
+	_, err := s.UpdateEgressAllowlist(ctx, &vmmdpb.UpdateEgressAllowlistRequest{
+		AppId: req.GetAppId(), EgressAllowlist: req.GetEgressAllowlist(), EgressPorts: req.GetEgressPorts(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &vmmdpb.UpdateAppEgressPolicyAck{Revision: req.GetRevision()}, nil
+}
+
 // EgressUpdates returns the allowlist pushes the fake received, in order.
 func (s *FakeVMMD) EgressUpdates() []*vmmdpb.UpdateEgressAllowlistRequest {
 	s.mu.Lock()

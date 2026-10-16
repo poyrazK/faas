@@ -47,9 +47,9 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
-	"POST /integrations/slack/actions":                                                  true, // ADR-1242 signed managed Slack actions.
-	"POST /integrations/slack/events":                                                   true, // ADR-1242 signed Slack uninstall/revocation callbacks.
-	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1241 Slack-signed provider callback.
+	"POST /integrations/slack/actions":                                                  true, // ADR-1442 signed managed Slack actions.
+	"POST /integrations/slack/events":                                                   true, // ADR-1442 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1441 Slack-signed provider callback.
 	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
@@ -61,13 +61,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 
-	"GET /v1/account/dpa": true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1219: authenticated HTML review/recovery form with named CSRF.
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1219: owner HTML credential form with session MFA and CSRF.
-	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1221: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
-	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1243 owner-only Slack routing editor.
-	"GET /oauth/slack/callback":                                       true, // ADR-1242 owner session and one-use state confirmation.
-	"GET /oauth/linear/callback":                                      true, // ADR-1223: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"GET /v1/account/dpa":                                             true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":                           true, // ADR-1037 WebSocket attach; the CLI drives it directly
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                true, // ADR-1330 WebSocket attach; the CLI drives it directly
 	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"POST /v1/hooks/{token}":                                          true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
@@ -83,6 +79,12 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/crons/{id}/policy":                   true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/policy":                              true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":             true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1419: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1419: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1421: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1443 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1442 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1423: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -298,6 +300,107 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/orgs/{slug}/application-standard-enrollments/{app}/local-intent":                   "SetApplicationStandardLocalIntent",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":                    "ApproveApplicationStandardException",
+	"POST /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions/{exception}/revoke": "RevokeApplicationStandardException",
+	// ADR-435: these hyphenated routes use the existing typed client names.
+	"POST /v1/orgs/{slug}/application-standard-reviews/{review}/approve":      "ApproveApplicationStandardReview",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/pause":  "PauseApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/resume": "ResumeApplicationStandardOperation",
+	"POST /v1/orgs/{slug}/application-standard-operations/{operation}/abort":  "AbortApplicationStandardOperation",
+
+	"GET /v1/orgs/{slug}/application-standard-assignments":              "ListApplicationStandardAssignments",
+	"GET /v1/orgs/{slug}/application-standard-assignments/{assignment}": "GetApplicationStandardAssignment",
+
+	"POST /v1/orgs/{slug}/application-standard-reviews":                              "PreviewApplicationStandardAssignment",
+	"GET /v1/orgs/{slug}/application-standard-reviews/{review}":                      "GetApplicationStandardReview",
+	"GET /v1/orgs/{slug}/application-standard-operations/{operation}":                "GetApplicationStandardOperation",
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}/exceptions":          "ListApplicationStandardExceptions",
+	"GET /v1/orgs/{slug}/application-standard-enrollments/{app}":                     "GetApplicationStandardEnrollment",
+	"GET /v1/orgs/{slug}/application-standards":                                      "ListApplicationStandards",
+	"GET /v1/orgs/{slug}/application-standards/{standard}":                           "GetApplicationStandardVersion",
+	"POST /v1/orgs/{slug}/application-standards/{standard}/versions":                 "PublishApplicationStandardVersion",
+	"GET /v1/orgs/{slug}/application-standard-log-destinations":                      "ListApplicationStandardLogDestinations",
+	"POST /v1/orgs/{slug}/application-standard-log-destinations":                     "CreateApplicationStandardLogDestination",
+	"GET /v1/orgs/{slug}/application-standard-log-destinations/{resource}":           "GetApplicationStandardLogDestination",
+	"GET /v1/orgs/{slug}/application-standard-publishers":                            "ListApplicationStandardPublishers",
+	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
+	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
+	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
+	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
+	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
+	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
+	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": "ExchangeBrowserPromotionApproval",
+
+	// BEGIN managed realtime SDK routes
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                   "ListRealtimePublisherCredentials",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                  "IssueRealtimePublisherCredential",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/rotate":                           "RotateRealtimePublisherCredential",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/revoke":                           "RevokeRealtimePublisherCredential",
+	"POST /v1/realtime/publishers/endpoints/{endpoint_id}/channels/{channel}/publish":                                   "PublishWithRealtimePublisherCredential",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials":                         "ListRealtimeWorkerCredentials",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials":                        "IssueRealtimeWorkerCredential",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate": "RotateRealtimeWorkerCredential",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke": "RevokeRealtimeWorkerCredential",
+	"GET /v1/realtime/workers/groups/{group_id}":                                                                        "GetRealtimeWorkerGroup",
+	"DELETE /v1/realtime/workers/groups/{group_id}":                                                                     "DeleteRealtimeWorkerGroup",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/batch":                       "ClaimRealtimeConsumerGroupBatch",
+	"POST /v1/realtime/workers/groups/{group_id}/claims/batch":                                                          "ClaimRealtimeWorkerGroupBatch",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/pause":                              "PauseRealtimeConsumerGroup",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume":                             "ResumeRealtimeConsumerGroup",
+	"POST /v1/realtime/workers/groups/{group_id}/pause":                                                                 "PauseRealtimeWorkerGroup",
+	"POST /v1/realtime/workers/groups/{group_id}/resume":                                                                "ResumeRealtimeWorkerGroup",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/drain":                              "DrainRealtimeConsumerGroup",
+	"POST /v1/realtime/workers/groups/{group_id}/drain":                                                                 "DrainRealtimeWorkerGroup",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle/batch":                "SettleRealtimeConsumerGroupBatch",
+	"POST /v1/realtime/workers/groups/{group_id}/claims/settle/batch":                                                   "SettleRealtimeWorkerGroupBatch",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/messages/{sequence}/history":         "GetRealtimeConsumerGroupDeliveryHistory",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit":                             "GetRealtimeConsumerGroupCircuit",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit":                             "ConfigureRealtimeConsumerGroupCircuit",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/priority":                            "GetRealtimeConsumerGroupPriority",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/metrics":                             "GetRealtimeConsumerGroupMetrics",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats":                          "GetRealtimeConsumerGroupWorkerHealth",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats":                         "HeartbeatRealtimeConsumerGroup",
+	"POST /v1/realtime/workers/groups/{group_id}/heartbeats":                                                            "HeartbeatRealtimeWorkerGroup",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate":                          "GetRealtimeConsumerGroupClaimRate",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate":                          "ConfigureRealtimeConsumerGroupClaimRate",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy":                        "GetRealtimeConsumerGroupRetryPolicy",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy":                        "ConfigureRealtimeConsumerGroupRetryPolicy",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention":               "GetRealtimeConsumerGroupDeadLetterRetention",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention":               "ConfigureRealtimeConsumerGroupDeadLetterRetention",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert":                           "GetRealtimeConsumerGroupLagAlert",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert":                           "ConfigureRealtimeConsumerGroupLagAlert",
+	"POST /v1/realtime/workers/groups/{group_id}/claims":                                                                "ClaimRealtimeWorkerGroup",
+	"POST /v1/realtime/workers/groups/{group_id}/claims/settle":                                                         "SettleRealtimeWorkerGroupClaim",
+	"GET /v1/realtime/workers/groups/{group_id}/dead-letters":                                                           "ListRealtimeWorkerGroupDeadLetters",
+	"POST /v1/realtime/workers/groups/{group_id}/dead-letters/{sequence}/replay":                                        "ReplayRealtimeWorkerGroupDeadLetter",
+	"POST /v1/realtime/workers/groups/{group_id}/resync":                                                                "ResyncRealtimeWorkerGroup",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups":                                             "ListRealtimeConsumerGroups",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups":                                            "CreateRealtimeConsumerGroup",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}":                                     "GetRealtimeConsumerGroup",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}":                                  "DeleteRealtimeConsumerGroup",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims":                             "ClaimRealtimeConsumerGroup",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle":                      "SettleRealtimeConsumerGroupClaim",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters":                        "ListRealtimeConsumerGroupDeadLetters",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export":                 "ExportRealtimeConsumerGroupDeadLetters",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/preview":               "PreviewRealtimeConsumerGroupDeadLetters",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs":                         "ListRealtimeReplayJobs",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs":                        "CreateRealtimeReplayJob",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/dry-run":                "CreateRealtimeReplayDryRun",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/{job}/{action}":         "ControlRealtimeReplayJob",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/replay":                "BulkReplayRealtimeConsumerGroupDeadLetters",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/{sequence}/replay":     "ReplayRealtimeConsumerGroupDeadLetter",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resync":                             "ResyncRealtimeConsumerGroup",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement":                                    "GetRealtimeChannelAcknowledgement",
+	"GET /v1/apps/{slug}/webhooks/{id}/realtime-channel":                                                                "GetRealtimeChannelWebhookFilter",
+	"PUT /v1/apps/{slug}/webhooks/{id}/realtime-channel":                                                                "SetRealtimeChannelWebhookFilter",
+	"DELETE /v1/apps/{slug}/webhooks/{id}/realtime-channel":                                                             "DeleteRealtimeChannelWebhookFilter",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets":                                                              "IssueRealtimeSubscriptionTicket",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access":                                         "GetManagedRealtimeAccess",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access":                                        "ChangeManagedRealtimeAccess",
+	// END managed realtime SDK routes
 	"PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers":  "ReconcileObjectStorageComputeTriggers",
 	"GET /v1/apps/{slug}/entities/quotas":                    "InspectDurableEntityTenantQuotas",
 	"GET /v1/apps/{slug}/entities/readiness":                 "GetDurableEntityReadiness",
@@ -319,6 +422,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
 	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
 
+	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
+	"GET /v1/service-map": "GetServiceMap",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",
@@ -394,6 +499,7 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/environment-field-ownership":                                   "ReleaseEnvironmentFieldOwnership",
 
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              "PreviewEnvironmentGitPlan",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
 	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",
@@ -438,18 +544,20 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/operation-definitions/{name}": "GetOperationDefinition",
 	"GET /v1/platform-tenant-self/customer-operations/identity":                    "GetPlatformTenantSelfOperationIdentity",
 	// Business workflow observation routes use domain-oriented SDK method names.
-	"GET /v1/apps/{slug}/workflow-readiness/timeline":                                 "GetAccountWorkflowCoordinationTimeline",
-	"GET /v1/platform-tenant-self/workflow-readiness/timeline":                        "GetPlatformTenantSelfWorkflowCoordinationTimeline",
-	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews":          "ReviewAccountWorkflowPlaybookProgress",
-	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews": "ReviewPlatformTenantSelfWorkflowPlaybookProgress",
-	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress":                       "StartAccountWorkflowPlaybookProgress",
-	"PATCH /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}":                 "UpdateAccountWorkflowPlaybookProgress",
-	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress":              "StartPlatformTenantSelfWorkflowPlaybookProgress",
-	"PATCH /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}":        "UpdatePlatformTenantSelfWorkflowPlaybookProgress",
-	"GET /v1/apps/{slug}/workflow-readiness/case":                                     "GetAccountWorkflowCase",
-	"GET /v1/platform-tenant-self/workflow-readiness/case":                            "GetPlatformTenantSelfWorkflowCase",
-	"GET /v1/apps/{slug}/workflow-readiness/follow-ups":                               "ListAccountWorkflowReadinessFollowUps",
-	"GET /v1/platform-tenant-self/workflow-readiness/follow-ups":                      "ListPlatformTenantSelfWorkflowReadinessFollowUps",
+	"GET /v1/apps/{slug}/workflow-readiness/timeline":                                        "GetAccountWorkflowCoordinationTimeline",
+	"GET /v1/platform-tenant-self/workflow-readiness/timeline":                               "GetPlatformTenantSelfWorkflowCoordinationTimeline",
+	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch":          "ConfigureAccountWorkflowPlaybookEvidenceWatch",
+	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/evidence-watch": "ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch",
+	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews":                 "ReviewAccountWorkflowPlaybookProgress",
+	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews":        "ReviewPlatformTenantSelfWorkflowPlaybookProgress",
+	"POST /v1/apps/{slug}/workflow-readiness/playbook-progress":                              "StartAccountWorkflowPlaybookProgress",
+	"PATCH /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}":                        "UpdateAccountWorkflowPlaybookProgress",
+	"POST /v1/platform-tenant-self/workflow-readiness/playbook-progress":                     "StartPlatformTenantSelfWorkflowPlaybookProgress",
+	"PATCH /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}":               "UpdatePlatformTenantSelfWorkflowPlaybookProgress",
+	"GET /v1/apps/{slug}/workflow-readiness/case":                                            "GetAccountWorkflowCase",
+	"GET /v1/platform-tenant-self/workflow-readiness/case":                                   "GetPlatformTenantSelfWorkflowCase",
+	"GET /v1/apps/{slug}/workflow-readiness/follow-ups":                                      "ListAccountWorkflowReadinessFollowUps",
+	"GET /v1/platform-tenant-self/workflow-readiness/follow-ups":                             "ListPlatformTenantSelfWorkflowReadinessFollowUps",
 
 	"POST /v1/apps/{slug}/workflow-readiness/subscriptions":                            "CreateAccountWorkflowReadinessSubscription",
 	"GET /v1/apps/{slug}/workflow-readiness/subscriptions":                             "ListAccountWorkflowReadinessSubscriptions",
@@ -488,6 +596,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/operations":                                                   "ListAccountOperations",
 	"GET /v1/apps/{slug}/operations/{id}/events":                                       "GetAccountOperationEvents",
 	"GET /v1/apps/{slug}/operations/{id}/executions":                                   "GetOperationExecutions",
+	"GET /v1/apps/{slug}/operations/{id}/timeline":                                     "GetOperationTimeline",
+	"POST /v1/apps/{slug}/operations/{id}/signals":                                     "SignalOperation",
+	"POST /v1/apps/{slug}/operation-signals":                                           "SignalOperationsBySubject",
 	"POST /v1/apps/{slug}/operations/{id}/retry-delivery":                              "RetryOperationDelivery",
 	"GET /v1/apps/{slug}/operations/{id}/recovery-inspection":                          "InspectOperationRecovery",
 	"POST /v1/apps/{slug}/operations/{id}/recovery-preview":                            "PreviewOperationRecovery",
@@ -517,11 +628,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/runtime/operations/{id}/workflow-states/validate":                        "ValidateOperationWorkflowStates",
 	"GET /v1/apps/{slug}/operations/{id}":                                              "GetOperation",
 	"POST /v1/apps/{slug}/operations/{id}/cancel":                                      "CancelOperation",
+	"POST /v1/apps/{slug}/operations/{id}/approvals/{step}":                            "DecideOperationApproval",
 	"POST /v1/platform-tenant-self/customer-operations":                                "StartPlatformTenantSelfOperation",
 	"GET /v1/platform-tenant-self/customer-operations":                                 "ListPlatformTenantSelfOperations",
 	"GET /v1/platform-tenant-self/customer-operations/{id}":                            "GetPlatformTenantSelfOperation",
 	"GET /v1/platform-tenant-self/customer-operations/{id}/events":                     "GetPlatformTenantSelfOperationEvents",
 	"POST /v1/platform-tenant-self/customer-operations/{id}/cancel":                    "CancelPlatformTenantSelfOperation",
+	"POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}":          "DecidePlatformTenantSelfOperationApproval",
 	"POST /v1/apps/{slug}/operations":                                                  "SubmitExclusiveOperation",
 	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations":             "SubmitExclusiveOperation",
 	"POST /v1/platform-tenant-self/apps/{slug}/operations":                             "SubmitPlatformTenantExclusiveOperation",
@@ -576,6 +689,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/route-removal/approvals":                                     "ApproveRouteRemoval",
 	"GET /v1/apps/{slug}/route-removal/check":                                          "CheckRouteRemoval",
 	"GET /v1/apps/{slug}/routes/advice":                                                "GetRouteAdvice",
+	"GET /v1/apps/{slug}/routes/awake":                                                 "GetRouteAwake",
 	"GET /v1/apps/{slug}/service-wake-ahead":                                           "GetServiceWakeAhead",
 	"PUT /v1/apps/{slug}/service-wake-ahead":                                           "SetServiceWakeAhead",
 	"GET /v1/apps/{slug}/route-priorities":                                             "GetRoutePriorities",
@@ -597,6 +711,10 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":             "DeleteOutboundCredentialKey",
 	"GET /v1/outbound/integrations/{integration}/ai-alerts":                            "ListOutboundAIBudgetAlerts",
 	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
+	"GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content":        "GetOutboundAIRequestContent",
+	"POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays":       "CreateOutboundAIReplay",
+	"GET /v1/outbound/ai-replays/{replay}":                                             "GetOutboundAIReplay",
+	"PUT /v1/outbound/integrations/{integration}/ai-content-policy":                    "SetOutboundAIContentPolicy",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
 	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",
@@ -791,6 +909,16 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
+	// MCP admission evidence and independent catalog monitoring roles.
+	"GET /v1/mcp/admissions/{id}":                           "GetMCPAdmissionReceipt",
+	"GET /v1/deployments/{id}/mcp-admissions":               "ListMCPAdmissionHistory",
+	"GET /v1/apps/{slug}/mcp-catalog-monitor":               "GetMCPCatalogMonitor",
+	"PUT /v1/apps/{slug}/mcp-catalog-monitor":               "ConfigureMCPCatalogMonitor",
+	"GET /v1/mcp-connection-health":                         "GetMCPConnectionHealth",
+	"GET /v1/mcp-oauth-retirements":                         "ListMCPOAuthRetirements",
+	"POST /v1/mcp-oauth-retirements/{id}":                   "RecoverMCPOAuthRetirement",
+	"POST /v1/apps/{slug}/mcp-catalog-monitor/oauth":        "MCPCatalogOAuth",
+	"POST /v1/apps/{slug}/mcp-catalog-monitor/observations": "ReportMCPCatalogObservation",
 	// ADR-426: typed MCP hosting probes and task rollout operations.
 	"GET /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health": "ProbeMCPInstanceHealth",
 	"POST /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe": "ProbeMCPInstanceProtocol",
@@ -876,6 +1004,7 @@ var methodRouteMap = map[string]string{
 	// cmd/gregale/commands_jobs.go.
 	"GET /v1/jobs":                                       "ListJobs",
 	"POST /v1/jobs":                                      "CreateJob",
+	"POST /v1/image-runs":                                "CreateImageRun",
 	"GET /v1/jobs/{name}":                                "GetJob",
 	"PATCH /v1/jobs/{name}":                              "UpdateJob",
 	"DELETE /v1/jobs/{name}":                             "DeleteJob",
@@ -889,6 +1018,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download": "DownloadJobArtifact",
 	"POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry":                        "RetryJobTask",
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs":                          "GetJobTaskLogs",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream":                   "StreamJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
@@ -1141,6 +1271,9 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "PutWebhookAutomationBinding",
 	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":             "GetWebhookAutomationBinding",
 	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/automation-binding":          "DeleteWebhookAutomationBinding",
+	"PUT /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":              "PutOperationWebhookBinding",
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":              "GetOperationWebhookBinding",
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding":           "DeleteOperationWebhookBinding",
 	"GET /v1/apps/{slug}/inbound-webhooks/{id}/automation-receipts/{event_id}": "GetWebhookAutomationReceipt",
 	"GET /v1/apps/{slug}/inbound-webhooks":                                     "ListInboundWebhookEndpoints",
 	"POST /v1/apps/{slug}/inbound-webhooks":                                    "CreateInboundWebhookEndpoint",
@@ -1331,6 +1464,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/queues/send":                                       "QueueSend",
 	"POST /v1/apps/{slug}/queues/receive":                                    "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                                   "AckQueueRow",
+	"POST /v1/apps/{slug}/queues/{queue}/leases":                             "LeaseQueueMessages",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:ack":                         "AckQueueLeases",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:nack":                        "NackQueueLeases",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:extend":                      "ExtendQueueLeases",
 	"GET /v1/apps/{slug}/queues/state":                                       "QueueState",
 	"GET /v1/apps/{slug}/queues/peek":                                        "QueuePeek",
 	"GET /v1/apps/{slug}/queues/dead_letter":                                 "QueueDeadLetter",
@@ -1368,7 +1505,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invocations":                                                    "ListInvocations",
 	"GET /v1/invocations/{id}":                                               "GetInvocation",
 
-	// ADR-638: historical subscription replay is a metadata-only preview.
+	// ADR-645: historical subscription replay is a metadata-only preview.
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replay-preview": "PreviewEventReplay",
 	// ADR-639: historical subscription replay is a bounded durable backfill.
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/replays": "CreateEventReplayBackfill",
@@ -1377,63 +1514,96 @@ var methodRouteMap = map[string]string{
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
 
 	// Workflow recovery policy and operator routes use the public client names.
-	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                         "GetEventRecoveryByRequest",
-	"GET /v1/apps/{slug}/recovery-policy":                                                 "GetWorkflowRecoveryPolicy",
-	"GET /v1/apps/{slug}/recovery-policy/health":                                          "GetWorkflowRecoveryPolicyHealth",
-	"GET /v1/apps/{slug}/recovery-policy/history":                                         "GetWorkflowRecoveryHistory",
-	"GET /v1/apps/{slug}/recovery-policy/queue":                                           "GetWorkflowRecoveryAutomaticQueue",
-	"GET /v1/apps/{slug}/recovery-policy/report":                                          "GetWorkflowRecoveryReport",
-	"GET /v1/apps/{slug}/recovery-policy/reviews":                                         "ListWorkflowRecoveryPolicyReviews",
-	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}":                              "GetWorkflowRecoveryPolicyReview",
-	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status":                       "GetWorkflowRecoveryReviewStatus",
-	"GET /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}":               "GetWorkflowRecoveryActionReceipt",
-	"POST /v1/apps/{slug}/recovery-policy/change-preview":                                 "PreviewWorkflowRecoveryPolicyChange",
-	"POST /v1/apps/{slug}/recovery-policy/control":                                        "ControlWorkflowRecoveryPolicy",
-	"POST /v1/apps/{slug}/recovery-policy/evaluate":                                       "EvaluateWorkflowRecoveryPolicy",
-	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress": "SuppressWorkflowRecoveryAutomaticAction",
-	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision":                    "DecideWorkflowRecoveryPolicyReview",
-	"POST /v1/event-recoveries/{jobID}/workflow-cancel":                                   "CancelWorkflowRecoveryExecution",
-	"POST /v1/event-recoveries/{jobID}/workflow-cancellation-preview":                     "PreviewWorkflowRecoveryCancellation",
-	"PUT /v1/apps/{slug}/recovery-policy":                                                 "SetWorkflowRecoveryPolicy",
+	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                                       "GetEventRecoveryByRequest",
+	"GET /v1/apps/{slug}/recovery-policy":                                                               "GetWorkflowRecoveryPolicy",
+	"GET /v1/apps/{slug}/recovery-policy/health":                                                        "GetWorkflowRecoveryPolicyHealth",
+	"POST /v1/apps/{slug}/workflow-failures/{failureID}/recovery-reviews":                               "PrepareWorkflowInitialRecoveryReview",
+	"GET /v1/apps/{slug}/initial-recovery-reviews/{reviewID}":                                           "GetWorkflowInitialRecoveryReview",
+	"GET /v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence":                                  "DiagnoseWorkflowInitialEvidence",
+	"POST /v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence/repair":                          "RepairWorkflowInitialEvidence",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence":                "DiagnoseWorkflowRetryEvidence",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/repair":        "RepairWorkflowRetryEvidence",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent":         "DiagnoseWorkflowRetryParentEvidence",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent/repair": "RepairWorkflowRetryParentEvidence",
+	"POST /v1/apps/{slug}/initial-recovery-reviews/{reviewID}/decision":                                 "DecideWorkflowInitialRecoveryReview",
+	"GET /v1/apps/{slug}/initial-recovery-reviews":                                                      "ListWorkflowInitialRecoveryReviews",
+	"GET /v1/apps/{slug}/workflow-failures":                                                             "ListWorkflowInitialFailures",
+	"GET /v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview":                                "PreviewWorkflowInitialRecovery",
+	"GET /v1/apps/{slug}/recovery-policy/history":                                                       "GetWorkflowRecoveryHistory",
+	"GET /v1/apps/{slug}/recovery-policy/queue":                                                         "GetWorkflowRecoveryAutomaticQueue",
+	"GET /v1/apps/{slug}/recovery-policy/report":                                                        "GetWorkflowRecoveryReport",
+	"GET /v1/apps/{slug}/recovery-policy/reviews":                                                       "ListWorkflowRecoveryPolicyReviews",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}":                                            "GetWorkflowRecoveryPolicyReview",
+	"GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/status":                                     "GetWorkflowRecoveryReviewStatus",
+	"GET /v1/event-recoveries/{jobID}/workflow-action-receipts/{requestID}":                             "GetWorkflowRecoveryActionReceipt",
+	"POST /v1/apps/{slug}/recovery-policy/change-preview":                                               "PreviewWorkflowRecoveryPolicyChange",
+	"POST /v1/apps/{slug}/recovery-policy/control":                                                      "ControlWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/evaluate":                                                     "EvaluateWorkflowRecoveryPolicy",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/suppress":               "SuppressWorkflowRecoveryAutomaticAction",
+	"POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/decision":                                  "DecideWorkflowRecoveryPolicyReview",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancel":                                                 "CancelWorkflowRecoveryExecution",
+	"POST /v1/event-recoveries/{jobID}/workflow-cancellation-preview":                                   "PreviewWorkflowRecoveryCancellation",
+	"PUT /v1/apps/{slug}/recovery-policy":                                                               "SetWorkflowRecoveryPolicy",
 
 	// Events delivery controls and durable recovery use descriptive SDK verbs.
-	"GET /v1/apps/{slug}/workflow-event-replay-preview":                                 "PreviewWorkflowEventReplay",
-	"POST /v1/apps/{slug}/workflow-event-replays":                                       "CreateWorkflowEventReplayBackfill",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control":         "GetEventSubscriptionDeliveryControl",
-	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause":  "PauseEventSubscription",
-	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume": "ResumeEventSubscription",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                   "GetEventConsumerHealth",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":          "GetEventConsumerDeliveryHealth",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health":         "GetEventConsumerExecutionHealth",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "GetEventSubscriptionRetryPolicy",
-	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":             "SetEventSubscriptionRetryPolicy",
-	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":          "ResetEventSubscriptionRetryPolicy",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":          "GetEventCircuitBreaker",
-	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":          "SetEventCircuitBreaker",
-	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":       "DisableEventCircuitBreaker",
-	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker/reset":   "ResetEventCircuitBreaker",
-	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":          "GetEventSubscriptionSchemaVersions",
-	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":          "SetEventSubscriptionSchemaVersions",
-	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":       "ResetEventSubscriptionSchemaVersions",
-	"POST /v1/event-schemas:preview-rollout":                                            "PreviewEventSchemaRollout",
-	"GET /v1/apps/{slug}/event-recoveries":                                              "ListEventRecoveries",
-	"POST /v1/apps/{slug}/event-recoveries":                                             "CreateEventRecovery",
-	"GET /v1/apps/{slug}/event-recoveries/health":                                       "GetEventRecoveryHealth",
-	"POST /v1/apps/{slug}/event-recoveries/preview":                                     "PreviewEventRecovery",
-	"GET /v1/event-recoveries/{jobID}":                                                  "GetEventRecovery",
-	"GET /v1/event-recoveries/{jobID}/items":                                            "ListEventRecoveryItems",
-	"GET /v1/event-recoveries/{jobID}/notifications":                                    "GetEventRecoveryNotifications",
-	"GET /v1/event-recoveries/{jobID}/notifications/retry-preview":                      "PreviewEventRecoveryNotificationRetry",
-	"POST /v1/event-recoveries/{jobID}/notifications/retry":                             "RetryEventRecoveryNotifications",
-	"GET /v1/apps/{slug}/event-recoveries/notification-retry-backlog":                   "ListEventRecoveryNotificationRetryBacklog",
-	"GET /v1/event-recoveries/{jobID}/notification-retry-decisions":                     "ListEventRecoveryNotificationRetryHistory",
-	"GET /v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}":         "GetEventRecoveryNotificationRetryDecision",
-	"GET /v1/event-recoveries/{jobID}/history":                                          "ListEventRecoveryHistory",
-	"GET /v1/event-recoveries/{jobID}/preflight":                                        "GetEventRecoveryPreflight",
-	"POST /v1/event-recoveries/{jobID}/cancel":                                          "CancelEventRecovery",
-	"POST /v1/event-recoveries/{jobID}/pause":                                           "PauseEventRecovery",
-	"POST /v1/event-recoveries/{jobID}/resume":                                          "ResumeEventRecovery",
-	"PUT /v1/event-recoveries/{jobID}/rate":                                             "SetEventRecoveryRate",
+	"GET /v1/apps/{slug}/workflow-event-replay-preview":                                                         "PreviewWorkflowEventReplay",
+	"POST /v1/apps/{slug}/workflow-event-replays":                                                               "CreateWorkflowEventReplayBackfill",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control":                                 "GetEventSubscriptionDeliveryControl",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause":                          "PauseEventSubscription",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume":                         "ResumeEventSubscription",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands":               "ListEventSubscriptionCapacityCommands",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}":   "GetEventSubscriptionCapacityCommand",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity":                        "SetEventSubscriptionCapacity",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                                           "GetEventConsumerHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":                                  "GetEventConsumerDeliveryHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview":           "PreviewEventExecutionLineageRetries",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs":              "ListEventExecutionLineageRetryJobs",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs":             "CreateEventExecutionLineageRetryJob",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}":  "GetEventExecutionLineageRetryJob",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases":                   "ListEventExecutionLineageCases",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases/{outboxID}/retry": "RetryEventExecutionLineageCase",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation":                         "GetEventExecutionReconciliation",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation":                        "RequestEventExecutionReconciliation",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health":                                 "GetEventConsumerExecutionHealth",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":                                     "GetEventSubscriptionRetryPolicy",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":                                     "SetEventSubscriptionRetryPolicy",
+	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/retry-policy":                                  "ResetEventSubscriptionRetryPolicy",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":                                  "GetEventCircuitBreaker",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":                                  "SetEventCircuitBreaker",
+	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker":                               "DisableEventCircuitBreaker",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/circuit-breaker/reset":                           "ResetEventCircuitBreaker",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":                                  "GetEventSubscriptionSchemaVersions",
+	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":                                  "SetEventSubscriptionSchemaVersions",
+	"DELETE /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions":                               "ResetEventSubscriptionSchemaVersions",
+	"POST /v1/event-schemas:preview-rollout":                                                                    "PreviewEventSchemaRollout",
+	"GET /v1/apps/{slug}/event-recoveries":                                                                      "ListEventRecoveries",
+	"POST /v1/apps/{slug}/event-recoveries":                                                                     "CreateEventRecovery",
+	"GET /v1/apps/{slug}/event-recoveries/health":                                                               "GetEventRecoveryHealth",
+	"POST /v1/apps/{slug}/event-recoveries/preview":                                                             "PreviewEventRecovery",
+	"GET /v1/event-recoveries/{jobID}":                                                                          "GetEventRecovery",
+	"GET /v1/event-recoveries/{jobID}/items":                                                                    "ListEventRecoveryItems",
+	"GET /v1/event-recoveries/{jobID}/notifications":                                                            "GetEventRecoveryNotifications",
+	"GET /v1/event-recoveries/{jobID}/notifications/retry-preview":                                              "PreviewEventRecoveryNotificationRetry",
+	"POST /v1/event-recoveries/{jobID}/notifications/retry":                                                     "RetryEventRecoveryNotifications",
+	"GET /v1/apps/{slug}/event-recoveries/notification-retry-backlog":                                           "ListEventRecoveryNotificationRetryBacklog",
+	"GET /v1/event-recoveries/{jobID}/notification-retry-decisions":                                             "ListEventRecoveryNotificationRetryHistory",
+	"GET /v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}":                                 "GetEventRecoveryNotificationRetryDecision",
+	"GET /v1/event-recoveries/{jobID}/history":                                                                  "ListEventRecoveryHistory",
+	"GET /v1/event-recoveries/{jobID}/preflight":                                                                "GetEventRecoveryPreflight",
+	"POST /v1/event-recoveries/{jobID}/cancel":                                                                  "CancelEventRecovery",
+	"POST /v1/event-recoveries/{jobID}/pause":                                                                   "PauseEventRecovery",
+	"POST /v1/event-recoveries/{jobID}/resume":                                                                  "ResumeEventRecovery",
+	"PUT /v1/event-recoveries/{jobID}/rate":                                                                     "SetEventRecoveryRate",
+
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/controls":   "ListEventExecutionLineageRetryJobControls",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/pause":     "PauseEventExecutionLineageRetryJob",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/resume":    "ResumeEventExecutionLineageRetryJob",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel":    "CancelEventExecutionLineageRetryJob",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill":                     "GetEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill":                    "RequestEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause":  "PauseEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume": "ResumeEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel": "CancelEventExecutionLineageCaseBackfill",
 
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style

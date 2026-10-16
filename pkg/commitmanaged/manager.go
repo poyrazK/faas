@@ -32,6 +32,7 @@ type Manager struct {
 	Identities        []*age.X25519Identity
 	Policy            commitwork.NetworkPolicy
 	AcceptedRetention time.Duration
+	RealtimeEnabled   bool
 	// Open is injectable for isolated acceptance environments. Production uses
 	// the policy-enforcing TLS dialer. Each pool is closed after its bounded tick.
 	Open   func(context.Context, string, commitwork.NetworkPolicy) (*pgxpool.Pool, error)
@@ -126,6 +127,16 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	if _, cleanupErr := relay.Cleanup(ctx, time.Now().UTC().Add(-retention), 32); cleanupErr != nil {
 		return count, "cleanup_pending", nil
 	}
+	var realtimeBacklog *commitwork.Backlog
+	if m.RealtimeEnabled {
+		n, observed, realtimeErr := m.tickRealtime(ctx, pool, src)
+		count += n
+		realtimeBacklog = observed
+		err = errors.Join(err, realtimeErr)
+		if realtimeErr != nil && observed == nil {
+			return count, "status_unavailable", nil
+		}
+	}
 	rows, blockedErr := pool.Query(ctx, `SELECT event_id::text,left(event_type,256),
  CASE WHEN blocked_code IN ('invalid_event','invalid_routing','identity_conflict','destination_unqualified','payload_too_large','acceptance_rejected') THEN blocked_code ELSE 'blocked' END,created_at
  FROM public.gregale_outbox WHERE accepted_at IS NULL AND blocked_code IS NOT NULL ORDER BY created_at,event_id LIMIT 32`)
@@ -150,6 +161,13 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 		return count, "blocked_status_pending", nil
 	}
 	backlog, backlogErr := relay.Backlog(ctx)
+	if realtimeBacklog != nil {
+		backlog.Pending += realtimeBacklog.Pending
+		backlog.Blocked += realtimeBacklog.Blocked
+		if realtimeBacklog.OldestPending != nil && (backlog.OldestPending == nil || realtimeBacklog.OldestPending.Before(*backlog.OldestPending)) {
+			backlog.OldestPending = realtimeBacklog.OldestPending
+		}
+	}
 	var snapshot *commitwork.Backlog
 	if backlogErr == nil {
 		snapshot = &backlog

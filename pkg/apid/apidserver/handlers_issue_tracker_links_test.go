@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// adr: 1208
+// adr: 1408
 func TestIssueTrackerLinkManagementAndReporterIsolation(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "tracker-links")

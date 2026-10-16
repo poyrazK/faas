@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 1201
+// adr: 1401
 func TestIssueDeploymentArtifactSymbolicationRESTAndOTLP(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "artifact-symbolication")

@@ -16,6 +16,11 @@ func (m *MemStore) detachGitSourceLocked(accountID, sourceID string, generation 
 	if memory.source.Detached || memory.source.Generation != generation || memory.source.Spec.Mode != "report" {
 		return ErrConflict
 	}
+	for _, r := range memory.retirements {
+		if r.Phase != "recovered" && r.Phase != "cancelled" {
+			return ErrConflict
+		}
+	}
 	for _, effect := range memory.effects {
 		if effect.CompletedAt == nil {
 			return ErrConflict
@@ -60,6 +65,9 @@ func (m *MemStore) RebindEnvironmentGitSource(_ context.Context, accountID, sour
 	if spec.Validate() != nil || spec.Mode != "report" || spec.Prune {
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
+	if spec.Provider == "" {
+		spec.Provider = "github"
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	memory, ok := m.environmentGitOps[sourceID]
@@ -67,7 +75,8 @@ func (m *MemStore) RebindEnvironmentGitSource(_ context.Context, accountID, sour
 		return EnvironmentGitSource{}, ErrNotFound
 	}
 	project := m.projects[memory.source.ProjectID]
-	if project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID {
+	if spec.Provider == "github" && (project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID) ||
+		spec.Provider == "gitlab" && m.gitlabOAuthConnections[accountID].AccountID == "" {
 		return EnvironmentGitSource{}, ErrNotFound
 	}
 	if env, err := m.projectEnvironmentBySlugLocked(memory.source.ProjectID, memory.source.EnvironmentSlug); err != nil || env.ID != memory.source.EnvironmentID {
@@ -118,12 +127,15 @@ func (s *PgStore) RebindEnvironmentGitSource(ctx context.Context, accountID, sou
 	if spec.Validate() != nil || spec.Mode != "report" || spec.Prune {
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
+	if spec.Provider == "" {
+		spec.Provider = "github"
+	}
 	var result EnvironmentGitSource
 	err := s.withGitSourceLifecycle(ctx, accountID, sourceID, func(tx pgx.Tx, source EnvironmentGitSource) error {
 		if err := detachGitSourceSQL(ctx, tx, source, generation); err != nil {
 			return err
 		}
-		row, err := sqlc.New().CreateEnvironmentGitSource(ctx, tx, sqlc.CreateEnvironmentGitSourceParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(source.ProjectID), EnvironmentSlug: source.EnvironmentSlug, RepositoryID: spec.RepositoryID, InstallationID: spec.InstallationID, Repository: spec.Repository, SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune})
+		row, err := sqlc.New().CreateEnvironmentGitSource(ctx, tx, sqlc.CreateEnvironmentGitSourceParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(source.ProjectID), EnvironmentSlug: source.EnvironmentSlug, RepositoryID: spec.RepositoryID, InstallationID: spec.InstallationID, Repository: spec.Repository, SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune, Provider: spec.Provider})
 		if err != nil {
 			return mapErr(err)
 		}

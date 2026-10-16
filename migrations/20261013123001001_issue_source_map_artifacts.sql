@@ -1,5 +1,4 @@
 -- +goose Up
--- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS issue_source_map_artifacts (
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  deployment_id uuid NOT NULL,
@@ -15,7 +14,6 @@ CREATE TABLE IF NOT EXISTS issue_source_map_artifacts (
  CHECK((canonical_manifest IS NULL) = (retired_at IS NOT NULL)),
  CHECK(canonical_manifest IS NULL OR octet_length(canonical_manifest::text) <= 4259840)
 );
--- +goose StatementEnd
 
 -- +goose Down
 DROP TABLE IF EXISTS issue_source_map_artifacts;

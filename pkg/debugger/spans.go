@@ -27,6 +27,7 @@ type StoredSpan struct {
 	DurationNanos     uint64            `json:"duration_nanos"`
 	Status            string            `json:"status"`
 	DBStatement       string            `json:"db_statement"`
+	ErrorType         string            `json:"error_type"`
 	Attributes        map[string]string `json:"attributes"`
 }
 
@@ -70,8 +71,9 @@ func ParseSpans(raw []byte) ([]api.DebugTelemetrySpan, bool) {
 			StartTime:      debugEvidenceTime(span.StartTimeUnixNano),
 			EndTime:        debugEvidenceTime(span.EndTimeUnixNano),
 			DurationNanos:  span.DurationNanos,
-			Status:         boundDebugEvidenceText(span.Status, api.DebugEvidenceMaxSpanTextBytes),
+			Status:         NormalizeSpanStatus(span.Status),
 			DBStatement:    sanitizeDebugDBStatement(span.DBStatement),
+			ErrorType:      sanitizeDebugErrorType(span.Status, span.ErrorType),
 			DependencyType: dependencyType,
 			DependencyKind: dependencyKind,
 			DependencyName: dependencyName,
@@ -129,6 +131,42 @@ func boundDebugEvidenceText(value string, maxBytes int) string {
 	}
 	value = safetext.Truncate(value, maxBytes)
 	return value
+}
+
+// NormalizeSpanStatus maps retained span status to "ok", "error" or "".
+// Rows written before ingest normalized OTLP codes carry the raw enum names
+// ("STATUS_CODE_ERROR"); anything else unrecognised is dropped rather than
+// echoed.
+func NormalizeSpanStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "ERROR", "STATUS_CODE_ERROR":
+		return "error"
+	case "OK", "STATUS_CODE_OK":
+		return "ok"
+	default:
+		return ""
+	}
+}
+
+// debugErrorTypeMaxBytes bounds a span failure class such as
+// "QueryTimeout", "java.net.SocketTimeoutException" or "503".
+const debugErrorTypeMaxBytes = 96
+
+// sanitizeDebugErrorType keeps an error span's failure class only when it
+// looks like a type name or code. Free text (an exception message mistakenly
+// sent as error.type) is dropped instead of being trimmed into evidence.
+func sanitizeDebugErrorType(status, errorType string) string {
+	errorType = strings.TrimSpace(errorType)
+	if NormalizeSpanStatus(status) != "error" || errorType == "" || len(errorType) > debugErrorTypeMaxBytes {
+		return ""
+	}
+	for i := 0; i < len(errorType); i++ {
+		c := errorType[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && !strings.ContainsRune("._:$/-", rune(c)) {
+			return ""
+		}
+	}
+	return errorType
 }
 
 func sanitizeDebugDBStatement(statement string) string {

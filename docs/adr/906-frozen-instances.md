@@ -91,6 +91,21 @@ Prototype (`TestMetalFreezeThawCycle`, this ADR): see "Prototype results".
 6. **Host swap is compressed and memory-only.** Compute hosts get zswap with
    writeback disabled for tenant slices. Without it, freezing still reclaims
    clean file pages; the frozen budget measures what is actually resident.
+   (Amended 2026-10-15, as built: the `zswap` Ansible role, off by default
+   per host, enables zswap with lz4 and no shrinker in front of a swapfile
+   that only provides slots, sets `memory.zswap.writeback=0` and
+   `MemoryZSwapMax` on `faas-tenant.slice`, and `MemorySwapMax=0` on the
+   control-plane, builder, system and user slices and on `init.scope`. vmmd
+   writes `memory.swap.max=0` on every running VM and opens swap only while a
+   VM is frozen, and only when it finds zswap enabled, a swap device and
+   writeback disabled on an ancestor of the VM's cgroup; the fence keeps the
+   value. A freeze does not reclaim by default, so a thaw stays fast. Under
+   memory pressure schedd first asks vmmd to compress a frozen VM
+   (FreezeInstance with reclaim on a frozen instance): if that frees at least
+   half its memory, the VM stays frozen and its reservation books the smaller
+   footprint; otherwise, or on a host without the role
+   (`frozen_compress_unavailable`), it parks as before.
+   `schedd_frozen_compress_total{outcome}` counts the outcomes.)
 7. **Reclaim asks only for what can go.** vmmd requests the cgroup's file
    pages, plus its anonymous pages when the cgroup can swap, in 16 MiB
    chunks, and stops at the first `EAGAIN` or after 2 s. On the swapless n2
@@ -102,7 +117,8 @@ Prototype (`TestMetalFreezeThawCycle`, this ADR): see "Prototype results".
 1. vmmd `Manager.Freeze` / `Thaw` and `JailerVMM.PauseVM` /
    `ReclaimVMMemory`, with unit and metal tests. This is the prototype.
 2. Host zswap (`systemd_slices` / `host_hardening` roles) with
-   `memory.zswap.writeback = 0` on tenant slices.
+   `memory.zswap.writeback = 0` on tenant slices. (Built 2026-10-15 as the
+   `zswap` role; see decision 6.)
 3. vmmd RPC, schedd `frozen` state (CHECK constraint, migration), frozen
    budget and TTL in `pkg/api/limits.go`, gateway thaw path, metrics
    (`vmmd_freeze_seconds`, `vmmd_thaw_seconds`, `node_frozen_resident_bytes`).
@@ -165,6 +181,40 @@ default. Instances restored from a snapshot are the common case, and for
 them that keeps the latency win at almost no memory cost. Swap-backed
 reclaim should be kept for host pressure, as in the ADR-909 overcommit
 prototype, rather than applied to every freeze.
+
+## Zswap at density (measured 2026-10-15)
+
+`TestMetalFreezeDensity` again, on n2 with memory-only zswap set up as the
+`zswap` role does (lz4, writeback off, swap closed to every other cgroup).
+Twelve 1 GiB Node VMs were restored from one snapshot and then served
+traffic (`FAAS_TEST_FREEZE_TRAFFIC`: four requests at a time per VM, JSON
+reads with a CPU-bound request every 50th) before they froze:
+
+| traffic | own (anonymous) memory per VM | swap | VM cgroup per VM, before → after freeze | compress p50 | thaw first byte p50 / p99 | first CPU-bound request p50 | kept compressed by schedd's rule |
+|---|---|---|---|---|---|---|---|
+| 60 s | 42 MB | none | 45.5 → 44.4 MB | — | 8.2 / 11 ms | 26 ms | — |
+| 60 s | 42 MB | zswap | 44.7 → 12.2 MB | 111 ms | 33 / 39 ms | 157 ms | 12 of 12 |
+| 180 s | 99 MB | zswap | 102.8 → 27.7 MB | 233 ms | 35 / 51 ms | 282 ms | 12 of 12 |
+
+A snapshot restore of the same app reached first byte in 373–416 ms p50
+and its first CPU-bound request took 401–409 ms.
+
+- **Restored instances that have served traffic gain too.** After 60 s a
+  restored VM owned 42 MB, close to prod's 48–66 MB. Without swap a freeze
+  freed none of it. zswap held it at 3.7–3.9× (503 MB in a 130 MB pool):
+  32 MB freed per VM after 60 s and 74 MB after 180 s, and every VM passed
+  schedd's rule (at least 16 MB and half its memory freed).
+- **Cold-booted instances** (about 300 MB anonymous) went from 310 to
+  120 MB per VM at 2.5× (3,566 MB in a 1,426 MB pool). Compressing took
+  0.88 s p50, and thaws reached first byte in 83 ms p50 (241 ms p99), with
+  556 ms for the first CPU-bound request.
+- **A compressed thaw stays well ahead of a restore.** Against the
+  uncompressed thaw (8 ms to first byte, 26 ms for the CPU-bound request)
+  it adds about 25 ms to first byte and 130–260 ms to the first CPU-bound
+  request, so compression stays a fallback for memory pressure and a
+  freeze still does not reclaim by default.
+- **Nothing else swapped.** With `init.scope` also at `MemorySwapMax=0`,
+  no cgroup outside the tenant VMs held swap after the runs.
 
 ## Prototype results
 

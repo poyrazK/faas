@@ -1,0 +1,74 @@
+version: 1
+assertion_profiles:
+  timeout-contract:
+    request_deadlines:
+      dependency-probe:
+        within: 750ms
+        min_samples: 3
+        expect: {status: 504, content_type: application/json, json: {'/error': deadline_exceeded, '/retryable': true}}
+  successful-deadline:
+    request_deadlines:
+      dependency-probe: {within: 750ms, min_samples: 3}
+  connection-limit:
+    connection_attempts: {request: dependency-probe, max_attempts_per_request: 2, min_requests: 3}
+  health-stays-responsive:
+    healthy_routes:
+      health: {p95: 750ms, error_rate: 0, min_samples: 3}
+  dependency-recovers:
+    recovery_deadlines:
+      dependency-probe:
+        within: 1s
+        sustain: 1s
+        window: 1s
+        thresholds: {p95: 750ms, error_rate: 0, min_samples: 2}
+suites:
+  request-deadlines:
+    scenarios:
+      - {scenario: request-deadlines, engine: real-vm, profile: warm}
+scenarios:
+  request-deadlines:
+    project: request-deadlines
+    source: ./native-probe
+    timeout: 5m
+    secrets:
+      GREGALE_TCP_CAMPAIGN_FIXTURE: '1'
+      GREGALE_POOL_FIXTURE: '1'
+      GREGALE_DEADLINE_FIXTURE: '1'
+      PROBE_DEPENDENCY_HOST: ${service.payment.host}
+      PROBE_DEPENDENCY_PORT: ${service.payment.port}
+      PROBE_DELAY_MS: '25'
+    services:
+      payment:
+        source: ./native-probe
+        tcp_ports: [6379]
+        secrets:
+          GREGALE_TCP_CAMPAIGN_FIXTURE: '1'
+    steps:
+      - name: baseline
+        requests:
+          - {name: ready, method: GET, path: /dependency, expect: {status: 200, json: {'/dependency': reachable}}}
+      - name: fault-campaign
+        requests:
+          - {name: dependency-probe, method: GET, path: /dependency, expect: {status: 200, json: {'/dependency': reachable}}}
+          - {name: health, method: GET, path: /, expect: {status: 200, json: {'/ready': true}}}
+        load:
+          connection_leaks: {path: /connections, within: 1s, sustain: 1s, max_extra: 2}
+          duration: 8s
+          streams:
+            - {name: dependency, requests: [dependency-probe], rate: 4, vus: 4}
+            # The schedule pauses every stream at each phase change until in-flight
+            # requests finish (up to the dependency deadline). Six VUs absorb a
+            # pause of about a second at this rate without dropping arrivals.
+            - {name: health, requests: [health], rate: 5, vus: 6}
+          thresholds: {error_rate: 1}
+          chaos_schedule:
+            - {name: baseline, duration: 2s, assertions: [health-stays-responsive, successful-deadline]}
+            - name: fault
+              duration: 2s
+              assertions: [connection-limit, health-stays-responsive, timeout-contract]
+              rules:
+                - {from: request-deadlines, to: payment, kind: tcp_timeout, port: 6379, direction: downstream, percent: 100, min_matches: 1}
+            - {name: recovery, duration: 4s, assertions: [health-stays-responsive, dependency-recovers, successful-deadline]}
+      - name: restored
+        requests:
+          - {name: dependency-restored, method: GET, path: /dependency, expect: {status: 200, json: {'/dependency': reachable}}}

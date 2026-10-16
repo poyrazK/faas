@@ -3,12 +3,15 @@ package imaged
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // grype.go — Grype subprocess runner (issue #299).
@@ -198,14 +201,15 @@ func runGrypeImpl(ctx context.Context, bin, dir string) (*ScanResult, error) {
 		return nil, fmt.Errorf("imaged: prepare grype source %q: %w", dir, err)
 	}
 	defer cleanup()
-	cmd := exec.CommandContext(ctx, bin, "dir:"+scanDir, "-o", "json")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("imaged: grype scan dir %q: %w (stderr=%q)", dir, err, stderr.String())
+	return runBoundedGrypeView(ctx, bin, scanDir)
+}
+
+func runGrypeDirectory(ctx context.Context, bin, scanDir string) (*ScanResult, error) {
+	stdout, _, err := runBoundedScanCommand(ctx, api.ApplicationStandardScanMaxOutputBytes, bin, "dir:"+scanDir, "-o", "json")
+	if err != nil {
+		return nil, fmt.Errorf("imaged: grype scan failed: %w", err)
 	}
-	return parseGrypeOutput(stdout.Bytes(), dir)
+	return parseGrypeOutput(stdout, scanDir)
 }
 
 // prepareGrypeSource turns an ext4 image into a directory Grype can catalog.
@@ -242,16 +246,23 @@ func prepareGrypeSource(ctx context.Context, source string) (string, func(), err
 		root = filepath.Dir(source)
 	}
 
+	if err := validateScanExt4(ctx, image); err != nil {
+		return "", func() {}, err
+	}
 	stageDir, err := os.MkdirTemp(root, "imaged-grype-")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("mkdir extraction dir: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(stageDir) }
-	request := fmt.Sprintf("rdump / %s", stageDir)
-	cmd := exec.CommandContext(ctx, "debugfs", "-R", request, image)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	request := "rdump / " + strconv.Quote(stageDir)
+	out, diagnostics, err := runBoundedScanCommand(ctx, api.ApplicationStandardScanMaxErrorBytes, "debugfs", "-R", request, image)
+	if err != nil || !validDebugFSScanDiagnostics(out, diagnostics) {
 		cleanup()
-		return "", func() {}, fmt.Errorf("debugfs extract: %w (output=%q)", err, string(output))
+		return "", func() {}, fmt.Errorf("debugfs extraction did not complete cleanly")
+	}
+	if entries, err := os.ReadDir(stageDir); err != nil || len(entries) == 0 {
+		cleanup()
+		return "", func() {}, fmt.Errorf("debugfs extraction produced no entries")
 	}
 	// debugfs preserves image ownership and modes. The scan runs as the
 	// unprivileged imaged user in the canonical unit, so make the temporary
@@ -263,14 +274,9 @@ func prepareGrypeSource(ctx context.Context, source string) (string, func(), err
 	// CAP_FOWNER. Without it every scan failed here, wrote the fail-closed
 	// CRITICAL=9999 sidecar, and vmmd refused to boot any VM on the node —
 	// so say so in the error rather than leaving a bare EPERM.
-	if output, err := exec.CommandContext(ctx, "chmod", "-R", "a+rX", stageDir).CombinedOutput(); err != nil {
+	if _, _, err := runBoundedScanCommand(ctx, api.ApplicationStandardScanMaxErrorBytes, "chmod", "-R", "a+rX", stageDir); err != nil {
 		cleanup()
-		if strings.Contains(string(output), "Operation not permitted") {
-			return "", func() {}, fmt.Errorf(
-				"chmod extraction: %w (output=%q); the daemon likely lacks CAP_FOWNER — debugfs restored root ownership via CAP_CHOWN and chmod needs ownership or CAP_FOWNER (see AmbientCapabilities in faas-imaged.service)",
-				err, string(output))
-		}
-		return "", func() {}, fmt.Errorf("chmod extraction: %w (output=%q)", err, string(output))
+		return "", func() {}, fmt.Errorf("chmod extraction failed; verify daemon CAP_FOWNER: %w", err)
 	}
 	return stageDir, cleanup, nil
 }
@@ -282,15 +288,22 @@ func prepareGrypeSource(ctx context.Context, source string) (string, func(), err
 // error message — the bytes are the entire grype JSON; the dir
 // does not appear in the result.
 func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
+	if len(raw) > api.ApplicationStandardScanMaxOutputBytes {
+		return nil, fmt.Errorf("imaged: grype JSON exceeds bound")
+	}
 	var out grypeOutput
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("imaged: grype scan dir %q: parse json: %w", dir, err)
+	}
+	if out.Matches == nil || len(out.Matches) > api.ApplicationStandardScanMaxFindings {
+		return nil, fmt.Errorf("imaged: grype matches are missing or exceed bound")
 	}
 	dbStatus, dbVersion, dbBuiltAt, err := out.Descriptor.DB.metadata()
 	if err != nil {
 		return nil, fmt.Errorf("imaged: grype scan dir %q: parse database metadata: %w", dir, err)
 	}
 	res := &ScanResult{
+		ScannerName:      out.Descriptor.Name,
 		ScannerVersion:   out.Descriptor.Version,
 		ScannerDBStatus:  dbStatus,
 		ScannerDBVersion: dbVersion,
@@ -311,6 +324,14 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 	}
 	res.Vulnerabilities = make([]Vulnerability, 0, len(out.Matches))
 	for _, m := range out.Matches {
+		if len(m.Artifact.Locations) > api.ApplicationStandardScanMaxPaths {
+			return nil, fmt.Errorf("imaged: grype paths exceed bound")
+		}
+		for _, location := range m.Artifact.Locations {
+			if len(location.Path) > api.ApplicationStandardScanMaxPathBytes || strings.ContainsAny(location.Path, "\x00\r\n") {
+				return nil, fmt.Errorf("imaged: grype path is invalid")
+			}
+		}
 		res.bumpSeverity(normalizeGrypeSeverity(m.Vulnerability.Severity))
 		res.Vulnerabilities = append(res.Vulnerabilities, Vulnerability{
 			ID:       m.Vulnerability.ID,
@@ -322,6 +343,37 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 		})
 	}
 	return res, nil
+}
+
+func validateScanExt4(ctx context.Context, image string) error {
+	f, err := openStagedScanArtifact(image)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > api.ApplicationStandardBaseMaxArtifactBytes {
+		return fmt.Errorf("scan image is not a bounded regular ext4")
+	}
+	var magic [2]byte
+	if _, err := f.ReadAt(magic[:], 1080); err != nil || binary.LittleEndian.Uint16(magic[:]) != 0xef53 {
+		return fmt.Errorf("scan image has no ext4 superblock")
+	}
+	out, _, err := runBoundedScanCommand(ctx, api.ApplicationStandardScanMaxErrorBytes, "debugfs", "-R", "stat /", image)
+	if err != nil || !bytes.Contains(out, []byte("Inode:")) || !bytes.Contains(out, []byte("Type: directory")) {
+		return fmt.Errorf("scan ext4 root inode is unavailable")
+	}
+	return nil
+}
+
+func validDebugFSScanDiagnostics(stdout, stderr []byte) bool {
+	for _, line := range strings.Split(string(append(append([]byte(nil), stdout...), stderr...)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "debugfs ") {
+			return false
+		}
+	}
+	return true
 }
 
 // vulnFixedIn picks the first fix version Grype reports. Future
@@ -391,6 +443,7 @@ func vulnPaths(locs []grypeLocation) []string {
 // client validator rejects null. Empty-slice vs nil is the
 // distinction the wire contract relies on.
 type ScanResult struct {
+	ScannerName string `json:"-"` // private producer intake; public scan shape is unchanged
 	// ImageDigest identifies the exact deployment reference the scan was
 	// attached to. Enforce-mode promotion compares it with the deployment row
 	// before allowing the snapshot handoff.

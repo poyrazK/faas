@@ -28,7 +28,10 @@ func (s *server) getServiceWakeAhead(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrCapacity("service wake-ahead"))
 		return
 	}
-	writeJSON(w, http.StatusOK, serviceWakeAheadResponse(app.Slug, setting))
+	out := serviceWakeAheadResponse(app.Slug, setting)
+	learned := s.routeEvidence().WakeAheadLearned(r.Context(), acct, app)
+	out.Learned = &learned
+	writeJSON(w, http.StatusOK, out)
 }
 
 // putServiceWakeAhead serves PUT /v1/apps/{slug}/service-wake-ahead. apid is

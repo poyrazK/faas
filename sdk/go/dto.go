@@ -481,6 +481,9 @@ type EventConsumerPendingSample = api.EventConsumerPendingSample
 type EventConsumerHealth = api.EventConsumerHealth
 type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
 type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
+type EventSubscriptionCapacityRequest = api.EventSubscriptionCapacityRequest
+type EventSubscriptionCapacityGuard = api.EventSubscriptionCapacityGuard
+type EventSubscriptionCapacityCommandReceipt = api.EventSubscriptionCapacityCommandReceipt
 type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
 type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
 
@@ -491,6 +494,8 @@ type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
 type EventDeliveryHealthAlert = api.EventDeliveryHealthAlert
 
 type EventConsumerCapacityWaits = api.EventConsumerCapacityWaits
+type EventConsumerCapacityPressure = api.EventConsumerCapacityPressure
+type EventConsumerCapacityScope = api.EventConsumerCapacityScope
 
 type EventConsumerWaitingReasons = api.EventConsumerWaitingReasons
 
@@ -568,3 +573,41 @@ type CreateNativeLinearIssueTicketRequest = api.CreateNativeLinearIssueTicketReq
 
 type NativeLinearIssueTrackerStatus = api.NativeLinearIssueTrackerStatus
 type UpdateNativeLinearIssueTrackerStatusRequest = api.UpdateNativeLinearIssueTrackerStatusRequest
+
+type EventExecutionReconciliation = api.EventExecutionReconciliation
+
+type EventExecutionLineageCase = api.EventExecutionLineageCase
+type EventExecutionLineageCases = api.EventExecutionLineageCases
+type RetryEventExecutionLineageCaseRequest = api.RetryEventExecutionLineageCaseRequest
+
+type EventExecutionLineageRetrySelection = api.EventExecutionLineageRetrySelection
+type CreateEventExecutionLineageRetryJobRequest = api.CreateEventExecutionLineageRetryJobRequest
+type EventExecutionLineageRetryJobItem = api.EventExecutionLineageRetryJobItem
+type EventExecutionLineageRetryJob = api.EventExecutionLineageRetryJob
+type EventExecutionLineageRetryJobHealth = api.EventExecutionLineageRetryJobHealth
+type EventExecutionLineageRetryJobHealthSample = api.EventExecutionLineageRetryJobHealthSample
+
+type CancelEventExecutionLineageRetryJobRequest = api.CancelEventExecutionLineageRetryJobRequest
+
+type EventExecutionLineageCaseBackfill = api.EventExecutionLineageCaseBackfill
+type RequestEventExecutionLineageCaseBackfillRequest = api.RequestEventExecutionLineageCaseBackfillRequest
+
+type ControlEventExecutionLineageCaseBackfillRequest = api.ControlEventExecutionLineageCaseBackfillRequest
+
+type EventExecutionLineageRetryJobSummary = api.EventExecutionLineageRetryJobSummary
+type EventExecutionLineageRetryJobs = api.EventExecutionLineageRetryJobs
+type EventExecutionLineageRetryJobAttentionOptions = api.EventExecutionLineageRetryJobAttentionOptions
+type EventExecutionLineageRetryJobAttentionPage = api.EventExecutionLineageRetryJobAttentionPage
+
+type ControlEventExecutionLineageRetryJobRequest = api.ControlEventExecutionLineageRetryJobRequest
+
+type EventExecutionLineageRetryJobControlReceipt = api.EventExecutionLineageRetryJobControlReceipt
+type EventExecutionLineageRetryJobControls = api.EventExecutionLineageRetryJobControls
+type EventExecutionLineageRetryJobControlFilters = api.EventExecutionLineageRetryJobControlFilters
+
+type EventSubscriptionCapacityCommands = api.EventSubscriptionCapacityCommands
+type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityCommandsQuery
+
+type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
+
+type EventDeliveryHealthConfirmation = api.EventDeliveryHealthConfirmation

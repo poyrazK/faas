@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestOwnershipRecoverySweepSurvivesErrorsWithoutNotifications(t *testing.T) {
@@ -50,7 +51,7 @@ func TestOwnershipRecoverySweepSurvivesErrorsWithoutNotifications(t *testing.T) 
 }
 
 type stalledOwnershipStore struct {
-	state.Store
+	Store   state.Store
 	entered chan struct{}
 	calls   atomic.Int32
 }
@@ -66,7 +67,7 @@ func (s *stalledOwnershipStore) ListOrphanedAppsPage(ctx context.Context, _, _ i
 func TestOwnershipRecoveryCoalescesHintsAndCancelsStalledStore(t *testing.T) {
 	store, _, destination, _ := rebalanceTestOwners(t)
 	stalled := &stalledOwnershipStore{Store: store, entered: make(chan struct{})}
-	e := newEngine(t, stalled, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(destination.ID)
+	e := newEngine(t, statetest.NewStore(stalled), &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(destination.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -273,9 +274,7 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := origin.convergeServiceReplicasToTarget(ctx, dep.ID, desired, true); err != nil {
-			t.Fatalf("seed replicas for app %d: %v", i, err)
-		}
+		seedOwnershipRecoveryReplicas(t, origin, dep.ID, desired)
 		rows, err := listServiceReplicas(ctx, store, app.ID, dep.ID)
 		if err != nil || classifyServiceReplicas(rows).ready != desired {
 			t.Fatalf("initial replicas for %d: %+v, %v", i, rows, err)
@@ -358,5 +357,28 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 	}
 	if origin.ledger.ResidentRAM() != 0 {
 		t.Fatal("old owner admission reservation leaked")
+	}
+}
+
+// The fixture starts 120 replicas in rapid succession. Concurrent lifecycle
+// work may hold the input fence; retry only that typed refusal, through the
+// production admission path, under a short deadline.
+func seedOwnershipRecoveryReplicas(t *testing.T, e *Engine, deploymentID string, desired int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	for {
+		err := e.convergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
+		if err == nil {
+			return
+		}
+		if !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
+			t.Fatalf("seed replicas: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("runtime input fence did not settle: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }

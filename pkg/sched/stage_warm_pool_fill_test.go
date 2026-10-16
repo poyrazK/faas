@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func stagePoolSnapshot(t *testing.T, f stageSnapshotFixture, dep state.Deployment, ram int) {
@@ -226,7 +227,7 @@ func TestRecreatedStageWarmPoolFillsNewLifetime(t *testing.T) {
 }
 
 type stagePoolPublicationStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	onPublish func(state.RuntimeInstancePublication)
 }
 
@@ -267,7 +268,7 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 				}
 			}
 			vmm := &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 			if err := engine.ReconcileWarmPool(WithScope(ctx, "stage"), f.app.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -292,10 +293,10 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 	}
 }
 
-type stagePoolUnavailableOwner struct{ *state.MemStore }
+type stagePoolUnavailableOwner struct{ MemStore *state.MemStore }
 
 func (s stagePoolUnavailableOwner) RuntimeScalingStateForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeScalingState, error) {
-	dep, err := s.DeploymentByID(ctx, deploymentID)
+	dep, err := s.MemStore.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return state.RuntimeScalingState{}, err
 	}
@@ -311,7 +312,7 @@ func TestEnvironmentWarmPoolsFailClosedForUnavailableStageOwner(t *testing.T) {
 	stage := stagePoolInstance(t, f, f.stage)
 	stagePoolSnapshot(t, f, f.prod, 256)
 	vmm := &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}
-	engine := newEngine(t, stagePoolUnavailableOwner{f.store}, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(stagePoolUnavailableOwner{f.store}), vmm, &fakeNotifier{}, "1.10.0")
 	if err := engine.ReconcileEnvironmentWarmPools(ctx, f.app.ID); err == nil {
 		t.Fatal("missing stage owner failure")
 	}
@@ -325,6 +326,7 @@ type stagePoolResumeVMM struct {
 	*stagePoolPausedVMM
 	resumeCalls int
 	resumeHook  func()
+	resumeErr   error
 }
 
 func (v *stagePoolResumeVMM) ResumeWarmInstance(context.Context, string, string) error {
@@ -332,7 +334,31 @@ func (v *stagePoolResumeVMM) ResumeWarmInstance(context.Context, string, string)
 	if v.resumeHook != nil {
 		v.resumeHook()
 	}
-	return nil
+	return v.resumeErr
+}
+
+// A promotion conflict belongs to another caller: keep its lease, and let the
+// request fall through to the ordinary wake path instead of failing it.
+func TestStageWarmPromotionConflictFallsThroughWithoutDestroyingLease(t *testing.T) {
+	ctx := t.Context()
+	f := seedStageSnapshotPolicy(t, 1, false)
+	stage := stagePoolInstance(t, f, f.stage)
+	if err := f.store.SetInstanceRuntime(ctx, stage.ID, "fc-stage", "10.100.0.2", 20001); err != nil {
+		t.Fatal(err)
+	}
+	app, err := state.AppForDeployment(ctx, f.store, f.stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &stagePoolResumeVMM{stagePoolPausedVMM: &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}, resumeErr: state.ErrConflict}
+	engine := newEngine(t, f.store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, accepted, err := engine.promoteWarmInstanceLocked(ctx, app, f.account, api.MustLimitsFor(f.account.Plan), f.stage, string(state.InstanceModeNormal)); err != nil || accepted || vmm.resumeCalls != 1 || vmm.destroys != 0 {
+		t.Fatalf("conflicting promotion: accepted=%v resume=%d destroyed=%d err=%v; want fallthrough", accepted, vmm.resumeCalls, vmm.destroys, err)
+	}
+	row, err := f.store.InstanceByID(ctx, stage.ID)
+	if err != nil || row.State != string(state.StateWarm) {
+		t.Fatalf("conflicting promotion retired another caller's lease: %+v %v", row, err)
+	}
 }
 
 func TestStageWarmPromotionRejectsChangedOwnerOrInputsDuringResume(t *testing.T) {

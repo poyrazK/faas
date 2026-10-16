@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE public.issue_slack_installations (
+CREATE TABLE IF NOT EXISTS public.issue_slack_installations (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
@@ -12,8 +12,10 @@ CREATE TABLE public.issue_slack_installations (
  installed_at timestamptz NOT NULL,
  CHECK((status='connected')=(octet_length(token_sealed)>0))
 );
-CREATE INDEX issue_slack_installations_workspace ON public.issue_slack_installations(slack_app_id,workspace_id);
-CREATE TABLE public.issue_slack_oauth_flows (
+
+CREATE INDEX IF NOT EXISTS issue_slack_installations_workspace ON public.issue_slack_installations(slack_app_id,workspace_id);
+
+CREATE TABLE IF NOT EXISTS public.issue_slack_oauth_flows (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  state_hash text NOT NULL UNIQUE CHECK(state_hash ~ '^[0-9a-f]{64}$'),
@@ -22,11 +24,27 @@ CREATE TABLE public.issue_slack_oauth_flows (
  sealed bytea NOT NULL CHECK(octet_length(sealed) BETWEEN 1 AND 16384),
  expires_at timestamptz NOT NULL
 );
-CREATE INDEX issue_slack_oauth_flows_expiry ON public.issue_slack_oauth_flows(expires_at);
-ALTER TABLE public.issue_team_slack_destinations ADD COLUMN oauth_revision bigint CHECK(oauth_revision>0);
 
-ALTER TABLE public.issue_team_slack_destinations DROP CONSTRAINT issue_team_slack_destinations_token_sealed_check;
-ALTER TABLE public.issue_team_slack_destinations ADD CONSTRAINT issue_team_slack_destinations_token_sealed_check CHECK(octet_length(token_sealed)>0 OR NOT enabled);
+CREATE INDEX IF NOT EXISTS issue_slack_oauth_flows_expiry ON public.issue_slack_oauth_flows(expires_at);
+
+ALTER TABLE public.issue_team_slack_destinations ADD COLUMN IF NOT EXISTS oauth_revision bigint CHECK(oauth_revision>0);
+-- +goose StatementBegin
+
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_destinations'::regclass AND conname='issue_team_slack_destinations_token_sealed_check' AND position('NOT enabled' in pg_get_constraintdef(oid))>0) THEN
+  ALTER TABLE public.issue_team_slack_destinations DROP CONSTRAINT IF EXISTS issue_team_slack_destinations_token_sealed_check;
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_destinations'::regclass AND conname='issue_team_slack_destinations_token_sealed_check') THEN
+  ALTER TABLE public.issue_team_slack_destinations ADD CONSTRAINT issue_team_slack_destinations_token_sealed_check CHECK(octet_length(token_sealed)>0 OR NOT enabled);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

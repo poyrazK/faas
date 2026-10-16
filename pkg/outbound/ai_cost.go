@@ -8,15 +8,42 @@ import (
 	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
-// AIPrice is one resolved price-list entry in millicents per million tokens
-// (ADR-990). Resolution already replaced absent cached-input and
-// cache-write prices with the input price.
+// AIPrice is one resolved price-list entry (ADR-990). Token prices are
+// millicents per million tokens; resolution already replaced absent
+// cached-input, cache-write and input-image prices with the input price and
+// an absent output-image price with the output price. The other media
+// prices (ADR-997) are zero when absent: Image per image, AudioMinute per
+// minute of input audio and Characters per million input characters.
 type AIPrice struct {
 	ModelPrefix string
 	Input       int64
 	CachedInput int64
 	CacheWrite  int64
 	Output      int64
+	InputImage  int64
+	OutputImage int64
+	Image       int64
+	AudioMinute int64
+	Characters  int64
+}
+
+// resolveMediaPrices fills the media prices of a resolved price.
+func resolveMediaPrices(price *AIPrice, inputImage, outputImage, image, audioMinute, characters *int64) {
+	price.InputImage, price.OutputImage = price.Input, price.Output
+	if inputImage != nil {
+		price.InputImage = *inputImage
+	}
+	if outputImage != nil {
+		price.OutputImage = *outputImage
+	}
+	for _, field := range []struct {
+		dst *int64
+		src *int64
+	}{{&price.Image, image}, {&price.AudioMinute, audioMinute}, {&price.Characters, characters}} {
+		if field.src != nil {
+			*field.dst = *field.src
+		}
+	}
 }
 
 // ResolveAIPrices converts an API price list into settlement prices.
@@ -34,6 +61,8 @@ func ResolveAIPrices(entries []api.OutboundAIPriceEntry) []AIPrice {
 		if entry.CacheWriteMillicentsPerMTok != nil {
 			price.CacheWrite = *entry.CacheWriteMillicentsPerMTok
 		}
+		resolveMediaPrices(&price, entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok,
+			entry.MillicentsPerImage, entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters)
 		prices = append(prices, price)
 	}
 	return prices
@@ -68,8 +97,11 @@ func aiPriceFor(integration Integration, model string) (AIPrice, bool) {
 	if !ok {
 		return AIPrice{}, false
 	}
-	return AIPrice{ModelPrefix: entry.Model, Input: entry.Price.Input, CachedInput: entry.Price.CachedInput,
-		CacheWrite: entry.Price.CacheWrite, Output: entry.Price.Output}, true
+	price := AIPrice{ModelPrefix: entry.Model, Input: entry.Price.Input, CachedInput: entry.Price.CachedInput,
+		CacheWrite: entry.Price.CacheWrite, Output: entry.Price.Output}
+	resolveMediaPrices(&price, entry.Price.InputImage, entry.Price.OutputImage, entry.Price.Image,
+		entry.Price.AudioMinute, entry.Price.Characters)
+	return price, true
 }
 
 // aiCallCostMillicents prices one call of an integration.
@@ -91,26 +123,34 @@ func aiCostMillicents(prices []AIPrice, usage AIUsage) int64 {
 }
 
 // priceCostMillicents prices one call, rounding up to a whole millicent so
-// a budget never under-counts. Uncached input excludes cached reads and
-// cache writes, which have their own prices. Big integers keep tokens times
-// price from overflowing.
+// a budget never under-counts. Uncached input excludes cached reads, cache
+// writes and input image tokens, and text output excludes output image
+// tokens, which have their own prices. A call is priced per image only when
+// it reports no output image tokens, so a model priced both ways is not
+// charged twice (ADR-997). Big integers keep amounts times prices from
+// overflowing.
 func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
 	if !usage.Known {
 		return 0
 	}
-	uncached := usage.InputTokens - usage.CachedInputTokens - usage.CacheWriteTokens
-	if uncached < 0 {
-		uncached = 0
-	}
+	uncached := max(usage.InputTokens-usage.CachedInputTokens-usage.CacheWriteTokens-usage.InputImageTokens, 0)
+	textOutput := max(usage.OutputTokens-usage.OutputImageTokens, 0)
+	// Every term is scaled to sixty million: per-million prices by 60,
+	// per-image prices by 60,000,000 and per-minute prices by 1,000,000.
 	total := new(big.Int)
-	for _, term := range [][2]int64{
-		{uncached, price.Input}, {usage.CachedInputTokens, price.CachedInput},
-		{usage.CacheWriteTokens, price.CacheWrite}, {usage.OutputTokens, price.Output},
+	for _, term := range [][3]int64{
+		{uncached, price.Input, 60}, {usage.CachedInputTokens, price.CachedInput, 60},
+		{usage.CacheWriteTokens, price.CacheWrite, 60}, {usage.InputImageTokens, price.InputImage, 60},
+		{textOutput, price.Output, 60}, {usage.OutputImageTokens, price.OutputImage, 60},
+		{usage.Characters, price.Characters, 60}, {usage.AudioSeconds, price.AudioMinute, 1_000_000},
 	} {
-		total.Add(total, new(big.Int).Mul(big.NewInt(term[0]), big.NewInt(term[1])))
+		total.Add(total, new(big.Int).Mul(big.NewInt(term[0]), big.NewInt(term[1]*term[2])))
 	}
-	million := big.NewInt(1_000_000)
-	quotient, remainder := new(big.Int).QuoRem(total, million, new(big.Int))
+	if usage.OutputImageTokens == 0 {
+		total.Add(total, new(big.Int).Mul(big.NewInt(usage.Images), big.NewInt(price.Image*60_000_000)))
+	}
+	scale := big.NewInt(60_000_000)
+	quotient, remainder := new(big.Int).QuoRem(total, scale, new(big.Int))
 	if remainder.Sign() > 0 {
 		quotient.Add(quotient, big.NewInt(1))
 	}

@@ -1,22 +1,35 @@
 -- +goose Up
-CREATE SEQUENCE issue_tracker_source_revision_seq AS bigint;
-ALTER TABLE issue_tracker_inbound_guards ADD COLUMN source_revision bigint NOT NULL DEFAULT nextval('issue_tracker_source_revision_seq') CHECK(source_revision>0);
-CREATE TABLE issue_tracker_source_guards(
+CREATE SEQUENCE IF NOT EXISTS issue_tracker_source_revision_seq AS bigint;
+
+ALTER TABLE issue_tracker_inbound_guards ADD COLUMN IF NOT EXISTS source_revision bigint NOT NULL DEFAULT nextval('issue_tracker_source_revision_seq') CHECK(source_revision>0);
+
+CREATE TABLE IF NOT EXISTS issue_tracker_source_guards(
  issue_id uuid PRIMARY KEY REFERENCES app_issues(id) ON DELETE CASCADE,
  revision bigint NOT NULL DEFAULT nextval('issue_tracker_source_revision_seq') CHECK(revision>0)
 );
-INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues;
-ALTER TABLE issue_tracker_auto_sync
- ADD COLUMN direction text NOT NULL DEFAULT 'outbound' CHECK(direction IN ('outbound','inbound','both')),
- ADD COLUMN source_revision bigint NOT NULL DEFAULT 0 CHECK(source_revision>=0),
- ADD COLUMN pending_source_revision bigint NOT NULL DEFAULT 0 CHECK(pending_source_revision>=0),
- ADD COLUMN observed_state text NOT NULL DEFAULT '' CHECK(observed_state IN ('','open','resolved')),
- ADD CONSTRAINT issue_tracker_inbound_revision_required CHECK(direction='outbound' OR source_revision>0);
+
+INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues ON CONFLICT DO NOTHING;
+
+ALTER TABLE issue_tracker_auto_sync ADD COLUMN IF NOT EXISTS direction text NOT NULL DEFAULT 'outbound' CHECK(direction IN ('outbound','inbound','both'));
+ALTER TABLE issue_tracker_auto_sync ADD COLUMN IF NOT EXISTS source_revision bigint NOT NULL DEFAULT 0 CHECK(source_revision>=0);
+ALTER TABLE issue_tracker_auto_sync ADD COLUMN IF NOT EXISTS pending_source_revision bigint NOT NULL DEFAULT 0 CHECK(pending_source_revision>=0);
+ALTER TABLE issue_tracker_auto_sync ADD COLUMN IF NOT EXISTS observed_state text NOT NULL DEFAULT '' CHECK(observed_state IN ('','open','resolved'));
 -- +goose StatementBegin
-CREATE FUNCTION issue_tracker_source_bump(target uuid) RETURNS void LANGUAGE sql AS $$
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='issue_tracker_auto_sync'::regclass AND conname='issue_tracker_inbound_revision_required') THEN
+  ALTER TABLE issue_tracker_auto_sync ADD CONSTRAINT issue_tracker_inbound_revision_required CHECK(direction='outbound' OR source_revision>0);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+CREATE OR REPLACE FUNCTION issue_tracker_source_bump(target uuid) RETURNS void LANGUAGE sql AS $$
  INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues WHERE id=target
  ON CONFLICT(issue_id) DO UPDATE SET revision=nextval('issue_tracker_source_revision_seq');
 $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
 CREATE OR REPLACE FUNCTION issue_tracker_inbound_bump() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target uuid;
  source_change boolean;
@@ -64,6 +77,9 @@ BEGIN
  END IF;
  RETURN NULL;
 END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
 CREATE OR REPLACE FUNCTION issue_tracker_inbound_install_bump() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  INSERT INTO issue_tracker_inbound_guards(app_id)
@@ -75,8 +91,10 @@ BEGIN
  RETURN NULL;
 END $$;
 -- +goose StatementEnd
-DROP TRIGGER issue_inbound_policy_update ON issue_tracker_auto_sync;
-CREATE TRIGGER issue_inbound_policy_update AFTER UPDATE ON issue_tracker_auto_sync FOR EACH ROW
+
+DROP TRIGGER IF EXISTS issue_inbound_policy_update ON issue_tracker_auto_sync;
+
+CREATE OR REPLACE TRIGGER issue_inbound_policy_update AFTER UPDATE ON issue_tracker_auto_sync FOR EACH ROW
  WHEN (ROW(OLD.revision,OLD.enabled,OLD.source_issue_id,OLD.binding_fingerprint,OLD.baseline,OLD.source_state,OLD.pending_state,OLD.outcome,OLD.reason,OLD.claim_id,OLD.direction,OLD.source_revision,OLD.pending_source_revision,OLD.observed_state)
  IS DISTINCT FROM ROW(NEW.revision,NEW.enabled,NEW.source_issue_id,NEW.binding_fingerprint,NEW.baseline,NEW.source_state,NEW.pending_state,NEW.outcome,NEW.reason,NEW.claim_id,NEW.direction,NEW.source_revision,NEW.pending_source_revision,NEW.observed_state))
  EXECUTE FUNCTION issue_tracker_inbound_bump();

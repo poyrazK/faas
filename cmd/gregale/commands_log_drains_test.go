@@ -25,6 +25,8 @@ func logDrainTestServer(t *testing.T, created *api.CreateAppLogDrainRequest) *ht
 			writeJSONTest(w, drain)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web/log-drains":
 			writeJSONTest(w, []api.AppLogDrainResponse{drain})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/web/log-drains/drain-1":
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -107,5 +109,27 @@ func TestCmdLogDrainsAddRefusesAnUnsetCredentialVariable(t *testing.T) {
 	}
 	if created.TargetURL != "" {
 		t.Fatalf("request reached the API: %+v", created)
+	}
+}
+
+// H10-17: the usage line shows `rm --id <ID> [<slug>]`, but a slug after the
+// flags was rejected as an unexpected positional argument.
+func TestCmdLogDrainsRmAcceptsTheSlugAfterFlags(t *testing.T) {
+	logDrainTestServer(t, &api.CreateAppLogDrainRequest{})
+	for _, args := range [][]string{
+		{"rm", "--id", "drain-1", "web"},
+		{"rm", "web", "--id", "drain-1"},
+		{"rm", "--app", "web", "--id", "drain-1"},
+	} {
+		out := captureLogDrainOutput(t, false)
+		if code := cmdLogDrains(args); code != 0 {
+			t.Fatalf("log-drains %q exit = %d", args, code)
+		}
+		if !strings.Contains(out.String(), "Deleted log drain drain-1") {
+			t.Fatalf("log-drains %q output = %q", args, out.String())
+		}
+	}
+	if code := cmdLogDrains([]string{"rm", "--id", "drain-1", "web", "extra"}); code == 0 {
+		t.Fatal("two positional arguments must still be rejected")
 	}
 }

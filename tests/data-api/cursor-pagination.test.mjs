@@ -61,7 +61,7 @@ test('cursor pagination respects composite order, nulls, changing data and RLS',
   const url = `http://127.0.0.1:${gateway.address().port}`
   for (let i = 0; i < 100 && (await fetch(url + '/healthz')).status !== 200 && child.exitCode === null; i++) await new Promise(r => setTimeout(r, 50))
   assert.equal((await fetch(url + '/healthz')).status, 200, logs)
-  const { createDataClient, cursorPage, cursorFrom } = await import('../../sdk/data/dist/index.js')
+  const { createDataClient, cursorPage, cursorFrom, createCursorPager } = await import('../../sdk/data/dist/index.js')
   const alice = createDataClient({ url, accessToken: await sign('alice') }).schema('api')
   const bob = createDataClient({ url, accessToken: await sign('bob') }).schema('api')
   for (const ascending of [true,false]) for (const nullsFirst of [true,false]) {
@@ -91,6 +91,23 @@ test('cursor pagination respects composite order, nulls, changing data and RLS',
     assert.deepEqual(reversed, expected.data.map(row => row.id).reverse())
 
   }
+  const opaqueOrder = [{ column: 'rank' }, { column: 'id', unique: true }]
+  const pager = await createCursorPager({ key: crypto.getRandomValues(new Uint8Array(32)), maxPageSize: 10 })
+  const scope = { identity: 'cursor-test/alice', schemaFingerprint: config.fingerprint }
+  let continuation, opaqueIds = [], lastOpaque
+  for (let i = 0; i < 6; i++) {
+    lastOpaque = await pager.page(alice.from('orders').select('id,rank'), { order: opaqueOrder, size: 2, scope, after: continuation })
+    assert.equal(lastOpaque.result.error, null)
+    opaqueIds.push(...lastOpaque.result.data.map(row => row.id))
+    if (!lastOpaque.nextCursor) break
+    continuation = lastOpaque.nextCursor
+  }
+  assert.deepEqual(opaqueIds, [1,2,3,4,5])
+  const backwardOpaque = await pager.page(alice.from('orders').select('id,rank'), { order: opaqueOrder, size: 2, scope, before: lastOpaque.previousCursor })
+  assert.deepEqual(backwardOpaque.result.data.map(row => row.id), [4,3])
+  await assert.rejects(pager.page(bob.from('orders').select('id,rank'), { order: opaqueOrder, size: 2, scope: { ...scope, identity: 'cursor-test/bob' }, after: continuation }), error => error.code === 'incompatible_cursor')
+  await assert.rejects(pager.page(alice.from('orders').select('id,rank').eq('rank', 1), { order: opaqueOrder, size: 2, scope, after: continuation }), error => error.code === 'incompatible_cursor')
+
   const textOrder=[{column:'label'},{column:'id',unique:true}]
   const first=await cursorPage(alice.from('orders').select('id,label'),{order:textOrder,size:1})
   const escaped=await cursorPage(alice.from('orders').select('id,label'),{order:textOrder,size:1,after:cursorFrom(first.data[0],textOrder)})
@@ -108,4 +125,13 @@ test('cursor pagination respects composite order, nulls, changing data and RLS',
   // Alice's cursor cannot expand Bob's RLS visibility in either direction.
   const isolated = await cursorPage(bob.from('orders').select('id,rank'), { order, size: 10, before: cursorFrom({ rank: null, id: 5 }, order) })
   assert.equal(isolated.error, null); assert.deepEqual(isolated.data.map(row => row.id), [1])
+  await owner.query("INSERT INTO api.orders(subject,id,rank,label) SELECT 'alice',n,n,'bulk-page' FROM generate_series(100,1099) n")
+  const largePager = await createCursorPager({ key: crypto.getRandomValues(new Uint8Array(32)) })
+  const primaryOrder = [{ column: 'id', unique: true }]
+  const large = await largePager.page(alice.from('orders').select('id'), { order: primaryOrder, size: 999, scope })
+  assert.equal(large.result.data.length, 999); assert.equal(large.hasMore, true); assert.ok(large.nextCursor)
+  const tail = await largePager.page(alice.from('orders').select('id'), { order: primaryOrder, size: 999, scope, after: large.nextCursor })
+  assert.equal(tail.result.data.length, 7); assert.equal(tail.nextCursor, null)
+  assert.equal(new Set([...large.result.data, ...tail.result.data].map(row => row.id)).size, 1006)
+
 })

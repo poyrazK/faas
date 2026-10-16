@@ -97,7 +97,7 @@ func (h *Handler) ensureCapturedMultipart(ctx context.Context, req requestContex
 	if err != nil {
 		return "", err
 	}
-	r := objectstorage.MultipartCreateRequest{SessionID: u.ID, Key: u.Key, SizeBytes: u.SizeBytes,
+	r := objectstorage.MultipartCreateRequest{Checksum: u.Checksum.Policy, SessionID: u.ID, Key: u.Key, SizeBytes: u.SizeBytes,
 		Metadata: objectstorage.ObjectMetadata{ContentType: u.ContentType, CacheControl: u.Metadata.CacheControl,
 			ContentDisposition: u.Metadata.ContentDisposition, ContentEncoding: u.Metadata.ContentEncoding,
 			ContentLanguage: u.Metadata.ContentLanguage, Metadata: u.Metadata.UserMetadata, Tags: u.Metadata.Tags}}

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE public.issue_tracker_linear_connections (
+CREATE TABLE IF NOT EXISTS public.issue_tracker_linear_connections (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),

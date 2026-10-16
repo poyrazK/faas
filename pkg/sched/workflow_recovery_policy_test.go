@@ -6,12 +6,13 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"testing"
 	"time"
 )
 
 type recoveryPolicySchedulerStore struct {
-	*state.MemStore
+	MemStore          *state.MemStore
 	calls, completion int
 	fail              bool
 }
@@ -30,7 +31,7 @@ func (s *recoveryPolicySchedulerStore) ProcessNextEventRecoveryExecutionNotifica
 func TestWorkflowRecoveryPolicyScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &recoveryPolicySchedulerStore{MemStore: state.NewMemStore(), fail: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		want := api.WorkflowRecoveryPolicyPollBatch
 		if fail {
@@ -58,7 +59,7 @@ func (s *recoveryReviewNotificationSchedulerStore) ProcessNextWorkflowRecoveryRe
 func TestWorkflowRecoveryReviewNotificationScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &recoveryReviewNotificationSchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, failNotices: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		want := api.WorkflowRecoveryPolicyPollBatch
 		if fail {
@@ -86,7 +87,7 @@ func (s *recoveryReviewCompletionSchedulerStore) ProcessNextWorkflowRecoveryRevi
 func TestWorkflowRecoveryReviewCompletionScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &recoveryReviewCompletionSchedulerStore{recoveryReviewNotificationSchedulerStore: &recoveryReviewNotificationSchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, failNotices: true}, failFinished: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		want := api.WorkflowRecoveryPolicyPollBatch
 		if fail {
@@ -114,7 +115,7 @@ func (s *automaticRecoverySchedulerStore) ProcessNextWorkflowRecoveryAutomaticPo
 func TestWorkflowRecoveryAutomaticPolicyScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &automaticRecoverySchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, failAutomatic: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		want := api.WorkflowRecoveryPolicyPollBatch
 		if fail {
@@ -142,7 +143,7 @@ func (s *blockedRecoverySchedulerStore) ProcessNextWorkflowRecoveryAutomaticBloc
 func TestWorkflowRecoveryAutomaticBlockedScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &blockedRecoverySchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, failBlocked: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		want := api.WorkflowRecoveryPolicyPollBatch
 		if fail {
@@ -151,5 +152,60 @@ func TestWorkflowRecoveryAutomaticBlockedScheduler(t *testing.T) {
 		if s.blocked != want || s.completion != 1 {
 			t.Fatalf("blocked %d completion %d", s.blocked, s.completion)
 		}
+	}
+}
+
+type isolatedRecoverySchedulerStore struct {
+	*recoveryPolicySchedulerStore
+	manual, automatic           int
+	manualError, automaticError bool
+	manualWork, automaticWork   bool
+}
+
+func (s *isolatedRecoverySchedulerStore) ProcessNextWorkflowInitialManualCompletion(context.Context, time.Time) (bool, error) {
+	s.manual++
+	if s.manualError {
+		return false, errors.New("manual observation unavailable")
+	}
+	return s.manualWork, nil
+}
+func (s *isolatedRecoverySchedulerStore) ProcessNextWorkflowRecoveryAutomaticPolicy(context.Context, time.Time) (bool, error) {
+	s.automatic++
+	if s.automaticError {
+		return false, errors.New("automatic execution unavailable")
+	}
+	return s.automaticWork, nil
+}
+
+// adr: 1278
+func TestWorkflowRecoverySchedulerIndependentBatches(t *testing.T) {
+	cases := []struct {
+		name                                                   string
+		manualError, automaticError, manualWork, automaticWork bool
+	}{
+		{name: "sustained_backlogs", manualWork: true, automaticWork: true},
+		{name: "manual_failure", manualError: true, automaticWork: true},
+		{name: "automatic_failure", automaticError: true, manualWork: true},
+		{name: "manual_idle", automaticWork: true},
+		{name: "automatic_idle", manualWork: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &isolatedRecoverySchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, manualError: tc.manualError, automaticError: tc.automaticError, manualWork: tc.manualWork, automaticWork: tc.automaticWork}
+			l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
+			manualPerPass, automaticPerPass := 1, 1
+			if tc.manualWork {
+				manualPerPass = api.WorkflowInitialManualCompletionPollBatch
+			}
+			if tc.automaticWork {
+				automaticPerPass = api.WorkflowRecoveryPolicyPollBatch
+			}
+			for pass := 1; pass <= 3; pass++ {
+				l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
+				if s.manual != pass*manualPerPass || s.automatic != pass*automaticPerPass || s.completion != pass {
+					t.Fatalf("pass %d manual=%d automatic=%d downstream=%d", pass, s.manual, s.automatic, s.completion)
+				}
+			}
+		})
 	}
 }

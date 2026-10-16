@@ -1,7 +1,21 @@
 -- +goose Up
-ALTER TABLE public.issue_team_slack_deliveries DROP CONSTRAINT issue_team_slack_deliveries_last_error_check;
-ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_team_slack_deliveries_last_error_check CHECK(last_error IN ('','issue_snoozed','destination_unavailable','delivery_expired','attempts_exhausted','token_unavailable','transport_error','rate_limited','slack_unavailable','slack_rejected','invalid_auth','channel_not_found','not_in_channel','missing_scope','thread_unavailable','invalid_response'));
-CREATE TABLE public.issue_application_triage (
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_deliveries'::regclass AND conname='issue_team_slack_deliveries_last_error_check' AND position('issue_snoozed' in pg_get_constraintdef(oid))>0) THEN
+  ALTER TABLE public.issue_team_slack_deliveries DROP CONSTRAINT IF EXISTS issue_team_slack_deliveries_last_error_check;
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_deliveries'::regclass AND conname='issue_team_slack_deliveries_last_error_check') THEN
+  ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_team_slack_deliveries_last_error_check CHECK(last_error IN ('','issue_snoozed','destination_unavailable','delivery_expired','attempts_exhausted','token_unavailable','transport_error','rate_limited','slack_unavailable','slack_rejected','invalid_auth','channel_not_found','not_in_channel','missing_scope','thread_unavailable','invalid_response'));
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS public.issue_application_triage (
  issue_id uuid PRIMARY KEY REFERENCES public.app_issues(id) ON DELETE CASCADE,
  incident_id uuid NOT NULL DEFAULT gen_random_uuid(),
  revision bigint NOT NULL CHECK(revision>0),
@@ -13,7 +27,8 @@ CREATE TABLE public.issue_application_triage (
  CHECK((acknowledged_at IS NOT NULL) OR acknowledged_by IS NULL),
  CHECK(snoozed_until IS NOT NULL OR (snoozed_by IS NULL AND snooze_reason=''))
 );
-CREATE TABLE public.issue_application_triage_activity (
+
+CREATE TABLE IF NOT EXISTS public.issue_application_triage_activity (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
  incident_id uuid NOT NULL,
@@ -25,6 +40,7 @@ CREATE TABLE public.issue_application_triage_activity (
  reason text NOT NULL DEFAULT '' CHECK(octet_length(reason)<=1024),
  UNIQUE(issue_id,revision)
 );
+
 CREATE OR REPLACE VIEW public.issue_slack_delivery_sources AS
 SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id,
  COALESCE(n.kind,act.action,'')::text AS kind,COALESCE(n.reason,'')::text AS reason,(COALESCE(act.details,'{}'::jsonb) || CASE WHEN i.id IS NOT NULL THEN jsonb_build_object('environment',i.environment) ELSE '{}'::jsonb END)::jsonb AS details,

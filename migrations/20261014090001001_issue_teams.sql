@@ -1,6 +1,5 @@
 -- +goose Up
--- +goose StatementBegin
-CREATE TABLE public.app_issue_teams (
+CREATE TABLE IF NOT EXISTS public.app_issue_teams (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
  team_key text NOT NULL CHECK(team_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'),
@@ -10,19 +9,48 @@ CREATE TABLE public.app_issue_teams (
  updated_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
  UNIQUE(app_id,team_key), UNIQUE(app_id,id)
 );
-CREATE TABLE public.app_issue_team_members (
+
+CREATE TABLE IF NOT EXISTS public.app_issue_team_members (
  team_id uuid NOT NULL REFERENCES public.app_issue_teams(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  PRIMARY KEY(team_id,account_id)
 );
-ALTER TABLE app_issues ADD COLUMN assignee_team_id uuid,
- ADD CONSTRAINT app_issues_target_check CHECK(num_nonnulls(assignee_account_id,assignee_team_id)<=1),
- ADD CONSTRAINT app_issues_team_fkey FOREIGN KEY(app_id,assignee_team_id) REFERENCES app_issue_teams(app_id,id);
-ALTER TABLE app_issue_ownership_rules ALTER COLUMN assignee_account_id DROP NOT NULL,
- ADD COLUMN assignee_team_id uuid,
- ADD CONSTRAINT app_issue_ownership_rules_target_check CHECK(num_nonnulls(assignee_account_id,assignee_team_id)=1),
- ADD CONSTRAINT app_issue_ownership_rules_team_fkey FOREIGN KEY(app_id,assignee_team_id) REFERENCES app_issue_teams(app_id,id);
-CREATE INDEX app_issues_team_inbox_idx ON app_issues(app_id,assignee_team_id,last_seen_at DESC,id DESC) WHERE assignee_team_id IS NOT NULL;
+
+ALTER TABLE app_issues ADD COLUMN IF NOT EXISTS assignee_team_id uuid;
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app_issues'::regclass AND conname='app_issues_target_check') THEN
+  ALTER TABLE app_issues ADD CONSTRAINT app_issues_target_check CHECK(num_nonnulls(assignee_account_id,assignee_team_id)<=1);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app_issues'::regclass AND conname='app_issues_team_fkey') THEN
+  ALTER TABLE app_issues ADD CONSTRAINT app_issues_team_fkey FOREIGN KEY(app_id,assignee_team_id) REFERENCES app_issue_teams(app_id,id);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+ALTER TABLE app_issue_ownership_rules ALTER COLUMN assignee_account_id DROP NOT NULL;
+ALTER TABLE app_issue_ownership_rules ADD COLUMN IF NOT EXISTS assignee_team_id uuid;
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app_issue_ownership_rules'::regclass AND conname='app_issue_ownership_rules_target_check') THEN
+  ALTER TABLE app_issue_ownership_rules ADD CONSTRAINT app_issue_ownership_rules_target_check CHECK(num_nonnulls(assignee_account_id,assignee_team_id)=1);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app_issue_ownership_rules'::regclass AND conname='app_issue_ownership_rules_team_fkey') THEN
+  ALTER TABLE app_issue_ownership_rules ADD CONSTRAINT app_issue_ownership_rules_team_fkey FOREIGN KEY(app_id,assignee_team_id) REFERENCES app_issue_teams(app_id,id);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+CREATE INDEX IF NOT EXISTS app_issues_team_inbox_idx ON app_issues(app_id,assignee_team_id,last_seen_at DESC,id DESC) WHERE assignee_team_id IS NOT NULL;
+
 CREATE OR REPLACE VIEW public.issue_group_rollups AS
  SELECT i.id,
     i.account_id,
@@ -57,7 +85,6 @@ CREATE OR REPLACE VIEW public.issue_group_rollups AS
   WHERE (NOT (EXISTS ( SELECT 1
            FROM public.issue_group_links l
           WHERE (l.issue_id = i.id))));
--- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

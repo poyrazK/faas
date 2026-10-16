@@ -13,6 +13,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// A blocked member has no native drain row, so it independently borrows its
+// captured deployment. These retained UUIDs deliberately have no parent FKs.
+const drainPlanDeploymentBorrowerSQL = `WITH plan AS (
+ INSERT INTO managed_postgres_cutover_drain_plans
+ (id,cutover_id,app_id,owner_node_id,owner_revision,fenced_at,inventory_count)
+ VALUES(gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),1,clock_timestamp(),1)
+ RETURNING id
+)
+INSERT INTO managed_postgres_cutover_drain_plan_members
+ (plan_id,instance_id,deployment_id,node_id,wake_id,instance_kind,instance_mode,observed_state,deployment_scope,qualification_live,blocker_code)
+SELECT id,gen_random_uuid(),$1::uuid,gen_random_uuid(),gen_random_uuid(),'wake','normal','parked','test',false,'parked_instance_unproven' FROM plan`
+
 func TestPgCloneDeploymentBorrowers(t *testing.T) {
 	for _, fault := range []string{"none", "stale", "unretired", "legacy", "cleaned"} {
 		t.Run(fault, func(t *testing.T) {
@@ -77,7 +89,8 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			}
 			softRows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name
  FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name)
- WHERE c.table_schema='public' AND t.table_type='BASE TABLE' AND c.column_name ~ 'deployment.*_id$'
+ WHERE c.table_schema='public' AND t.table_type='BASE TABLE'
+ AND (c.column_name ~ 'deployment.*_id$' OR c.table_name='environment_workload_retirements' AND c.column_name='deployment_ids')
  AND NOT EXISTS(SELECT 1 FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid JOIN pg_namespace ns ON ns.oid=child.relnamespace WHERE ns.nspname=c.table_schema AND child.relname=c.table_name)
  AND NOT (c.table_name='github_deployments' AND c.column_name='github_deployment_id')
  AND NOT EXISTS(SELECT 1 FROM pg_constraint f JOIN pg_class tab ON tab.oid=f.conrelid
@@ -125,6 +138,13 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			replay, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), l)
 			if err != nil || replay.Deployments[id]["deployment_revision_pins_deployment_id_fkey"] != original {
 				t.Fatal("caller mutation changed inventory", replay, err)
+			}
+			if _, err = pool.Exec(t.Context(), drainPlanDeploymentBorrowerSQL, id); err != nil {
+				t.Fatal(err)
+			}
+			withPlan, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), l)
+			if err != nil || withPlan.SoftReferences[id]["managed_postgres_cutover_drain_plan_members.deployment_id"] != 1 {
+				t.Fatal("blocked retirement evidence omitted", withPlan, err)
 			}
 		})
 	}

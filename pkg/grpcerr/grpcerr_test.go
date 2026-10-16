@@ -5,6 +5,7 @@ package grpcerr_test
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -39,6 +40,7 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 		{api.CodeInvalidRef, codes.InvalidArgument, "Invalid ref"},
 		{api.CodeNotFound, codes.NotFound, "Not found"},
 		{api.CodeGitHubInstallNotFound, codes.NotFound, "GitHub install not found"},
+		{api.CodeGitHubAccountConflict, codes.AlreadyExists, "GitHub account conflict"},
 		{api.CodeSourceRefUnavailable, codes.Unavailable, "Source ref unavailable"},
 		{api.CodeUnauthorized, codes.PermissionDenied, "Unauthorized"},
 		{api.CodeCapacity, codes.ResourceExhausted, "No capacity"},
@@ -46,6 +48,10 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 		{api.CodeNotImplemented, codes.Unimplemented, "Not implemented"},
 		{api.CodeDatabaseCutoverFenced, codes.FailedPrecondition, "Database cutover in progress"},
 		{api.CodeAppAdmissionUnavailable, codes.Unavailable, "App admission unavailable"},
+		{api.CodeInstanceNotFreezable, codes.FailedPrecondition, "Instance not freezable"},
+		{api.CodeInstanceBusy, codes.FailedPrecondition, "Instance busy"},
+		{api.CodeFrozenInstanceRefused, codes.FailedPrecondition, "Instance frozen"},
+		{api.CodeInstanceFrozen, codes.Unavailable, "Instance frozen"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
@@ -216,6 +222,7 @@ func TestFromStatus_RecoversHTTPStatusFromCode(t *testing.T) {
 		wantStatus int
 	}{
 		{api.ErrCapacity("no headroom"), 503},
+		{api.ErrGitHubAccountConflict(), http.StatusConflict},
 		{api.ErrSnapshotBackoff(5), 503},
 		{api.ErrPlanLimitConcurrency(proLimits, 5), 429},
 		{api.ErrPlanLimitRAM(freeLimits, 512), 403},

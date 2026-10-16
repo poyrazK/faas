@@ -19,7 +19,7 @@ class OutboundAIUsageItem:
     """
 
     caller: str
-    """App UUID, or "runs" for stateless Runs."""
+    """App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997)."""
     model: str
     """Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers
     responses without one."""
@@ -32,6 +32,12 @@ class OutboundAIUsageItem:
     cached_input_tokens: int
     cache_write_tokens: int
     output_tokens: int
+    images: int
+    """Images billed per image (ADR-997)."""
+    audio_seconds: int
+    """Seconds of transcribed audio."""
+    characters: int
+    """Characters of speech input."""
     cost_millicents: int | Unset = UNSET
     """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
     unpriced model."""
@@ -56,6 +62,12 @@ class OutboundAIUsageItem:
 
         output_tokens = self.output_tokens
 
+        images = self.images
+
+        audio_seconds = self.audio_seconds
+
+        characters = self.characters
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -71,6 +83,9 @@ class OutboundAIUsageItem:
                 "cached_input_tokens": cached_input_tokens,
                 "cache_write_tokens": cache_write_tokens,
                 "output_tokens": output_tokens,
+                "images": images,
+                "audio_seconds": audio_seconds,
+                "characters": characters,
             }
         )
         if cost_millicents is not UNSET:
@@ -99,6 +114,12 @@ class OutboundAIUsageItem:
 
         output_tokens = d.pop("output_tokens")
 
+        images = d.pop("images")
+
+        audio_seconds = d.pop("audio_seconds")
+
+        characters = d.pop("characters")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -111,6 +132,9 @@ class OutboundAIUsageItem:
             cached_input_tokens=cached_input_tokens,
             cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
+            images=images,
+            audio_seconds=audio_seconds,
+            characters=characters,
             cost_millicents=cost_millicents,
         )
 

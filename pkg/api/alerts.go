@@ -160,6 +160,9 @@ var AllowedAlertRuleMetrics = []string{
 	"workflow_pending_age_seconds",
 	"workflow_waiting_age_seconds",
 	"workflow_due_age_seconds",
+	// ADR-1192: edge-rule activity from the ADR-960 hourly hit counts.
+	"edge_rule_hits",
+	"edge_rule_log_hits",
 
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
@@ -179,6 +182,10 @@ var AllowedAlertRuleMetrics = []string{
 	"mcp_tasks_oldest_age_seconds",
 	"mcp_tasks_metrics_stale",
 	"mcp_task_promotion_hold_age_seconds",
+	"mcp_policy_unconverged_gateways",
+	"mcp_policy_unverified",
+	MetricMCPCatalogDrift, MetricMCPCatalogMonitorUnavailable,
+	MetricMCPOAuthReauthorization, MetricMCPOAuthRenewalFailed, MetricMCPOAuthRetirementExpiring, MetricMCPOAuthIssuanceUnknown,
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
@@ -233,10 +240,11 @@ func IsEdgeSecurityAlertMetric(metric string) bool {
 func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
-		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" {
+		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
+		IsEdgeRuleAlertMetric(metric) {
 		return action == "" || action == "webhook"
 	}
-	if metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
+	if IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true
@@ -247,6 +255,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 // custom-domain and metric routes.
 type CreateAlertRuleRequest struct {
 	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
+	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"` // ADR-1192
 	PostDeployRollbackWindowSeconds *int    `json:"post_deploy_rollback_window_seconds,omitempty"`
 	Name                            string  `json:"name"`
 	Enabled                         *bool   `json:"enabled,omitempty"`
@@ -305,6 +314,7 @@ type RotateAlertRuleSecretRequest struct {
 // for us).
 type AlertRuleResponse struct {
 	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
+	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"`
 	PostDeployRollbackWindowSeconds int     `json:"post_deploy_rollback_window_seconds,omitempty"`
 	ID                              string  `json:"id"`
 	AppID                           string  `json:"app_id"`
@@ -334,6 +344,7 @@ type AlertRuleResponse struct {
 // pkg/api_test.
 type AlertRuleRow struct {
 	EventSubscriptionID             string
+	EdgeRuleID                      string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AppID                           string
@@ -366,6 +377,7 @@ type AlertRuleRow struct {
 func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 	return AlertRuleResponse{
 		EventSubscriptionID:             r.EventSubscriptionID,
+		EdgeRuleID:                      r.EdgeRuleID,
 		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
 		ID:                              r.ID,
 		AppID:                           r.AppID,
@@ -459,6 +471,23 @@ func TrimNonEmpty(s string) (string, bool) {
 	return t, t != ""
 }
 
+// Edge-rule activity metrics (ADR-1192).
+const (
+	AlertMetricEdgeRuleHits    = "edge_rule_hits"
+	AlertMetricEdgeRuleLogHits = "edge_rule_log_hits"
+)
+
+// EdgeRuleAlertWindowSpecs are the windows edge-rule activity alerts
+// accept: hit counts are kept in hourly buckets for 14 days (ADR-960), so
+// sub-hour windows cannot be answered and 15d outlives retention.
+var EdgeRuleAlertWindowSpecs = []string{"1h", "6h", "24h", "7d"}
+
+// IsEdgeRuleAlertMetric reports whether metric counts edge-rule hits
+// (ADR-1192).
+func IsEdgeRuleAlertMetric(metric string) bool {
+	return metric == AlertMetricEdgeRuleHits || metric == AlertMetricEdgeRuleLogHits
+}
+
 func IsEventConsumerAlertMetric(metric string) bool {
 	if IsEventConsumerExecutionAlertMetric(metric) {
 		return true
@@ -468,4 +497,27 @@ func IsEventConsumerAlertMetric(metric string) bool {
 		return true
 	}
 	return false
+}
+
+// AlertMetricActionRestriction explains why an observation-only metric cannot
+// run a deployment action.
+func AlertMetricActionRestriction(metric string) string {
+	if IsMCPConnectionHealthMetric(metric) {
+		return "MCP connection health alerts support webhook action only"
+	}
+	if IsMCPCatalogMonitorMetric(metric) {
+		return "MCP catalog monitoring alerts support webhook action only"
+	}
+	if IsMCPPolicyConvergenceMetric(metric) {
+		return "MCP policy convergence alerts support webhook action only"
+	}
+	switch metric {
+	case "mcp_task_promotion_hold_age_seconds":
+		return "MCP promotion hold alerts support webhook action only"
+	case "mcp_tasks_oldest_age_seconds":
+		return "MCP task age alerts support webhook action only"
+	case "mcp_tasks_metrics_stale":
+		return "MCP task metrics freshness alerts support webhook action only"
+	}
+	return "pre-auth target metrics support webhook action only"
 }

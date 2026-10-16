@@ -36,34 +36,36 @@ func EffectiveAppRequestRateLimits(plan Plan, rpsOverride, burstOverride int) (r
 // CPU-limit status reports the mutable host cgroup ceiling; guest RAM and vCPU
 // topology remain boot-time configuration.
 type RuntimePolicyStatusResponse struct {
-	AppID            string                       `json:"app_id"`
-	DesiredRevision  int64                        `json:"desired_revision"`
-	State            string                       `json:"state"` // active, pending, or unverified
-	Coverage         []string                     `json:"coverage"`
-	ServingGateways  int                          `json:"serving_gateways"`
-	AppliedGateways  int                          `json:"applied_gateways"`
-	PendingGateways  int                          `json:"pending_gateways"`
-	StaleGateways    int                          `json:"stale_gateways"`
-	RequestPolicy    RuntimePolicyComponentStatus `json:"request_policy"`
-	EdgeRules        RuntimePolicyComponentStatus `json:"edge_rules"`
-	CorsPresets      RuntimePolicyComponentStatus `json:"cors_presets"`
-	ResponseCache    RuntimePolicyComponentStatus `json:"response_cache"`
-	EgressAllowlist  RuntimePolicyNodeStatus      `json:"egress_allowlist"`
-	CPULimit         RuntimePolicyNodeStatus      `json:"cpu_limit"`
-	SchedulerScaling RuntimePolicySchedulerStatus `json:"scheduler_scaling"`
+	MCPConvergence   *MCPPolicyConvergenceSnapshot `json:"mcp_convergence,omitempty"`
+	AppID            string                        `json:"app_id"`
+	DesiredRevision  int64                         `json:"desired_revision"`
+	State            string                        `json:"state"` // active, pending, or unverified
+	Coverage         []string                      `json:"coverage"`
+	ServingGateways  int                           `json:"serving_gateways"`
+	AppliedGateways  int                           `json:"applied_gateways"`
+	PendingGateways  int                           `json:"pending_gateways"`
+	StaleGateways    int                           `json:"stale_gateways"`
+	RequestPolicy    RuntimePolicyComponentStatus  `json:"request_policy"`
+	EdgeRules        RuntimePolicyComponentStatus  `json:"edge_rules"`
+	CorsPresets      RuntimePolicyComponentStatus  `json:"cors_presets"`
+	ResponseCache    RuntimePolicyComponentStatus  `json:"response_cache"`
+	EgressAllowlist  RuntimePolicyNodeStatus       `json:"egress_allowlist"`
+	CPULimit         RuntimePolicyNodeStatus       `json:"cpu_limit"`
+	SchedulerScaling RuntimePolicySchedulerStatus  `json:"scheduler_scaling"`
 }
 
 // RuntimePolicyComponentStatus reports convergence for a policy component's
 // desired revision and fresh consumer observations. A desired revision may be
 // an independent ledger position or a scoped projection over a shared ledger.
 type RuntimePolicyComponentStatus struct {
-	Scope           string `json:"scope,omitempty"` // app or account
-	DesiredRevision int64  `json:"desired_revision"`
-	State           string `json:"state"` // active, pending, or unverified
-	ServingGateways int    `json:"serving_gateways"`
-	AppliedGateways int    `json:"applied_gateways"`
-	PendingGateways int    `json:"pending_gateways"`
-	StaleGateways   int    `json:"stale_gateways"`
+	LegacyFleetRevision int64  `json:"legacy_fleet_revision,omitempty"` // unknown historical edge-rule owners
+	Scope               string `json:"scope,omitempty"`                 // app, account, or fleet
+	DesiredRevision     int64  `json:"desired_revision"`
+	State               string `json:"state"` // active, pending, or unverified
+	ServingGateways     int    `json:"serving_gateways"`
+	AppliedGateways     int    `json:"applied_gateways"`
+	PendingGateways     int    `json:"pending_gateways"`
+	StaleGateways       int    `json:"stale_gateways"`
 }
 
 // RuntimePolicyNodeStatus reports app-scoped egress policy convergence across

@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,13 +37,20 @@ func TestHexIPToString_IPv4(t *testing.T) {
 	}
 }
 
+// The kernel prints IPv6 addresses as four host-order (little-endian)
+// words. Every address used to collapse to "::1", so a server on every
+// interface ("::", Node's default) was reported as loopback, and the
+// unbracketed "::1:5173" defeated the host's app_loopback_bound check.
 func TestHexIPToString_IPv6(t *testing.T) {
-	// IPv6 (16 hex chars) collapses to "::1" in the conservative
-	// implementation — we only need the first listener, the host
-	// re-derives anyway. Pin the literal so the host-side parser
-	// stays in sync if we ever expand this.
-	if got := hexIPToString("00000000000000000000000000000001"); got != "::1" {
-		t.Errorf("hexIPToString(ipv6-loopback) = %q, want %q", got, "::1")
+	for _, tc := range []struct{ in, want string }{
+		{"00000000000000000000000001000000", "::1"},
+		{"00000000000000000000000000000000", "::"},
+		{"0000000000000000FFFF00000100007F", "127.0.0.1"}, // v4-mapped loopback
+		{"000080FE00000000FF005450B6AD1DFE", "fe80::5054:ff:fe1d:adb6"},
+	} {
+		if got := hexIPToString(tc.in); got != tc.want {
+			t.Errorf("hexIPToString(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -154,6 +162,23 @@ func TestScanListeningFile_MatchOwnedInode(t *testing.T) {
 	}
 	if !strings.Contains(addr, ":80") {
 		t.Errorf("addr = %q, want contains :80", addr)
+	}
+}
+
+// A tcp6 listener reports a bracketed address the host can split, so a
+// development server on [::1] (Vite's default) is named app_loopback_bound.
+func TestScanListeningFile_IPv6Loopback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "net_tcp6")
+	content := strings.Join([]string{
+		"  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+		" 0: 00000000000000000000000001000000:1435 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4242 1 0000000000000000 100 0 0 10 0",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, addr, ok := scanListeningFile(path, map[uint64]struct{}{4242: {}})
+	if !ok || port != 5173 || addr != "[::1]:5173" {
+		t.Fatalf("scanListeningFile = %d %q %t, want 5173 [::1]:5173", port, addr, ok)
 	}
 }
 
@@ -279,7 +304,7 @@ func TestProbeListening_NoChildEarlyOut(t *testing.T) {
 	// so a regression to "scan all inodes anyway" doesn't silently
 	// observe an init-script-spawned daemon and misclassify.
 	for _, pid := range []int{-1, 0} {
-		if port, _, ok := probeListening(pid); ok || port != 0 {
+		if port, _, ok := probeListening(pid, 0); ok || port != 0 {
 			t.Errorf("probeListening(%d) = (%d, _, %v), want (0, _, false)", pid, port, ok)
 		}
 	}
@@ -368,5 +393,38 @@ func TestScanListeningFile_SkipsDebuggerPortWhileDebugging(t *testing.T) {
 		if port, _, ok := scanListeningFile(path, owned); !ok || port != tc.want {
 			t.Fatalf("debugging=%t: port = %d (ok=%t), want %d", tc.debugging, port, ok, tc.want)
 		}
+	}
+}
+
+// TestScanListeningFileFor_PrefersExpectedPort covers H10-56: an app serving
+// HTTP on 8080 and raw TCP on 7000 was characterized on 7000 because /proc
+// listed it first, and portnorm then tried to redirect 8080 to 7000.
+func TestScanListeningFileFor_PrefersExpectedPort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "net_tcp")
+	content := strings.Join([]string{
+		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+		" 0: 00000000:1B58 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 111 1 0000000000000000 100 0 0 10 0",
+		" 1: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 222 1 0000000000000000 100 0 0 10 0",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fake proc/net/tcp: %v", err)
+	}
+	owned := map[uint64]struct{}{111: {}, 222: {}}
+	for _, tc := range []struct {
+		want, port int
+		exact      bool
+	}{
+		{want: 8080, port: 8080, exact: true},
+		{want: 9999, port: 7000, exact: false},
+		{want: 0, port: 7000, exact: false},
+	} {
+		port, addr, ok, exact := scanListeningFileFor(path, owned, tc.want)
+		if !ok || port != tc.port || exact != tc.exact || !strings.HasSuffix(addr, fmt.Sprintf(":%d", tc.port)) {
+			t.Errorf("scanListeningFileFor(want=%d) = (%d, %q, %v, %v), want (%d, _, true, %v)", tc.want, port, addr, ok, exact, tc.port, tc.exact)
+		}
+	}
+	if port, _, ok := scanListeningFile(path, owned); !ok || port != 7000 {
+		t.Errorf("scanListeningFile = (%d, %v), want the first listener 7000", port, ok)
 	}
 }

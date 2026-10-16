@@ -48,6 +48,7 @@ from ..models.deployment_response_tag import DeploymentResponseTag, check_deploy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
@@ -87,6 +88,8 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    staged_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
     """Worker instance shutdown progress from the deployment audit timeline. Counts are instances, not application
     tasks. Overdue spans passed their deadline without a recorded outcome."""
@@ -302,6 +305,10 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        staged_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.staged_review, Unset):
+            staged_review = self.staged_review.to_dict()
 
         worker_drain: dict[str, Any] | Unset = UNSET
         if not isinstance(self.worker_drain, Unset):
@@ -624,6 +631,8 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if staged_review is not UNSET:
+            field_dict["staged_review"] = staged_review
         if worker_drain is not UNSET:
             field_dict["worker_drain"] = worker_drain
         if promotion_hold is not UNSET:
@@ -749,6 +758,7 @@ class DeploymentResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
@@ -780,6 +790,13 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _staged_review = d.pop("staged_review", UNSET)
+        staged_review: AppReleaseReview | Unset
+        if isinstance(_staged_review, Unset):
+            staged_review = UNSET
+        else:
+            staged_review = AppReleaseReview.from_dict(_staged_review)
 
         _worker_drain = d.pop("worker_drain", UNSET)
         worker_drain: DeploymentWorkerDrainStatus | Unset
@@ -1353,6 +1370,7 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            staged_review=staged_review,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,
             durable_entity_validator=durable_entity_validator,

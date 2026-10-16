@@ -1,6 +1,5 @@
 -- +goose Up
--- +goose StatementBegin
-CREATE TABLE public.issue_tracker_links (
+CREATE TABLE IF NOT EXISTS public.issue_tracker_links (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
  provider text NOT NULL CHECK(provider IN ('github','linear')),
@@ -13,8 +12,22 @@ CREATE TABLE public.issue_tracker_links (
  updated_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
  UNIQUE(issue_id,provider,external_key)
 );
-CREATE INDEX issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id,created_at DESC,id DESC);
-ALTER TABLE issue_activity DROP CONSTRAINT issue_activity_action_check, ADD CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text, 'tracker_linked'::text, 'tracker_link_updated'::text, 'tracker_unlinked'::text])));
+
+CREATE INDEX IF NOT EXISTS issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id,created_at DESC,id DESC);
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='issue_activity'::regclass AND conname='issue_activity_action_check' AND position('tracker_linked' in pg_get_constraintdef(oid))>0) THEN
+  ALTER TABLE issue_activity DROP CONSTRAINT IF EXISTS issue_activity_action_check;
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='issue_activity'::regclass AND conname='issue_activity_action_check') THEN
+  ALTER TABLE issue_activity ADD CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text, 'tracker_linked'::text, 'tracker_link_updated'::text, 'tracker_unlinked'::text])));
+ END IF;
+END $issue_replay$;
 -- +goose StatementEnd
 
 -- +goose Down

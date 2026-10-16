@@ -3,7 +3,10 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -715,10 +718,154 @@ func TestServiceProxyNetworkRulesDoNotAffectHTTP(t *testing.T) {
 	defer cancel()
 	request = request.WithContext(ctx)
 	recorder := httptest.NewRecorder()
-	if handled := proxy.applyScenarioChaos(recorder, request, trace.SpanFromContext(ctx), "run", "caller", "cache"); handled || recorder.Header().Get("X-Gregale-Chaos-Injected") != "" || ctx.Err() != nil {
+	if handled, _ := proxy.applyScenarioChaos(recorder, request, trace.SpanFromContext(ctx), "run", "caller", "cache"); handled || recorder.Header().Get("X-Gregale-Chaos-Injected") != "" || ctx.Err() != nil {
 		t.Fatal("TCP or DNS rules affected an HTTP request")
 	}
 	if matches.Load() != 0 {
 		t.Fatalf("recorded %d HTTP chaos matches for network-only rules", matches.Load())
+	}
+}
+
+func TestServiceProxyRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		seconds int64
+		expired bool
+	}{
+		{"rate limited", 429, 1, false}, {"unavailable", 503, 30, false},
+		{"plain server failure", 503, 0, false}, {"expired fault", 429, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var forwards, matches int
+			provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-inventory", Endpoints: []ServiceEndpoint{{InstanceID: "instance-inventory", NodeID: "node-a", Port: 8080}}}}
+			proxy := NewServiceProxy(ServiceProxyConfig{
+				Provider: provider,
+				Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+					return ServiceTarget{AppID: "app-inventory", ScenarioTestRunID: "retry-run"}, true, nil
+				},
+				Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+					return ServiceCaller{AppID: "app-worker"}, nil
+				},
+				ResolveChaos: func(context.Context, string, string, string) (chaos.Lease, error) {
+					expiry := time.Now().Add(time.Minute)
+					if tc.expired {
+						expiry = time.Now().Add(-time.Second)
+					}
+					return chaos.Lease{Generation: "retry-generation", ExpiresAt: expiry, Rules: []chaos.Rule{{To: "inventory", Kind: chaos.KindHTTPStatus, Percent: 100, StatusCode: tc.status, RetryAfterSeconds: tc.seconds}}}, nil
+				},
+				ObserveChaosMatch: func(runID, caller, generation string, rule chaos.Rule) {
+					if runID != "retry-run" || caller != "app-worker" || generation != "retry-generation" || rule.RetryAfterSeconds != tc.seconds {
+						t.Fatal("match evidence lost scope or retry header")
+					}
+					matches++
+				},
+				Forward: func(Target) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwards++; w.WriteHeader(200) })
+				},
+			})
+			request := httptest.NewRequest(http.MethodGet, "http://gateway/v1/internal/services/inventory/stock", nil)
+			request.Header.Set(ServiceProxyCallerAppHeader, "app-worker")
+			response := httptest.NewRecorder()
+			proxy.ServeHTTP(response, request)
+			if tc.expired {
+				if response.Code != 200 || response.Header().Get("Retry-After") != "" || matches != 0 || forwards != 1 {
+					t.Fatal("expired header leaked into normal response")
+				}
+			} else {
+				want := ""
+				if tc.seconds > 0 {
+					want = fmt.Sprint(tc.seconds)
+				}
+				if response.Code != tc.status || response.Header().Get("Retry-After") != want || matches != 1 || forwards != 0 {
+					t.Fatalf("wrong fault response: %d %v, matches=%d forwards=%d", response.Code, response.Header(), matches, forwards)
+				}
+			}
+		})
+	}
+}
+
+func TestServiceProxyHTTPBodyFaults(t *testing.T) {
+	for _, kind := range []string{chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody} {
+		for _, h2 := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/http2=%t", kind, h2), func(t *testing.T) {
+				var forwards, matches atomic.Int32
+				metrics := NewMetrics()
+				proxy := NewServiceProxy(ServiceProxyConfig{
+					Metrics:  metrics,
+					Provider: &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: "app-inventory", Endpoints: []ServiceEndpoint{{InstanceID: "instance-inventory", NodeID: "node-a", Port: 8080}}}},
+					Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+						return ServiceTarget{AppID: "app-inventory", ScenarioTestRunID: "body-run"}, true, nil
+					},
+					Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+						return ServiceCaller{AppID: "app-worker"}, nil
+					},
+					ResolveChaos: func(context.Context, string, string, string) (chaos.Lease, error) {
+						return chaos.Lease{Generation: "body-generation", ExpiresAt: time.Now().Add(time.Minute), Rules: []chaos.Rule{{To: "inventory", Kind: kind, Percent: 100}}}, nil
+					},
+					ObserveChaosMatch: func(run, caller, generation string, rule chaos.Rule) {
+						if run != "body-run" || caller != "app-worker" || generation != "body-generation" || rule.Kind != kind {
+							t.Error("body fault lost match scope")
+						}
+						matches.Add(1)
+					},
+					Forward: func(Target) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							forwards.Add(1)
+							w.WriteHeader(200)
+							_, _ = io.WriteString(w, `{"available":true}`)
+						})
+					},
+				})
+				server := httptest.NewUnstartedServer(proxy)
+				server.EnableHTTP2 = h2
+				if h2 {
+					server.StartTLS()
+				} else {
+					server.Start()
+				}
+				defer server.Close()
+				request, err := http.NewRequest(http.MethodGet, server.URL+"/v1/internal/services/inventory/stock", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set(ServiceProxyCallerAppHeader, "app-worker")
+				response, err := server.Client().Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, readErr := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if response.StatusCode != 200 || response.Header.Get("Content-Type") != "application/json" || response.Header.Get("X-Gregale-Chaos-Injected") != kind || (h2 && response.ProtoMajor != 2) {
+					t.Fatalf("wrong protocol response: %+v", response)
+				}
+				if kind == chaos.KindHTTPMalformedJSON {
+					if readErr != nil || json.Valid(body) {
+						t.Fatalf("malformed entity: %q %v", body, readErr)
+					}
+				} else if readErr == nil || int64(len(body)) >= response.ContentLength {
+					t.Fatalf("truncation did not cause client body-read error: %q %v", body, readErr)
+				}
+				if got := labelledCounterValue(t, metrics.Registry(), "gateway_service_chaos_injected_total", "kind", kind); got != 1 {
+					t.Fatalf("body fault metric = %v", got)
+				}
+				if forwards.Load() != 0 || matches.Load() != 1 {
+					t.Fatal("synthetic fault forwarded or omitted evidence")
+				}
+				request, err = http.NewRequest(http.MethodHead, server.URL+"/v1/internal/services/inventory/stock", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set(ServiceProxyCallerAppHeader, "app-worker")
+				response, err = server.Client().Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = response.Body.Close()
+				if response.Header.Get("X-Gregale-Chaos-Injected") != "" || matches.Load() != 1 || forwards.Load() != 1 {
+					t.Fatal("HEAD body fault was falsely counted")
+				}
+			})
+		}
 	}
 }

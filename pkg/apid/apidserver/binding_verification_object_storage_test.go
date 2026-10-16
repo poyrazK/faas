@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 const passedObjectStorageVerification = `{"prefix":"ASSETS","environment":{"status":"passed","detail":"PRIVATE_DETAIL"},"configuration":{"status":"passed"},"connection":{"status":"passed"},"authorization":{"status":"passed"},"bucket_access":{"status":"passed"}}`
@@ -132,7 +133,7 @@ func TestObjectStorageBindingVerificationRotationAndStaleServingInstance(t *test
 	// unchanged public metadata and without relying on a configuration stamp.
 	rows[0].BindingID = uuid.NewString()
 	reads := &inventoryReadStore{MemStore: e.store, objects: rows}
-	e.s.store = reads
+	e.s.store = statetest.NewMem(reads)
 	item, _ = selectedObjectStorageVerification(t, e, app, binding.ID)
 	if item.VerificationStatus != "stale" || item.Verification.Reason != "configuration_changed" {
 		t.Fatalf("replacement reused evidence: %+v", item)

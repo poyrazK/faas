@@ -21,7 +21,7 @@ func (s *escalationBatchStore) EnqueueIssueApplicationEscalation(context.Context
 	return s.calls < s.stop, s.err
 }
 
-// ADR-1239: escalation work stops at empty/failure/cancellation and a bounded batch.
+// ADR-1439: escalation work stops at empty/failure/cancellation and a bounded batch.
 func TestNativeEscalationBatchAndForm(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

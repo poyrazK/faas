@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1240: filter and page only authorized current responses, without evidence.
+// ADR-1440: filter and page only authorized current responses, without evidence.
 func TestPg_NativeApplicationResponseInbox(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	owner, app := seedPgAccountAndApp(t, s, ctx)

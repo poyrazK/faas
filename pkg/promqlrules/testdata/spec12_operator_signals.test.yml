@@ -1,0 +1,683 @@
+# Firing and quiet coverage for the spec §12 operator signals (ADR-1235):
+# edge rules, response cache, safe deploy, standby write relay, stale
+# routes, notify hub, pool cap, schedd loop work, snapshot materialization,
+# instance hot loops and stats collection. All are warn.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: "edge rule apply errors, compile errors and JWT rejections fire"
+    input_series:
+      - series: 'gateway_edge_rule_apply_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="jwt",result="error"}'
+        values: '0+2x30'
+      - series: 'gateway_edge_rule_compile_error_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="route"}'
+        values: '0+1x30'
+      - series: 'gateway_edge_rule_match_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="jwt",outcome="failed"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasEdgeRuleApplyHigh
+        exp_alerts:
+          - exp_labels:
+              kind: "jwt"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Edge rule kind jwt is failing more than one request per minute"
+              description: "gateway_edge_rule_apply_total{result=\"error\"} for kind jwt has exceeded 1/min for 5m. Each error is a non-2xx response the edge wrote for a rule, so customers are seeing it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleApplyHigh.md"
+      - eval_time: 30m
+        alertname: FaasEdgeRuleCompileError
+        exp_alerts:
+          - exp_labels:
+              kind: "route"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Edge rules of kind route are failing to compile"
+              description: "gatewayd-internal dropped at least one route edge rule at load time in the last 10m. A shipped rule is broken and is not being enforced; the counter is cumulative, so this alert reads new ticks only."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      - eval_time: 30m
+        alertname: FaasEdgeRuleJWTFailures
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Edge JWT verification is rejecting more than five requests per minute"
+              description: "gateway_edge_rule_match_total{kind=\"jwt\",outcome=\"failed\"} has exceeded 5/min for 5m. Customers are receiving 401s from the JWT gate; check verifier reachability and key rotation before treating it as client error."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleJWTFailures.md"
+
+  - interval: 1m
+    name: "response cache bypass_authed share fires"
+    input_series:
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="hit"}'
+        values: '0+60x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="bypass_authed"}'
+        values: '0+6x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasResponseCacheBypassAuthedHigh
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "response_cache"
+              public_status: "internal"
+            exp_annotations:
+              summary: "More than 5% of cacheable lookups bypass the cache as authenticated"
+              description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+
+  - interval: 1m
+    name: "response cache store_skipped share fires"
+    input_series:
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="hit"}'
+        values: '0+60x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="store_skipped"}'
+        values: '0+120x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasResponseCacheStoreSkippedHigh
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "response_cache"
+              public_status: "internal"
+            exp_annotations:
+              summary: "More than half of response-cache decisions skip the store"
+              description: "More than 50% of response-cache decisions over 10m were store_skipped: origins are returning veto headers or statuses, or bodies above the 1 MiB entry limit."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+
+  - interval: 1m
+    name: "response cache stale_if_error_served share fires"
+    input_series:
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="hit"}'
+        values: '0+60x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="stale_if_error_served"}'
+        values: '0+6x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasResponseCacheStaleIfErrorHigh
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "response_cache"
+              public_status: "internal"
+            exp_annotations:
+              summary: "More than 5% of cached responses are stale-if-error serves"
+              description: "More than 5% of response-cache decisions over 10m served a stale entry because the origin failed. Treat it as an origin incident that the cache is masking."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+
+  - interval: 1m
+    name: "response cache L1 above 80% of 64 MiB fires"
+    input_series:
+      - series: 'gateway_response_cache_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '60000000x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasResponseCacheL1Pressure
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "response_cache"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Response-cache L1 on fsn-2.gregale.dev:9092 is above 80% of its 64 MiB ceiling"
+              description: "The local response cache on fsn-2.gregale.dev:9092 has held more than 80% of DefaultResponseCacheMaxBytes for 15m, so the LRU is evicting faster than hit rate can settle. Reduce route or vary_on cardinality."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+
+  - interval: 1m
+    name: "safe deploy stuck, abort surge, audit, timestamp and GC failures fire"
+    input_series:
+      - series: 'meterd_safedeploy_orchestrator_stuck_detected_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '0+1x30'
+      - series: 'meterd_safedeploy_orchestrator_aborted_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '0+1x30'
+      - series: 'meterd_safedeploy_orchestrator_audit_emit_failed_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '0+12x30'
+      - series: 'meterd_safedeploy_orchestrator_stuck_check_missing_timestamp_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '0+1x30'
+      - series: 'meterd_deployment_audit_gc_failed_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasCanaryStuckStep
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "meterd"
+              family: "safe_deploy"
+              public_status: "internal"
+            exp_annotations:
+              summary: "A canary rollout is stuck at one step"
+              description: "The safe-deploy orchestrator found a rollout past StuckAfterDuration at the same step in the last 5m. Traffic is held at the current split until an operator advances or aborts it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - eval_time: 30m
+        alertname: FaasSafedeployAbortSurge
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "meterd"
+              family: "safe_deploy"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Safe-deploy rollouts are aborting fleet-wide"
+              description: "More than one rollout aborted per 5m, sustained for 5m. A fleet-wide abort rate points at a shared cause (health gate, metrics source, platform regression) rather than one bad release."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - eval_time: 30m
+        alertname: FaasSafedeployAuditEmitFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "meterd"
+              family: "safe_deploy"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Deployment audit writes are failing"
+              description: "Orchestrator or deployment audit emits have failed above 0.1/s for 10m. Rollouts keep advancing, but their audit trail is silently incomplete until writes recover."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - eval_time: 30m
+        alertname: FaasSafedeployMissingTimestamp
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "meterd"
+              family: "safe_deploy"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Canary deployments are missing canary_step_started_at"
+              description: "The orchestrator saw deployment rows without canary_step_started_at in the last 15m. Stuck detection cannot evaluate those rows, so a stuck rollout among them would not be reported."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - eval_time: 30m
+        alertname: FaasDeploymentAuditGCFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "meterd"
+              family: "safe_deploy"
+              public_status: "internal"
+            exp_annotations:
+              summary: "The 90-day deployment audit GC is failing"
+              description: "The deployment audit retention sweep failed at least once in the last hour. Audit rows keep accumulating until it succeeds."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+  - interval: 1m
+    name: "deployment audit emit failures alone fire the audit alert"
+    input_series:
+      - series: 'meterd_deployment_audit_emitted_total{job="meterd",instance="127.0.0.1:9106",kind="promoted",outcome="failed"}'
+        values: '0+12x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasSafedeployAuditEmitFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "meterd"
+              family: "safe_deploy"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Deployment audit writes are failing"
+              description: "Orchestrator or deployment audit emits have failed above 0.1/s for 10m. Rollouts keep advancing, but their audit trail is silently incomplete until writes recover."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+  - interval: 1m
+    name: "standby write relay failures and slow relays fire"
+    input_series:
+      - series: 'gatewayd_write_redirect_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="leader_unreachable",auth_kind="bearer"}'
+        values: '0+1x30'
+      - series: 'gatewayd_write_redirect_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="loop_prevented",auth_kind="bearer"}'
+        values: '0+2x30'
+      - series: 'gatewayd_write_redirect_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="mTLS_failure",auth_kind="bearer"}'
+        values: '0+1x30'
+      - series: 'gatewayd_write_redirect_latency_seconds_bucket{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",le="1"}'
+        values: '0x30'
+      - series: 'gatewayd_write_redirect_latency_seconds_bucket{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",le="5"}'
+        values: '0+10x30'
+      - series: 'gatewayd_write_redirect_latency_seconds_bucket{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",le="+Inf"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasWriteRedirectLeaderUnreachable
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "write_redirect"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Standby fsn-2.gregale.dev:9092 cannot reach the write leader"
+              description: "Writes arriving on standby fsn-2.gregale.dev:9092 are failing with leader_unreachable above 0.1/min for 5m. Customers see write errors on this node until the leader is reachable again."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - eval_time: 30m
+        alertname: FaasWriteRedirectLoopPrevented
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "write_redirect"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Write redirects on fsn-2.gregale.dev:9092 are looping"
+              description: "The write gate on fsn-2.gregale.dev:9092 refused more than one redirect loop per minute for 5m. Two nodes disagree about the leader, or a client is replaying redirects."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - eval_time: 30m
+        alertname: FaasWriteRedirectMTLSFailure
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "write_redirect"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Write relays from fsn-2.gregale.dev:9092 are failing mTLS"
+              description: "The standby write relay on fsn-2.gregale.dev:9092 failed mTLS to the leader in the last 10m. Check internal certificate expiry and clock skew between the nodes."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - eval_time: 30m
+        alertname: FaasWriteRedirectLatencyHigh
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "write_redirect"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Write relay p95 on fsn-2.gregale.dev:9092 is above 3s"
+              description: "Relayed writes from fsn-2.gregale.dev:9092 have taken more than 3s at p95 for 10m. Above 5s the relay times out, so the overlay between nodes is degrading."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+
+  - interval: 1m
+    name: "stale route serves fire"
+    input_series:
+      - series: 'gateway_route_lookup_stale_served_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasRouteLookupStaleServed
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "route_lookup"
+              public_status: "internal"
+            exp_annotations:
+              summary: "fsn-2.gregale.dev:9092 is routing from last-known-good routes"
+              description: "Route lookups on fsn-2.gregale.dev:9092 are erroring and the edge has served from its stale route tier for 5m. Routes change no faster than FAAS_GATEWAY_ROUTE_STALE_TTL allows; check Postgres reachability from this node."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteLookupStaleServed.md"
+
+  - interval: 1m
+    name: "notify hub reconnects, drops and a disabled hub fire"
+    input_series:
+      - series: 'apid_db_notify_hub_reconnects_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '0+1x30'
+      - series: 'schedd_db_notify_hub_dropped_total{job="schedd",instance="127.0.0.1:9103",channel="faas_wake"}'
+        values: '0+1x30'
+      - series: 'meterd_db_notify_hub_conns{job="meterd",instance="127.0.0.1:9106"}'
+        values: '0x30'
+      - series: 'meterd_db_notify_hub_subscribers{job="meterd",instance="127.0.0.1:9106"}'
+        values: '3x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasDBNotifyHubReconnects
+        exp_alerts:
+          - exp_labels:
+              job: "apid"
+              instance: "127.0.0.1:9101"
+              severity: "warn"
+              component: "platform"
+              family: "db_notify_hub"
+              public_status: "internal"
+            exp_annotations:
+              summary: "apid keeps losing its LISTEN connection"
+              description: "apid on 127.0.0.1:9101 reconnected its notify hub more than once per 5m for 5m. Check Postgres restarts and idle-connection reaping."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
+      - eval_time: 30m
+        alertname: FaasDBNotifyHubDropped
+        exp_alerts:
+          - exp_labels:
+              job: "schedd"
+              instance: "127.0.0.1:9103"
+              channel: "faas_wake"
+              severity: "warn"
+              component: "platform"
+              family: "db_notify_hub"
+              public_status: "internal"
+            exp_annotations:
+              summary: "schedd is dropping faas_wake notifications"
+              description: "A subscriber on schedd (127.0.0.1:9103) has not drained its faas_wake buffer for 15m. Durable tables and safety ticks recover the work, but the consumer is falling behind."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
+      - eval_time: 30m
+        alertname: FaasDBNotifyHubDisabled
+        exp_alerts:
+          - exp_labels:
+              job: "meterd"
+              instance: "127.0.0.1:9106"
+              severity: "warn"
+              component: "platform"
+              family: "db_notify_hub"
+              public_status: "internal"
+            exp_annotations:
+              summary: "meterd runs without its notify hub"
+              description: "meterd on 127.0.0.1:9106 has subscribers but no hub connection, so FAAS_DB_NOTIFY_HUB=0 is set and each subscriber holds its own LISTEN connection. Not an outage; it consumes the pre-hub connection count against max_connections."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
+
+  - interval: 1m
+    name: "a pool above 90% of its cap fires"
+    input_series:
+      - series: 'schedd_db_pool_conns{job="schedd",instance="127.0.0.1:9103",state="acquired"}'
+        values: '19x30'
+      - series: 'schedd_db_pool_conns{job="schedd",instance="127.0.0.1:9103",state="idle"}'
+        values: '1x30'
+      - series: 'schedd_db_pool_max_conns{job="schedd",instance="127.0.0.1:9103"}'
+        values: '20x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasDBPoolNearCap
+        exp_alerts:
+          - exp_labels:
+              job: "schedd"
+              instance: "127.0.0.1:9103"
+              severity: "warn"
+              component: "platform"
+              family: "db_pool"
+              public_status: "internal"
+            exp_annotations:
+              summary: "schedd is using over 90% of its database pool"
+              description: "schedd on 127.0.0.1:9103 has held more than 90% of its pool cap (pkg/db.DaemonMaxConnections) for 10m. Callers will start waiting for connections; FaasDBPoolStarved fires once they give up."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
+
+  - interval: 1m
+    name: "a grown pool of idle connections stays quiet"
+    input_series:
+      - series: 'apid_db_pool_conns{job="apid",instance="127.0.0.1:9101",state="acquired"}'
+        values: '1x30'
+      - series: 'apid_db_pool_conns{job="apid",instance="127.0.0.1:9101",state="idle"}'
+        values: '11x30'
+      - series: 'apid_db_pool_conns{job="apid",instance="127.0.0.1:9101",state="constructing"}'
+        values: '0x30'
+      - series: 'apid_db_pool_max_conns{job="apid",instance="127.0.0.1:9101"}'
+        values: '12x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasDBPoolNearCap
+        exp_alerts: []
+
+  - interval: 1m
+    name: "dropped and panicked loop work fire"
+    input_series:
+      - series: 'schedd_loop_work_total{job="schedd",instance="127.0.0.1:9103",kind="restart",outcome="dropped"}'
+        values: '0+5x30'
+      - series: 'schedd_loop_work_total{job="schedd",instance="127.0.0.1:9103",kind="prime",outcome="panicked"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasScheddLoopWorkDropped
+        exp_alerts:
+          - exp_labels:
+              job: "schedd"
+              instance: "127.0.0.1:9103"
+              kind: "restart"
+              severity: "warn"
+              component: "schedd"
+              family: "loop_work"
+              public_status: "internal"
+            exp_annotations:
+              summary: "schedd is dropping restart loop work"
+              description: "schedd on 127.0.0.1:9103 dropped more than one restart task per minute for 15m. The kind slot budget is too small for the notification rate; the durable table and safety ticker still recover the work, later."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddLoopWork.md"
+      - eval_time: 30m
+        alertname: FaasScheddLoopWorkPanicked
+        exp_alerts:
+          - exp_labels:
+              job: "schedd"
+              instance: "127.0.0.1:9103"
+              kind: "prime"
+              severity: "warn"
+              component: "schedd"
+              family: "loop_work"
+              public_status: "internal"
+            exp_annotations:
+              summary: "A schedd prime handler panicked"
+              description: "An off-loop prime task on 127.0.0.1:9103 panicked in the last 10m. This is a handler bug, not a capacity signal; find the stack in the schedd journal."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddLoopWork.md"
+
+  - interval: 1m
+    name: "remote snapshot materialization, a hot instance and slow stats collection fire"
+    input_series:
+      - series: 'vmmd_snapshot_materialize_seconds_bucket{job="vmmd",instance="fsn-2.gregale.dev:9104",artifact="mem",source="materialized",le="0.1"}'
+        values: '0x30'
+      - series: 'vmmd_snapshot_materialize_seconds_bucket{job="vmmd",instance="fsn-2.gregale.dev:9104",artifact="mem",source="materialized",le="0.5"}'
+        values: '0+10x30'
+      - series: 'vmmd_snapshot_materialize_seconds_bucket{job="vmmd",instance="fsn-2.gregale.dev:9104",artifact="mem",source="materialized",le="+Inf"}'
+        values: '0+10x30'
+      - series: 'schedd_instance_cpu_pct{job="schedd-compute",instance="fsn-2.gregale.dev:9103",app="app-1",node="fsn-2.faas"}'
+        values: '97x30'
+      - series: 'schedd_instance_stats_collect_seconds_bucket{job="schedd-compute",instance="fsn-2.gregale.dev:9103",le="0.1"}'
+        values: '0x30'
+      - series: 'schedd_instance_stats_collect_seconds_bucket{job="schedd-compute",instance="fsn-2.gregale.dev:9103",le="0.5"}'
+        values: '0+10x30'
+      - series: 'schedd_instance_stats_collect_seconds_bucket{job="schedd-compute",instance="fsn-2.gregale.dev:9103",le="+Inf"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasSnapshotMaterializeSlow
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "vmmd"
+              family: "snapshot_materialize"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Wakes are fetching snapshot memory across the network"
+              description: "p95 time to materialize a remote snapshot memory file has exceeded 200 ms for 15m. One fetch can exceed the whole wake budget, so placement is landing away from snapshot replicas (ADR-063)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/snapshot-restore-performance.md"
+      - eval_time: 30m
+        alertname: FaasInstanceHotLoop
+        exp_alerts:
+          - exp_labels:
+              app: "app-1"
+              node: "fsn-2.faas"
+              severity: "warn"
+              component: "schedd"
+              family: "instance_stats"
+              public_status: "internal"
+            exp_annotations:
+              summary: "App app-1 is pinned above 90% CPU on fsn-2.faas"
+              description: "An instance of app-1 on fsn-2.faas has used more than 90% CPU for 15m. A sustained ceiling usually means a hot loop in the customer app rather than load."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInstanceHotLoop.md"
+      - eval_time: 30m
+        alertname: FaasScheddInstanceStatsCollectSlow
+        exp_alerts:
+          - exp_labels:
+              job: "schedd-compute"
+              instance: "fsn-2.gregale.dev:9103"
+              severity: "warn"
+              component: "schedd"
+              family: "instance_stats"
+              public_status: "internal"
+            exp_annotations:
+              summary: "schedd instance-stats collection on fsn-2.gregale.dev:9103 is slow"
+              description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+
+  - interval: 1m
+    name: "a healthy fleet with flat failure counters stays quiet"
+    input_series:
+      - series: 'gateway_edge_rule_apply_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="jwt",result="error"}'
+        values: '3x30'
+      - series: 'gateway_edge_rule_apply_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="jwt",result="ok"}'
+        values: '0+100x30'
+      - series: 'gateway_edge_rule_compile_error_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="route"}'
+        values: '2x30'
+      - series: 'gateway_edge_rule_match_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="jwt",outcome="failed"}'
+        values: '0+1x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="hit"}'
+        values: '0+600x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="bypass_authed"}'
+        values: '0+6x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="store_skipped"}'
+        values: '0+6x30'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="stale_if_error_served"}'
+        values: '0+6x30'
+      - series: 'gateway_response_cache_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '10000000x30'
+      - series: 'meterd_safedeploy_orchestrator_stuck_detected_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '2x30'
+      - series: 'meterd_safedeploy_orchestrator_aborted_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '4x30'
+      - series: 'meterd_safedeploy_orchestrator_audit_emit_failed_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '1x30'
+      - series: 'meterd_deployment_audit_emitted_total{job="meterd",instance="127.0.0.1:9106",kind="promoted",outcome="ok"}'
+        values: '0+12x30'
+      - series: 'meterd_safedeploy_orchestrator_stuck_check_missing_timestamp_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '1x30'
+      - series: 'meterd_deployment_audit_gc_failed_total{job="meterd",instance="127.0.0.1:9106"}'
+        values: '1x30'
+      - series: 'gatewayd_write_redirect_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="relayed",auth_kind="bearer"}'
+        values: '0+30x30'
+      - series: 'gatewayd_write_redirect_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="leader_unreachable",auth_kind="bearer"}'
+        values: '1x30'
+      - series: 'gatewayd_write_redirect_latency_seconds_bucket{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",le="1"}'
+        values: '0+10x30'
+      - series: 'gatewayd_write_redirect_latency_seconds_bucket{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",le="5"}'
+        values: '0+10x30'
+      - series: 'gatewayd_write_redirect_latency_seconds_bucket{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",le="+Inf"}'
+        values: '0+10x30'
+      - series: 'gateway_route_lookup_stale_served_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '5x30'
+      - series: 'apid_db_notify_hub_reconnects_total{job="apid",instance="127.0.0.1:9101"}'
+        values: '2x30'
+      - series: 'schedd_db_notify_hub_dropped_total{job="schedd",instance="127.0.0.1:9103",channel="faas_wake"}'
+        values: '7x30'
+      - series: 'meterd_db_notify_hub_conns{job="meterd",instance="127.0.0.1:9106"}'
+        values: '1x30'
+      - series: 'meterd_db_notify_hub_subscribers{job="meterd",instance="127.0.0.1:9106"}'
+        values: '3x30'
+      - series: 'schedd_db_pool_conns{job="schedd",instance="127.0.0.1:9103",state="acquired"}'
+        values: '5x30'
+      - series: 'schedd_db_pool_conns{job="schedd",instance="127.0.0.1:9103",state="idle"}'
+        values: '2x30'
+      - series: 'schedd_db_pool_max_conns{job="schedd",instance="127.0.0.1:9103"}'
+        values: '20x30'
+      - series: 'schedd_loop_work_total{job="schedd",instance="127.0.0.1:9103",kind="restart",outcome="queued"}'
+        values: '0+50x30'
+      - series: 'schedd_loop_work_total{job="schedd",instance="127.0.0.1:9103",kind="restart",outcome="dropped"}'
+        values: '3x30'
+      - series: 'schedd_instance_cpu_pct{job="schedd-compute",instance="fsn-2.gregale.dev:9103",app="app-1",node="fsn-2.faas"}'
+        values: '40x30'
+      - series: 'vmmd_snapshot_materialize_seconds_bucket{job="vmmd",instance="fsn-2.gregale.dev:9104",artifact="mem",source="materialized",le="0.1"}'
+        values: '0+10x30'
+      - series: 'vmmd_snapshot_materialize_seconds_bucket{job="vmmd",instance="fsn-2.gregale.dev:9104",artifact="mem",source="materialized",le="0.5"}'
+        values: '0+10x30'
+      - series: 'vmmd_snapshot_materialize_seconds_bucket{job="vmmd",instance="fsn-2.gregale.dev:9104",artifact="mem",source="materialized",le="+Inf"}'
+        values: '0+10x30'
+      - series: 'schedd_instance_stats_collect_seconds_bucket{job="schedd-compute",instance="fsn-2.gregale.dev:9103",le="0.1"}'
+        values: '0+10x30'
+      - series: 'schedd_instance_stats_collect_seconds_bucket{job="schedd-compute",instance="fsn-2.gregale.dev:9103",le="0.5"}'
+        values: '0+10x30'
+      - series: 'schedd_instance_stats_collect_seconds_bucket{job="schedd-compute",instance="fsn-2.gregale.dev:9103",le="+Inf"}'
+        values: '0+10x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasEdgeRuleApplyHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasEdgeRuleCompileError
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasEdgeRuleJWTFailures
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasResponseCacheBypassAuthedHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasResponseCacheStoreSkippedHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasResponseCacheStaleIfErrorHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasResponseCacheL1Pressure
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasCanaryStuckStep
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasSafedeployAbortSurge
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasSafedeployAuditEmitFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasSafedeployMissingTimestamp
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasDeploymentAuditGCFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasWriteRedirectLeaderUnreachable
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasWriteRedirectLoopPrevented
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasWriteRedirectMTLSFailure
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasWriteRedirectLatencyHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasRouteLookupStaleServed
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasDBNotifyHubReconnects
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasDBNotifyHubDropped
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasDBNotifyHubDisabled
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasDBPoolNearCap
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasScheddLoopWorkDropped
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasScheddLoopWorkPanicked
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasSnapshotMaterializeSlow
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasInstanceHotLoop
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasScheddInstanceStatsCollectSlow
+        exp_alerts: []

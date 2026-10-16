@@ -1,6 +1,7 @@
 -- +goose Up
-ALTER TABLE issue_tracker_auto_sync ADD COLUMN last_successful_at timestamptz;
-CREATE TABLE issue_tracker_sync_history (
+ALTER TABLE issue_tracker_auto_sync ADD COLUMN IF NOT EXISTS last_successful_at timestamptz;
+
+CREATE TABLE IF NOT EXISTS issue_tracker_sync_history (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  link_id uuid NOT NULL REFERENCES issue_tracker_links(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -18,7 +19,8 @@ CREATE TABLE issue_tracker_sync_history (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CONSTRAINT issue_tracker_sync_history_claim_key UNIQUE(link_id,claim_id)
 );
-CREATE INDEX issue_tracker_sync_history_page_idx ON issue_tracker_sync_history(link_id,created_at DESC,id DESC);
+
+CREATE INDEX IF NOT EXISTS issue_tracker_sync_history_page_idx ON issue_tracker_sync_history(link_id,created_at DESC,id DESC);
 
 -- +goose Down
 -- +goose StatementBegin

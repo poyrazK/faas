@@ -311,3 +311,19 @@ func TestDoctorImageExactHealthcheckTiming(t *testing.T) {
 		t.Fatalf("invalid exact timing accepted: %+v", invalid)
 	}
 }
+
+// TestDescribeDoctorImageReportsTheProcessUser covers H10-58: an image without
+// USER runs as root under ADR-1239, but doctor printed the manifest default
+// "app".
+func TestDescribeDoctorImageReportsTheProcessUser(t *testing.T) {
+	for _, tc := range []struct{ user, want string }{
+		{"", "0"},
+		{"1000:1000", "1000:1000"},
+		{"nginx", "nginx"},
+	} {
+		img := describeDoctorImage(oci.ImageInspection{Config: oci.ImageConfig{OS: "linux", Architecture: "amd64", Cmd: []string{"nginx"}, User: tc.user}})
+		if img.User != tc.want {
+			t.Errorf("image USER %q: doctor user = %q, want %q", tc.user, img.User, tc.want)
+		}
+	}
+}

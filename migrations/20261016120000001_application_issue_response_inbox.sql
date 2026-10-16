@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE VIEW public.issue_application_response_access AS
+CREATE OR REPLACE VIEW public.issue_application_response_access AS
 SELECT i.id AS issue_id,a.id AS app_id,a.account_id AS owner_account_id,actor.id AS actor_account_id,owner.plan AS owner_plan,
  CASE WHEN tr.escalated_at IS NOT NULL THEN tr.escalation_team_id ELSE i.assignee_team_id END::uuid AS responsible_team_id,route.team_id AS routed_team_id
 FROM public.app_issues i JOIN public.apps a ON a.id=i.app_id AND a.account_id=i.account_id

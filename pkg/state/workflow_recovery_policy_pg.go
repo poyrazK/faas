@@ -12,14 +12,24 @@ import (
 	"time"
 )
 
-func pgPolicyResponse(app string, version int64, raw []byte, updated pgtype.Timestamptz, actorKind, actorID string, last pgtype.Timestamptz, status string, failures int32, paused pgtype.Timestamptz, pauseReason string) (api.WorkflowRecoveryPolicyResponse, error) {
+func pgPolicyResponse(app string, version int64, raw []byte, updated pgtype.Timestamptz, actorKind, actorID string, last pgtype.Timestamptz, status string, failures int32, paused pgtype.Timestamptz, pauseReason string, pollFailure, pollNotification []byte) (api.WorkflowRecoveryPolicyResponse, error) {
 	out := api.WorkflowRecoveryPolicyResponse{AppID: app, Version: version, UpdatedAt: updated.Time, ActorKind: actorKind, ActorID: actorID, LastEvaluationAt: timestamptzToTimePtr(last), Status: status}
 	err := json.Unmarshal(raw, &out.Policy)
 	if err != nil {
 		return out, fmt.Errorf("decode recovery policy: %w", err)
 	}
-	if out.Policy.Mode == "automatic_retry" {
+	if api.WorkflowRecoveryPolicyAutomaticMode(out.Policy.Mode) {
 		out.AutomaticExecution = &api.WorkflowRecoveryPolicyAutomaticExecution{ConsecutiveFailures: int(failures), PausedAt: timestamptzToTimePtr(paused), PauseReason: pauseReason}
+	}
+	if out.AutomaticExecution != nil && len(pollFailure) > 0 {
+		if err = json.Unmarshal(pollFailure, &out.AutomaticExecution.PollingFailure); err != nil {
+			return out, fmt.Errorf("decode automatic polling failure: %w", err)
+		}
+	}
+	if len(pollNotification) > 0 {
+		if err = json.Unmarshal(pollNotification, &out.PollingNotification); err != nil {
+			return out, fmt.Errorf("decode polling notification: %w", err)
+		}
 	}
 	return out, nil
 }
@@ -42,7 +52,7 @@ func (s *PgStore) GetWorkflowRecoveryPolicy(ctx context.Context, account, app st
 	if err != nil {
 		return api.WorkflowRecoveryPolicyResponse{}, err
 	}
-	return pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason)
+	return pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification)
 }
 func (s *PgStore) SetWorkflowRecoveryPolicy(ctx context.Context, account, app string, req api.SetWorkflowRecoveryPolicyRequest) (api.WorkflowRecoveryPolicyResponse, error) {
 	if err := eventRecoveryIDs(account, app); err != nil {
@@ -91,7 +101,7 @@ func (s *PgStore) SetWorkflowRecoveryPolicy(ctx context.Context, account, app st
 		if err != nil {
 			return api.WorkflowRecoveryPolicyResponse{}, fmt.Errorf("update recovery policy: %w", err)
 		}
-		return finish(pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason))
+		return finish(pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification))
 	}
 	row, err := q.WorkflowRecoveryPolicySet(ctx, tx, sqlc.WorkflowRecoveryPolicySetParams{AppID: mustPgUUID(app), AccountID: mustPgUUID(account), ExpectedVersion: req.ExpectedVersion, Enabled: req.Policy.Enabled, Policy: raw, NowAt: now, ActorKind: actor.Kind, ActorID: actor.ID, Status: status})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -100,7 +110,7 @@ func (s *PgStore) SetWorkflowRecoveryPolicy(ctx context.Context, account, app st
 	if err != nil {
 		return api.WorkflowRecoveryPolicyResponse{}, fmt.Errorf("create recovery policy: %w", err)
 	}
-	return finish(pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason))
+	return finish(pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification))
 }
 func (s *PgStore) ListWorkflowRecoveryPolicyReviews(ctx context.Context, account, app, after string, limit int) (api.WorkflowRecoveryPolicyReviews, error) {
 	out := api.WorkflowRecoveryPolicyReviews{Reviews: []api.WorkflowRecoveryPolicyReview{}}
@@ -221,7 +231,7 @@ func (s *PgStore) ProcessNextWorkflowRecoveryPolicy(ctx context.Context, now tim
 	if err != nil {
 		return false, err
 	}
-	response, err := pgPolicyResponse(uuidString(p.AppID), p.Version, p.Policy, p.UpdatedAt, p.ActorKind, p.ActorID, p.LastEvaluatedAt, p.Status, p.AutomaticFailures, p.AutomaticPausedAt, p.AutomaticPauseReason)
+	response, err := pgPolicyResponse(uuidString(p.AppID), p.Version, p.Policy, p.UpdatedAt, p.ActorKind, p.ActorID, p.LastEvaluatedAt, p.Status, p.AutomaticFailures, p.AutomaticPausedAt, p.AutomaticPauseReason, p.AutomaticPollFailure, p.AutomaticPollNotification)
 	if err != nil {
 		return false, err
 	}
@@ -326,9 +336,22 @@ func (s *PgStore) ProcessNextWorkflowRecoveryPolicy(ctx context.Context, now tim
 	if len(jobs) < api.WorkflowRecoveryPolicyJobsPerPoll {
 		cursor = pgtype.UUID{}
 	}
-	err = q.WorkflowRecoveryPolicyAdvance(ctx, tx, sqlc.WorkflowRecoveryPolicyAdvanceParams{AppID: p.AppID, NextAt: pgtypeFromTime(now.Add(api.WorkflowRecoveryPolicyPollInterval)), NowAt: pgtypeFromTime(now), JobCursor: cursor, Status: status})
+	var failures []string
+	if initialPolicyPreparationEnabled(response.Policy) {
+		ids, e := q.WorkflowInitialRecoveryPolicyFailures(ctx, tx, sqlc.WorkflowInitialRecoveryPolicyFailuresParams{AppID: p.AppID, RetainedAfter: pgtypeFromTime(now.Add(-api.WorkflowRecoveryFailureRetention)), NowAt: pgtypeFromTime(now), Workflows: response.Policy.WorkflowNames, Statuses: response.Policy.FailureStatuses, AfterID: p.InitialFailureCursor, PolicyVersion: p.Version, PageLimit: api.WorkflowRecoveryPolicyJobsPerPoll})
+		if e != nil {
+			return false, fmt.Errorf("scan initial recovery failures: %w", e)
+		}
+		for _, id := range ids {
+			failures = append(failures, uuidString(id))
+		}
+	}
+	err = q.WorkflowRecoveryPolicyAdvance(ctx, tx, sqlc.WorkflowRecoveryPolicyAdvanceParams{AppID: p.AppID, NextAt: pgtypeFromTime(now.Add(api.WorkflowRecoveryPolicyPollInterval)), NowAt: pgtypeFromTime(now), JobCursor: cursor, InitialFailureCursor: recoveryRequestUUID(initialPolicyNextCursor(failures)), Status: status})
 	if err != nil {
 		return false, err
 	}
-	return true, tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, prepareInitialPolicyReviews(ctx, s, uuidString(p.AccountID), uuidString(p.AppID), p.Version, failures)
 }

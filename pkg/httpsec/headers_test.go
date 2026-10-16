@@ -455,3 +455,23 @@ func TestNonce_LogPathSanitisedEndToEnd(t *testing.T) {
 // _ keeps silentLogger reachable to dead-code-elimination when
 // helpers are added in future edits without breaking the import.
 var _ = silentLogger
+
+// ADR-1190: the dashboard's Auth screens may call one exact HTTPS origin;
+// the rest of the policy is unchanged and nothing else can be injected.
+func TestCSPWithConnectOriginAddsOnlyThatOrigin(t *testing.T) {
+	const nonce = "abc123XYZ-_abc123XYZ"
+	base := httpsec.BuildCSPForTest(nonce)
+	got, ok := httpsec.CSPWithConnectOrigin(nonce, "https://shop-auth.gregale.app")
+	if !ok || got != strings.Replace(base, "connect-src 'self';", "connect-src 'self' https://shop-auth.gregale.app;", 1) {
+		t.Fatalf("policy = %q", got)
+	}
+	for _, origin := range []string{
+		"", "http://shop-auth.gregale.app", "https://shop-auth.gregale.app/", "https://*.gregale.app",
+		"https://shop-auth.gregale.app; script-src *", "https://shop-auth.gregale.app 'unsafe-inline'",
+		"https://SHOP.gregale.app", "https://localhost", "https://user@shop.gregale.app",
+	} {
+		if _, ok := httpsec.CSPWithConnectOrigin(nonce, origin); ok {
+			t.Errorf("accepted %q", origin)
+		}
+	}
+}

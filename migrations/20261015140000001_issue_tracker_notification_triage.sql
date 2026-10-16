@@ -1,13 +1,15 @@
 -- +goose Up
-CREATE TABLE public.issue_tracker_sync_triage (
+CREATE TABLE IF NOT EXISTS public.issue_tracker_sync_triage (
  incident_id uuid PRIMARY KEY,
  link_id uuid NOT NULL REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK(revision>0),
  acknowledged_by uuid,
  claimed_by uuid
 );
-CREATE INDEX issue_tracker_sync_triage_link_idx ON public.issue_tracker_sync_triage(link_id);
-CREATE TABLE public.issue_tracker_sync_triage_activity (
+
+CREATE INDEX IF NOT EXISTS issue_tracker_sync_triage_link_idx ON public.issue_tracker_sync_triage(link_id);
+
+CREATE TABLE IF NOT EXISTS public.issue_tracker_sync_triage_activity (
  id uuid PRIMARY KEY,
  incident_id uuid NOT NULL REFERENCES public.issue_tracker_sync_triage(incident_id) ON DELETE CASCADE,
  actor_id uuid NOT NULL,

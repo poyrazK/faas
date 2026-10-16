@@ -100,3 +100,21 @@ func TestRenderQueueStatusIncludesActionableSignals(t *testing.T) {
 		}
 	}
 }
+
+// A scaling policy's unset bounds read as the app's own: "min=0 max=0"
+// described a consumer that can run max_concurrency instances (H10-75).
+func TestQueueScalingBoundsUseAppDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		report queueStatusReport
+		want   string
+	}{
+		{"unset policy", queueStatusReport{ScalingPolicy: &api.ScalingPolicy{}, MaxConcurrency: 5}, "min=0 max=5 (max_concurrency)"},
+		{"no policy", queueStatusReport{MinInstances: 1, MaxConcurrency: 3}, "min=1 max=3 (max_concurrency)"},
+		{"explicit", queueStatusReport{ScalingPolicy: &api.ScalingPolicy{MinInstances: 2, MaxInstances: 4}, MaxConcurrency: 5}, "min=2 max=4"},
+	} {
+		if got := queueScalingBounds(tc.report); got != tc.want {
+			t.Errorf("%s: bounds = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

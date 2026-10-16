@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 1205
+// adr: 1405
 func TestIssueSavedViewsAndSymbolicatedOwnershipRoutes(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "saved-view-routing")

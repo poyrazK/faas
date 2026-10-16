@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"maps"
 	"net/netip"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -1875,12 +1875,15 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *api.ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *api.TracingConfig        `json:"tracing,omitempty"`
-	StartupDeadlineS int                       `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int                       `json:"max_retries,omitempty"`
-	StopGracePeriodS int                       `json:"stop_grace_period_s,omitempty"`
-	StopSignal       string                    `json:"stop_signal,omitempty"`
+	// Pause is the app's declared pause value (ADR-1151); empty selects the
+	// default for the app's type (api.EffectivePause).
+	Pause            string               `json:"pause,omitempty"`
+	Profiling        *api.ProfilingConfig `json:"profiling,omitempty"`
+	Tracing          *api.TracingConfig   `json:"tracing,omitempty"`
+	StartupDeadlineS int                  `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                  `json:"max_retries,omitempty"`
+	StopGracePeriodS int                  `json:"stop_grace_period_s,omitempty"`
+	StopSignal       string               `json:"stop_signal,omitempty"`
 	// RequestTimeoutS is the app-owned request wall-clock budget. Zero
 	// inherits the plan/type default; positive values are validated against
 	// the plan request-budget ceiling before persistence.
@@ -1940,7 +1943,7 @@ func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Profiling == nil && m.Tracing == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -2317,6 +2320,12 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// Admission metadata only: checked under the parent lock, never persisted.
+	ExpectedReview      *api.AppReleaseReview `json:"-"`
+	ReviewedRolloutMode string                `json:"-"`
+	StagedReview        *api.AppReleaseReview `json:"-"`
+	// ReviewedSettings is resolved by apid, then frozen on first named staging.
+	ReviewedSettings *ProjectEnvironmentWorkloadSettings `json:"-"`
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
 	// GitOps candidate. It remains attached after activation so serving runtime
 	// configuration is preserved; it is internal metadata, never a receipt.
@@ -3419,6 +3428,8 @@ const (
 	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
+	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-1192
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3608,7 +3619,11 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	EventSubscriptionID             string
+	EventSubscriptionID string
+	// EdgeRuleID scopes an edge-rule activity alert to one rule (ADR-1192);
+	// empty counts every rule of the app. Immutable, and not a foreign key:
+	// a rule-set restore re-inserts rules under the same ids.
+	EdgeRuleID                      string
 	PostDeployRollbackWindowSeconds int
 	ID                              string
 	AccountID                       string
@@ -3720,85 +3735,103 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventRealtimeSchedulePublished        AppWebhookEvent = "realtime.schedule.published"
-	AppWebhookEventRealtimeScheduleFailed           AppWebhookEvent = "realtime.schedule.failed"
-	AppWebhookEventRealtimeScheduleSkipped          AppWebhookEvent = "realtime.schedule.skipped"
-	AppWebhookEventRealtimeNotificationSent         AppWebhookEvent = "realtime.notification.sent"
-	AppWebhookEventRealtimeNotificationFailed       AppWebhookEvent = "realtime.notification.failed"
-	AppWebhookEventRealtimeNotificationExpired      AppWebhookEvent = "realtime.notification.expired"
-	AppWebhookEventRealtimeNotificationCancelled    AppWebhookEvent = "realtime.notification.cancelled"
-	AppWebhookEventRealtimeNotificationSuperseded   AppWebhookEvent = "realtime.notification.superseded"
-	AppWebhookEventRealtimeMessageRead              AppWebhookEvent = "realtime.message.read"
-	AppWebhookEventRealtimeInboxFallbackRequired    AppWebhookEvent = "realtime.inbox.fallback_required"
-	AppWebhookEventRealtimeInboxAcknowledged        AppWebhookEvent = "realtime.inbox.acknowledged"
-	AppWebhookEventRealtimeInboxGap                 AppWebhookEvent = "realtime.inbox.gap"
-	AppWebhookEventCronFired                        AppWebhookEvent = "cron.fired"
-	AppWebhookEventCronFiredManually                AppWebhookEvent = "cron.fired.manually"
-	AppWebhookEventAppCreated                       AppWebhookEvent = "app.created"
-	AppWebhookEventAppDeleted                       AppWebhookEvent = "app.deleted"
-	AppWebhookEventAppDeployed                      AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled                        AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked                        AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken                         AppWebhookEvent = "app.woken"
-	AppWebhookEventAppHealthChanged                 AppWebhookEvent = "app.health.changed"
-	AppWebhookEventBuildSucceeded                   AppWebhookEvent = "build.succeeded"
-	AppWebhookEventBuildFailed                      AppWebhookEvent = "build.failed"
-	AppWebhookEventDeploymentLive                   AppWebhookEvent = "deployment.live"
-	AppWebhookEventDeploymentFailed                 AppWebhookEvent = "deployment.failed"
-	AppWebhookEventRolloutCompleted                 AppWebhookEvent = "rollout.completed"
-	AppWebhookEventRolloutAborted                   AppWebhookEvent = "rollout.aborted"
-	AppWebhookEventErrorNew                         AppWebhookEvent = "error.new"
-	AppWebhookEventJobFinished                      AppWebhookEvent = "job.finished"
-	AppWebhookEventOperationFinished                AppWebhookEvent = "operation.finished"
-	AppWebhookEventPreviewCreated                   AppWebhookEvent = "preview.created"
-	AppWebhookEventBudgetThreshold                  AppWebhookEvent = "budget.threshold"
-	AppWebhookEventUsageStatementFinalized          AppWebhookEvent = "usage_statement.finalized"
-	AppWebhookEventConsumerUsageThreshold           AppWebhookEvent = "consumer.usage_threshold"
-	AppWebhookEventOutboundAIBudgetThreshold        AppWebhookEvent = "outbound.ai_budget.threshold"
-	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
-	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
-	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
-	AppWebhookEventRouteMonitorViolated             AppWebhookEvent = "routes.monitor.violated"
-	AppWebhookEventRouteMonitorEscalated            AppWebhookEvent = "routes.monitor.escalated"
-	AppWebhookEventRouteMonitorRecovered            AppWebhookEvent = "routes.monitor.recovered"
-	AppWebhookEventRouteHealthAborted               AppWebhookEvent = "routes.health.aborted"
-	AppWebhookEventRouteHealthBlocked               AppWebhookEvent = "routes.health.blocked"
-	AppWebhookEventRouteHealthResumed               AppWebhookEvent = "routes.health.resumed"
-	AppWebhookEventProfileRouteRegressed            AppWebhookEvent = "profile.route_regressed"
-	AppWebhookEventProfileRouteRecovered            AppWebhookEvent = "profile.route_recovered"
-	AppWebhookEventRouteRequirementsChanged         AppWebhookEvent = "routes.requirements.changed"
-	AppWebhookEventRouteRequirementsViolated        AppWebhookEvent = "routes.requirements.violated"
-	AppWebhookEventRouteRequirementsRecovered       AppWebhookEvent = "routes.requirements.recovered"
-	AppWebhookEventIssueTrackerSyncAttention        AppWebhookEvent = "issue.tracker_sync.attention"
-	AppWebhookEventIssueTrackerSyncRecovered        AppWebhookEvent = "issue.tracker_sync.recovered"
-	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
-	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
-	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
-	AppWebhookEventIssueReopened                    AppWebhookEvent = "issue.reopened"
-	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
-	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
-	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
-	AppWebhookEventIssueFrequencyThresholdReached   AppWebhookEvent = "issue.frequency_threshold_reached"
-	AppWebhookEventRecoveryQueueBlocked             AppWebhookEvent = "automation.recovery_queue_blocked"
-	AppWebhookEventRecoveryHealthAlert              AppWebhookEvent = "automation.recovery_health_alert"
-	AppWebhookEventRecoveryHealthRecovered          AppWebhookEvent = "automation.recovery_health_recovered"
-	AppWebhookEventRecoveryPolicyPaused             AppWebhookEvent = "automation.recovery_policy_paused"
-	AppWebhookEventRecoveryReviewFinished           AppWebhookEvent = "automation.recovery_review_finished"
-	AppWebhookEventRecoveryReviewReady              AppWebhookEvent = "automation.recovery_review_ready"
-	AppWebhookEventRecoveryCompleted                AppWebhookEvent = "event_recovery.completed"
-	AppWebhookEventRecoveryCancelled                AppWebhookEvent = "event_recovery.cancelled"
-	AppWebhookEventRecoveryExpired                  AppWebhookEvent = "event_recovery.expired"
-	AppWebhookEventAutomationPaused                 AppWebhookEvent = "automation.paused"
-	AppWebhookEventRecoveryExecutionAttention       AppWebhookEvent = "event_recovery.execution_attention"
-	AppWebhookEventRecoveryExecutionFinished        AppWebhookEvent = "event_recovery.execution_finished"
-	AppWebhookEventWorkflowFinished                 AppWebhookEvent = "workflow.finished"
+	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
+	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
+	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
+	AppWebhookEventRealtimeConsumerGroupDeadLetterExpiring AppWebhookEvent = "realtime.consumer_group.dead_letter_expiring"
+	AppWebhookEventRealtimeConsumerGroupDeliveryExpired    AppWebhookEvent = "realtime.consumer_group.delivery_expired"
+	AppWebhookEventRealtimeReplayJobCompleted              AppWebhookEvent = "realtime.replay_job.completed"
+	AppWebhookEventRealtimeReplayJobCancelled              AppWebhookEvent = "realtime.replay_job.cancelled"
+	AppWebhookEventRealtimeReplayJobProcessingFailed       AppWebhookEvent = "realtime.replay_job.processing_failed"
+	AppWebhookEventRealtimeConsumerGroupCircuitOpened      AppWebhookEvent = "realtime.consumer_group.circuit_opened"
+	AppWebhookEventRealtimeConsumerGroupCircuitHalfOpen    AppWebhookEvent = "realtime.consumer_group.circuit_half_open"
+	AppWebhookEventRealtimeConsumerGroupCircuitClosed      AppWebhookEvent = "realtime.consumer_group.circuit_closed"
+	AppWebhookEventRealtimeConsumerGroupWorkerLost         AppWebhookEvent = "realtime.consumer_group.worker_lost"
+	AppWebhookEventRealtimeConsumerGroupWorkerRecovered    AppWebhookEvent = "realtime.consumer_group.worker_recovered"
+	AppWebhookEventRealtimeConsumerGroupDeadLettered       AppWebhookEvent = "realtime.consumer_group.dead_lettered"
+	AppWebhookEventRealtimeChannelAcknowledged             AppWebhookEvent = "realtime.channel.acknowledged"
+	AppWebhookEventRealtimeChannelPublished                AppWebhookEvent = "realtime.channel.published"
+	AppWebhookEventRealtimeSchedulePublished               AppWebhookEvent = "realtime.schedule.published"
+	AppWebhookEventRealtimeScheduleFailed                  AppWebhookEvent = "realtime.schedule.failed"
+	AppWebhookEventRealtimeScheduleSkipped                 AppWebhookEvent = "realtime.schedule.skipped"
+	AppWebhookEventRealtimeNotificationSent                AppWebhookEvent = "realtime.notification.sent"
+	AppWebhookEventRealtimeNotificationFailed              AppWebhookEvent = "realtime.notification.failed"
+	AppWebhookEventRealtimeNotificationExpired             AppWebhookEvent = "realtime.notification.expired"
+	AppWebhookEventRealtimeNotificationCancelled           AppWebhookEvent = "realtime.notification.cancelled"
+	AppWebhookEventRealtimeNotificationSuperseded          AppWebhookEvent = "realtime.notification.superseded"
+	AppWebhookEventRealtimeMessageRead                     AppWebhookEvent = "realtime.message.read"
+	AppWebhookEventRealtimeInboxFallbackRequired           AppWebhookEvent = "realtime.inbox.fallback_required"
+	AppWebhookEventRealtimeInboxAcknowledged               AppWebhookEvent = "realtime.inbox.acknowledged"
+	AppWebhookEventRealtimeInboxGap                        AppWebhookEvent = "realtime.inbox.gap"
+	AppWebhookEventCronFired                               AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually                       AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated                              AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted                              AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed                             AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled                               AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked                               AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken                                AppWebhookEvent = "app.woken"
+	AppWebhookEventAppHealthChanged                        AppWebhookEvent = "app.health.changed"
+	AppWebhookEventBuildSucceeded                          AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed                             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentLive                          AppWebhookEvent = "deployment.live"
+	AppWebhookEventDeploymentFailed                        AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutCompleted                        AppWebhookEvent = "rollout.completed"
+	AppWebhookEventRolloutAborted                          AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew                                AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished                             AppWebhookEvent = "job.finished"
+	AppWebhookEventOperationFinished                       AppWebhookEvent = "operation.finished"
+	AppWebhookEventPreviewCreated                          AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold                         AppWebhookEvent = "budget.threshold"
+	AppWebhookEventUsageStatementFinalized                 AppWebhookEvent = "usage_statement.finalized"
+	AppWebhookEventPlatformTenantStatementFinalized        AppWebhookEvent = "platform_tenant.statement.finalized"
+	AppWebhookEventDebugRegressionDetected                 AppWebhookEvent = "debug.regression.detected"
+	AppWebhookEventDebugRegressionResolved                 AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteMonitorViolated                    AppWebhookEvent = "routes.monitor.violated"
+	AppWebhookEventRouteMonitorEscalated                   AppWebhookEvent = "routes.monitor.escalated"
+	AppWebhookEventRouteMonitorRecovered                   AppWebhookEvent = "routes.monitor.recovered"
+	AppWebhookEventRouteHealthAborted                      AppWebhookEvent = "routes.health.aborted"
+	AppWebhookEventRouteHealthBlocked                      AppWebhookEvent = "routes.health.blocked"
+	AppWebhookEventRouteHealthResumed                      AppWebhookEvent = "routes.health.resumed"
+	AppWebhookEventProfileRouteRegressed                   AppWebhookEvent = "profile.route_regressed"
+	AppWebhookEventProfileRouteRecovered                   AppWebhookEvent = "profile.route_recovered"
+	AppWebhookEventRouteRequirementsChanged                AppWebhookEvent = "routes.requirements.changed"
+	AppWebhookEventRouteRequirementsViolated               AppWebhookEvent = "routes.requirements.violated"
+	AppWebhookEventRouteRequirementsRecovered              AppWebhookEvent = "routes.requirements.recovered"
+	AppWebhookEventIssueCreated                            AppWebhookEvent = "issue.created"
+	AppWebhookEventIssueAssigned                           AppWebhookEvent = "issue.assigned"
+	AppWebhookEventIssueResolved                           AppWebhookEvent = "issue.resolved"
+	AppWebhookEventIssueReopened                           AppWebhookEvent = "issue.reopened"
+	AppWebhookEventIssueIgnored                            AppWebhookEvent = "issue.ignored"
+	AppWebhookEventIssueRegressed                          AppWebhookEvent = "issue.regressed"
+	AppWebhookEventIssueImpactThresholdReached             AppWebhookEvent = "issue.impact_threshold_reached"
+	AppWebhookEventRecoveryCompleted                       AppWebhookEvent = "event_recovery.completed"
+	AppWebhookEventRecoveryCancelled                       AppWebhookEvent = "event_recovery.cancelled"
+	AppWebhookEventRecoveryExpired                         AppWebhookEvent = "event_recovery.expired"
+	AppWebhookEventRecoveryExecutionFinished               AppWebhookEvent = "event_recovery.execution_finished"
+	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
+	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
+	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
+	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
+	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
+	AppWebhookEventRecoveryPolicyPaused                    AppWebhookEvent = "automation.recovery_policy_paused"
+	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "automation.recovery_review_finished"
+	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
+	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
+	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
+	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
+	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
+	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
+	AppWebhookEventIssueFrequencyThresholdReached          AppWebhookEvent = "issue.frequency_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
 // emitters, tests, and adapters. Keep the order stable: it is also the
 // order used in validation error messages and generated documentation.
 var AllAppWebhookEvents = []AppWebhookEvent{
-	AppWebhookEventRealtimeSchedulePublished, AppWebhookEventRealtimeScheduleFailed, AppWebhookEventRealtimeScheduleSkipped,
+	AppWebhookEventRealtimeReplayJobCompleted, AppWebhookEventRealtimeReplayJobCancelled, AppWebhookEventRealtimeReplayJobProcessingFailed,
+	AppWebhookEventRealtimeConsumerGroupCircuitOpened, AppWebhookEventRealtimeConsumerGroupCircuitHalfOpen, AppWebhookEventRealtimeConsumerGroupCircuitClosed, AppWebhookEventRealtimeConsumerGroupWorkerLost, AppWebhookEventRealtimeConsumerGroupWorkerRecovered, AppWebhookEventRealtimeConsumerGroupDeliveryExpired, AppWebhookEventRealtimeConsumerGroupLagExceeded, AppWebhookEventRealtimeConsumerGroupLagRecovered, AppWebhookEventRealtimeConsumerGroupDeadLetterExpiring, AppWebhookEventRealtimeConsumerGroupDeadLettered, AppWebhookEventRealtimeChannelAcknowledged, AppWebhookEventRealtimeChannelPublished, AppWebhookEventRealtimeSchedulePublished, AppWebhookEventRealtimeScheduleFailed, AppWebhookEventRealtimeScheduleSkipped,
 	AppWebhookEventRealtimeNotificationSent,
 	AppWebhookEventRealtimeNotificationFailed,
 	AppWebhookEventRealtimeNotificationExpired,
@@ -3851,9 +3884,21 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
+	AppWebhookEventRecoveryPollingStatus,
+	AppWebhookEventRecoveryHealthAlert,
+	AppWebhookEventRecoveryHealthRecovered,
+	AppWebhookEventRecoveryQueueBlocked,
+	AppWebhookEventRecoveryPolicyPaused,
+	AppWebhookEventRecoveryReviewFinished,
+	AppWebhookEventRecoveryReviewReady,
+	AppWebhookEventRecoveryCompleted,
+	AppWebhookEventRecoveryCancelled,
+	AppWebhookEventRecoveryExpired,
+	AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventIssueFrequencyThresholdReached,
-	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
+	AppWebhookEventEnvironmentGitOpsChanged,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -6191,12 +6236,12 @@ type UpdateAppParams struct {
 	// an app during a deploy rollback or a billing investigation.
 	MaintenanceMode    *bool
 	SetMaintenanceMode bool
-	// RequireSigned (issue #472 / ADR-054) gates OCI image deploys
-	// on a valid cosign signature from a trusted publisher. SetRequireSigned
+	// RequireSigned (ADR-054, ADR-435) gates OCI image deploys and source-build
+	// publication on an explicitly approved publisher. SetRequireSigned
 	// distinguishes "unset" (don't touch) from "explicit false"
 	// (opt out of signature enforcement). Admin-only via PATCH
-	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source-tarball
-	// deploys are unaffected.
+	// /v1/apps/{slug}; not plan-gated (any plan may opt in). Source builds need
+	// the separately configured build publisher, never implicit platform trust.
 	RequireSigned    *bool
 	SetRequireSigned bool
 	// SecurityPolicy controls the deploy-time posture guard. It is an
@@ -6466,10 +6511,13 @@ type Snapshot struct {
 	// test fixtures that bypass the storage contract. Wake sends
 	// StorageKey on the wire; vmmd resolves it through the
 	// configured StorageBackend.
-	StorageKey    string
-	Stale         bool
-	DeletePending bool
-	CreatedAt     time.Time
+	StorageKey string
+	// ApplicationStandardCaptureToken identifies immutable, published capture
+	// history. Empty means legacy cache data; this reference is not restore authority.
+	ApplicationStandardCaptureToken string
+	Stale                           bool
+	DeletePending                   bool
+	CreatedAt                       time.Time
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -7373,7 +7421,7 @@ var ErrScanSourceDowngrade = errors.New("state: scan_source downgrade rejected")
 //
 // PR 2 introduces `orgs`, `org_memberships`, and `org_invitations` tables
 // plus nullable `org_id` columns on the 19 tenant-root tables
-// (see docs/iam-6-ownership-inventory.md §B). The Go types here mirror
+// (see docs/iam-006-ownership-inventory.md §B). The Go types here mirror
 // those tables 1:1 and are the surface PR 5's handlers consume.
 //
 // The OrgRole / OrgStatus / OrgInvitationStatus enums match the SQL
@@ -9122,6 +9170,7 @@ const (
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed
 // is age/X25519 ciphertext and is never returned by the API.
 type AppLogDrain struct {
+	StandardBinding  *ApplicationStandardLogDrainBinding `json:"-"`
 	ID               string
 	AppID            string
 	AccountID        string

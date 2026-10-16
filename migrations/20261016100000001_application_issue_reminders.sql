@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE public.issue_application_reminder_policies (
+CREATE TABLE IF NOT EXISTS public.issue_application_reminder_policies (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  enabled boolean NOT NULL DEFAULT false,
  revision bigint NOT NULL CHECK(revision>0),
@@ -7,7 +7,8 @@ CREATE TABLE public.issue_application_reminder_policies (
  repeat_limit integer NOT NULL CHECK(repeat_limit BETWEEN 1 AND 3),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE TABLE public.issue_application_reminders (
+
+CREATE TABLE IF NOT EXISTS public.issue_application_reminders (
  id uuid PRIMARY KEY,
  issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
  response_id uuid NOT NULL,
@@ -17,13 +18,33 @@ CREATE TABLE public.issue_application_reminders (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE(issue_id,response_id,sequence)
 );
-ALTER TABLE public.issue_application_triage ADD COLUMN reminder_started_at timestamptz;
-ALTER TABLE public.issue_application_triage ADD COLUMN last_reminded_at timestamptz;
-ALTER TABLE public.issue_application_triage ADD COLUMN reminder_count integer NOT NULL DEFAULT 0 CHECK(reminder_count BETWEEN 0 AND 3);
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN reminder_id uuid REFERENCES public.issue_application_reminders(id) ON DELETE CASCADE;
-ALTER TABLE public.issue_team_slack_deliveries DROP CONSTRAINT issue_slack_source_check;
-ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_slack_source_check CHECK((notification_id IS NOT NULL AND activity_id IS NULL AND reminder_id IS NULL AND application_policy_revision IS NULL AND recipient_account_ids IS NULL AND assigned_team_id IS NULL AND assigned_account_id IS NULL) OR (notification_id IS NULL AND num_nonnulls(activity_id,reminder_id)=1 AND application_policy_revision IS NOT NULL AND application_policy_revision>0 AND recipient_account_ids IS NOT NULL AND cardinality(recipient_account_ids)>0));
-CREATE UNIQUE INDEX issue_slack_reminder_once ON public.issue_team_slack_deliveries(reminder_id) WHERE reminder_id IS NOT NULL;
+
+ALTER TABLE public.issue_application_triage ADD COLUMN IF NOT EXISTS reminder_started_at timestamptz;
+
+ALTER TABLE public.issue_application_triage ADD COLUMN IF NOT EXISTS last_reminded_at timestamptz;
+
+ALTER TABLE public.issue_application_triage ADD COLUMN IF NOT EXISTS reminder_count integer NOT NULL DEFAULT 0 CHECK(reminder_count BETWEEN 0 AND 3);
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS reminder_id uuid REFERENCES public.issue_application_reminders(id) ON DELETE CASCADE;
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_deliveries'::regclass AND conname='issue_slack_source_check' AND position('reminder_id' in pg_get_constraintdef(oid))>0) THEN
+  ALTER TABLE public.issue_team_slack_deliveries DROP CONSTRAINT IF EXISTS issue_slack_source_check;
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_deliveries'::regclass AND conname='issue_slack_source_check') THEN
+  ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_slack_source_check CHECK((notification_id IS NOT NULL AND activity_id IS NULL AND reminder_id IS NULL AND application_policy_revision IS NULL AND recipient_account_ids IS NULL AND assigned_team_id IS NULL AND assigned_account_id IS NULL) OR (notification_id IS NULL AND num_nonnulls(activity_id,reminder_id)=1 AND application_policy_revision IS NOT NULL AND application_policy_revision>0 AND recipient_account_ids IS NOT NULL AND cardinality(recipient_account_ids)>0));
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+CREATE UNIQUE INDEX IF NOT EXISTS issue_slack_reminder_once ON public.issue_team_slack_deliveries(reminder_id) WHERE reminder_id IS NOT NULL;
+
 CREATE OR REPLACE VIEW public.issue_slack_delivery_sources AS
 SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id,
  COALESCE(n.kind,act.action,CASE WHEN rem.id IS NOT NULL THEN 'application_reminder' END,'')::text AS kind,COALESCE(n.reason,'')::text AS reason,(COALESCE(act.details,CASE WHEN rem.id IS NOT NULL THEN jsonb_build_object('reminder_sequence',rem.sequence::text) END,'{}'::jsonb) || CASE WHEN i.id IS NOT NULL THEN jsonb_build_object('environment',i.environment) ELSE '{}'::jsonb END)::jsonb AS details,

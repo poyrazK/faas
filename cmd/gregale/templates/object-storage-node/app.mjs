@@ -84,9 +84,9 @@ async function upload(request, response, pair, key, signal, spoolRoot) {
       await pair.client.send(new PutObjectCommand({Bucket: pair.bucket, Key: key, Body: body,
         ContentLength: size, ContentType: request.headers['content-type'] || 'application/octet-stream'}), {abortSignal: signal});
     } finally {body.destroy();}
-    response.writeHead(201, {'content-type': 'application/json', 'cache-control': 'no-store'});
-    response.end(JSON.stringify({ok: true, key}));
   } finally {await rm(directory, {recursive: true, force: true});}
+  response.writeHead(201, {'content-type': 'application/json', 'cache-control': 'no-store'});
+  response.end(JSON.stringify({ok: true, key}));
 }
 
 async function download(response, pair, key, signal) {

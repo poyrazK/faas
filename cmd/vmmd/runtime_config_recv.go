@@ -84,6 +84,7 @@ type runtimeConfigReceiver struct {
 	// never snapshots it; delivery also needs the operator flag.
 	diverged        *vmmdgrpc.DivergedInstances
 	devPatchEnabled bool
+	devPatchMetrics *devPatchMetrics
 }
 
 func (*runtimeConfigReceiver) Close() {}

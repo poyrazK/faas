@@ -103,3 +103,11 @@ export {
   type RealtimeActivityParticipant, type RealtimeActivitySummary, type RealtimeActivitySummaryOptions,
   type RealtimePresenceDirectory, type RealtimePresenceDirectoryOptions,
 } from './realtime-activity-summary.js';
+
+export { subscribeRealtimeSSE, RealtimeSSEError } from './realtime-sse.js';
+export type { RealtimeSSEOptions, RealtimeSSEMessage } from './realtime-sse.js';
+
+export { createBrowserRealtimeTicketSocketFactory } from './browser-realtime.js';
+
+export { consumeRealtimeChannelWithFallback } from './realtime-transport.js';
+export type { RealtimeTransport, RealtimeTransportMessage, RealtimeTransportOptions } from './realtime-transport.js';

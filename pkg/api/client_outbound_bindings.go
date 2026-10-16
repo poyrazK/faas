@@ -46,6 +46,26 @@ func (c *Client) SetOutboundIntegrationAIPolicy(ctx context.Context, integration
 	return c.do(ctx, "PUT", path, policy, nil)
 }
 
+// SetOutboundAIContentPolicy replaces an integration's content guardrails
+// (ADR-997).
+func (c *Client) SetOutboundAIContentPolicy(ctx context.Context, integrationID string, policy OutboundAIContentPolicy) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-content-policy"
+	return c.do(ctx, "PUT", path, policy, nil)
+}
+
+// CreateOutboundAIReplay replays a captured call on targets (ADR-997).
+func (c *Client) CreateOutboundAIReplay(ctx context.Context, integrationID, requestID string, req CreateOutboundAIReplayRequest) (OutboundAIReplay, error) {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-requests/" + url.PathEscape(requestID) + "/replays"
+	var out OutboundAIReplay
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+// GetOutboundAIReplay reads a replay and its results.
+func (c *Client) GetOutboundAIReplay(ctx context.Context, replayID string) (OutboundAIReplay, error) {
+	var out OutboundAIReplay
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-replays/"+url.PathEscape(replayID), nil, &out)
+}
+
 // GetOutboundIntegrationAIPrices returns the price list in effect.
 func (c *Client) GetOutboundIntegrationAIPrices(ctx context.Context, integrationID string) (OutboundAIPriceListResponse, error) {
 	var out OutboundAIPriceListResponse
@@ -112,6 +132,14 @@ func (c *Client) ListOutboundAIRequestLog(ctx context.Context, integrationID str
 		path += "?" + encoded
 	}
 	var out OutboundAIRequestLogList
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetOutboundAIRequestContent reads one logged call's captured bodies
+// (ADR-996).
+func (c *Client) GetOutboundAIRequestContent(ctx context.Context, integrationID, requestID string) (OutboundAIRequestContent, error) {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-requests/" + url.PathEscape(requestID) + "/content"
+	var out OutboundAIRequestContent
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

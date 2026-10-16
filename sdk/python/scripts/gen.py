@@ -134,6 +134,21 @@ def pre_normalize_spec(spec: Path) -> Path:
         if constraints != [{"required": ["enabled"]}, {"required": ["tls"]}]:
             raise ValueError("UpdateTCPListenerRequest generator adaptation needs review")
         del update["oneOf"]
+    # The pinned generator ignores standalone application/x-ndjson responses.
+    # Treat this binary attachment as opaque bytes for generation only; the
+    # canonical API continues to return JSONL with its original content type.
+    export_path = "/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export"
+    export_operation = fixed.get("paths", {}).get(export_path, {}).get("get")
+    if export_operation is not None:
+        if export_operation.get("operationId") != "exportRealtimeConsumerGroupDeadLetters":
+            raise ValueError("dead-letter export generator adaptation needs review")
+        content = export_operation["responses"]["200"]["content"]
+        if set(content) != {"application/x-ndjson"} or content["application/x-ndjson"]["schema"] != {
+            "type": "string",
+            "format": "binary",
+        }:
+            raise ValueError("dead-letter export binary response adaptation needs review")
+        export_operation["responses"]["200"]["content"] = {"application/octet-stream": content["application/x-ndjson"]}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="openapi-", delete=False) as fh:
         tmp = Path(fh.name)
         json.dump(fixed, fh, indent=2, sort_keys=False, default=str)
@@ -141,6 +156,33 @@ def pre_normalize_spec(spec: Path) -> Path:
 
 
 WRAPPER_MODULES = (
+    "realtime_workers.py",
+    "realtime_activity.py",
+    "realtime_presence.py",
+    "realtime_publisher.py",
+    "realtime_scopes.py",
+    "realtime_read_progress.py",
+    "realtime_read_publisher.py",
+    "realtime_read_refresh.py",
+    "realtime_connection_status.py",
+    "realtime_health.py",
+    "realtime_catch_up.py",
+    "realtime_subscriptions.py",
+    "realtime_readiness.py",
+    "realtime_diagnostics.py",
+    "realtime_timeline.py",
+    "realtime_recovery.py",
+    "realtime_websocket.py",
+    "realtime_channels.py",
+    "realtime_websocket_presence.py",
+    "realtime_filters.py",
+    "realtime_websocket_reads.py",
+    "realtime_direct_messages.py",
+    "realtime_expiry.py",
+    "realtime_sse.py",
+    "realtime_transport.py",
+    "realtime_backpressure.py",
+    "realtime_drain.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -150,6 +192,7 @@ WRAPPER_MODULES = (
     "release_context.py",
     "dev_bridge.py",
     "webhook.py",
+    "auth.py",
     "pre_auth_target.py",
     "ai_gateway.py",
     "issues.py",
@@ -159,8 +202,10 @@ WRAPPER_MODULES = (
     "job_operations_runtime.py",
     "object_storage_runtime.py",
     "secret_reload_runtime.py",
+    "queue_consumer.py",
     "operations.py",
     "event_consumer_transactions.py",
+    "event_consumer_delivery_context.py",
     "commit_subscriber_wait.py",
     "commit_delivery_report.py",
     "commit_recovery_plan.py",
@@ -394,7 +439,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
+                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -965,6 +1010,253 @@ __all__ += ("OperationWorkflowDependency",)
 from .models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
 __all__ += ("OperationWorkflowRelatedInstance",)
 
+
+from .realtime_direct_messages import RealtimeDirectMessage, RealtimeWebSocketDirectMessages
+from .realtime_drain import RealtimeDrainResult
+from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
+from .realtime_expiry import RealtimeExpiryDiagnostics, RealtimeExpiryStatus, RealtimeMessageExpiry
+from .realtime_sse import RealtimeSSEClient, RealtimeSSEMessage
+from .realtime_transport import RealtimeFallbackClient, RealtimeTransportStatus
+
+__all__ += (
+    "RealtimeDrainResult",
+    "RealtimeBackpressureMonitor",
+    "RealtimeBackpressureStatus",
+    "RealtimeProcessingStatus",
+    "RealtimeExpiryDiagnostics",
+    "RealtimeExpiryStatus",
+    "RealtimeMessageExpiry",
+    "RealtimeSSEClient",
+    "RealtimeSSEMessage",
+    "RealtimeFallbackClient",
+    "RealtimeTransportStatus",
+    "RealtimeDirectMessage", "RealtimeWebSocketDirectMessages")
+
+
+from .realtime_websocket_reads import RealtimeWebSocketReadProgress
+
+__all__ += ("RealtimeWebSocketReadProgress",)
+
+
+from .realtime_filters import RealtimeEventFilter
+
+__all__ += ("RealtimeEventFilter",)
+
+
+from .realtime_websocket_presence import RealtimeWebSocketPresence, RealtimeWebSocketSignal
+
+__all__ += ("RealtimeWebSocketPresence", "RealtimeWebSocketSignal")
+
+
+from .realtime_channels import RealtimeChannelSubscription, RealtimeMultiChannelClient
+
+__all__ += ("RealtimeChannelSubscription", "RealtimeMultiChannelClient")
+
+
+from .realtime_websocket import RealtimeWebSocketClient, RealtimeWebSocketMessage, RealtimeWebSocketSession
+
+__all__ += ("RealtimeWebSocketClient", "RealtimeWebSocketMessage", "RealtimeWebSocketSession")
+
+
+from .realtime_recovery import (
+    RealtimeRecoveryCoordinator,
+    RealtimeRecoveryError,
+    RealtimeRecoveryEvent,
+    RealtimeRecoveryRetry,
+    RealtimeRecoverySession,
+    RealtimeRecoveryTarget,
+)
+
+__all__ += (
+    "RealtimeRecoveryCoordinator",
+    "RealtimeRecoveryError",
+    "RealtimeRecoveryEvent",
+    "RealtimeRecoveryRetry",
+    "RealtimeRecoverySession",
+    "RealtimeRecoveryTarget",
+)
+
+
+from .realtime_timeline import RealtimeIncidentEvent, RealtimeIncidentTimeline
+
+__all__ += ("RealtimeIncidentEvent", "RealtimeIncidentTimeline")
+
+
+from .realtime_diagnostics import export_realtime_diagnostics
+
+__all__ += ("export_realtime_diagnostics",)
+
+
+from .realtime_readiness import (
+    RealtimeCatchUpRequirement,
+    RealtimeReadinessError,
+    RealtimeReadinessResult,
+    wait_realtime_ready,
+)
+
+__all__ += (
+    "RealtimeCatchUpRequirement",
+    "RealtimeReadinessError",
+    "RealtimeReadinessResult",
+    "wait_realtime_ready",
+)
+
+
+from .realtime_subscriptions import (
+    RealtimeSubscriptionStatus,
+    RealtimeSubscriptionSummary,
+    RealtimeSubscriptionTracker,
+    RealtimeSubscriptionWaitError,
+)
+
+__all__ += (
+    "RealtimeSubscriptionStatus",
+    "RealtimeSubscriptionSummary",
+    "RealtimeSubscriptionTracker",
+    "RealtimeSubscriptionWaitError",
+)
+
+
+from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
+
+__all__ += ("RealtimeCatchUpStatus", "RealtimeCatchUpTracker", "RealtimeCatchUpWaitError")
+
+
+from .realtime_health import RealtimeHealthSummary, summarize_realtime_health
+
+__all__ += ("RealtimeHealthSummary", "summarize_realtime_health")
+
+
+from .realtime_connection_status import (
+    RealtimeConnectionStatus,
+    RealtimeConnectionStatusTracker,
+    RealtimeConnectionQuality,
+    RealtimeConnectionQualityTracker,
+)
+
+__all__ += (
+    "RealtimeConnectionStatus",
+    "RealtimeConnectionStatusTracker",
+    "RealtimeConnectionQuality",
+    "RealtimeConnectionQualityTracker",
+)
+
+
+from .realtime_read_refresh import RealtimeReadRefreshCoordinator, RealtimeReadRefreshError
+
+__all__ += ("RealtimeReadRefreshCoordinator", "RealtimeReadRefreshError")
+
+
+from .realtime_read_publisher import (
+    RealtimeReadProgressPublisher,
+    RealtimeReadPublishError,
+    create_managed_realtime_read_publisher,
+)
+
+__all__ += (
+    "RealtimeReadProgressPublisher",
+    "RealtimeReadPublishError",
+    "create_managed_realtime_read_publisher",
+)
+
+
+from .realtime_read_progress import (
+    RealtimeReadProgress,
+    RealtimeReadProgressTracker,
+    RealtimeReadProgressFreshness,
+    RealtimeUnreadSummary,
+    RealtimeUnreadBadge,
+    format_realtime_unread_badge,
+    summarize_realtime_unread,
+)
+
+__all__ += (
+    "RealtimeReadProgress",
+    "RealtimeReadProgressTracker",
+    "RealtimeReadProgressFreshness",
+    "RealtimeUnreadSummary",
+    "RealtimeUnreadBadge",
+    "format_realtime_unread_badge",
+    "summarize_realtime_unread",
+)
+
+
+from .realtime_scopes import (
+    REALTIME_ACTIVITY_SCOPE_PREFIX,
+    parse_realtime_activity_scope,
+    realtime_activity_scope_channel,
+)
+
+__all__ += (
+    "REALTIME_ACTIVITY_SCOPE_PREFIX",
+    "parse_realtime_activity_scope",
+    "realtime_activity_scope_channel",
+)
+
+
+from .realtime_publisher import (
+    RealtimeActivityPublishError,
+    RealtimeActivityPublisher,
+    create_managed_realtime_activity_publisher,
+)
+
+__all__ += (
+    "RealtimeActivityPublishError",
+    "RealtimeActivityPublisher",
+    "create_managed_realtime_activity_publisher",
+)
+
+
+from .realtime_presence import (
+    RealtimeActivitySummary,
+    RealtimeLabeledActivityParticipant,
+    summarize_realtime_activity,
+    format_realtime_typing_summary,
+    RealtimeActivityParticipant,
+    RealtimePresenceDirectory,
+    RealtimePresenceEvent,
+    RealtimePresenceMember,
+    RealtimePresenceSummary,
+)
+
+__all__ += (
+    "RealtimeActivitySummary",
+    "RealtimeLabeledActivityParticipant",
+    "summarize_realtime_activity",
+    "format_realtime_typing_summary",
+    "RealtimeActivityParticipant",
+    "RealtimePresenceDirectory",
+    "RealtimePresenceEvent",
+    "RealtimePresenceMember",
+    "RealtimePresenceSummary",
+)
+
+
+from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
+
+__all__ += ("RealtimeActivity", "RealtimeActivityTracker")
+
+
+from .realtime_workers import (
+    RealtimeLeaseLostError,
+    RealtimeWorkerContext,
+    RealtimeWorkerError,
+    RealtimeWorkerEvent,
+    RealtimeWorkerOptions,
+    consume_realtime_consumer_group,
+    consume_realtime_consumer_group_with_credential,
+)
+
+__all__ += (
+    "RealtimeLeaseLostError",
+    "RealtimeWorkerContext",
+    "RealtimeWorkerError",
+    "RealtimeWorkerEvent",
+    "RealtimeWorkerOptions",
+    "consume_realtime_consumer_group",
+    "consume_realtime_consumer_group_with_credential",
+)
+
 from .event_consumer_transactions import (
     EventConsumerCommitUnknownError,
     EventConsumerConflictError,
@@ -993,6 +1285,9 @@ from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recov
 __all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
 from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+from .event_consumer_delivery_context import (EventConsumerDeliveryContext, EventConsumerDeliveryContextUnavailableError,
+                                              event_consumer_delivery_context_from_headers)
+__all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
 '''
 
 

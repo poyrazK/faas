@@ -12,6 +12,7 @@ import (
 )
 
 type environmentGitOpsMemory struct {
+	retirements    map[string]EnvironmentWorkloadRetirement
 	source         EnvironmentGitSource
 	revisions      map[string]EnvironmentDesiredRevision
 	runs           map[string]EnvironmentGitOpsRun
@@ -29,6 +30,7 @@ type environmentGitOpsMemory struct {
 	qualifications map[string]EnvironmentWorkloadQualificationRequest
 	poll           environmentGitSourcePoll
 	approvals      map[string]EnvironmentGitRevisionApproval
+	notifications  environmentGitNotificationState
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -52,6 +54,9 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 	if spec.Validate() != nil {
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
+	if spec.Provider == "" {
+		spec.Provider = "github"
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.createEnvironmentGitSourceLocked(accountID, projectID, environment, spec)
@@ -59,7 +64,9 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 
 func (m *MemStore) createEnvironmentGitSourceLocked(accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
 	project, ok := m.projects[projectID]
-	if !ok || project.AccountID != accountID || project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID {
+	if !ok || project.AccountID != accountID ||
+		(spec.Provider != "gitlab" && (project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID)) ||
+		(spec.Provider == "gitlab" && m.gitlabOAuthConnections[accountID].AccountID == "") {
 		return EnvironmentGitSource{}, ErrNotFound
 	}
 	env, err := m.projectEnvironmentBySlugLocked(projectID, environment)
@@ -286,6 +293,11 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 		}
 	}
 	completed := now.UTC()
+	var notificationPlan api.EnvironmentGitOpsPlan
+	_ = json.Unmarshal(plan, &notificationPlan)
+	if err := m.environmentGitNotificationLocked(memory, "drift", environmentGitReportNotificationStatus(status, notificationPlan), run.ID, errorCode, notificationPlan, now); err != nil {
+		return err
+	}
 	var incomingSteps []EnvironmentGitOpsStep
 	_ = json.Unmarshal(steps, &incomingSteps)
 	if len(incomingSteps) == 0 && len(run.Steps) > 2 {

@@ -48,8 +48,17 @@ type Config struct {
 	FlagsEnabled            bool   `toml:"flags_enabled"`
 	FlagsWorkloadJWKSPath   string `toml:"flags_workload_jwks_path"`
 	FlagsWorkloadIssuer     string `toml:"flags_workload_issuer"`
+	// WorkloadJWKSPath is the cluster workload-identity JWKS (ADR-1141):
+	// queue leases verify against it, and Flags and Operations use it when
+	// their own trust settings are empty.
+	WorkloadJWKSPath string `toml:"workload_jwks_path"`
+	WorkloadIssuer   string `toml:"workload_issuer"`
 	// AIGatewayEnabled opens the AI gateway APIs (ADR-991); off by default.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+	// AIGatewayAccounts limits the AI gateway to these account IDs during a
+	// staged preview rollout (ADR-998); empty or "*" admits every entitled
+	// account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
+	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in

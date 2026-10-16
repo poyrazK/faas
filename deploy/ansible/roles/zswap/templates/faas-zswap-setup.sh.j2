@@ -1,0 +1,28 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# faas-zswap-setup — memory-only compressed swap for frozen VMs
+# (ADR-906 decision 6). Idempotent; faas-zswap.service runs it at boot.
+set -eu
+
+z=/sys/module/zswap/parameters
+if ! echo {{ faas_zswap_compressor }} > "$z/compressor"; then
+  echo "faas-zswap: compressor {{ faas_zswap_compressor }} unavailable; keeping $(cat "$z/compressor")" >&2
+fi
+echo {{ faas_zswap_max_pool_percent }} > "$z/max_pool_percent"
+# The shrinker writes cold compressed pages back to the swap device; writeback
+# is disabled below anyway, so keep it from trying.
+echo N > "$z/shrinker_enabled"
+echo Y > "$z/enabled"
+
+# Tenant memory never reaches the disk: writeback is off on the tenant slice
+# and inherited by every VM scope below it. This must hold before swap is on.
+tenant=$(systemctl show -P ControlGroup faas-tenant.slice)
+if [ -z "$tenant" ]; then
+  echo "faas-zswap: faas-tenant.slice has no cgroup" >&2
+  exit 1
+fi
+echo 0 > "/sys/fs/cgroup${tenant}/memory.zswap.writeback"
+
+if ! swapon --show=NAME --noheadings | grep -qxF '{{ faas_zswap_swapfile }}'; then
+  swapon '{{ faas_zswap_swapfile }}'
+fi

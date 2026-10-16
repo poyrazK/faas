@@ -1,14 +1,16 @@
 -- +goose Up
-CREATE TABLE issue_tracker_inbound_guards (
+CREATE TABLE IF NOT EXISTS issue_tracker_inbound_guards (
  app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
  revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0)
 );
-INSERT INTO issue_tracker_inbound_guards(app_id) SELECT id FROM apps;
+
+INSERT INTO issue_tracker_inbound_guards(app_id) SELECT id FROM apps ON CONFLICT DO NOTHING;
+-- +goose StatementBegin
+
 
 -- Intent changes advance a durable app-wide fence. Traffic counters, token
 -- refreshes and scheduler timestamps do not invalidate an owner's preview.
--- +goose StatementBegin
-CREATE FUNCTION issue_tracker_inbound_bump() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION issue_tracker_inbound_bump() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target uuid;
 BEGIN
  IF TG_TABLE_NAME = 'apps' THEN
@@ -28,7 +30,10 @@ BEGIN
  ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1;
  RETURN NULL;
 END $$;
-CREATE FUNCTION issue_tracker_inbound_install_bump() RETURNS trigger LANGUAGE plpgsql AS $$
+-- +goose StatementEnd
+-- +goose StatementBegin
+
+CREATE OR REPLACE FUNCTION issue_tracker_inbound_install_bump() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  INSERT INTO issue_tracker_inbound_guards(app_id)
  SELECT id FROM apps WHERE
@@ -39,34 +44,50 @@ BEGIN
  RETURN NULL;
 END $$;
 -- +goose StatementEnd
-CREATE TRIGGER issue_inbound_intent_insert AFTER INSERT ON app_issues FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_intent_update AFTER UPDATE ON app_issues FOR EACH ROW
+
+CREATE OR REPLACE TRIGGER issue_inbound_intent_insert AFTER INSERT ON app_issues FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_intent_update AFTER UPDATE ON app_issues FOR EACH ROW
  WHEN (ROW(OLD.state,OLD.assignee_account_id,OLD.assignee_team_id,OLD.resolved_at,OLD.fixed_deployment_id,OLD.fixed_deployment_created_at,OLD.ignored_until,OLD.fingerprint,OLD.grouping_version,OLD.environment,OLD.split_source_issue_id)
  IS DISTINCT FROM ROW(NEW.state,NEW.assignee_account_id,NEW.assignee_team_id,NEW.resolved_at,NEW.fixed_deployment_id,NEW.fixed_deployment_created_at,NEW.ignored_until,NEW.fingerprint,NEW.grouping_version,NEW.environment,NEW.split_source_issue_id))
  EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_intent_delete AFTER DELETE ON app_issues FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_group AFTER INSERT OR UPDATE OR DELETE ON issue_group_links FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_rules AFTER INSERT OR UPDATE OR DELETE ON issue_split_rules FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_links AFTER INSERT OR UPDATE OR DELETE ON issue_tracker_links FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_policy_insert AFTER INSERT ON issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_policy_update AFTER UPDATE ON issue_tracker_auto_sync FOR EACH ROW
+
+CREATE OR REPLACE TRIGGER issue_inbound_intent_delete AFTER DELETE ON app_issues FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_group AFTER INSERT OR UPDATE OR DELETE ON issue_group_links FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_rules AFTER INSERT OR UPDATE OR DELETE ON issue_split_rules FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_links AFTER INSERT OR UPDATE OR DELETE ON issue_tracker_links FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_policy_insert AFTER INSERT ON issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_policy_update AFTER UPDATE ON issue_tracker_auto_sync FOR EACH ROW
  WHEN (ROW(OLD.revision,OLD.enabled,OLD.source_issue_id,OLD.binding_fingerprint,OLD.baseline,OLD.source_state,OLD.pending_state,OLD.outcome,OLD.reason,OLD.claim_id)
  IS DISTINCT FROM ROW(NEW.revision,NEW.enabled,NEW.source_issue_id,NEW.binding_fingerprint,NEW.baseline,NEW.source_state,NEW.pending_state,NEW.outcome,NEW.reason,NEW.claim_id))
  EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_policy_delete AFTER DELETE ON issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_linear_insert AFTER INSERT ON issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_linear_update AFTER UPDATE ON issue_tracker_linear_connections FOR EACH ROW
+
+CREATE OR REPLACE TRIGGER issue_inbound_policy_delete AFTER DELETE ON issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_linear_insert AFTER INSERT ON issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_linear_update AFTER UPDATE ON issue_tracker_linear_connections FOR EACH ROW
  WHEN (ROW(OLD.revision,OLD.account_id,OLD.connected,OLD.workspace_id,OLD.team_id,OLD.viewer_id,OLD.auth_method,OLD.oauth_status IN ('reconnect_required','revoking'))
  IS DISTINCT FROM ROW(NEW.revision,NEW.account_id,NEW.connected,NEW.workspace_id,NEW.team_id,NEW.viewer_id,NEW.auth_method,NEW.oauth_status IN ('reconnect_required','revoking')))
  EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_linear_delete AFTER DELETE ON issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_app AFTER UPDATE ON apps FOR EACH ROW
+
+CREATE OR REPLACE TRIGGER issue_inbound_linear_delete AFTER DELETE ON issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_app AFTER UPDATE ON apps FOR EACH ROW
  WHEN (ROW(OLD.account_id,OLD.status,OLD.deleted_at,OLD.github_install_id,OLD.github_repo_full_name,OLD.github_owner_id,OLD.github_repo_id,OLD.github_install_binding_id,OLD.github_install_account_id)
  IS DISTINCT FROM ROW(NEW.account_id,NEW.status,NEW.deleted_at,NEW.github_install_id,NEW.github_repo_full_name,NEW.github_owner_id,NEW.github_repo_id,NEW.github_install_binding_id,NEW.github_install_account_id))
  EXECUTE FUNCTION issue_tracker_inbound_bump();
-CREATE TRIGGER issue_inbound_install_insert AFTER INSERT ON github_installations FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_install_bump();
-CREATE TRIGGER issue_inbound_install_delete AFTER DELETE ON github_installations FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_install_bump();
-CREATE TRIGGER issue_inbound_install_update AFTER UPDATE ON github_installations FOR EACH ROW
+
+CREATE OR REPLACE TRIGGER issue_inbound_install_insert AFTER INSERT ON github_installations FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_install_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_install_delete AFTER DELETE ON github_installations FOR EACH ROW EXECUTE FUNCTION issue_tracker_inbound_install_bump();
+
+CREATE OR REPLACE TRIGGER issue_inbound_install_update AFTER UPDATE ON github_installations FOR EACH ROW
  WHEN (ROW(OLD.account_id,OLD.installation_id,OLD.org_id) IS DISTINCT FROM ROW(NEW.account_id,NEW.installation_id,NEW.org_id))
  EXECUTE FUNCTION issue_tracker_inbound_install_bump();
 

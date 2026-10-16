@@ -13,8 +13,10 @@ T = TypeVar("T", bound="OutboundAIPriceEntry")
 
 @_attrs_define
 class OutboundAIPriceEntry:
-    """Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins), in millicents per
-    million tokens. Absent cached or cache-write prices use the input price.
+    """Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins). Token prices are
+    millicents per million tokens; absent cached, cache-write and input-image prices use the input price and an absent
+    output-image price uses the output price. Media prices (ADR-997) are per image, per minute of input audio and per
+    million input characters, and are zero when absent.
 
     """
 
@@ -23,6 +25,14 @@ class OutboundAIPriceEntry:
     output_millicents_per_mtok: int
     cached_input_millicents_per_mtok: int | Unset = UNSET
     cache_write_millicents_per_mtok: int | Unset = UNSET
+    input_image_millicents_per_mtok: int | Unset = UNSET
+    output_image_millicents_per_mtok: int | Unset = UNSET
+    millicents_per_image: int | Unset = UNSET
+    """Charged per image when a call reports no output image tokens."""
+    millicents_per_audio_minute: int | Unset = UNSET
+    """Charged per minute of transcribed audio."""
+    millicents_per_million_characters: int | Unset = UNSET
+    """Charged per million characters of speech input."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +45,16 @@ class OutboundAIPriceEntry:
         cached_input_millicents_per_mtok = self.cached_input_millicents_per_mtok
 
         cache_write_millicents_per_mtok = self.cache_write_millicents_per_mtok
+
+        input_image_millicents_per_mtok = self.input_image_millicents_per_mtok
+
+        output_image_millicents_per_mtok = self.output_image_millicents_per_mtok
+
+        millicents_per_image = self.millicents_per_image
+
+        millicents_per_audio_minute = self.millicents_per_audio_minute
+
+        millicents_per_million_characters = self.millicents_per_million_characters
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -49,6 +69,16 @@ class OutboundAIPriceEntry:
             field_dict["cached_input_millicents_per_mtok"] = cached_input_millicents_per_mtok
         if cache_write_millicents_per_mtok is not UNSET:
             field_dict["cache_write_millicents_per_mtok"] = cache_write_millicents_per_mtok
+        if input_image_millicents_per_mtok is not UNSET:
+            field_dict["input_image_millicents_per_mtok"] = input_image_millicents_per_mtok
+        if output_image_millicents_per_mtok is not UNSET:
+            field_dict["output_image_millicents_per_mtok"] = output_image_millicents_per_mtok
+        if millicents_per_image is not UNSET:
+            field_dict["millicents_per_image"] = millicents_per_image
+        if millicents_per_audio_minute is not UNSET:
+            field_dict["millicents_per_audio_minute"] = millicents_per_audio_minute
+        if millicents_per_million_characters is not UNSET:
+            field_dict["millicents_per_million_characters"] = millicents_per_million_characters
 
         return field_dict
 
@@ -65,12 +95,27 @@ class OutboundAIPriceEntry:
 
         cache_write_millicents_per_mtok = d.pop("cache_write_millicents_per_mtok", UNSET)
 
+        input_image_millicents_per_mtok = d.pop("input_image_millicents_per_mtok", UNSET)
+
+        output_image_millicents_per_mtok = d.pop("output_image_millicents_per_mtok", UNSET)
+
+        millicents_per_image = d.pop("millicents_per_image", UNSET)
+
+        millicents_per_audio_minute = d.pop("millicents_per_audio_minute", UNSET)
+
+        millicents_per_million_characters = d.pop("millicents_per_million_characters", UNSET)
+
         outbound_ai_price_entry = cls(
             model_prefix=model_prefix,
             input_millicents_per_mtok=input_millicents_per_mtok,
             output_millicents_per_mtok=output_millicents_per_mtok,
             cached_input_millicents_per_mtok=cached_input_millicents_per_mtok,
             cache_write_millicents_per_mtok=cache_write_millicents_per_mtok,
+            input_image_millicents_per_mtok=input_image_millicents_per_mtok,
+            output_image_millicents_per_mtok=output_image_millicents_per_mtok,
+            millicents_per_image=millicents_per_image,
+            millicents_per_audio_minute=millicents_per_audio_minute,
+            millicents_per_million_characters=millicents_per_million_characters,
         )
 
         outbound_ai_price_entry.additional_properties = d

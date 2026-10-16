@@ -115,6 +115,7 @@ func TestNestedHelpNeverMakesProductionRequests(t *testing.T) {
 		{"jobs", "runs", "--help"},
 		{"traffic", "status", "--help"},
 		{"orgs", "members", "--help"},
+		{"orgs", "standards", "application", "--help"},
 		{"cors", "rm", "--help"},
 		{"keys", "rm", "--help"},
 		{"keys", "rotate", "--help"},
@@ -220,5 +221,29 @@ func TestValidateCLILimitAndOffset(t *testing.T) {
 				t.Errorf("error = %v, want error=%t", tc.got, tc.want)
 			}
 		})
+	}
+}
+
+// H10-1: `apps rm` and `apps delete` were rejected as unknown, leaving
+// deletion reachable only through a flag on the list command.
+func TestCmdAppsDispatch_RmSubcommand(t *testing.T) {
+	for _, args := range [][]string{
+		{"apps", "rm", "demo", "--yes"},
+		{"apps", "delete", "--yes", "demo"},
+		{"apps", "rm", "-q", "demo"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			resetJSONOut(t)
+			f := authedFakeAPI(t, "", http.StatusNoContent)
+			if code := run(args); code != 0 {
+				t.Fatalf("run(%q) = %d, want 0", args, code)
+			}
+			if f.sawMethod != http.MethodDelete || f.sawPath != "/v1/apps/demo" {
+				t.Errorf("request = %s %s, want DELETE /v1/apps/demo", f.sawMethod, f.sawPath)
+			}
+		})
+	}
+	if code := run([]string{"apps", "rm"}); code != 1 {
+		t.Errorf("run(apps rm) = %d, want 1 (usage)", code)
 	}
 }

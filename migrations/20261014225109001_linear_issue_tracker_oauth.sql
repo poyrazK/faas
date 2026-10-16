@@ -1,14 +1,20 @@
 -- +goose Up
-ALTER TABLE public.issue_tracker_linear_connections
- ADD COLUMN auth_method text NOT NULL DEFAULT 'api_key' CHECK(auth_method IN ('api_key','oauth')),
- ADD COLUMN oauth_status text NOT NULL DEFAULT '' CHECK(oauth_status IN ('','ready','refreshing','reconnect_required','revoking')),
- ADD COLUMN access_token_expires_at timestamptz,
- ADD COLUMN credential_generation bigint NOT NULL DEFAULT 1 CHECK(credential_generation>0),
- ADD COLUMN refresh_claim_id uuid,
- ADD COLUMN refresh_claim_until timestamptz,
- ADD COLUMN refresh_started_at timestamptz,
- ADD CONSTRAINT issue_tracker_linear_oauth_shape CHECK((auth_method='api_key' AND oauth_status='' AND access_token_expires_at IS NULL) OR (auth_method='oauth' AND connected AND oauth_status<>'' AND access_token_expires_at IS NOT NULL));
-CREATE TABLE public.issue_tracker_linear_oauth_flows (
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS auth_method text NOT NULL DEFAULT 'api_key' CHECK(auth_method IN ('api_key','oauth'));
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS oauth_status text NOT NULL DEFAULT '' CHECK(oauth_status IN ('','ready','refreshing','reconnect_required','revoking'));
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS access_token_expires_at timestamptz;
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS credential_generation bigint NOT NULL DEFAULT 1 CHECK(credential_generation>0);
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS refresh_claim_id uuid;
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS refresh_claim_until timestamptz;
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS refresh_started_at timestamptz;
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_tracker_linear_connections'::regclass AND conname='issue_tracker_linear_oauth_shape') THEN
+  ALTER TABLE public.issue_tracker_linear_connections ADD CONSTRAINT issue_tracker_linear_oauth_shape CHECK((auth_method='api_key' AND oauth_status='' AND access_token_expires_at IS NULL) OR (auth_method='oauth' AND connected AND oauth_status<>'' AND access_token_expires_at IS NOT NULL));
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS public.issue_tracker_linear_oauth_flows (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
  issue_id uuid NOT NULL,
@@ -18,7 +24,9 @@ CREATE TABLE public.issue_tracker_linear_oauth_flows (
  sealed_state bytea NOT NULL CHECK(octet_length(sealed_state)>0),
  expires_at timestamptz NOT NULL
 );
-CREATE INDEX issue_tracker_linear_oauth_flows_expiry_idx ON public.issue_tracker_linear_oauth_flows(expires_at);
+
+CREATE INDEX IF NOT EXISTS issue_tracker_linear_oauth_flows_expiry_idx ON public.issue_tracker_linear_oauth_flows(expires_at);
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

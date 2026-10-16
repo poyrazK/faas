@@ -49,10 +49,18 @@ type SetWorkflowRecoveryPolicyRequest struct {
 	ExpectedVersion int64                  `json:"expected_version"`
 	Policy          WorkflowRecoveryPolicy `json:"policy"`
 }
+type WorkflowRecoveryAutomaticPollingFailure struct {
+	Code     string    `json:"code"`
+	Attempts int64     `json:"attempts"`
+	FailedAt time.Time `json:"failed_at"`
+	RetryAt  time.Time `json:"retry_at"`
+}
+
 type WorkflowRecoveryPolicyAutomaticExecution struct {
-	ConsecutiveFailures int        `json:"consecutive_failures"`
-	PausedAt            *time.Time `json:"paused_at,omitempty"`
-	PauseReason         string     `json:"pause_reason"`
+	PollingFailure      *WorkflowRecoveryAutomaticPollingFailure `json:"polling_failure,omitempty"`
+	ConsecutiveFailures int                                      `json:"consecutive_failures"`
+	PausedAt            *time.Time                               `json:"paused_at,omitempty"`
+	PauseReason         string                                   `json:"pause_reason"`
 }
 
 // LastEvaluation is worker evidence; queue reads never refresh it.
@@ -87,15 +95,16 @@ type WorkflowRecoveryPolicyPausedWebhookPayload struct {
 	PolicyURL           string    `json:"policy_url"`
 }
 type WorkflowRecoveryPolicyResponse struct {
-	AutomaticExecution *WorkflowRecoveryPolicyAutomaticExecution `json:"automatic_execution,omitempty"`
-	AppID              string                                    `json:"app_id"`
-	Version            int64                                     `json:"version"`
-	Policy             WorkflowRecoveryPolicy                    `json:"policy"`
-	UpdatedAt          time.Time                                 `json:"updated_at"`
-	ActorKind          string                                    `json:"actor_kind"`
-	ActorID            string                                    `json:"actor_id"`
-	LastEvaluationAt   *time.Time                                `json:"last_evaluation_at,omitempty"`
-	Status             string                                    `json:"status"`
+	PollingNotification *WorkflowRecoveryPollingNotification      `json:"polling_notification,omitempty"`
+	AutomaticExecution  *WorkflowRecoveryPolicyAutomaticExecution `json:"automatic_execution,omitempty"`
+	AppID               string                                    `json:"app_id"`
+	Version             int64                                     `json:"version"`
+	Policy              WorkflowRecoveryPolicy                    `json:"policy"`
+	UpdatedAt           time.Time                                 `json:"updated_at"`
+	ActorKind           string                                    `json:"actor_kind"`
+	ActorID             string                                    `json:"actor_id"`
+	LastEvaluationAt    *time.Time                                `json:"last_evaluation_at,omitempty"`
+	Status              string                                    `json:"status"`
 }
 type WorkflowRecoveryPolicyDecision struct {
 	PreflightBlockers []string `json:"preflight_blockers,omitempty"`
@@ -109,18 +118,20 @@ type WorkflowRecoveryPolicyDecision struct {
 	Outcome           string   `json:"outcome"`
 }
 type WorkflowRecoveryPolicyReview struct {
-	AutomaticExecution     *WorkflowRecoveryReviewAutomaticExecution     `json:"automatic_execution,omitempty"`
-	CompletionNotification *WorkflowRecoveryReviewCompletionNotification `json:"completion_notification,omitempty"`
-	Notification           *WorkflowRecoveryReviewNotification           `json:"notification,omitempty"`
-	ReviewDecision         *WorkflowRecoveryReviewDecision               `json:"review_decision,omitempty"`
-	ID                     string                                        `json:"id"`
-	AppID                  string                                        `json:"app_id"`
-	JobID                  string                                        `json:"job_id"`
-	PolicyVersion          int64                                         `json:"policy_version"`
-	Policy                 WorkflowRecoveryPolicy                        `json:"policy"`
-	ObservedAt             time.Time                                     `json:"observed_at"`
-	Decisions              []WorkflowRecoveryPolicyDecision              `json:"decisions"`
-	Plan                   *WorkflowRecoveryResponsePlan                 `json:"plan,omitempty"`
+	ParentEvidenceRepairs  map[string]WorkflowInitialEvidenceRepairReceipt `json:"parent_evidence_repairs,omitempty"`
+	EvidenceRepairs        map[string]WorkflowInitialEvidenceRepairReceipt `json:"evidence_repairs,omitempty"`
+	AutomaticExecution     *WorkflowRecoveryReviewAutomaticExecution       `json:"automatic_execution,omitempty"`
+	CompletionNotification *WorkflowRecoveryReviewCompletionNotification   `json:"completion_notification,omitempty"`
+	Notification           *WorkflowRecoveryReviewNotification             `json:"notification,omitempty"`
+	ReviewDecision         *WorkflowRecoveryReviewDecision                 `json:"review_decision,omitempty"`
+	ID                     string                                          `json:"id"`
+	AppID                  string                                          `json:"app_id"`
+	JobID                  string                                          `json:"job_id"`
+	PolicyVersion          int64                                           `json:"policy_version"`
+	Policy                 WorkflowRecoveryPolicy                          `json:"policy"`
+	ObservedAt             time.Time                                       `json:"observed_at"`
+	Decisions              []WorkflowRecoveryPolicyDecision                `json:"decisions"`
+	Plan                   *WorkflowRecoveryResponsePlan                   `json:"plan,omitempty"`
 }
 type WorkflowRecoveryPolicyReviews struct {
 	Reviews   []WorkflowRecoveryPolicyReview `json:"reviews"`
@@ -137,15 +148,24 @@ func (r SetWorkflowRecoveryPolicyRequest) Validate() error {
 			return err
 		}
 	}
-	if r.ExpectedVersion < 0 || (p.Mode != "preview" && p.Mode != "automatic_retry") || len(p.WorkflowNames) < 1 || len(p.WorkflowNames) > WorkflowRecoveryPolicyFiltersMax || len(p.Triggers) < 1 || len(p.Triggers) > 3 || len(p.FailureStatuses) > 2 || p.MaxResumeCount < 1 || p.MaxResumeCount > WorkflowRunMaxResumes || p.CooldownSeconds < WorkflowRecoveryPolicyMinCooldownSeconds || p.CooldownSeconds > WorkflowRecoveryPolicyMaxCooldownSeconds || p.HourlyActionBudget < 1 || p.HourlyActionBudget > WorkflowRecoveryPolicyHourlyActionsMax || p.RatePerSecond < 1 || p.RatePerSecond > EventRecoveryRateMax || strings.TrimSpace(p.Reason) == "" {
+	if r.ExpectedVersion < 0 || (p.Mode != "preview" && !WorkflowRecoveryPolicyAutomaticMode(p.Mode)) || len(p.WorkflowNames) < 1 || len(p.WorkflowNames) > WorkflowRecoveryPolicyFiltersMax || len(p.Triggers) < 1 || len(p.Triggers) > 4 || len(p.FailureStatuses) > 2 || p.MaxResumeCount < 1 || p.MaxResumeCount > WorkflowRunMaxResumes || p.CooldownSeconds < WorkflowRecoveryPolicyMinCooldownSeconds || p.CooldownSeconds > WorkflowRecoveryPolicyMaxCooldownSeconds || p.HourlyActionBudget < 1 || p.HourlyActionBudget > WorkflowRecoveryPolicyHourlyActionsMax || p.RatePerSecond < 1 || p.RatePerSecond > EventRecoveryRateMax || strings.TrimSpace(p.Reason) == "" {
 		return fmt.Errorf("invalid recovery policy filters or limits")
 	}
-	if p.Mode == "automatic_retry" {
-		if len(p.Triggers) != 1 || p.Triggers[0] != "saved_failure" || len(p.FailureStatuses) == 0 || p.HourlyExecutionBudget < 1 || p.HourlyExecutionBudget > WorkflowRecoveryPolicyHourlyActionsMax || p.PauseAfterFailures < 1 || p.PauseAfterFailures > WorkflowRecoveryPolicyPauseFailuresMax {
-			return fmt.Errorf("automatic_retry requires saved_failure, explicit failure statuses, an execution budget and a failure pause limit")
+	if WorkflowRecoveryPolicyAutomaticMode(p.Mode) {
+		trigger := "saved_failure"
+		if p.Mode == "automatic_initial" {
+			trigger = "initial_failure"
+		}
+		if len(p.Triggers) != 1 || p.Triggers[0] != trigger || len(p.FailureStatuses) == 0 || p.HourlyExecutionBudget < 1 || p.HourlyExecutionBudget > WorkflowRecoveryPolicyHourlyActionsMax || p.PauseAfterFailures < 1 || p.PauseAfterFailures > WorkflowRecoveryPolicyPauseFailuresMax {
+			return fmt.Errorf("automatic modes require their single matching trigger, explicit failure statuses, an execution budget and a failure pause limit")
 		}
 	} else if p.HourlyExecutionBudget != 0 || p.PauseAfterFailures != 0 {
-		return fmt.Errorf("automatic execution limits require automatic_retry mode")
+		return fmt.Errorf("automatic execution limits require an automatic mode")
+	}
+	for _, trigger := range p.Triggers {
+		if trigger == "initial_failure" && len(p.FailureStatuses) == 0 {
+			return fmt.Errorf("initial_failure requires explicit failure statuses")
+		}
 	}
 	seen := map[string]bool{}
 	for _, name := range p.WorkflowNames {
@@ -156,7 +176,7 @@ func (r SetWorkflowRecoveryPolicyRequest) Validate() error {
 	}
 	seen = map[string]bool{}
 	for _, trigger := range p.Triggers {
-		if trigger != "saved_failure" && trigger != "stalled" && trigger != "deadline_exceeded" || seen[trigger] {
+		if trigger != "initial_failure" && trigger != "saved_failure" && trigger != "stalled" && trigger != "deadline_exceeded" || seen[trigger] {
 			return fmt.Errorf("invalid or duplicate recovery trigger")
 		}
 		seen[trigger] = true
@@ -276,19 +296,20 @@ type WorkflowRecoveryReviewNotification struct {
 	ReceiverWebhookIDs []string  `json:"receiver_webhook_ids"`
 }
 type WorkflowRecoveryReviewReadyWebhookPayload struct {
-	EventID       string                           `json:"event_id"`
-	ReviewID      string                           `json:"review_id"`
-	AppID         string                           `json:"app_id"`
-	App           string                           `json:"app"`
-	JobID         string                           `json:"job_id"`
-	PolicyVersion int64                            `json:"policy_version"`
-	PreparedAt    time.Time                        `json:"prepared_at"`
-	ObservedAt    time.Time                        `json:"observed_at"`
-	Targets       []WorkflowRecoveryPolicyDecision `json:"targets"`
-	ReviewURL     string                           `json:"review_url"`
-	StatusURL     string                           `json:"status_url"`
-	ReviewCommand string                           `json:"review_command"`
-	ExportCommand string                           `json:"export_command"`
+	InitialFailureID string                           `json:"initial_failure_id,omitempty"`
+	EventID          string                           `json:"event_id"`
+	ReviewID         string                           `json:"review_id"`
+	AppID            string                           `json:"app_id"`
+	App              string                           `json:"app"`
+	JobID            string                           `json:"job_id,omitempty"`
+	PolicyVersion    int64                            `json:"policy_version"`
+	PreparedAt       time.Time                        `json:"prepared_at"`
+	ObservedAt       time.Time                        `json:"observed_at"`
+	Targets          []WorkflowRecoveryPolicyDecision `json:"targets"`
+	ReviewURL        string                           `json:"review_url"`
+	StatusURL        string                           `json:"status_url"`
+	ReviewCommand    string                           `json:"review_command"`
+	ExportCommand    string                           `json:"export_command"`
 }
 
 type WorkflowRecoveryReviewCompletionNotification struct {
@@ -328,13 +349,31 @@ func (r ControlWorkflowRecoveryPolicyRequest) Validate() error {
 	return (EventRecoveryControlRequest{Reason: r.Reason}).Validate()
 }
 
+type WorkflowRecoveryQueueEvidence struct {
+	Diagnosis   WorkflowRetryEvidenceDiagnosis `json:"diagnosis"`
+	EvidenceURL string                         `json:"evidence_url"`
+	CLICommand  string                         `json:"cli_command"`
+}
+
+type WorkflowRecoveryInitialQueueEvidence struct {
+	Stage       string                           `json:"stage"`
+	Diagnosis   WorkflowInitialEvidenceDiagnosis `json:"diagnosis"`
+	EvidenceURL string                           `json:"evidence_url"`
+	CLICommand  string                           `json:"cli_command"`
+}
+
 type WorkflowRecoveryAutomaticQueueEntry struct {
-	QueuedAt          time.Time                       `json:"queued_at"`
-	QueuedAgeSeconds  int64                           `json:"queued_age_seconds"`
-	WaitingAgeSeconds *int64                          `json:"waiting_age_seconds,omitempty"`
-	ReviewID          string                          `json:"review_id"`
-	PolicyVersion     int64                           `json:"policy_version"`
-	Action            WorkflowRecoveryAutomaticAction `json:"action"`
+	InitialEvidence           *WorkflowRecoveryInitialQueueEvidence `json:"initial_evidence,omitempty"`
+	Evidence                  *WorkflowRecoveryQueueEvidence        `json:"evidence,omitempty"`
+	EvidenceUnavailableReason string                                `json:"evidence_unavailable_reason,omitempty"`
+	WaitCategory              string                                `json:"wait_category,omitempty"`
+	WaitReason                string                                `json:"wait_reason,omitempty"`
+	QueuedAt                  time.Time                             `json:"queued_at"`
+	QueuedAgeSeconds          int64                                 `json:"queued_age_seconds"`
+	WaitingAgeSeconds         *int64                                `json:"waiting_age_seconds,omitempty"`
+	ReviewID                  string                                `json:"review_id"`
+	PolicyVersion             int64                                 `json:"policy_version"`
+	Action                    WorkflowRecoveryAutomaticAction       `json:"action"`
 }
 type WorkflowRecoveryAutomaticQueue struct {
 	HealthIncident   *WorkflowRecoveryHealthIncident       `json:"health_incident,omitempty"`
@@ -382,6 +421,10 @@ type WorkflowRecoveryAutomaticSuppression struct {
 	SuppressedAt time.Time `json:"suppressed_at"`
 }
 type WorkflowRecoveryAutomaticBlockedNotification struct {
+	State              string    `json:"state,omitempty"`
+	Sequence           int64     `json:"sequence,omitempty"`
+	EvidenceKind       string    `json:"evidence_kind,omitempty"`
+	DiagnosisReason    string    `json:"diagnosis_reason,omitempty"`
 	EventID            string    `json:"event_id"`
 	Status             string    `json:"status"`
 	Reason             string    `json:"reason"`
@@ -389,19 +432,31 @@ type WorkflowRecoveryAutomaticBlockedNotification struct {
 	ReceiverWebhookIDs []string  `json:"receiver_webhook_ids"`
 }
 type WorkflowRecoveryQueueBlockedWebhookPayload struct {
-	EventID         string    `json:"event_id"`
-	AppID           string    `json:"app_id"`
-	App             string    `json:"app"`
-	ReviewID        string    `json:"review_id"`
-	ActionID        string    `json:"action_id"`
-	PolicyVersion   int64     `json:"policy_version"`
-	Position        int64     `json:"position"`
-	ChildJobID      string    `json:"child_job_id,omitempty"`
-	Status          string    `json:"status"`
-	Reason          string    `json:"reason"`
-	ObservedAt      time.Time `json:"observed_at"`
-	QueueURL        string    `json:"queue_url"`
-	ReviewStatusURL string    `json:"review_status_url"`
+	EvidenceKind     string    `json:"evidence_kind,omitempty"`
+	DiagnosisReason  string    `json:"diagnosis_reason,omitempty"`
+	EvidenceURL      string    `json:"evidence_url,omitempty"`
+	RunID            string    `json:"run_id,omitempty"`
+	ResumeCount      *int64    `json:"resume_count,omitempty"`
+	Repairable       *bool     `json:"repairable,omitempty"`
+	CLICommand       string    `json:"cli_command,omitempty"`
+	InitialFailureID string    `json:"initial_failure_id,omitempty"`
+	State            string    `json:"state,omitempty"`
+	PreviousReason   string    `json:"previous_reason,omitempty"`
+	OperatorAction   string    `json:"operator_action,omitempty"`
+	JobURL           string    `json:"job_url,omitempty"`
+	EventID          string    `json:"event_id"`
+	AppID            string    `json:"app_id"`
+	App              string    `json:"app"`
+	ReviewID         string    `json:"review_id"`
+	ActionID         string    `json:"action_id"`
+	PolicyVersion    int64     `json:"policy_version"`
+	Position         int64     `json:"position"`
+	ChildJobID       string    `json:"child_job_id,omitempty"`
+	Status           string    `json:"status"`
+	Reason           string    `json:"reason"`
+	ObservedAt       time.Time `json:"observed_at"`
+	QueueURL         string    `json:"queue_url"`
+	ReviewStatusURL  string    `json:"review_status_url"`
 }
 
 func (c *Client) SuppressWorkflowRecoveryAutomaticAction(ctx context.Context, app, review, action string, r SuppressWorkflowRecoveryAutomaticActionRequest) (WorkflowRecoveryAutomaticAction, error) {
@@ -411,4 +466,9 @@ func (c *Client) SuppressWorkflowRecoveryAutomaticAction(ctx context.Context, ap
 	}
 	err := c.do(ctx, http.MethodPost, recoveryPolicyPath(app)+"/reviews/"+url.PathEscape(review)+"/actions/"+url.PathEscape(action)+"/suppress", r, &out)
 	return out, err
+}
+
+// WorkflowRecoveryPolicyAutomaticMode identifies modes with explicit execution authority.
+func WorkflowRecoveryPolicyAutomaticMode(mode string) bool {
+	return mode == "automatic_retry" || mode == "automatic_initial"
 }

@@ -1,7 +1,14 @@
 -- +goose Up
-ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN webhook_enabled boolean NOT NULL DEFAULT false,
- ADD CONSTRAINT issue_tracker_linear_webhook_connected CHECK(NOT webhook_enabled OR connected);
-CREATE TABLE public.issue_tracker_callbacks (
+ALTER TABLE public.issue_tracker_linear_connections ADD COLUMN IF NOT EXISTS webhook_enabled boolean NOT NULL DEFAULT false;
+-- +goose StatementBegin
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_tracker_linear_connections'::regclass AND conname='issue_tracker_linear_webhook_connected') THEN
+  ALTER TABLE public.issue_tracker_linear_connections ADD CONSTRAINT issue_tracker_linear_webhook_connected CHECK(NOT webhook_enabled OR connected);
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS public.issue_tracker_callbacks (
  scope_key text NOT NULL CHECK(octet_length(scope_key)<=128),
  delivery_id text NOT NULL CHECK(octet_length(delivery_id) BETWEEN 1 AND 128),
  provider text NOT NULL CHECK(provider IN ('github','linear')),
@@ -21,8 +28,11 @@ CREATE TABLE public.issue_tracker_callbacks (
  CHECK((provider='github' AND app_id IS NULL AND installation_id>0 AND repository_id>0 AND connection_revision=0 AND workspace_id IS NULL AND team_id IS NULL AND ticket_url<>'') OR
  (provider='linear' AND app_id IS NOT NULL AND connection_revision>0 AND installation_id=0 AND repository_id=0 AND workspace_id IS NOT NULL AND team_id IS NOT NULL AND ticket_url=''))
 );
-CREATE INDEX issue_tracker_callbacks_pending_idx ON public.issue_tracker_callbacks(received_at) WHERE processed_at IS NULL;
-CREATE INDEX issue_tracker_callbacks_retention_idx ON public.issue_tracker_callbacks(processed_at) WHERE processed_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS issue_tracker_callbacks_pending_idx ON public.issue_tracker_callbacks(received_at) WHERE processed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS issue_tracker_callbacks_retention_idx ON public.issue_tracker_callbacks(processed_at) WHERE processed_at IS NOT NULL;
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

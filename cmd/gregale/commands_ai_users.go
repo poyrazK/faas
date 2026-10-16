@@ -41,11 +41,11 @@ func cmdAICatalog(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "MODEL\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT")
+	_, _ = fmt.Fprintln(tw, "MODEL\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT\tMEDIA")
 	for _, entry := range catalog.Entries {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", entry.ModelPrefix, financialMoney(entry.InputMillicentsPerMTok),
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.ModelPrefix, financialMoney(entry.InputMillicentsPerMTok),
 			formatOptionalPrice(entry.CachedInputMillicentsPerMTok), formatOptionalPrice(entry.CacheWriteMillicentsPerMTok),
-			financialMoney(entry.OutputMillicentsPerMTok))
+			financialMoney(entry.OutputMillicentsPerMTok), formatMediaPrices(entry))
 	}
 	_ = tw.Flush()
 	return 0

@@ -62,9 +62,11 @@ var DaemonMaxConnections = map[string]int32{
 	"imaged":            3,
 	"builderd":          3,
 	"meterd":            3,
-	"githubd":           2,
-	"outboundd":         2,
-	"s3-gatewayd":       2,
+	// One connection is the notify hub's LISTEN; with 2, every claim-loop
+	// query ran at the cap and 12% of acquires waited on prod (H10-83).
+	"githubd":     3,
+	"outboundd":   2,
+	"s3-gatewayd": 2,
 }
 
 // DaemonMaxConnectionsNotifyHubDisabled is the budget used when
@@ -105,9 +107,11 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"imaged":            3,
 	"builderd":          3,
 	"meterd":            3,
-	"githubd":           2,
-	"outboundd":         2,
-	"s3-gatewayd":       2,
+	// Never below the hub-on budget: githubd's one subscriber parks a
+	// connection on this path too.
+	"githubd":     3,
+	"outboundd":   2,
+	"s3-gatewayd": 2,
 }
 
 const defaultMaxConnections int32 = 4
@@ -192,9 +196,13 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 	if err != nil {
 		return nil, fmt.Errorf("db: open pool: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
+	// Under a Type=notify unit, wait for an unreachable database instead of
+	// exiting into the restart limit (ADR-1344 §5 rule 6, boot_wait.go).
+	if err := defaultBootWaiter().ping(ctx, func(ctx context.Context) error {
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		defer cancel()
+		return pool.Ping(pingCtx)
+	}); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}

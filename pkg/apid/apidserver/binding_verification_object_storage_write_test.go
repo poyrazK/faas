@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestObjectStorageWriteVerificationAdmissionAndEvidence(t *testing.T) {
@@ -73,7 +74,7 @@ func TestObjectStorageWriteVerificationAdmissionAndEvidence(t *testing.T) {
 	}
 }
 
-type lockedStorageProbeStore struct{ *state.MemStore }
+type lockedStorageProbeStore struct{ MemStore *state.MemStore }
 
 func (s *lockedStorageProbeStore) GetObjectBucketObjectLock(ctx context.Context, account, app, bucket string) (state.ObjectBucketObjectLock, error) {
 	lock, err := s.MemStore.GetObjectBucketObjectLock(ctx, account, app, bucket)
@@ -86,7 +87,7 @@ func TestObjectStorageWriteVerificationRejectsKnownRetention(t *testing.T) {
 	apidserver.EnableAppTaskAPIForTest(&e)
 	app, _ := apidserver.SeedAppTaskDeployment(t, e, "storage-locked")
 	apidserver.ReadyObjectStorageVerificationBinding(t, e, app, "default", "read_write")
-	(*(*e.S()).Store()) = &lockedStorageProbeStore{MemStore: (*e.Store())}
+	(*(*e.S()).Store()) = statetest.NewMem(&lockedStorageProbeStore{MemStore: (*e.Store())})
 	r := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/tasks", api.CreateAppTaskRequest{Command: []string{api.AppTaskObjectStorageWriteProbeCommand, "ASSETS", "read_write"}}, nil)
 	if r.Code != 403 {
 		t.Fatalf("write probe admitted into locked bucket: %d %s", r.Code, r.Body.String())

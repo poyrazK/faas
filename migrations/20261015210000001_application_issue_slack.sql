@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE public.issue_application_slack_policies (
+CREATE TABLE IF NOT EXISTS public.issue_application_slack_policies (
  app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
  enabled boolean NOT NULL DEFAULT false,
  revision bigint NOT NULL CHECK(revision>0),
@@ -9,20 +9,36 @@ CREATE TABLE public.issue_application_slack_policies (
  unrouted_alerts bigint NOT NULL DEFAULT 0 CHECK(unrouted_alerts>=0),
  CHECK(NOT enabled OR cardinality(events)>0)
 );
+
 ALTER TABLE public.issue_team_slack_deliveries ALTER COLUMN notification_id DROP NOT NULL;
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN activity_id uuid REFERENCES public.issue_activity(id) ON DELETE CASCADE;
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN application_policy_revision bigint;
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN recipient_account_ids uuid[];
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN assigned_team_id uuid;
-ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN assigned_account_id uuid;
-ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_slack_source_check CHECK(
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS activity_id uuid REFERENCES public.issue_activity(id) ON DELETE CASCADE;
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS application_policy_revision bigint;
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS recipient_account_ids uuid[];
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS assigned_team_id uuid;
+
+ALTER TABLE public.issue_team_slack_deliveries ADD COLUMN IF NOT EXISTS assigned_account_id uuid;
+-- +goose StatementBegin
+
+DO $issue_replay$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.issue_team_slack_deliveries'::regclass AND conname='issue_slack_source_check') THEN
+  ALTER TABLE public.issue_team_slack_deliveries ADD CONSTRAINT issue_slack_source_check CHECK(
  (notification_id IS NOT NULL AND activity_id IS NULL AND application_policy_revision IS NULL AND recipient_account_ids IS NULL AND assigned_team_id IS NULL AND assigned_account_id IS NULL)
  OR (notification_id IS NULL AND activity_id IS NOT NULL AND application_policy_revision>0 AND application_policy_revision IS NOT NULL AND recipient_account_ids IS NOT NULL AND cardinality(recipient_account_ids)>0)
 );
-CREATE UNIQUE INDEX issue_slack_activity_delivery ON public.issue_team_slack_deliveries(activity_id) WHERE activity_id IS NOT NULL;
-CREATE INDEX issue_slack_application_history ON public.issue_team_slack_deliveries(created_at,delivery_seq) WHERE activity_id IS NOT NULL;
+ END IF;
+END $issue_replay$;
+-- +goose StatementEnd
 
-CREATE VIEW public.issue_slack_delivery_sources AS
+CREATE UNIQUE INDEX IF NOT EXISTS issue_slack_activity_delivery ON public.issue_team_slack_deliveries(activity_id) WHERE activity_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS issue_slack_application_history ON public.issue_team_slack_deliveries(created_at,delivery_seq) WHERE activity_id IS NOT NULL;
+
+
+CREATE OR REPLACE VIEW public.issue_slack_delivery_sources AS
 SELECT d.id AS delivery_id,COALESCE(n.issue_id,i.id)::uuid AS issue_id,n.link_id,
  COALESCE(n.kind,act.action,'')::text AS kind,COALESCE(n.reason,'')::text AS reason,(COALESCE(act.details,'{}'::jsonb) || CASE WHEN i.id IS NOT NULL THEN jsonb_build_object('environment',i.environment) ELSE '{}'::jsonb END)::jsonb AS details,
  COALESCE(CASE WHEN d.notification_id IS NOT NULL THEN

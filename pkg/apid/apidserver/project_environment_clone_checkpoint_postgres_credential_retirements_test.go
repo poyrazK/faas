@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointCredentialRetirementFailureStore struct {
@@ -90,7 +91,7 @@ func compensateCheckpointCredentialFixture(t *testing.T, f *cloneCoordinatorFixt
 	t.Helper()
 	op := f.lease.Operation
 	var err error
-	f.lease.Operation, err = s.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = s.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func checkpointCredentialRetirementFixture(t *testing.T) (*cloneCoordinatorFixtu
 	}
 	compensateCheckpointCredentialFixture(t, f, s)
 	store := &checkpointCredentialRetirementFailureStore{checkpointCredentialFailureStore: s}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	// Retirement and observation never require credential decryption.
 	setSecretRecipient = nil
 	mfaIdentities = nil
@@ -119,7 +120,7 @@ func assertCheckpointCredentialRetirement(t *testing.T, f *cloneCoordinatorFixtu
 		t.Fatal("retirement journal", in.State, err)
 	}
 	if want != "retired" {
-		if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+		if _, err = s.PgStore.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("unproven retirement allowed fork deletion", err)
 		}
 	}
@@ -157,7 +158,7 @@ func TestPGCloneCheckpointPostgresCredentialRetirementLostReplies(t *testing.T) 
 			}
 			original := assertCheckpointCredentialRetirement(t, f, s, bindingID, id, want)
 			if kind == "commit" && d.bindingCount > 1 {
-				if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+				if _, err = s.PgStore.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 					t.Fatal("one retired binding released another binding's database", err)
 				}
 			}
@@ -249,7 +250,7 @@ func TestPGCloneCheckpointPostgresCredentialRetirementAllPreparationStates(t *te
 			var err error
 			switch kind {
 			case "planned":
-				_, err = s.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, bindingID)
+				_, err = s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, bindingID)
 			case "sealed":
 				s.loseSeal = true
 				f.lease, err = f.srv.prepareCheckpointPostgresCredentials(t.Context(), f.lease, base)
@@ -271,7 +272,7 @@ func TestPGCloneCheckpointPostgresCredentialRetirementAllPreparationStates(t *te
 			original := assertCheckpointCredentialPrivate(t, f, s, base, bindingID, id, kind)
 			compensateCheckpointCredentialFixture(t, f, s)
 			store := &checkpointCredentialRetirementFailureStore{checkpointCredentialFailureStore: s}
-			f.srv.store = store
+			f.srv.store = statetest.NewPg(store)
 			d := &checkpointCredentialRetirementTestDriver{checkpointCredentialTestDriver: base, receipts: make(map[string]state.ProjectEnvironmentCloneCheckpointPostgresCredentialRetirementObservation)}
 			setSecretRecipient = nil
 			mfaIdentities = nil

@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -104,6 +106,12 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	watch, prob := devloop.ValidateWatch(req.Watch)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	req.Watch = watch
 	limits := api.MustLimitsFor(acct.Plan)
 	lease, prob := devSessionLease(req.LeaseSeconds, limits)
 	if prob != nil {
@@ -133,6 +141,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				"Developer session shape changed", "run 'gregale dev --stop' once, then start the session again"))
 			return
 		}
+		if prob := devloop.WatchUnsupported(existing, watch); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), existing.ID, expiresAt)
 		if refreshErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
@@ -148,6 +160,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 
+	if prob := devloop.WatchUnsupported(app, watch); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	created, err := s.store.CreateAppIfUnderQuota(r.Context(), app, limits)
 	if err != nil {
 		var quotaErr *state.QuotaError
@@ -159,6 +175,18 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				api.WriteProblem(w, api.ErrPlanLimitApps(limits, quotaErr.Observed))
 			}
 		case errors.Is(err, state.ErrConflict):
+			if revived, ok := s.reviveDevSession(r, acct, slug, project, app, limits); ok {
+				refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), revived.ID, expiresAt)
+				if refreshErr != nil {
+					api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
+					return
+				}
+				s.audit.Emit(r.Context(), "dev_session.revived", &acct.ID, map[string]any{
+					"app_id": refreshed.ID, "slug": refreshed.Slug, "project": project, "workspace_id": req.WorkspaceID,
+				})
+				s.writeDevSession(w, r, acct, refreshed, req, http.StatusOK)
+				return
+			}
 			// A concurrent PUT may have inserted the same deterministic row
 			// after our initial lookup. Fold that race into the idempotent
 			// refresh path; a different row at the slug remains a conflict.
@@ -191,6 +219,36 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 	s.log.Info("developer session created", "app", created.ID,
 		"slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.writeDevSession(w, r, acct, created, req, http.StatusCreated)
+}
+
+// reviveDevSession restores the caller's own deleted developer session when
+// its tombstone still holds the deterministic slug. `gregale dev --stop` and
+// the lease janitor tear the session down and soft-delete the app, and the
+// tombstone keeps the slug for the seven-day restore window, so starting the
+// same session again failed with "slug is already in use" for a week (hunt
+// #10, H10-87). Only a finished teardown is revived, never another account's
+// row, a different project or a changed shape; the caller then renews the
+// lease and syncs a fresh deployment as for a new session.
+func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits) (state.App, bool) {
+	tomb, err := s.store.AppBySlugIncludingDeleted(r.Context(), slug)
+	if err != nil || tomb.DeletedAt == nil || tomb.AccountID != acct.ID ||
+		tomb.PreviewOfSlug != project || tomb.PreviewPrNumber != 0 ||
+		tomb.PreviewPrState != state.PreviewPrStateTornDown ||
+		tomb.Type != app.Type || (app.Type == state.AppTypeFunction && tomb.Runtime != app.Runtime) {
+		return state.App{}, false
+	}
+	if _, err := s.store.RestoreApp(r.Context(), tomb.ID, limits); err != nil {
+		s.log.Warn("developer session revive failed", "app", tomb.ID, "err", err)
+		return state.App{}, false
+	}
+	restored, err := s.store.SetPreviewPrState(r.Context(), tomb.ID, state.PreviewPrStateOpen)
+	if err != nil {
+		s.log.Warn("developer session reopen failed", "app", tomb.ID, "err", err)
+		return state.App{}, false
+	}
+	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
+		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
+	return restored, true
 }
 
 func (s *server) destroyDevSession(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -251,6 +309,7 @@ func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	writeJSON(w, http.StatusOK, api.DevSessionResponse{
 		App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres, Buckets: buckets,
+		Watch: devloop.LoadWatch(r.Context(), s.store, app.ID),
 	})
 }
 
@@ -437,6 +496,7 @@ func (s *server) recordDevSync(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("record developer sync history"))
 		return
 	}
+	s.devLoopMetrics.ObserveSync(req, devloop.LoadWatch(r.Context(), s.store, app.ID) != nil)
 	writeJSON(w, http.StatusCreated, devSyncHistoryItem(row))
 }
 

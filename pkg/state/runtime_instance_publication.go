@@ -5,6 +5,7 @@ import (
 	"net/netip"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 // RuntimeInstancePublication is authored by schedd from the admitted boot or
@@ -17,6 +18,7 @@ type RuntimeInstancePublication struct {
 	Fence                                        RuntimeAppSecretFence
 	ConfigFence                                  RuntimeAppConfigFence
 	Inputs                                       *RuntimeConfigInputs
+	AdmissionReceipt, PromotionReceipt           *runtimeadmission.Receipt
 	RuntimeUpgradeColdBoot                       *RuntimeUpgradeColdBoot
 }
 
@@ -26,6 +28,9 @@ type RuntimeInstancePublicationStore interface {
 }
 
 func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
+	if err := validateOwnedNativeReceipt(p); err != nil {
+		return err
+	}
 	if p.Fence.empty() || !validRuntimeAppSecretFence(p.Fence) || !validRuntimeAppConfigFence(p.ConfigFence) || p.Netns == "" || p.GuestUID <= 0 ||
 		!validRuntimePublicationTransition(p.ExpectedState, p.targetState()) {
 		return ErrInvalidArgument
@@ -61,5 +66,5 @@ func validRuntimePublicationTransition(from, to string) bool {
 	if to == string(StateWarm) {
 		return from == string(StateWaking)
 	}
-	return to == string(StateRunning) && (from == string(StateColdBooting) || from == string(StateWaking) || from == string(StateWarm))
+	return to == string(StateRunning) && (from == string(StateColdBooting) || from == string(StateWaking) || from == string(StateWarm) || from == string(StateFrozen))
 }

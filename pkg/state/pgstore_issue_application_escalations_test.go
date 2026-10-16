@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1239: once-per-response escalation transfers reminder responsibility only
+// ADR-1439: once-per-response escalation transfers reminder responsibility only
 // on admission, with live authorization, transactionality and delivery fencing.
 func TestPg_NativeApplicationEscalationLifecycle(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
