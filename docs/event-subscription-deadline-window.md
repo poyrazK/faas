@@ -302,3 +302,10 @@ Node applications can use `watchEventSubscriptionDeadlines` for deadline-only
 sustained count conditions, recovery boundaries, confirmation progress and durable
 alert acknowledgments. It uses a separate Node checkpoint format and the existing
 full-count endpoint. See [Node watch configuration and persistence](event-deadline-node-watch.md).
+
+## Python watch
+
+Python exports `awatch_event_subscription_deadlines` with independent total/reason
+warning and recovery counts, fresh confirmation progress and durable alert
+acknowledgments. Its checkpoint format is Python-specific. See
+[async configuration, cancellation and persistence](event-deadline-python-watch.md).

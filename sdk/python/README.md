@@ -2507,3 +2507,16 @@ Consume/close response bodies before leaving that block. Managed bindings reject
 raw `current()`. Stop admission and the coordinator before
 `storage.wait_for_retirement(timeout=5)`; timeout never closes leased clients.
 Without a hook, `current()` keeps caller-owned lifetime behavior.
+
+### Async deadline count alerts
+
+`awatch_event_subscription_deadlines(client.inner, target, options)` supports
+sustained total/reason deadline alerts, separate recovery counts, fresh-evidence
+progress, task cancellation, checkpoint/resume and exact alert acknowledgments.
+Configure `EventDeadlineTarget` and `EventDeadlineWatchOptions`; load saved state
+with `validate_event_deadline_checkpoint` and apply offline acknowledgments with
+`acknowledge_event_deadline_alerts`.
+
+Python uses its own deadline-only checkpoint format; Go/CLI and Node checkpoints
+are rejected. Applications own persistence and notification delivery. Persist before
+publishing and deduplicate replayed alerts. See [configuration and cancellation](../../docs/event-deadline-python-watch.md).
