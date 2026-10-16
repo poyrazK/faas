@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func checkDefaultRouteProbeStore(t *testing.T, s state.Store) {
 		t.Fatal(err)
 	}
 	want := state.RouteProbeTarget{AccountID: account.ID, AppID: app.ID, Slug: app.Slug, CandidateID: candidate.ID, StableID: stable.ID}
-	if len(targets) != 1 || targets[0] != want {
+	if len(targets) != 1 || !reflect.DeepEqual(targets[0], want) {
 		t.Fatalf("default probe targets = %+v, want [%+v]", targets, want)
 	}
 

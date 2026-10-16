@@ -75,8 +75,9 @@ func (s *PgStore) ListDefaultRouteProbeTargets(ctx context.Context) ([]RouteProb
 	out := make([]RouteProbeTarget, 0, len(rows))
 	for _, r := range rows {
 		var paths []string
-		if err := json.Unmarshal(r.ProbePaths, &paths); err != nil {
-			// A manifest that fails to decode keeps the default probe of "/".
+		if err := json.Unmarshal(r.ProbePaths, &paths); err != nil || len(paths) == 0 {
+			// No paths, or a manifest that fails to decode, keeps the default
+			// probe of "/" (nil, as MemStore reports it).
 			paths = nil
 		}
 		out = append(out, RouteProbeTarget{AccountID: r.AccountID, AppID: r.AppID, Slug: r.Slug, CandidateID: r.CandidateID, StableID: r.StableID, ProbePaths: paths})
