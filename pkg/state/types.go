@@ -685,16 +685,18 @@ func (m ConsumerAuthMode) Valid() bool {
 // Credentials (ConsumerKey) are attached to this row so key rotation does
 // not change the identity used for throttling, usage attribution, or billing.
 type APIConsumer struct {
-	ID               string
-	AccountID        string
-	AppID            string
-	PlatformTenantID string // optional account-level customer; survives key rotation
-	ExternalRef      string
-	Name             string
-	Status           APIConsumerStatus
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	RevokedAt        *time.Time
+	ScenarioCreationSHA256    string
+	ScenarioCreationExpiresAt *time.Time
+	ID                        string
+	AccountID                 string
+	AppID                     string
+	PlatformTenantID          string // optional account-level customer; survives key rotation
+	ExternalRef               string
+	Name                      string
+	Status                    APIConsumerStatus
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	RevokedAt                 *time.Time
 	// PlatformTenantManaged marks rows created by the account owner's
 	// platform-tenant bundle apply. A tenant link alone does not imply ownership.
 	PlatformTenantManaged bool

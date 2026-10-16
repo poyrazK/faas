@@ -15964,6 +15964,83 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/dev/test-runs/{run_id}/consumers/{name}:
+    parameters:
+      - { name: run_id, in: path, required: true, schema: { type: string, pattern: '^[a-f0-9]{32}$' } }
+      - { name: name, in: path, required: true, schema: { type: string }, description: Consumer name declared by the scenario. }
+    put:
+      tags: [dev]
+      operationId: ensureScenarioTestConsumer
+      summary: Atomically create or recover a test consumer bound to a durable intent.
+      description: >-
+        Requires a live registered session for a new consumer. Repeated identical
+        requests return the same consumer in its current state, including revoked.
+        Changed expiry or an existing identity without the matching creation
+        intent returns conflict. No keys are created or returned. The intent is
+        committed with the consumer, independently of response caching.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScenarioTestConsumerRequest' }
+      responses:
+        '200':
+          description: Original consumer and versioned creation receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioTestConsumerReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [dev]
+      operationId: revokeScenarioTestConsumer
+      summary: Revoke the exact receipted consumer, including after session teardown.
+      description: Atomically verifies creation intent, expected consumer ID and unchanged ownership. Repeating revocation is safe. No credentials are returned.
+      parameters:
+        - { name: app_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: expires_at, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: consumer_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Original consumer in revoked state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioTestConsumerReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [dev]
+      operationId: lookupScenarioTestConsumer
+      summary: Read a test consumer creation receipt without creating resources.
+      description: >-
+        Account and immutable app scoped. Available after app soft deletion and
+        consumer revocation. Null consumer means no matching committed receipt
+        was observed; it does not prove an uncertain request cannot still commit.
+        Recovery must leave a missing receipt unresolved. An unsupported older
+        server route returns an error, not a versioned receipt.
+      parameters:
+        - { name: app_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: expires_at, in: query, required: true, schema: { type: string, format: date-time }, description: Original requested expiry. }
+      responses:
+        '200':
+          description: Versioned receipt with an optional original consumer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioTestConsumerReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/dev/test-runs/{run_id}/chaos:
     parameters:
       - name: run_id
@@ -66711,6 +66788,27 @@ components:
         webhooks:
           type: array
           items: { $ref: '#/components/schemas/PlatformTenantWebhookResponse' }
+
+    ScenarioTestConsumerRequest:
+      type: object
+      required: [app_id, expires_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        expires_at:
+          type: string
+          format: date-time
+          description: Original credential expiry, normalized to UTC microseconds for intent hashing.
+    ScenarioTestConsumerReceipt:
+      type: object
+      required: [schema_version, intent_sha256, expires_at, consumer]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        intent_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        expires_at: { type: string, format: date-time }
+        consumer:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/APIConsumerResponse' }
 
     CreateAPIConsumerRequest:
       description: "Stable customer identity to which consumer credentials can be attached."

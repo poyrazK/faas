@@ -13,11 +13,12 @@ import (
 )
 
 type testCampaignFaultConsumer struct {
-	ID          string    `json:"id,omitempty"`
-	AppID       string    `json:"app_id"`
-	AppSlug     string    `json:"app_slug"`
-	ExternalRef string    `json:"external_ref"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	ID                   string    `json:"id,omitempty"`
+	AppID                string    `json:"app_id"`
+	AppSlug              string    `json:"app_slug"`
+	ExternalRef          string    `json:"external_ref"`
+	ExpiresAt            time.Time `json:"expires_at"`
+	CreationIntentSHA256 string    `json:"creation_intent_sha256,omitempty"`
 }
 type testCampaignFaultJournal struct {
 	Registration string                               `json:"registration"`
@@ -51,6 +52,7 @@ type testCampaignFaultObservation struct {
 	Consumers               map[string]string `json:"consumers"`
 	RegistrationExpiresAt   *time.Time        `json:"registration_expires_at,omitempty"`
 	RegistrationExpiryState string            `json:"registration_expiry_state"`
+	ConsumerIDs             map[string]string `json:"consumer_ids,omitempty"`
 }
 
 // Read and validate all journals before issuing even the first mutation.
@@ -106,10 +108,16 @@ func validateTestCampaignFaultJournal(j testCampaignRunJournal, scenario testSce
 		if !api.ValidAppSlug(c.AppSlug) {
 			return errors.New("invalid consumer app slug")
 		}
-		if c.ID == "" {
+		if c.CreationIntentSHA256 != "" {
+			intent, err := api.ScenarioTestConsumerIntent(j.RunID, name, api.ScenarioTestConsumerRequest{AppID: c.AppID, ExpiresAt: c.ExpiresAt})
+			if err != nil || intent != c.CreationIntentSHA256 {
+				return errors.New("consumer creation intent differs from journal identity")
+			}
+		}
+		if c.ID == "" && c.CreationIntentSHA256 == "" {
 			return errors.New("consumer creation result is uncertain; inspect manually")
 		}
-		if id, err := uuid.Parse(c.ID); err != nil || id.String() != c.ID {
+		if id, err := uuid.Parse(c.ID); c.ID != "" && (err != nil || id.String() != c.ID) {
 			return errors.New("invalid consumer ID")
 		}
 	}
@@ -118,7 +126,7 @@ func validateTestCampaignFaultJournal(j testCampaignRunJournal, scenario testSce
 func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClient, journals []testCampaignRunJournal, execute bool, registrationOnly bool) ([]testCampaignFaultObservation, error) {
 	observations := []testCampaignFaultObservation{}
 	for _, j := range journals {
-		observation := testCampaignFaultObservation{RunID: j.RunID, Consumers: map[string]string{}}
+		observation := testCampaignFaultObservation{RunID: j.RunID, Consumers: map[string]string{}, ConsumerIDs: map[string]string{}}
 		names := []string{}
 		for name := range j.Faults.Consumers {
 			names = append(names, name)
@@ -126,7 +134,11 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 		sort.Strings(names)
 		for _, name := range names {
 			c := j.Faults.Consumers[name]
-			live, err := client.GetAPIConsumer(ctx, c.AppSlug, c.ID)
+			live, err := readTestCampaignConsumer(ctx, client, j.RunID, name, c)
+			if c.ID == "" && err == nil {
+				c.ID = live.ID
+			}
+			observation.ConsumerIDs[name] = c.ID
 			if isNotFound(err) {
 				observation.Consumers[name] = "absent"
 				continue
@@ -143,7 +155,7 @@ func inspectTestCampaignFaults(ctx context.Context, client testCampaignFaultClie
 			}
 			observation.Consumers[name] = "active"
 			if execute && !registrationOnly {
-				revoked, err := client.RevokeAPIConsumer(ctx, c.AppSlug, c.ID)
+				revoked, err := revokeTestCampaignConsumer(ctx, client, j.RunID, name, c)
 				if err != nil {
 					return observations, err
 				}

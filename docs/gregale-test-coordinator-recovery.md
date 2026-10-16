@@ -183,10 +183,42 @@ active `--handoff` index. The existing work-directory and shared-claim locks sti
 apply. Cleanup verifies the fault inventory, revokes exact recorded consumers,
 deletes verified workload sessions, and then conditionally deletes the namespace.
 Changed consumer ownership or external references, changed namespace membership,
-uncertain consumer creation, failed lookups and legacy journals without a fault
+unresolved consumer creation, failed lookups and legacy journals without a fault
 inventory block this operation. Session cleanup without `--faults` retains its
 existing behavior. Retry the same command after an interruption; immutable IDs
 and live checks make already revoked/absent resources safe to revisit.
+
+### Recovering an interrupted consumer creation
+
+New campaign workers save a `creation_intent_sha256` with the expected app ID,
+run-specific external reference and fixed credential expiry before requesting a
+consumer. The dedicated test-consumer PUT commits that intent and the consumer
+in the same transaction. Repeating it returns the original identity; a different
+expiry, unreceipted conflicting identity, or changed ownership is rejected.
+The server uses the existing run lock to serialize creation with registration
+cleanup. The response cache is not the durability boundary.
+
+If a response is lost or the final journal save is interrupted, cleanup uses the
+read-only test-consumer lookup to recover the ID. It verifies the receipt version,
+intent hash, expiry, UUID, app, external reference, name and ownership before
+revocation. Recovered IDs appear in `consumer_ids` in fault observations. Frozen
+journals and ancestor evidence remain unchanged. This works through portable
+handoffs because the saved intent contains no host paths or credentials.
+Intent-scoped revocation checks the same receipt and the expected consumer ID
+atomically. It remains available after app soft deletion, when the ordinary
+slug-based consumer route is unavailable. Linked or replaced ownership blocks it.
+
+A missing receipt, unavailable lookup route, changed intent, or legacy uncertain
+creation without an intent still requires manual inspection. Lookup never creates
+a consumer, and expiry never proves that an uncertain creation is absent. Normal
+recovery never replays a fixture or mints a credential. An explicit provisioning
+retry retains its original expiry and cannot reactivate a revoked consumer.
+Standalone runs without campaign journaling retain their existing creation path.
+
+Apply the consumer-intent migration and deploy the updated API before running
+new campaign workers. Intent receipts remain with the consumer through revocation
+and soft deletion of its app, and disappear on the existing hard-delete cascade.
+Raw keys are never saved in journals, receipts or observations.
 
 The new registration read API returns versioned membership even after its apps
 are inactive. Empty membership is an explicit successful response, so an old

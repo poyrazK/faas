@@ -227,3 +227,23 @@ deadline, and locks member apps before deleting membership and match evidence.
 Unknown legacy deadlines remain for explicit cleanup. Expiry observations are
 informational and cannot establish resource absence or test completion. The
 janitor does not extend its ownership to sessions or consumer credentials.
+
+Campaign consumer creation commits a deterministic intent digest and requested
+credential expiry atomically with the consumer row. The intent binds run, consumer
+name and immutable app identity; external-reference uniqueness also prevents
+adopting legacy or unrelated creations. Replays retain the same consumer and its
+current revocation state. Creation requires a live registered developer session
+and serializes on the run lock used by namespace cleanup.
+
+Workers persist the intent before the request. A separate read-only, account-
+scoped lookup lets recovery resolve a lost creation response without creating
+resources or minting keys. Recovery verifies the complete receipt and records
+recovered IDs only in observations, preserving frozen journals across handoffs.
+Missing receipts remain uncertain; they do not establish absence. Existing
+consumers with known journaled IDs retain their original cleanup semantics.
+
+Intent-scoped revocation compares the receipt and expected consumer ID under a
+consumer row lock (or the memory-store mutex), including after app soft deletion.
+Both linked and managed platform-customer ownership block this operation. New
+intent journals use this route for saved and recovered IDs; legacy known IDs
+retain their existing route. Unsupported lookup routes cannot prove absence.

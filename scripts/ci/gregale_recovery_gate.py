@@ -19,6 +19,8 @@ FILTER = (
     "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
+    "TestCampaignFaultConsumerIntentRecovery",
+    "TestCampaignFaultConsumerIntentPortableRecovery",
     "TestCampaignFaultHistoryCLIUsesActiveOwner",
     "TestCampaignFaultHistoryCleanupAcrossGenerations",
     "TestCampaignFaultHistoryBlocksBeforeMutation",
@@ -151,12 +153,16 @@ def main():
             return 1
         registration_contracts = run("registration-contracts", [go, "test", "-p=1",
             STATE_GCFLAGS, "-count=1",
-            "-run", "^(TestScenarioRegistration|TestScenarioTest(Members|Conditional|Expiry)|TestPgStoreScenario(TestMembers|ConditionalCleanup))", "./pkg/api", "./pkg/state"])
+            "-run", "^(TestScenarioRegistration|TestScenarioTest(Members|Conditional|Expiry|ConsumerIntent)|TestPgStoreScenario(TestMembers|ConditionalCleanup))", "./pkg/api", "./pkg/state"])
         if not registration_contracts["passed"]:
+            return 1
+        consumer_intents = run("consumer-intents", [go, "test", "-p=1", STATE_GCFLAGS,
+            "-count=1", "./pkg/apid/scenarioconsumer"])
+        if not consumer_intents["passed"]:
             return 1
         registration_api = run("registration-api", [go, "test", "-p=1", STATE_GCFLAGS,
             "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-c=1 -dwarf=false", "-count=1",
-            "-run", "^TestScenarioTestRegistrationRequiresSameRunAndCleanup$", "./pkg/apid/apidserver"])
+            "-run", "^(TestScenarioTestRegistrationRequiresSameRunAndCleanup|TestScenarioTestConsumerIntentHTTP)$", "./pkg/apid/apidserver"])
         if not registration_api["passed"]:
             return 1
         files = sorted(str(path.relative_to(ROOT)) for path in (ROOT / "cmd" / "gregale").glob("*.go"))

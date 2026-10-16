@@ -1001,7 +1001,7 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 	if len(specs) == 0 {
 		return nil, nil, nil
 	}
-	expiresAt := time.Now().UTC().Add(timeout + time.Hour)
+	expiresAt := time.Now().UTC().Add(timeout + time.Hour).Truncate(time.Microsecond)
 	env := make([]string, 0, 2*len(specs))
 	ids := make([]string, 0, len(specs))
 	for _, spec := range specs {
@@ -1010,20 +1010,50 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 			journal = journals[0]
 		}
 		record := testCampaignFaultConsumer{AppSlug: appSlug, ExternalRef: "gregale-test-" + runID + "-" + spec.Name, ExpiresAt: expiresAt}
+		var consumer api.APIConsumerResponse
+		var err error
 		if journal != nil {
 			record.AppID = journal.journal.Workloads[journal.primaryProject].AppID
+			if saved, ok := journal.journal.Faults.Consumers[spec.Name]; ok {
+				if saved.AppID != record.AppID || saved.AppSlug != appSlug || saved.ExternalRef != record.ExternalRef || saved.CreationIntentSHA256 == "" {
+					return env, ids, errors.New("consumer retry intent changed")
+				}
+				record = saved
+			}
+			req := api.ScenarioTestConsumerRequest{AppID: record.AppID, ExpiresAt: record.ExpiresAt}
+			intent, intentErr := api.ScenarioTestConsumerIntent(runID, spec.Name, req)
+			if intentErr != nil {
+				return env, ids, intentErr
+			}
+			if record.CreationIntentSHA256 != "" && record.CreationIntentSHA256 != intent {
+				return env, ids, errors.New("consumer retry intent changed")
+			}
+			record.CreationIntentSHA256 = intent
 			if err := journal.consumer(spec.Name, record); err != nil {
 				return env, ids, err
 			}
+			creator, ok := client.(testScenarioConsumerEnsure)
+			if !ok {
+				return env, ids, errors.New("server-backed test consumer creation is unavailable")
+			}
+			receipt, createErr := creator.EnsureScenarioTestConsumer(ctx, runID, spec.Name, req)
+			if createErr != nil {
+				return env, ids, fmt.Errorf("consumer %s: %w", spec.Name, createErr)
+			}
+			consumer, err = verifiedTestConsumerReceipt(receipt, runID, spec.Name, req, intent)
+			if err == nil && record.ID != "" && record.ID != consumer.ID {
+				err = errors.New("consumer retry returned another identity")
+			}
+		} else {
+			consumer, err = client.CreateAPIConsumer(ctx, appSlug, api.CreateAPIConsumerRequest{ExternalRef: record.ExternalRef, Name: "Scenario " + spec.Name})
+		}
+		if err != nil {
+			return env, ids, err
+		}
+		if journal != nil && (consumer.Status != "active" || consumer.RevokedAt != nil) {
+			return env, ids, errors.New("consumer retry cannot reactivate a revoked identity")
 		}
 
-		consumer, err := client.CreateAPIConsumer(ctx, appSlug, api.CreateAPIConsumerRequest{
-			ExternalRef: "gregale-test-" + runID + "-" + spec.Name,
-			Name:        "Scenario " + spec.Name,
-		})
-		if err != nil {
-			return env, ids, fmt.Errorf("consumer %s: %w", spec.Name, err)
-		}
 		ids = append(ids, consumer.ID)
 		record.ID = consumer.ID
 		if journal != nil && consumer.AppID != record.AppID {
@@ -1037,7 +1067,7 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 			scopes = []string{"read", "write"}
 		}
 		key, err := client.CreateConsumerKey(ctx, appSlug, consumer.ID, api.CreateConsumerKeyRequest{
-			Name: "scenario-" + spec.Name, Scopes: scopes, ExpiresAt: &expiresAt,
+			Name: "scenario-" + spec.Name, Scopes: scopes, ExpiresAt: &record.ExpiresAt,
 		})
 		if err != nil {
 			return env, ids, fmt.Errorf("consumer %s key: %w", spec.Name, err)

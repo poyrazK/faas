@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
+	"github.com/onebox-faas/faas/pkg/apid/scenarioconsumer"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -1611,6 +1612,18 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dev/sessions/{project}/patches/{generation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevPatchStatus))))
 	mux.HandleFunc("GET /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevSession))))
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
+	scenarioConsumer := func(w http.ResponseWriter, r *http.Request, account state.Account) {
+		scenarioconsumer.Serve(w, r, account, s.store, func(ctx context.Context, consumer state.APIConsumer) {
+			event := "scenario_consumer.intent_ensured"
+			if r.Method == http.MethodDelete {
+				event = "scenario_consumer.intent_revoked"
+			}
+			s.audit.Emit(ctx, event, &account.ID, map[string]any{"app_id": consumer.AppID, "consumer_id": consumer.ID, "intent_sha256": consumer.ScenarioCreationSHA256})
+		})
+	}
+	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}/consumers/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(scenarioConsumer))))
+	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}/consumers/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(scenarioConsumer))))
+	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}/consumers/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(scenarioConsumer))))
 	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getScenarioTestRegistration))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.registerScenarioTest))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}/chaos", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.injectScenarioTestChaos))))

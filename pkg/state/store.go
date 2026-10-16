@@ -1684,6 +1684,9 @@ type Store interface {
 	// credentials should be created with CreateConsumerKeyForConsumer so
 	// key rotation preserves this identity for throttling and billing.
 	CreateAPIConsumer(ctx context.Context, accountID, appID, externalRef, name string) (APIConsumer, error)
+	EnsureScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest) (APIConsumer, error)
+	LookupScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest) (APIConsumer, error)
+	RevokeScenarioTestConsumer(ctx context.Context, accountID, runID, name string, req api.ScenarioTestConsumerRequest, consumerID string) (APIConsumer, error)
 	GetAPIConsumerByID(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
 	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
 	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
