@@ -4,9 +4,7 @@
 package gitlabfixture
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -30,6 +28,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest/gitarchive"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
@@ -135,28 +134,22 @@ func (f *Fixture) SealedTokens(t *testing.T) ([]byte, time.Time) {
 
 func (f *Fixture) Add(t *testing.T, sha string, definition api.EnvironmentDefinition) {
 	t.Helper()
-	body, err := json.Marshal(definition)
+	f.AddFiles(t, sha, definition, nil)
+}
+
+// AddFiles serves the exact build context through the production archive endpoint.
+func (f *Fixture) AddFiles(t *testing.T, sha string, definition api.EnvironmentDefinition, files map[string][]byte) {
+	t.Helper()
+	archive, err := gitarchive.Create(sha, definition, files)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var archive bytes.Buffer
-	gz := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gz)
-	if err := tw.WriteHeader(&tar.Header{Name: "shop-" + sha + "/environments/production.yaml", Mode: 0o600, Size: int64(len(body))}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.archives[sha], f.head = bytes.Clone(archive.Bytes()), sha
+	if previous, exists := f.archives[sha]; exists && !bytes.Equal(previous, archive) {
+		t.Fatal("fixture commit cannot replace immutable archive bytes")
+	}
+	f.archives[sha], f.head = bytes.Clone(archive), sha
 }
 
 func (f *Fixture) SetUnavailable(value bool) {

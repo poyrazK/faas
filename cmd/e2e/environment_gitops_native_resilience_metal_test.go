@@ -314,7 +314,7 @@ func (j *nativeGitOpsJourney) assertAuthority(t *testing.T, revision string, gen
 	t.Helper()
 	s, err := j.client.GetEnvironmentGitOps(t.Context(), j.project.Slug, "production")
 	if err != nil || s.Source.ApprovedRevisionID != revision || s.Source.AppliedRevisionID != revision || s.Source.Generation != generation ||
-		s.Source.SourceErrorCode != "environment_git_source_unavailable" {
+		s.Source.SourceErrorCode != j.provider.outageCode() {
 		t.Fatalf("source outage or restart changed approved/serving authority: %+v %v", s.Source, err)
 	}
 }

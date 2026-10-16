@@ -1,11 +1,8 @@
 package e2e_test
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +11,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest/gitarchive"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -66,28 +64,21 @@ func (f *gitOpsSourceFixture) setUnavailable(unavailable bool) {
 
 func (f *gitOpsSourceFixture) add(t *testing.T, sha string, definition api.EnvironmentDefinition) {
 	t.Helper()
-	body, err := json.Marshal(definition)
+	f.addFiles(t, sha, definition, nil)
+}
+
+func (f *gitOpsSourceFixture) addFiles(t *testing.T, sha string, definition api.EnvironmentDefinition, files map[string][]byte) {
+	t.Helper()
+	archive, err := gitarchive.Create(sha, definition, files)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var archive bytes.Buffer
-	gz := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gz)
-	if err := tw.WriteHeader(&tar.Header{Name: "shop-" + sha + "/environments/production.yaml", Mode: 0o600, Size: int64(len(body))}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.archives[sha] = bytes.Clone(archive.Bytes())
+	if previous, exists := f.archives[sha]; exists && !bytes.Equal(previous, archive) {
+		t.Fatal("fixture commit cannot replace immutable archive bytes")
+	}
+	f.archives[sha] = bytes.Clone(archive)
 	f.head = sha
 }
 

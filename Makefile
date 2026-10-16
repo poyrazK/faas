@@ -1484,7 +1484,7 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
 
 .PHONY: test-environment-gitops-native
-test-environment-gitops-native: ## Isolated native API/worker/queue/guest acceptance with strict pass and leak gates.
+test-environment-gitops-native: ## Isolated native API/worker/queue and source scheduled-Job acceptance with strict pass and leak gates.
 	@GO="$(GO)" bash scripts/test-environment-gitops-native.sh
 
 .PHONY: test-environment-gitops-report

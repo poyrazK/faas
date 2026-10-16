@@ -10,6 +10,7 @@ import (
 
 type gitOpsSourceProvider interface {
 	add(*testing.T, string, api.EnvironmentDefinition)
+	addFiles(*testing.T, string, api.EnvironmentDefinition, map[string][]byte)
 	setUnavailable(bool)
 	outageCode() string
 }
@@ -20,6 +21,9 @@ type gitLabGitOpsSourceFixture struct{ fixture *gitlabfixture.Fixture }
 
 func (f *gitLabGitOpsSourceFixture) add(t *testing.T, sha string, definition api.EnvironmentDefinition) {
 	f.fixture.Add(t, sha, definition)
+}
+func (f *gitLabGitOpsSourceFixture) addFiles(t *testing.T, sha string, definition api.EnvironmentDefinition, files map[string][]byte) {
+	f.fixture.AddFiles(t, sha, definition, files)
 }
 func (f *gitLabGitOpsSourceFixture) setUnavailable(value bool) { f.fixture.SetUnavailable(value) }
 func (*gitLabGitOpsSourceFixture) outageCode() string {

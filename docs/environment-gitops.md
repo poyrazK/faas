@@ -311,15 +311,24 @@ before production qualification polling or enforcement can be enabled.
 The opt-in native graph journey includes an image API and a push worker
 with a reviewed queue binding for each of GitHub and GitLab. It requires an
 isolated designated x86_64 KVM
-host, a disposable PostgreSQL database, the qualified kernel and generic base,
-and guest-init built from the same checkout. Run it with
-`make test-environment-gitops-native` after setting `DATABASE_URL`,
-`FAAS_TEST_KERNEL`, `FAAS_TEST_MINIMAL_BASE_PATH`, `FAAS_GUEST_INIT`, and
-`GREGALE_GITOPS_NATIVE_HOST_CLASS=native`. The guarded runner requires a clean
+host, a disposable PostgreSQL database, a qualified kernel, guest-init built
+from the same checkout, and registry access to three pinned base images. Run
+`make test-environment-gitops-native` with `DATABASE_URL`, `FAAS_TEST_KERNEL`,
+`FAAS_GUEST_INIT`, `GREGALE_GITOPS_NATIVE_HOST_CLASS=native`, and these explicit
+`repository@sha256:...` image references:
+
+- `GREGALE_GITOPS_NATIVE_BUILDER_REF`: the real builder image with Railpack and BuildKit.
+- `GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF`: the matching Node source runtime base.
+- `GREGALE_GITOPS_NATIVE_DOCKERFILE_RUNTIME_REF`: the minimal runtime base for the scratch Dockerfile fixture and full-rootfs image workloads.
+
+Imaged stages these through its verified base-producer path in private test
+storage. No supplied ext4 is imported as image provenance. Each checkout and
+temporary volume needs at least 32 GiB free for base conversion, builder drives,
+exports and compilation. The guarded runner requires a clean
 checkout, refuses active Gregale services, checks leaks before and after, and
 builds fresh daemon/fixture binaries rather than reusing a caller's prebuilt
 directory. It
-requires the named metal test, both provider cases and every required scenario
+requires both named metal tests, both providers and every required scenario
 to pass rather than skip. Set the host class to
 `nested-diagnostic` only for troubleshooting; that result cannot qualify a
 production gate. A passing journey must prove API serving through the gateway,
@@ -338,10 +347,42 @@ The reviewed rollback must obtain a fresh graph and native qualification at a
 new generation, preserve accepted queue identities, and serve another customer
 delivery before convergence. Slow gateway requests continue throughout these
 transitions; a failed request or a response from the superseded image fails the
-journey. The guarded runner allows up to 180 minutes for the two provider
-journeys and retains its pre-run and
+journey. The guarded runner allows up to 300 minutes for the complete provider
+and source-kind matrix and retains its pre-run and
 post-run leak checks. These cases still require execution on the exclusive
 native host; no passing dedicated native result has been established.
+
+### Native source-backed scheduled Jobs
+
+The same guarded runner additionally requires
+`TestEnvironmentGitOpsSourceJobsNativeMetal` for GitHub and GitLab, each with
+`source` and `dockerfile` workloads. These use the real builder microVM,
+imaged, native Job qualification, release activation, scheduler cron admission,
+guest command and durable task logs. The real builder base is staged by imaged
+from its pinned reference, with the checkout's guest-init. Shared host artifacts
+remain unchanged. GitLab's fixture proxy, private CA and OAuth keys apply only
+to apid; builder and image downloads keep their normal transport trust.
+The source fixture uses Railpack Node; the
+Dockerfile fixture copies a checkout-built static customer executable through
+BuildKit inside the builder VM. Real source builds may need their normal tool
+and runtime downloads on the exclusive acceptance node.
+
+Each case requires a paused schedule during the first build, successful native
+smoke qualification and then an actual scheduled occurrence. Guest output must
+contain that build's commit and the occurrence's own run ID exactly once;
+qualification smoke output cannot substitute for this proof. A second
+occurrence reuses the exact deployment layer without adding a build. Restarting
+schedd and apid between completed occurrences must preserve the Job identity,
+schedule revision, cursor and artifact. Another case restarts apid with a source
+build in progress, supersedes it through HTTP review/approval, and rejects any
+scheduled run or serving receipt for the superseded commit. Reviewed rollback
+requires a fresh candidate, qualification graph and successful occurrence.
+These cases do not claim recovery of an in-flight scheduled Job after a
+scheduler crash.
+
+This harness has not established a passing exclusive native result. Local
+archive/report tests and metal-tagged compilation do not qualify the native
+execution or leak gates. Production settings remain unchanged.
 
 ### Native qualification evidence
 
@@ -352,10 +393,11 @@ an existing run is never overwritten. The report and raw logs have private
 permissions. `make test-environment-gitops-report` validates this evidence
 contract without a VM or database.
 
-The `gregale.dev/gitops-native-acceptance/v1` report binds the run to a clean
+The `gregale.dev/gitops-native-acceptance/v2` report binds the run to a clean
 commit, host OS/architecture/kernel and virtualization observation, pinned Go,
 Firecracker/jailer and PostgreSQL client versions, and SHA-256/size fingerprints
-of the kernel, base, base digest sidecar and guest-init. It rechecks these inputs
+of the kernel and guest-init, plus all three pinned base-image references.
+It rechecks these inputs
 after execution and fingerprints the private JSON event stream and diagnostic
 logs. The JSON does not contain database URLs, OAuth credentials, fixture paths,
 or raw test output.
@@ -363,6 +405,8 @@ or raw test output.
 For both providers it requires structured Go test pass events for baseline
 serving, source outage/restart, held-revision supersession, scheduler restart
 with accepted work, reviewed rollback, override repair and retirement/recovery.
+It also requires every provider/source-kind case for source Job qualification,
+artifact reuse, scheduler restart, held-build supersession and rollback.
 A missing scenario, skip, failure, malformed/contradictory event stream, nonzero
 runner exit, changed inputs, or failed leak check prevents a pass. Human-readable
 `PASS` strings are not evidence. The post-run leak observation also runs when an
@@ -376,10 +420,13 @@ authorization; no production gate consumes it or changes automatically.
 Provider boundaries are local fixtures. GitLab uses the fixed production HTTPS
 origin with a daemon-scoped loopback CONNECT proxy and test CA, plus sealed
 account OAuth credentials and immutable project/commit archive reads. TLS
-verification remains enabled; the proxy cannot dial arbitrary origins. Both
-journeys use manual approval and immutable image workloads. They do not establish
-live-provider access, protected-MR native qualification, or native source-build
-acceptance. Those limitations are explicit in the report's `coverage` object.
+verification remains enabled; the proxy cannot dial arbitrary origins. All
+journeys use manual approval. Live GitHub/GitLab access and protected-MR
+review qualification remain outside this local-fixture coverage. The v2
+`coverage` object lists image workloads and both source-backed Job kinds;
+`source_scheduled_jobs_passed` can become true only with the complete successful
+exclusive native matrix. Older image-only v1 reports cannot qualify this matrix.
+The report still grants no production authorization.
 
 ## Next implementation steps
 

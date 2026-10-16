@@ -1,7 +1,9 @@
 package e2e_test
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -25,7 +27,7 @@ func TestGitOpsSourceFixturePinsArchivesAndRecoversOnSameConnection(t *testing.T
 	definition := api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: "production",
 		Workloads: map[string]api.EnvironmentWorkload{"api": {App: "shop-api", Variables: map[string]string{"MODE": "original"}}}}
 	first, second := strings.Repeat("a", 40), strings.Repeat("b", 40)
-	f.add(t, first, definition)
+	f.addFiles(t, first, definition, map[string][]byte{"jobs/report/commit.txt": []byte(first)})
 	workload := definition.Workloads["api"]
 	workload.Variables = map[string]string{"MODE": "changed"}
 	definition.Workloads["api"] = workload
@@ -62,6 +64,36 @@ func TestGitOpsSourceFixturePinsArchivesAndRecoversOnSameConnection(t *testing.T
 				if chunk.BytesStreamed != int64(archive.Len()) || chunk.Truncated {
 					t.Fatal("fixture returned inconsistent terminal provenance")
 				}
+			}
+		}
+		if tc.sha == first {
+			gz, err := gzip.NewReader(bytes.NewReader(archive.Bytes()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := tar.NewReader(gz)
+			found := false
+			for {
+				hdr, err := tr.Next()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if hdr.Name == "shop-"+first+"/jobs/report/commit.txt" {
+					content, err := io.ReadAll(tr)
+					if err != nil || string(content) != first {
+						t.Fatal("GitHub build context differs from reviewed commit")
+					}
+					found = true
+				}
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !found {
+				t.Fatal("GitHub provider omitted the source build context")
 			}
 		}
 		desired, err := environmentgitops.ReadGitDefinition(bytes.NewReader(archive.Bytes()), "environments/production.yaml", 1<<20)

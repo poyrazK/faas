@@ -21,6 +21,20 @@ import tempfile
 
 PACKAGE = "github.com/onebox-faas/faas/cmd/e2e"
 ROOT_TEST = "TestEnvironmentGitOpsNativeMetal"
+SOURCE_JOB_TEST = "TestEnvironmentGitOpsSourceJobsNativeMetal"
+SCHEMA = "gregale.dev/gitops-native-acceptance/v2"
+SOURCE_KINDS = ("source", "dockerfile")
+SOURCE_JOB_SCENARIOS = ("qualified_schedule", "artifact_reuse", "scheduler_restart",
+                        "held_build_supersession", "reviewed_rollback")
+FIXTURES = ("kernel", "guest_init")
+BASE_IMAGES = {"builder": "GREGALE_GITOPS_NATIVE_BUILDER_REF",
+               "source_runtime": "GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF",
+               "dockerfile_runtime": "GREGALE_GITOPS_NATIVE_DOCKERFILE_RUNTIME_REF"}
+
+
+def pinned_image(value):
+    # Credentials, URLs and arbitrary operator strings never enter report JSON.
+    return value if isinstance(value, str) and "://" not in value and re.fullmatch(r"[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}", value) else None
 PROVIDERS = ("github", "gitlab")
 SCENARIOS = (
     "baseline_serving", "source_outage_restart", "held_revision_supersession",
@@ -81,7 +95,6 @@ def snapshot(repo):
 
 
 def metadata(repo):
-    base = os.environ.get("FAAS_TEST_MINIMAL_BASE_PATH", "")
     go_mod = (repo / "go.mod").read_text()
     pinned = re.search(r"^go ([0-9.]+)$", go_mod, re.MULTILINE)
     return {
@@ -94,9 +107,8 @@ def metadata(repo):
                      "firecracker": command(["firecracker", "--version"]),
                      "jailer": command(["jailer", "--version"]),
                      "postgres_client": command(["psql", "--version"])},
+        "base_images": {key: pinned_image(os.environ.get(variable)) for key, variable in BASE_IMAGES.items()},
         "fixtures": {"kernel": fingerprint(os.environ.get("FAAS_TEST_KERNEL")),
-                     "base": fingerprint(base),
-                     "base_digest": fingerprint(base + ".digest" if base else None),
                      "guest_init": fingerprint(os.environ.get("FAAS_GUEST_INIT"))},
     }
 
@@ -106,7 +118,22 @@ def required_tests():
     for provider in PROVIDERS:
         names.append(f"{ROOT_TEST}/{provider}")
         names.extend(f"{ROOT_TEST}/{provider}/{scenario}" for scenario in SCENARIOS)
+    names.append(SOURCE_JOB_TEST)
+    for provider in PROVIDERS:
+        parent = f"{SOURCE_JOB_TEST}/{provider}"
+        names.append(parent)
+        for kind in SOURCE_KINDS:
+            case = f"{parent}/{kind}"
+            names.append(case)
+            names.extend(f"{case}/{scenario}" for scenario in SOURCE_JOB_SCENARIOS)
     return names
+
+
+def required_coverage():
+    return {"providers": list(PROVIDERS), "provider_boundary": "local_fixture",
+            "approval_policy": "manual", "workloads": ["image_api", "image_push_worker", "source_scheduled_job", "dockerfile_scheduled_job"],
+            "source_kinds": list(SOURCE_KINDS), "source_build_execution": "builder_microvm",
+            "live_provider_access": False, "protected_review_acceptance": False}
 
 
 def read_events(path):
@@ -202,12 +229,11 @@ def initialize(repo, requested, host_class):
             directory.rmdir()
             raise ValueError("report directory must be outside the source checkout")
     os.chmod(directory, 0o700)
-    report = {"schema": "gregale.dev/gitops-native-acceptance/v1", "started_at": utc_now(),
+    report = {"schema": SCHEMA, "started_at": utc_now(),
               "host_class": host_class, "evidence_kind": "local_operator_run",
               "production_enforcement_enabled": False, "native_acceptance_passed": False,
-              "coverage": {"providers": list(PROVIDERS), "provider_boundary": "local_fixture",
-                           "approval_policy": "manual", "workloads": "image_api_and_push_worker",
-                           "live_provider_and_source_build_acceptance": False},
+              "source_scheduled_jobs_passed": False,
+              "coverage": required_coverage(),
               "initial": metadata(repo), "result": "incomplete"}
     write_json(directory / "report.json", report)
     return directory
@@ -221,7 +247,11 @@ def finish(repo, directory, stages, reason, exit_code):
     identity_stable = initial == final and initial["source"]["clean"] and bool(
         re.fullmatch(r"[a-f0-9]{40}", initial["source"]["commit"] or ""))
     versions = initial["versions"]
-    metadata_complete = (all(value and value["bytes"] > 0 for value in initial["fixtures"].values()) and
+    contract_current = report.get("schema") == SCHEMA and report.get("coverage") == required_coverage()
+    metadata_complete = (set(initial.get("base_images", {})) == set(BASE_IMAGES) and
+                         all(pinned_image(initial["base_images"].get(key)) for key in BASE_IMAGES) and
+                         set(initial["fixtures"]) == set(FIXTURES) and
+                         all(initial["fixtures"].get(key) and initial["fixtures"][key]["bytes"] > 0 for key in FIXTURES) and
                          all(versions.get(key) for key in ("go", "firecracker", "jailer", "postgres_client")) and
                          versions["go"] == versions["go_required"])
     events = read_events(directory / "test-events.jsonl")
@@ -230,7 +260,7 @@ def finish(repo, directory, stages, reason, exit_code):
     supported = (native or report["host_class"] == "nested-diagnostic" and
                  initial["host"]["system"] == "Linux" and initial["host"]["architecture"] == "x86_64" and
                  bool(initial["host"]["virtualization_probe"]))
-    passed = (supported and exit_code == 0 and identity_stable and metadata_complete and events["complete"] and
+    passed = (contract_current and supported and exit_code == 0 and identity_stable and metadata_complete and events["complete"] and
               all(stages.get(key) == "pass" for key in ("preflight", "leak_before", "journey", "leak_after", "source")))
     if passed:
         result = "passed" if native else "diagnostic_passed"
@@ -238,6 +268,8 @@ def finish(repo, directory, stages, reason, exit_code):
         result = "blocked" if stages.get("preflight") != "pass" else "failed"
     failures = [reason] if reason else []
     failures.extend(key + "_" + value for key, value in stages.items() if value != "pass")
+    if not contract_current:
+        failures.append("report_contract_mismatch")
     if not identity_stable:
         failures.append("source_or_inputs_changed_or_unclean")
     if not metadata_complete:
@@ -250,6 +282,7 @@ def finish(repo, directory, stages, reason, exit_code):
                   metadata_complete=bool(metadata_complete), stages=stages, failure_reasons=failures,
                   command_exit_code=exit_code, exit_code=exit_code or (0 if passed else 1), events=events, result=result,
                   native_acceptance_passed=bool(passed and native),
+                  source_scheduled_jobs_passed=bool(passed and native),
                   artifacts={name: fingerprint(directory / name) for name in ARTIFACTS})
     write_json(path, report)
     return passed

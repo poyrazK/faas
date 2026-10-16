@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the existing image API/worker journey for both provider boundaries.
+# Run image API/worker and real source/Dockerfile scheduled-Job journeys for both providers.
 # Reports are local operator evidence and never enable production enforcement.
 set -Eeuo pipefail
 umask 077
@@ -37,7 +37,7 @@ trap 'reason=interrupted; exit 143' TERM
 
 die() { reason="$1"; echo "GitOps native acceptance: $2" >&2; exit 1; }
 require_env() { [[ -n "${!1:-}" ]] || die missing_configuration "set $1 explicitly"; }
-for variable in GREGALE_GITOPS_NATIVE_HOST_CLASS DATABASE_URL FAAS_TEST_KERNEL FAAS_TEST_MINIMAL_BASE_PATH FAAS_GUEST_INIT; do
+for variable in GREGALE_GITOPS_NATIVE_HOST_CLASS DATABASE_URL FAAS_TEST_KERNEL FAAS_GUEST_INIT GREGALE_GITOPS_NATIVE_BUILDER_REF GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF GREGALE_GITOPS_NATIVE_DOCKERFILE_RUNTIME_REF; do
   require_env "$variable"
 done
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 && "$(id -u)" == 0 && -c /dev/kvm ]] ||
@@ -63,10 +63,15 @@ case "$GREGALE_GITOPS_NATIVE_HOST_CLASS" in
     ;;
   *) die unsupported_host_class "host class must be native or nested-diagnostic" ;;
 esac
-for fixture in "$FAAS_TEST_KERNEL" "$FAAS_TEST_MINIMAL_BASE_PATH" "$FAAS_TEST_MINIMAL_BASE_PATH.digest" "$FAAS_GUEST_INIT"; do
-  [[ -r "$fixture" ]] || die missing_fixture "a required native fixture is unreadable"
+for fixture in "$FAAS_TEST_KERNEL" "$FAAS_GUEST_INIT"; do
+  [[ -f "$fixture" && -r "$fixture" ]] || die missing_fixture "a required native fixture is unreadable"
 done
 [[ -x "$FAAS_GUEST_INIT" ]] || die invalid_fixture "guest-init is not executable"
+if ! python3 - "$report_dir/report.json" <<'PY_IMAGES'
+import json, sys
+raise SystemExit(0 if all(json.load(open(sys.argv[1]))["initial"]["base_images"].values()) else 1)
+PY_IMAGES
+then die invalid_base_images "all three acceptance base images must be digest-pinned references without credentials"; fi
 [[ -z "${FAAS_SKIP_PG_TESTS:-}" ]] || die skipped_postgres "PostgreSQL tests cannot be skipped"
 [[ -z "${FAAS_E2E_BIN_DIR:-}" && -z "${FAAS_E2E_HELLO_SERVER_BINARY:-}" ]] ||
   die unverified_prebuilt_binaries "acceptance must build its daemons and fixture server from this checkout"
@@ -75,16 +80,19 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >"$report_dir/postgres-
 
 exec 9>/var/lock/faas-builder-acceptance.lock
 flock -w 10 9 || die busy_host "acceptance host is busy"
-for service in faas-apid faas-imaged faas-schedd faas-vmmd faas-gatewayd-internal faas-gatewayd-public; do
+for service in faas-apid faas-imaged faas-builderd faas-schedd faas-vmmd faas-gatewayd-internal faas-gatewayd-public; do
   if systemctl is-active --quiet "$service"; then
     die active_services "refusing to share the host with active $service"
   fi
 done
 cd "$repo_root"
+# Real base conversion, builder drives, source exports and Go compilation
+# share this disposable host. Refuse the journey before allocating them.
+required_kib=33554432
 for volume in "$repo_root" "${TMPDIR:-/tmp}"; do
   free_kib="$(df -Pk "$volume" | awk 'NR == 2 {print $4}')"
-  [[ "$free_kib" =~ ^[0-9]+$ && "$free_kib" -ge 8388608 ]] ||
-    die insufficient_disk "at least 8 GiB free is required on the checkout and temporary volumes"
+  [[ "$free_kib" =~ ^[0-9]+$ && "$free_kib" -ge "$required_kib" ]] ||
+    die insufficient_disk "at least 32 GiB free is required on the checkout and temporary volumes"
 done
 revision="$(git rev-parse HEAD)"
 [[ -z "$(git status --porcelain)" ]] || die dirty_source "source checkout must be clean"
@@ -93,8 +101,8 @@ reason=leak_before_failed
 if make leakcheck >"$report_dir/leak-before.log" 2>&1; then leak_before=pass; else leak_before=fail; exit 1; fi
 reason=journey_failed
 if GOMEMLIMIT=6GiB GREGALE_GITOPS_NATIVE_ACCEPTANCE=1 GREGALE_GITOPS_ACCEPTANCE=1 \
-  make GO="$go_binary" PKGS=./cmd/e2e RUN_REGEX='^TestEnvironmentGitOpsNativeMetal$' \
-  RUN_ARGS='-json -timeout 180m' test-metal >"$report_dir/test-events.jsonl" 2>"$report_dir/runner.log"; then
+  make GO="$go_binary" PKGS=./cmd/e2e RUN_REGEX='^TestEnvironmentGitOps(NativeMetal|SourceJobsNativeMetal)$' \
+  RUN_ARGS='-json -timeout 300m' test-metal >"$report_dir/test-events.jsonl" 2>"$report_dir/runner.log"; then
   journey=pass
 else
   journey=fail

@@ -502,15 +502,16 @@ jobs:
           GOMAXPROCS: 2
           GREGALE_GITOPS_ACCEPTANCE: '1'
         run: |
-          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitlabfixture/|fakeregistry|testdata/helloserver/)|scripts/(test-environment-gitops-native|gitops_native_report)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitarchive/|gitlabfixture/|builderbase|harness|fakeregistry|testdata/(helloserver|gitopsjob)/)|scripts/(test-environment-gitops-native|gitops_native_report)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
           python3 scripts/gitops_native_report_test.py
-          go test -race -p 1 ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
+          go test -race -p 1 ./pkg/e2etest/gitarchive ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
           # TestMain prepares the shared daemons before the HTTP case starts.
           go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
           go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
-          rm -f "$RUNNER_TEMP/gitops-native.test"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/gitops-source-job" ./pkg/e2etest/testdata/gitopsjob
+          rm -f "$RUNNER_TEMP/gitops-native.test" "$RUNNER_TEMP/gitops-source-job"
       # -race on every tested package: races are the failures hardest to
       # trace back later. Changed packages plus the §6.2 invariant tests
       # (tests/property) when anything in their import tree changed.

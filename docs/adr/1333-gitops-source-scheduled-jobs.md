@@ -52,3 +52,12 @@ identity, archive/commit and build fencing, materializer isolation, qualified
 artifact binding, failed/superseded builds, release publication, occurrence
 snapshots, restart checks, rollback and SQL guard/replay safety in both stores.
 Native execution remains pending on an exclusive native x86_64 KVM host.
+
+The guarded native runner now includes both providers and both source kinds,
+with real builder execution, guest commit/run output, repeated occurrences
+without rebuilding, restart between completed occurrences, held-build
+supersession and fresh reviewed rollback. Its v2 report fingerprints the real
+kernel and guest-init and binds all three pinned base-image references,
+requiring every scenario's structured pass event. Implementation
+and local validation of this harness are not a native acceptance pass; execution
+and leak checks still require the exclusive native host.

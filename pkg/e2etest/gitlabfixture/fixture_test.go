@@ -1,10 +1,13 @@
 package gitlabfixture
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -48,7 +51,7 @@ func fixtureClient(t *testing.T, f *Fixture) gitlabsource.Client {
 func TestFixturePinsAuthorityIdentityAndArchiveThroughVerifiedTLS(t *testing.T) {
 	f := New(t)
 	sha := strings.Repeat("a", 40)
-	f.Add(t, sha, fixtureDefinition())
+	f.AddFiles(t, sha, fixtureDefinition(), map[string][]byte{"jobs/report/commit.txt": []byte(sha)})
 	client := fixtureClient(t, f)
 	for _, tc := range []struct {
 		name, token, repository string
@@ -79,7 +82,39 @@ func TestFixturePinsAuthorityIdentityAndArchiveThroughVerifiedTLS(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer archive.Close()
-	desired, err := environmentgitops.ReadGitDefinition(archive, "environments/production.yaml", 1<<20)
+	raw, err := io.ReadAll(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gz)
+	found := false
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Name == "shop-"+sha+"/jobs/report/commit.txt" {
+			data, err := io.ReadAll(tr)
+			if err != nil || string(data) != sha {
+				t.Fatal("GitLab build context differs from reviewed commit")
+			}
+			found = true
+		}
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("GitLab provider omitted the source build context")
+	}
+	desired, err := environmentgitops.ReadGitDefinition(bytes.NewReader(raw), "environments/production.yaml", 1<<20)
 	if err != nil || desired.Definition.Workloads["api"].Variables["MODE"] != "reviewed" {
 		t.Fatalf("approved archive: %+v %v", desired, err)
 	}

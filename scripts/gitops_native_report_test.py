@@ -20,22 +20,25 @@ def event(action, test=None, **extra):
 
 
 def successful_events():
-    events = [event("start"), event("run", report.ROOT_TEST)]
-    for provider in report.PROVIDERS:
-        parent = report.ROOT_TEST + "/" + provider
-        events.append(event("run", parent))
-        for scenario in report.SCENARIOS:
-            name = parent + "/" + scenario
-            events.extend((event("run", name), event("pass", name)))
-        events.append(event("pass", parent))
-    events.extend((event("pass", report.ROOT_TEST), event("pass")))
+    events = [event("start")]
+    expected = report.required_tests()
+    def visit(name):
+        events.append(event("run", name))
+        for child in expected:
+            if "/" in child and child.rsplit("/", 1)[0] == name:
+                visit(child)
+        events.append(event("pass", name))
+    for root in (report.ROOT_TEST, report.SOURCE_JOB_TEST):
+        visit(root)
+    events.append(event("pass"))
     return events
 
 
 def metadata():
     return {"source": {"commit": "a" * 40, "clean": True},
             "host": {"system": "Linux", "architecture": "x86_64", "virtualization_probe": "none"},
-            "fixtures": {key: {"sha256": "b" * 64, "bytes": 128} for key in ("kernel", "base", "base_digest", "guest_init")},
+            "base_images": {key: "registry.example/"+key+"@sha256:"+"c"*64 for key in report.BASE_IMAGES},
+            "fixtures": {key: {"sha256": "b" * 64, "bytes": 128} for key in report.FIXTURES},
             "versions": {"go": "go1.26.9", "go_required": "go1.26.9", "firecracker": "v1.15.0",
                          "jailer": "v1.15.0", "postgres_client": "PostgreSQL 16"}}
 
@@ -56,6 +59,28 @@ class NativeReportTests(unittest.TestCase):
         for missing in report.required_tests():
             with self.subTest(missing=missing):
                 self.write_events([e for e in successful_events() if e.get("Test") != missing])
+                self.assertFalse(report.read_events(self.events)["complete"])
+
+    def test_image_only_evidence_cannot_substitute_for_source_job_matrix(self):
+        expected = report.required_tests()
+        for provider in ("github", "gitlab"):
+            for kind in ("source", "dockerfile"):
+                for scenario in ("qualified_schedule", "artifact_reuse", "scheduler_restart", "held_build_supersession", "reviewed_rollback"):
+                    self.assertIn(f"{report.SOURCE_JOB_TEST}/{provider}/{kind}/{scenario}", expected)
+        self.write_events([e for e in successful_events() if not e.get("Test", "").startswith(report.SOURCE_JOB_TEST)])
+        self.assertFalse(report.read_events(self.events)["complete"])
+        self.assertFalse(self.finish()[0])
+
+    def test_source_scenarios_cannot_skip_or_fail(self):
+        for name in report.required_tests():
+            if not name.startswith(report.SOURCE_JOB_TEST + "/"):
+                continue
+            for action in ("skip", "fail"):
+                events = successful_events()
+                for e in events:
+                    if e.get("Test") == name and e["Action"] == "pass":
+                        e["Action"] = action
+                self.write_events(events)
                 self.assertFalse(report.read_events(self.events)["complete"])
 
     def test_skips_failures_duplicates_and_out_of_order_results_fail_closed(self):
@@ -86,7 +111,7 @@ class NativeReportTests(unittest.TestCase):
 
     def finish(self, initial=None, final=None, host_class="native", stages=None, exit_code=0):
         initial = initial or metadata()
-        (self.directory / "report.json").write_text(json.dumps({"initial": initial, "host_class": host_class,
+        (self.directory / "report.json").write_text(json.dumps({"schema": report.SCHEMA, "coverage": report.required_coverage(), "initial": initial, "host_class": host_class,
             "production_enforcement_enabled": False, "native_acceptance_passed": False}))
         stages = stages or {key: "pass" for key in ("preflight", "leak_before", "journey", "leak_after", "source")}
         with patch.object(report, "metadata", return_value=final or initial):
@@ -100,11 +125,27 @@ class NativeReportTests(unittest.TestCase):
         passed, value = self.finish()
         self.assertTrue(passed)
         self.assertTrue(value["native_acceptance_passed"])
+        self.assertTrue(value["source_scheduled_jobs_passed"])
         self.assertEqual(value["result"], "passed")
         passed, value = self.finish(host_class="nested-diagnostic")
         self.assertTrue(passed)
         self.assertFalse(value["native_acceptance_passed"])
         self.assertEqual(value["result"], "diagnostic_passed")
+        self.assertFalse(value["source_scheduled_jobs_passed"])
+
+    def test_old_or_changed_report_contract_cannot_qualify(self):
+        for field, value in (("schema", "gregale.dev/gitops-native-acceptance/v1"), ("coverage", {})):
+            self.finish()
+            path = self.directory / "report.json"
+            stored = json.loads(path.read_text())
+            stored[field] = value
+            path.write_text(json.dumps(stored))
+            with patch.object(report, "metadata", return_value=metadata()):
+                self.assertFalse(report.finish(self.directory, self.directory,
+                    {key: "pass" for key in ("preflight", "leak_before", "journey", "leak_after", "source")}, "", 0))
+            final = json.loads(path.read_text())
+            self.assertFalse(final["native_acceptance_passed"])
+            self.assertIn("report_contract_mismatch", final["failure_reasons"])
 
     def test_unverified_host_missing_versions_and_changed_inputs_fail(self):
         mutations = (
@@ -114,6 +155,8 @@ class NativeReportTests(unittest.TestCase):
             lambda x: x["host"].update(virtualization_probe="kvm"),
             lambda x: x["host"].update(virtualization_probe=None),
             lambda x: x["fixtures"].update(guest_init=None),
+            lambda x: x["base_images"].update(builder=None),
+            lambda x: x["base_images"].pop("source_runtime"),
             lambda x: x["versions"].update(firecracker=None),
             lambda x: x["versions"].update(go="go1.27.0"),
         )
@@ -124,7 +167,7 @@ class NativeReportTests(unittest.TestCase):
                 passed, value = self.finish(initial)
                 self.assertFalse(passed)
                 self.assertFalse(value["native_acceptance_passed"])
-        for field in ("source", "fixtures", "versions"):
+        for field in ("source", "fixtures", "versions", "base_images"):
             final = copy.deepcopy(metadata())
             final[field][next(iter(final[field]))] = "changed"
             passed, _ = self.finish(final=final)
@@ -149,6 +192,11 @@ class NativeReportTests(unittest.TestCase):
                 report.initialize(self.directory, str(self.directory / "inside-source"), "native")
         self.assertEqual(target.stat().st_mode & 0o777, 0o700)
 
+    def test_image_configuration_is_pinned_and_redacted(self):
+        for value in (None, "registry.example/base:latest", "https://registry.example/base@sha256:"+"a"*64, "https://user:must-not-leak@registry.example/base@sha256:"+"a"*64):
+            self.assertIsNone(report.pinned_image(value))
+        self.assertEqual(report.pinned_image("registry.example/base@sha256:"+"a"*64), "registry.example/base@sha256:"+"a"*64)
+
     def test_fingerprints_do_not_block_on_devices_or_pipes(self):
         path = self.directory / "fixture"
         path.write_bytes(b"reviewed fixture")
@@ -164,7 +212,7 @@ class NativeReportTests(unittest.TestCase):
         repo = Path(__file__).resolve().parent.parent
         target = self.directory / "blocked-run"
         env = os.environ.copy()
-        for name in ("FAAS_TEST_KERNEL", "FAAS_TEST_MINIMAL_BASE_PATH", "FAAS_GUEST_INIT"):
+        for name in ("FAAS_TEST_KERNEL", "FAAS_GUEST_INIT", *report.BASE_IMAGES.values()):
             env.pop(name, None)
         secret = "must-not-appear-in-report"
         env.update(GREGALE_GITOPS_NATIVE_REPORT_DIR=str(target), GREGALE_GITOPS_NATIVE_HOST_CLASS="native", DATABASE_URL=secret)
