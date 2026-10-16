@@ -1068,6 +1068,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-1199 · Workflow Operation execution budget](1199-workflow-operation-execution-budget.md)
 - [ADR-1198 · Webhook-delivered Operation signals](1198-webhook-delivered-operation-signals.md)
 - [ADR-1197 · Operation event waits and signals](1197-operation-event-waits-and-signals.md)
 - [ADR-1196 · Operation deadlines and budgets](1196-operation-deadlines-and-budgets.md)

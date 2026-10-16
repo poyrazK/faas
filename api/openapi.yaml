@@ -57601,7 +57601,7 @@ components:
         decision: { type: string, enum: [approved, rejected] }
         comment: { type: string, maxLength: 1024, description: Recorded with the decision in the operation history. }
     OperationLimits:
-      description: ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take only a deadline, and job definitions take none.
+      description: ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take a deadline and an execution budget (ADR-1199), and job definitions take none.
       type: object
       additionalProperties: false
       properties:
@@ -57616,7 +57616,7 @@ components:
           minimum: 1
           maximum: 25
         max_execution_seconds:
-          description: HTTP attempt runtime summed across generations.
+          description: Runtime of HTTP attempts, or of a workflow's HTTP step attempts, summed across generations; waits do not count.
           type: integer
           minimum: 1
           maximum: 604800

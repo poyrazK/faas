@@ -219,7 +219,7 @@ accepted work.
   deadline_exceeded` when its deadline passes, whether it is queued, retrying,
   running or waiting for a timer or approval. Its completion callback fires.
   An HTTP attempt still running at the deadline is cut. Unless the definition
-  declares `recovery: safe_to_retry`, that attempt needs reconciliation,
+  declares `recovery: safe_retry`, that attempt needs reconciliation,
   because Gregale cannot know whether it took effect. Workflow Operations
   settle within one minute of the deadline.
 - **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
@@ -230,10 +230,17 @@ accepted work.
   once a deadline has passed or the budget is spent. Recording an outcome is
   still allowed.
 
-Workflow definitions accept only `deadline_seconds`; their steps carry their own
-retries and timeouts. Job definitions accept no limits. Reads return `limits`,
-`deadline_at` and `usage {execution_ms, attempts}`, and
-`gregale customer-operations get` prints the deadline and budget. See
+Workflow definitions accept `deadline_seconds` and `max_execution_seconds`
+([ADR-1199](adr/1199-workflow-operation-execution-budget.md)). The budget sums
+the runtime of the HTTP step attempts; timer, approval and event waits do not
+count. Each attempt is cut at the earlier of its step timeout and the budget
+still unspent. A cut step, like any failed workflow step, needs reconciliation,
+and `safe_to_retry` recovery is refused once the budget is spent. Workflow steps
+never retry automatically, so `max_attempts` is HTTP-only.
+
+Job definitions accept no limits. Reads return `limits`, `deadline_at` and
+`usage {execution_ms, attempts}`, and `gregale customer-operations get` prints
+the deadline and budget. See
 [ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
 
 ## Contract

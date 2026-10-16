@@ -16326,6 +16326,12 @@ SELECT workflows FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
 -- name: GetCustomerOperationForWorkflow :one
 SELECT record FROM customer_operations WHERE workflow_run_id=sqlc.arg(run_id)::uuid;
 
+-- name: ListFinishedWorkflowRunAttempts :many
+-- ADR-1199: the finished step attempts an Operation's execution budget counts.
+SELECT step_name, attempt, started_at, finished_at FROM workflow_step_attempts
+WHERE run_id=sqlc.arg(run_id)::uuid AND finished_at IS NOT NULL
+ORDER BY started_at, step_name, attempt;
+
 -- name: LockCustomerOperationForWorkflow :one
 SELECT record FROM customer_operations WHERE workflow_run_id=sqlc.arg(run_id)::uuid FOR UPDATE;
 
@@ -16402,11 +16408,14 @@ SELECT EXISTS (SELECT 1 FROM instances WHERE id = sqlc.arg(instance_id)::uuid
 AND app_id = sqlc.arg(app_id)::uuid AND deployment_id = sqlc.arg(deployment_id)::uuid AND state = 'running');
 
 -- name: CustomerOperationWorkflowAttemptWindow :one
+-- ADR-1199: the Operation's execution budget also caps the attempt window.
 SELECT r.definition_snapshot, r.resume_count, r.lease_until,
-       a.started_at, clock_timestamp()::timestamptz AS observed_at
+       a.started_at, clock_timestamp()::timestamptz AS observed_at,
+       coalesce((o.record #>> '{limits,max_execution_seconds}')::integer, 0)::integer AS max_execution_seconds
 FROM workflow_runs r
 JOIN workflow_steps s ON s.run_id=r.id
 JOIN workflow_step_attempts a ON a.run_id=r.id AND a.step_name=s.step_name AND a.attempt=s.attempt
+LEFT JOIN customer_operations o ON o.workflow_run_id=r.id
 WHERE r.id=sqlc.arg(run_id)::uuid AND s.step_name=sqlc.arg(step_name)::text
 AND s.attempt=sqlc.arg(attempt)::integer AND s.status='running' AND a.status='running'
 AND r.status='running' AND r.lease_until>clock_timestamp();

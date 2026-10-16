@@ -11346,10 +11346,12 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 
 const customerOperationWorkflowAttemptWindow = `-- name: CustomerOperationWorkflowAttemptWindow :one
 SELECT r.definition_snapshot, r.resume_count, r.lease_until,
-       a.started_at, clock_timestamp()::timestamptz AS observed_at
+       a.started_at, clock_timestamp()::timestamptz AS observed_at,
+       coalesce((o.record #>> '{limits,max_execution_seconds}')::integer, 0)::integer AS max_execution_seconds
 FROM workflow_runs r
 JOIN workflow_steps s ON s.run_id=r.id
 JOIN workflow_step_attempts a ON a.run_id=r.id AND a.step_name=s.step_name AND a.attempt=s.attempt
+LEFT JOIN customer_operations o ON o.workflow_run_id=r.id
 WHERE r.id=$1::uuid AND s.step_name=$2::text
 AND s.attempt=$3::integer AND s.status='running' AND a.status='running'
 AND r.status='running' AND r.lease_until>clock_timestamp()
@@ -11362,13 +11364,15 @@ type CustomerOperationWorkflowAttemptWindowParams struct {
 }
 
 type CustomerOperationWorkflowAttemptWindowRow struct {
-	DefinitionSnapshot []byte
-	ResumeCount        int32
-	LeaseUntil         pgtype.Timestamptz
-	StartedAt          pgtype.Timestamptz
-	ObservedAt         pgtype.Timestamptz
+	DefinitionSnapshot  []byte
+	ResumeCount         int32
+	LeaseUntil          pgtype.Timestamptz
+	StartedAt           pgtype.Timestamptz
+	ObservedAt          pgtype.Timestamptz
+	MaxExecutionSeconds int32
 }
 
+// ADR-1199: the Operation's execution budget also caps the attempt window.
 func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db DBTX, arg CustomerOperationWorkflowAttemptWindowParams) (CustomerOperationWorkflowAttemptWindowRow, error) {
 	row := db.QueryRow(ctx, customerOperationWorkflowAttemptWindow, arg.RunID, arg.StepName, arg.Attempt)
 	var i CustomerOperationWorkflowAttemptWindowRow
@@ -11378,6 +11382,7 @@ func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db
 		&i.LeaseUntil,
 		&i.StartedAt,
 		&i.ObservedAt,
+		&i.MaxExecutionSeconds,
 	)
 	return i, err
 }
@@ -40535,6 +40540,45 @@ func (q *Queries) ListFeatureFlagVersions(ctx context.Context, db DBTX, arg List
 			&i.Actor,
 			&i.RestoredFrom,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFinishedWorkflowRunAttempts = `-- name: ListFinishedWorkflowRunAttempts :many
+SELECT step_name, attempt, started_at, finished_at FROM workflow_step_attempts
+WHERE run_id=$1::uuid AND finished_at IS NOT NULL
+ORDER BY started_at, step_name, attempt
+`
+
+type ListFinishedWorkflowRunAttemptsRow struct {
+	StepName   string
+	Attempt    int32
+	StartedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+}
+
+// ADR-1199: the finished step attempts an Operation's execution budget counts.
+func (q *Queries) ListFinishedWorkflowRunAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) ([]ListFinishedWorkflowRunAttemptsRow, error) {
+	rows, err := db.Query(ctx, listFinishedWorkflowRunAttempts, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFinishedWorkflowRunAttemptsRow{}
+	for rows.Next() {
+		var i ListFinishedWorkflowRunAttemptsRow
+		if err := rows.Scan(
+			&i.StepName,
+			&i.Attempt,
+			&i.StartedAt,
+			&i.FinishedAt,
 		); err != nil {
 			return nil, err
 		}
