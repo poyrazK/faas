@@ -295,10 +295,23 @@ class Qualification(PilotProbes, AcceptanceChecks, ProviderFaultChecks):
                 'Alternate workers.dev or preview serving is enabled')
         self.checked('alternate_endpoints_disabled')
 
+    def access_token(self):
+        path = self.env.get('HOSTING_QUAL_ACCESS_TOKEN_FILE')
+        if path:
+            from internal_frontend_hosting_pilot_common import PilotError, private_read
+            try:
+                token = private_read(Path(path), 16384).decode().strip()
+            except (PilotError, OSError, ValueError):
+                raise Failure('Cannot read the protected canonical Access token file') from None
+        else:
+            token = self.env.get('HOSTING_QUAL_ACCESS_TOKEN', '')
+        require(re.fullmatch(r'[A-Za-z0-9_.-]{1,16384}', token) is not None, 'Invalid canonical Access token encoding')
+        return token
+
     def edge(self, path='/', *, authenticated=True, method='GET', headers=None):
         values = dict(headers or {})
         if authenticated:
-            values['Cookie'] = 'CF_Authorization=' + self.env['HOSTING_QUAL_ACCESS_TOKEN']
+            values['Cookie'] = 'CF_Authorization=' + self.access_token()
         sid = self.site['id']
         require(isinstance(sid, str) and UUID.fullmatch(sid), 'Invalid site identity for edge request')
         # Derive the destination instead of forwarding a cookie to an API-
@@ -379,14 +392,14 @@ class Qualification(PilotProbes, AcceptanceChecks, ProviderFaultChecks):
 
     def preflight(self):
         require(self.env.get('FAAS_FRONTEND_HOSTING_ENABLED', '').lower() in ('1', 'true'), 'Enable the internal CLI flag explicitly for qualification')
-        for key in ('FAAS_API', 'FAAS_TOKEN', 'CLOUDFLARE_API_TOKEN', 'HOSTING_QUAL_ACCESS_TOKEN',
+        for key in ('FAAS_API', 'FAAS_TOKEN', 'CLOUDFLARE_API_TOKEN',
                     'HOSTING_QUAL_R2_ACCESS_KEY', 'HOSTING_QUAL_R2_SECRET_KEY'):
             require(bool(self.env.get(key)), f'Missing required environment binding: {key}')
         url = urlsplit(self.env['FAAS_API'])
         require(url.scheme == 'https' and url.hostname and url.username is None and url.password is None and not url.query and not url.fragment and
                 url.path in ('', '/'), 'FAAS_API must name an explicit HTTPS API origin')
         self.api_url = self.env['FAAS_API'].rstrip('/')
-        require(re.fullmatch(r'[A-Za-z0-9_.-]{1,16384}', self.env['HOSTING_QUAL_ACCESS_TOKEN']), 'Invalid Access token encoding')
+        self.access_token()
         self.deployment = self.infrastructure.output()
         domain = self.deployment['hosting_domain']
         require(url.hostname != domain and not url.hostname.endswith('.' + domain) and not domain.endswith('.' + url.hostname),
@@ -628,6 +641,10 @@ class Qualification(PilotProbes, AcceptanceChecks, ProviderFaultChecks):
             require(status == 200, 'Site cleanup could not be observed through the API')
             return False
         _, elapsed = self.wait('artifact retirement and site removal', gone, self.args.cleanup_timeout)
+        self.verify_removed_site(elapsed)
+
+    def verify_removed_site(self, elapsed):
+        sid = self.site['id']
         for prefix in ('staging', 'published'):
             require(self.storage_count(f'hosting/{prefix}/{sid}/') == 0, 'Retired fixture objects remain in private storage')
         if self.site['durable_routing']:

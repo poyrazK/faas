@@ -11290,6 +11290,7 @@ const (
 	HostingRouteStatusReadTimeout              = 5 * time.Second
 	HostingDomainsPerSite                      = 5
 	HostingDomainHostnameMaxBytes              = 64
+	HostingPilotRelaySocketMaxBytes            = 100
 	HostingDomainPageSize                      = 10
 	HostingDomainConcurrency                   = 2
 	HostingDomainDetailsMaxBytes               = 16 << 10

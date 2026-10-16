@@ -249,8 +249,9 @@ requires API domain capability, applied Worker domain infrastructure and serving
 and durable routing. The domain and CNAME target must match the isolated pilot.
 The controller must attest to an unused, exclusively owned disposable hostname;
 it must refuse existing or unrelated records, provider objects, and overlapping
-runs. No real controller is bundled: review and configure one for the intended
-DNS provider and protected operator identity before running this scenario.
+runs. The [bundled pilot adapters](internal-frontend-hosting-pilot.md) implement this
+contract for Cloudflare customer DNS and protected operator JWT files. Review
+and configure their isolated scope before running this scenario.
 
 The controller is invoked as `[ABSOLUTE_EXECUTABLE, COMMAND]`, without a shell.
 Each command receives a JSON object on standard input, with this identity:
@@ -338,8 +339,10 @@ credentials, privacy, retention, and provider charges.
 
 Three additional scenarios are independently opt-in. They use a separate
 operator-owned provider fault controller, alongside the existing DNS/Access
-controller. No real fault controller or provider credentials are bundled. The
-portable fixture suite exercises all three without live provisioning.
+controller. The [bundled private pilot relay](internal-frontend-hosting-pilot.md) implements
+this controller contract behind an explicit bootstrap opt-in. Provider credentials
+remain operator supplied. The portable fixture suite exercises all three without
+live provisioning.
 
 For a later explicitly provisioned, isolated durable pilot, add the desired
 flags to the extended acceptance command:
@@ -364,7 +367,8 @@ scheduled provider call and does not modify SQL schedules or accelerate the
 reconciler. Select a timeout that covers that interval. After a fault is actually
 observed, `--provider-observation-seconds` defaults to 180, bounded to 180..600.
 Allow at least two hours for the complete live run, plus operator review time,
-and use API and both Access identities valid for that window.
+and renew API/Access identities as needed. The bundled pilot supports protected
+JWT files because the current Access apps have one-hour sessions.
 
 ### Scoped provider fault controller
 

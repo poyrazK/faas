@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
 import uuid
 
 
@@ -16,6 +17,7 @@ class AcceptanceChecks:
     def configure_acceptance(self):
         self.domain = None
         self.domain_token = None
+        self.domain_token_read_at = 0
         self.domain_dns_dirty = False
         self.domain_run = str(uuid.uuid4())
 
@@ -203,7 +205,8 @@ class AcceptanceChecks:
         identity = {'version': 1, 'api_origin': self.api_url, 'account_id': self.args.account,
                     'origin_id': self.deployment['origin_id'], 'worker_name': self.deployment['worker_name'],
                     'hostname': self.args.custom_domain, 'run_id': self.domain_run}
-        request = {**identity, 'records': records or [], 'access_aud': (self.domain or {}).get('details', {}).get('access_aud', '')}
+        request = {**identity, 'site_id': (self.site or {}).get('id', ''), 'domain_id': (self.domain or {}).get('id', ''),
+                   'records': records or [], 'access_aud': (self.domain or {}).get('details', {}).get('access_aud', '')}
         result = self.probe_execute([str(self.args.domain_controller), action],
                                     {k: self.env[k] for k in keys if k in self.env}, timeout=45,
                                     input=json.dumps(request).encode())
@@ -281,11 +284,17 @@ class AcceptanceChecks:
         require(isinstance(token, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,16384}', token) is not None,
                 'The dedicated domain controller did not supply an Access JWT')
         self.domain_token = token
+        self.domain_token_read_at = time.monotonic()
         self.checked('custom_domain_ready')
 
     def domain_edge(self, path='/', *, method='GET', authenticated=True, headers=None):
         values = dict(headers or {})
         if authenticated:
+            if time.monotonic() - self.domain_token_read_at >= 60:
+                token = self.domain_control('token').get('access_token', '')
+                self.probe_require(isinstance(token, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,16384}', token) is not None,
+                                   'Domain Access refresh did not supply an identity token')
+                self.domain_token, self.domain_token_read_at = token, time.monotonic()
             values['Cookie'] = 'CF_Authorization=' + self.domain_token
         return self.http.request(method, 'https://' + self.args.custom_domain + path, values)
 
@@ -295,7 +304,7 @@ class AcceptanceChecks:
         def access_denied():
             # Canonical cookies must not authorize a custom-domain audience.
             for method, headers in [('GET', {}), ('HEAD', {}), ('GET', {'If-None-Match': etag}),
-                                    ('GET', {'Cookie': 'CF_Authorization=' + self.env['HOSTING_QUAL_ACCESS_TOKEN']})]:
+                                    ('GET', {'Cookie': 'CF_Authorization=' + self.access_token()})]:
                 status, received, _ = self.domain_edge(method=method, authenticated=False, headers=headers)
                 require(status in (302, 303, 401, 403) and 'x-gregale-release' not in received and
                         'x-gregale-cache' not in received,

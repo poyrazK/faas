@@ -408,3 +408,7 @@ operations dashboard’s hypothetical provider-cost calculator.
 The independently gated [traffic runbook](internal-frontend-hosting-traffic.md)
 describes provider-side approximate observations, privacy, retention and the
 operations panel. It is separate from catalog storage accounting and billing.
+
+The [runnable pilot workflow](internal-frontend-hosting-pilot.md) bundles the
+private DNS/Access and provider-fault adapters plus prepare/qualify/recovery-cleanup
+commands. Its relay requires a separate default-off bootstrap opt-in.

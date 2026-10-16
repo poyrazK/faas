@@ -22,7 +22,7 @@ type Config struct {
 func Load(getenv func(string) string, appsDomain string) (*Config, error) {
 	domain := strings.ToLower(strings.TrimSpace(getenv("FAAS_FRONTEND_HOSTING_DOMAIN")))
 	if domain == "" {
-		if getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED") == "true" {
+		if getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_PILOT_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_PILOT_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_PILOT_RELAY_SOCKET") != "" {
 			return nil, errors.New("enabled hosting requires an isolated hosting domain and provider configuration")
 		}
 		return nil, nil
@@ -68,6 +68,9 @@ func Load(getenv func(string) string, appsDomain string) (*Config, error) {
 		}
 	} else if value := getenv("FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED"); value == "1" || value == "true" {
 		return nil, errors.New("hosting analytics requires provider configuration")
+	}
+	if err := configurePilot(cfg, getenv); err != nil {
+		return nil, err
 	}
 	return cfg, nil
 }
