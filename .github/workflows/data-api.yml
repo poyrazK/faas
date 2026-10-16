@@ -55,6 +55,20 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ github.event_name != 'pull_request' }}
+      # Pull requests restore main's setup-go cache read-only. Saving a ~1 GB
+      # copy per pull-request ref overflowed the 10 GB repository cache and
+      # evicted ci-light's main families, so light jobs compiled cold.
+      - name: restore Go cache from main (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: setup-go-${{ runner.os }}-x64-ubuntu24-go-pr-restore-only
+          restore-keys: |
+            setup-go-${{ runner.os }}-x64-ubuntu24-go-
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
