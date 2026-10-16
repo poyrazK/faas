@@ -210,6 +210,7 @@ func (s ServiceCallScope) Allows(method, requestPath string) bool {
 func normalizeServiceCallPathPrefix(raw string) (string, error) {
 	prefix := strings.TrimSpace(raw)
 	if prefix == "" || len(prefix) > ServiceCallPathPrefixMaxBytes || !strings.HasPrefix(prefix, "/") ||
+		strings.HasPrefix(prefix, "//") || strings.HasPrefix(prefix, "/\\") ||
 		strings.ContainsAny(prefix, "?#\\\r\n\x00") {
 		return "", fmt.Errorf("path prefix %q must be an origin-form path without query or fragment", raw)
 	}
@@ -226,6 +227,7 @@ func normalizeServiceCallPathPrefix(raw string) (string, error) {
 
 func canonicalServiceCallRequestPath(value string) (string, bool) {
 	if value == "" || len(value) > ServiceCallPathPrefixMaxBytes || !strings.HasPrefix(value, "/") ||
+		strings.HasPrefix(value, "//") || strings.HasPrefix(value, "/\\") ||
 		strings.ContainsAny(value, "\\\r\n\x00") {
 		return "", false
 	}

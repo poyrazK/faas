@@ -40,7 +40,7 @@ func compareDiagnosticMetadata(out *api.BindingVerificationRunDiagnostics, r api
 		change("service_target_deployment", diagnosticUUID(r.Inventory.ServiceTargets[name]), diagnosticUUID(i.ServiceTargets[name]), "service_target_changed", api.AppBindingInventoryItem{Type: api.BindingTypeService, Name: name, Binding: name})
 	}
 	old, current := diagnosticBindings(r.Inventory, r.Scope), diagnosticBindings(i, r.Scope)
-	keys := make([]string, 0, len(old)+len(current))
+	keys := make([]string, 0)
 	for key := range old {
 		keys = append(keys, key)
 	}

@@ -5229,7 +5229,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// events remain ACKed so an unsupported provider event cannot create
 		// an endless retry loop.
 		if mapStripeTypeToEventType(ev.Type) != billing.EventUnknown {
-			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", ev.Data.Object.Customer, "event_type", ev.Type)
+			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", logsanitize.Field(ev.Data.Object.Customer), "event_type", logsanitize.Field(ev.Type))
 			api.WriteProblem(w, api.ErrCapacity("billing webhook customer binding unavailable"))
 			return
 		}
@@ -5238,7 +5238,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	normalized := normalizeStripeWebhook(ev, body)
 	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderStripe), acct, normalized.PlanID, normalized.Invoice); err != nil {
-		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
@@ -5259,7 +5259,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	claimed, err := s.claimWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 	if err != nil {
-		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook replay protection unavailable"))
 		return
 	}
@@ -5278,7 +5278,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// VerifyWebhook return value, so both paths converge on
 	// handleBillingEvent.
 	if err := s.handleBillingEvent(r.Context(), normalized, acct); err != nil {
-		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
