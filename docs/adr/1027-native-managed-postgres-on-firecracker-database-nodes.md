@@ -426,10 +426,19 @@ are not a fourth manifest box role yet.
   with a new guest-init therefore rebuilds it, while running VMs keep the
   base bind-mounted into their jail. Old bases are pruned. Systemd is
   notified once RPCs are served; `/readyz` waits for the bases.
-- **Ansible.** `database_node.yml` installs the signed release (cosign
-  verified against the release workflow identity), stages the mTLS bundle
-  and firewall, runs the `firecracker` role with the release's signed guest
-  kernel, then `database_vmmd`, then `pgproxyd_service`.
+- **Ansible.** `database_node.yml` first applies the spec §11 host
+  baseline compute nodes get: `cgroups_v2`, `grub` (the cgroup kernel
+  argument and the user-namespace and BPF sysctls) and `host_hardening`
+  (sshd, fail2ban, unattended upgrades, auditd, journald bounds). It then
+  installs the signed release (cosign verified against the release
+  workflow identity), stages the mTLS bundle and firewall, and joins the
+  overlay.
+  - The `overlay` role also installs the manifest's private endpoint
+    aliases. pgproxyd dials `schedd.faas`, which nothing else resolved on
+    a database node.
+  - Then come the `firecracker` role with the release's signed guest
+    kernel, `database_vmmd` and `pgproxyd_service`.
+  - CI now syntax-checks the playbook.
 
 Metal: `TestMetalDatabaseNodeMode` runs vmmd in database mode. It served
 RPCs immediately, built the PostgreSQL 17 base from the pinned image in

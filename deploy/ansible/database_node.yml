@@ -58,9 +58,12 @@
         privs: USAGE
       become_user: postgres
 
-# Order: release + mTLS + firewall, then Firecracker with the release's
-# signed guest kernel, then the archive keeper, then vmmd in database mode
-# (which archives through it when dbbackupd_enabled), then pgproxyd, then
+# Order: the spec §11 host baseline compute nodes get (cgroups v2, the
+# user-namespace and BPF sysctls, sshd and audit hardening), then release
+# + mTLS + firewall, then the overlay and its private endpoint aliases
+# (pgproxyd dials schedd.faas), then Firecracker with the release's signed
+# guest kernel, then the archive keeper, then vmmd in database mode (which
+# archives through it when dbbackupd_enabled), then pgproxyd, then
 # node_exporter for the host alerts and the internal-PKI expiry exporter.
 - name: Converge database nodes
   hosts: database_nodes
@@ -69,7 +72,11 @@
   vars:
     faas_box_role: database
   roles:
+    - role: cgroups_v2
+    - role: grub
+    - role: host_hardening
     - role: database_node
+    - role: overlay
     - role: firecracker
     - role: dbbackupd_service
     - role: database_vmmd

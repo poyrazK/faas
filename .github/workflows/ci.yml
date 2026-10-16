@@ -1672,6 +1672,8 @@ jobs:
           ansible-playbook --syntax-check pki_renew.yml
           # ADR-372: the tenant egress gateway converge entrypoint.
           ansible-playbook --syntax-check tenant_egress_gateway.yml
+          # ADR-1027: the database node converge entrypoint.
+          ansible-playbook --syntax-check database_node.yml
           # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
           # job, so a syntax error in them would only surface when an operator
           # ran one by hand against a real host.
