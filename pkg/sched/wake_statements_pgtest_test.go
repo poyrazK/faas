@@ -330,3 +330,73 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		t.Fatalf("frozen_thaw events = %d, want 1", events)
 	}
 }
+
+// The ordinary path's statements for a wake with no VM to reuse: a cold boot,
+// and a restore from the deployment's snapshot. The baseline for ADR-1345.
+func TestPostgresBootStatements(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		snapshot bool
+	}{
+		{name: "cold boot"},
+		{name: "snapshot restore", snapshot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _, tracer := tracedPgStore(t)
+			ctx := t.Context()
+			acct, err := store.CreateAccount(ctx, "boot-statements-"+uuid.NewString()+"@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "boot-" + uuid.NewString()[:8], Type: state.AppTypeFunction,
+				RAMMB: 512, MaxConcurrency: 4, IdleTimeoutS: 30})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+				ImageDigest: "sha256:boot", Status: state.DeployLive})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+				t.Fatal(err)
+			}
+			if tc.snapshot {
+				if _, err := store.CreateSnapshot(ctx, state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0",
+					StorageKey: "snap/" + dep.ID + "/captures/c1/v2/mem", MemBytes: 1 << 20}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.HeartbeatComputeNode(ctx, node.ID); err != nil {
+				t.Fatal(err)
+			}
+			vmm := &fakeVMM{}
+			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithNotifyInPublication()
+
+			tracer.armed.Store(true)
+			result, err := e.Wake(ctx, app.ID, "", "", "")
+			answered := time.Now()
+			tracer.armed.Store(false)
+			if err != nil || result.InstanceID == "" {
+				t.Fatalf("Wake: %+v, %v", result, err)
+			}
+			names := tracer.recorded()
+			before := 0
+			for i, name := range names {
+				tracer.mu.Lock()
+				ended := tracer.intervals[i][1]
+				tracer.mu.Unlock()
+				if !ended.IsZero() && !ended.After(answered) {
+					before++
+					t.Logf("%2d %s", before, name)
+				}
+			}
+			t.Logf("%s: %d statements before the answer, %d sequential round trips (cold boots %d, restores %d)",
+				tc.name, before, tracer.sequentialRoundTrips(answered), vmm.coldBoots, vmm.restores)
+		})
+	}
+}
