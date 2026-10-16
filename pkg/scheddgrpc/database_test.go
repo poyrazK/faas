@@ -351,7 +351,8 @@ func TestImportDatabaseValidatesAndMaps(t *testing.T) {
 	f := &fakeDatabases{importState: dbguest.ImportStatus{State: dbguest.ImportRunning, StartedAt: started}}
 	s := New(nil, nil, nil).WithDatabases(f)
 	req := &scheddpb.ImportDatabaseRequest{DatabaseId: testDBID, Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, SourceDatabase: "gregale",
-		User: "gregale_mig_ab", Password: "secret", TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: []string{"neon"}}
+		User: "gregale_mig_ab", Password: "secret", TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: []string{"neon"},
+		OperationId: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}
 	if _, err := s.ImportDatabase(asCaller(callerPgproxy), req); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("pgproxyd import = %v, want PermissionDenied", err)
 	}
@@ -360,7 +361,7 @@ func TestImportDatabaseValidatesAndMaps(t *testing.T) {
 		t.Fatalf("import = %+v, %v", got, err)
 	}
 	if spec := f.importSpec; spec.Host != req.Host || spec.Port != 5432 || spec.Source.Password != "secret" || spec.Source.Owner != "gregale_schema_owner" ||
-		spec.Source.Database != "gregale" || len(spec.Source.SkipExtensions) != 1 {
+		spec.Source.Database != "gregale" || len(spec.Source.SkipExtensions) != 1 || spec.Source.OperationID != req.OperationId {
 		t.Fatalf("scheduler got %+v", spec)
 	}
 	bad := proto.Clone(req).(*scheddpb.ImportDatabaseRequest)

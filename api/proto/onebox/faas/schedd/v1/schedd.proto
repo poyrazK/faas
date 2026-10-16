@@ -1284,6 +1284,8 @@ message ImportDatabaseRequest {
   string target_database = 7;
   string owner = 8;
   repeated string skip_extensions = 9;
+  // The import's name (a lowercase UUID; ADR-1370's copy_operation_id).
+  string operation_id = 10;
 }
 
 message DatabaseImportProgress {
@@ -1293,6 +1295,8 @@ message DatabaseImportProgress {
   google.protobuf.Timestamp started_at = 3;
   google.protobuf.Timestamp finished_at = 4;
   int32 source_major = 5;
+  // The import this progress describes.
+  string operation_id = 6;
 }
 
 message ResizeDatabaseRequest {

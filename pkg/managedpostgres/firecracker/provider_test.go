@@ -1027,12 +1027,13 @@ func TestImportCopiesIntoTheCustomerDatabaseAsItsOwner(t *testing.T) {
 	}
 	src := managedpostgres.ImportSource{Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, Database: "gregale", User: "gregale_mig_ab",
 		Password: "never-printed", SkipExtensions: []string{"neon"}}
-	got, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, Source: src})
+	const operationID = "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"
+	got, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, OperationID: operationID, Source: src})
 	if err != nil || got.State != managedpostgres.ImportRunning {
 		t.Fatalf("import = %+v, %v", got, err)
 	}
 	req := sched.imports[0]
-	if req.GetTargetDatabase() != "gregale" || req.GetOwner() != schemaOwner || req.GetHost() != src.Host || req.GetPassword() != src.Password {
+	if req.GetTargetDatabase() != "gregale" || req.GetOwner() != schemaOwner || req.GetHost() != src.Host || req.GetPassword() != src.Password || req.GetOperationId() != operationID {
 		t.Fatalf("schedd got %v", req)
 	}
 	if printed := fmt.Sprintf("%v %+v %#v", src, src, src); strings.Contains(printed, "never-printed") {
@@ -1041,8 +1042,15 @@ func TestImportCopiesIntoTheCustomerDatabaseAsItsOwner(t *testing.T) {
 	if got, err := p.ImportStatus(ctx, testDatabaseID); err != nil || got.State != managedpostgres.ImportRunning || got.SourceMajor != 16 {
 		t.Fatalf("status = %+v, %v", got, err)
 	}
-	if _, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, Source: managedpostgres.ImportSource{Host: "h", Port: 0}}); !errors.Is(err, managedpostgres.ErrInvalid) {
+	if _, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, OperationID: operationID, Source: managedpostgres.ImportSource{Host: "h", Port: 0}}); !errors.Is(err, managedpostgres.ErrInvalid) {
 		t.Fatalf("no port = %v, want ErrInvalid", err)
+	}
+	// An activation's copy names its operation; without one there is no
+	// lineage to keep.
+	for _, id := range []string{"", "not-a-uuid", strings.ToUpper(operationID)} {
+		if _, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, OperationID: id, Source: src}); !errors.Is(err, managedpostgres.ErrInvalid) {
+			t.Fatalf("operation id %q = %v, want ErrInvalid", id, err)
+		}
 	}
 	if _, err := p.ImportStatus(ctx, "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"); !errors.Is(err, managedpostgres.ErrNotFound) {
 		t.Fatalf("unknown database = %v, want ErrNotFound", err)

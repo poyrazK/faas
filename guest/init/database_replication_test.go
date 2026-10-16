@@ -25,7 +25,7 @@ func TestReplicationAuthenticationIsBridgeOnly(t *testing.T) {
 			maps = append(maps, line)
 		}
 	}
-	if !slices.Equal(maps, []string{"replication nobody " + databaseReplicationRole}) {
+	if !slices.Equal(maps, []string{"replication nobody " + databaseReplicationRole, "import postgres " + databaseImportRole}) {
 		t.Fatalf("pg_ident.conf maps %q", maps)
 	}
 }

@@ -146,6 +146,13 @@ type ImportSource struct {
 	TargetDatabase string   `json:"target_database"`
 	Owner          string   `json:"owner"`
 	SkipExtensions []string `json:"skip_extensions,omitempty"`
+	// OperationID names the import (a lowercase UUID: a cutover's
+	// copy_operation_id, ADR-1370). Importing again under it reports the
+	// import unchanged, or restarts a failed one; another ID while one is
+	// running or done is ErrCodeImportOperationMismatch. A finished copy
+	// records it in the target database inside the restore transaction,
+	// so it outlives the VM.
+	OperationID string `json:"operation_id"`
 }
 
 // ImportState is an import's progress.
@@ -166,6 +173,8 @@ type ImportStatus struct {
 	FinishedAt time.Time   `json:"finished_at,omitzero"`
 	// SourceMajor is the source server's PostgreSQL major.
 	SourceMajor int `json:"source_major,omitempty"`
+	// OperationID is the import this status describes.
+	OperationID string `json:"operation_id,omitempty"`
 }
 
 // Import error codes.
@@ -175,7 +184,16 @@ const (
 	ErrCodeSourceDown     = "source_unreachable"
 	ErrCodeExtension      = "extension_unavailable"
 	ErrCodeTargetNotEmpty = "target_not_empty"
+	// ErrCodeImportOperationMismatch: another import is running, or done,
+	// in this database.
+	ErrCodeImportOperationMismatch = "import_operation_mismatch"
 )
+
+// operationIDPattern is a lowercase UUID.
+var operationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// ValidOperationID reports whether id names an import.
+func ValidOperationID(id string) bool { return operationIDPattern.MatchString(id) }
 
 // ReplicationMode is how a primary treats its standby.
 type ReplicationMode string
@@ -418,12 +436,14 @@ func (s *ImportSource) Validate() error {
 		return errors.New("import: no source")
 	case !identifierPattern.MatchString(s.Database) || !identifierPattern.MatchString(s.TargetDatabase) || s.TargetDatabase == "postgres":
 		return errors.New("import: invalid database name")
-	case !identifierPattern.MatchString(s.User) || !identifierPattern.MatchString(s.Owner):
+	case !identifierPattern.MatchString(s.User) || !identifierPattern.MatchString(s.Owner) || s.Owner == "postgres":
 		return errors.New("import: invalid role name")
 	case s.Password == "" || len(s.Password) > 1024 || strings.ContainsAny(s.Password, "\x00\n"):
 		return errors.New("import: invalid password")
 	case len(s.SkipExtensions) > 32:
 		return errors.New("import: too many skipped extensions")
+	case !ValidOperationID(s.OperationID):
+		return errors.New("import: invalid operation id")
 	}
 	for _, ext := range s.SkipExtensions {
 		if !identifierPattern.MatchString(ext) {

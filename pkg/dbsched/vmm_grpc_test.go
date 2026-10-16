@@ -4,6 +4,7 @@ package dbsched
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"testing"
 
@@ -23,6 +24,7 @@ type scriptedVmmd struct {
 	vmmdpb.UnimplementedVmmdServer
 	createErr, startErr, stopErr error
 	lastControl                  *vmmdpb.DatabaseControlRequest
+	control                      *vmmdpb.DatabaseControlResponse
 }
 
 func (s *scriptedVmmd) CreateDatabaseVolume(context.Context, *vmmdpb.CreateDatabaseVolumeRequest) (*vmmdpb.CreateDatabaseVolumeResponse, error) {
@@ -36,6 +38,9 @@ func (s *scriptedVmmd) StopDatabase(context.Context, *vmmdpb.StopDatabaseRequest
 }
 func (s *scriptedVmmd) DatabaseControl(_ context.Context, req *vmmdpb.DatabaseControlRequest) (*vmmdpb.DatabaseControlResponse, error) {
 	s.lastControl = req
+	if s.control != nil {
+		return s.control, nil
+	}
 	return &vmmdpb.DatabaseControlResponse{State: "ready", PostgresMajor: 17, ErrorCode: dbguest.ErrCodeAdminSQLFailed, Sqlstate: "42710"}, nil
 }
 
@@ -88,5 +93,28 @@ func TestGRPCVMMToleratesRetryOutcomes(t *testing.T) {
 	}
 	if srv.lastControl.GetOp() != "admin_sql" || srv.lastControl.GetSql() != "CREATE ROLE app" {
 		t.Fatalf("control request = %+v", srv.lastControl)
+	}
+}
+
+// A guest that already ran or finished an import under another operation
+// refuses the new one, and the adapter reports the conflict with the
+// operation the guest holds.
+func TestGRPCVMMImportUnderAnotherOperationIsAConflict(t *testing.T) {
+	const held, asked = "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b", "1c1c9d2f-6a1b-4e47-8b8f-2d3e4f5a6b7c"
+	srv := &scriptedVmmd{control: &vmmdpb.DatabaseControlResponse{State: "ready", ErrorCode: dbguest.ErrCodeImportOperationMismatch,
+		Import: &vmmdpb.DatabaseImportStatus{State: string(dbguest.ImportDone), OperationId: held}}}
+	g, ctx, node := scriptedAdapter(t, srv), context.Background(), Node{ID: "db-a", TargetURL: "unix:///run/faas/vmmd.sock"}
+	spec := testImportSpec()
+	spec.Source.OperationID = asked
+	got, err := g.Import(ctx, node, "id", spec)
+	if !errors.Is(err, ErrConflict) || got.State != dbguest.ImportDone || got.OperationID != held {
+		t.Fatalf("import under another operation = %+v, %v; want ErrConflict holding %s", got, err, held)
+	}
+	if srv.lastControl.GetImport().GetOperationId() != asked {
+		t.Fatalf("vmmd got operation %q, want %q", srv.lastControl.GetImport().GetOperationId(), asked)
+	}
+	srv.control.ErrorCode, srv.control.Import.OperationId = "", asked
+	if got, err := g.Import(ctx, node, "id", spec); err != nil || got.OperationID != asked {
+		t.Fatalf("import under its own operation = %+v, %v", got, err)
 	}
 }

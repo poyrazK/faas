@@ -227,10 +227,14 @@ func (ImportSource) String() string   { return "[REDACTED]" }
 func (ImportSource) GoString() string { return "managedpostgres.ImportSource{[REDACTED]}" }
 
 // ImportRequest copies Source into the provider's empty database
-// ResourceID.
+// ResourceID. OperationID (a lowercase UUID, ADR-1370's
+// copy_operation_id) names the import: importing again under it reports
+// the import unchanged, or restarts a failed one; another ID while one is
+// running or done is ErrConflict.
 type ImportRequest struct {
-	ResourceID string
-	Source     ImportSource
+	ResourceID  string
+	Source      ImportSource
+	OperationID string
 }
 
 // ImportState is an import's progress.
@@ -250,12 +254,19 @@ type ImportStatus struct {
 	StartedAt   time.Time
 	FinishedAt  time.Time
 	SourceMajor int
+	// OperationID is the import this status describes. A finished copy
+	// keeps it across a restart of the database, so ImportDone with the
+	// expected ID proves the copy's lineage.
+	OperationID string
 }
 
 // Importer is a provider that copies a database from another backend into
 // one of its own. Import starts the copy, or reports one already running or
 // done; ImportStatus reports it. An import interrupted before it finished
-// leaves the target empty and can be started again.
+// leaves the target empty and can be started again. ImportStatus need not
+// wake the database, so it may report ImportNone for a finished copy whose
+// database stopped since; Import under the same OperationID is the
+// authoritative answer.
 type Importer interface {
 	Import(ctx context.Context, req ImportRequest) (ImportStatus, error)
 	ImportStatus(ctx context.Context, resourceID string) (ImportStatus, error)

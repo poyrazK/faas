@@ -309,13 +309,16 @@ func (g *GRPCVMM) Import(ctx context.Context, node Node, id string, spec ImportS
 	src := spec.Source
 	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(dbguest.OpImport), Import: &vmmdpb.DatabaseImport{
 		Host: spec.Host, Port: int32(spec.Port), Database: src.Database, User: src.User, Password: src.Password, //nolint:gosec // port validated
-		TargetDatabase: src.TargetDatabase, Owner: src.Owner, SkipExtensions: src.SkipExtensions,
+		TargetDatabase: src.TargetDatabase, Owner: src.Owner, SkipExtensions: src.SkipExtensions, OperationId: src.OperationID,
 	}})
 	if status.Code(err) == codes.FailedPrecondition {
 		return noImport, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
 	}
 	if err != nil {
 		return noImport, err
+	}
+	if resp.GetErrorCode() == dbguest.ErrCodeImportOperationMismatch {
+		return importStatus(resp.GetImport()), fmt.Errorf("%w: another import is running or done in this database", ErrConflict)
 	}
 	if resp.GetErrorCode() != "" {
 		return noImport, fmt.Errorf("guest error %s", resp.GetErrorCode())
@@ -327,7 +330,7 @@ func importStatus(in *vmmdpb.DatabaseImportStatus) dbguest.ImportStatus {
 	if in == nil {
 		return noImport
 	}
-	out := dbguest.ImportStatus{State: dbguest.ImportState(in.GetState()), Error: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor())}
+	out := dbguest.ImportStatus{State: dbguest.ImportState(in.GetState()), Error: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()), OperationID: in.GetOperationId()}
 	if in.GetStartedAt() != nil {
 		out.StartedAt = in.GetStartedAt().AsTime()
 	}

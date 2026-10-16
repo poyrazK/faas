@@ -358,7 +358,7 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication())}
 	if in := req.GetImport(); in != nil {
 		control.Import = &dbguest.ImportSource{Database: in.GetDatabase(), User: in.GetUser(), Password: in.GetPassword(),
-			TargetDatabase: in.GetTargetDatabase(), Owner: in.GetOwner(), SkipExtensions: in.GetSkipExtensions()}
+			TargetDatabase: in.GetTargetDatabase(), Owner: in.GetOwner(), SkipExtensions: in.GetSkipExtensions(), OperationID: in.GetOperationId()}
 	}
 	if req.GetAfter() != nil {
 		control.After = req.GetAfter().AsTime()
@@ -392,7 +392,7 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}
 	}
 	if i := resp.Import; i != nil {
-		out.Import = &vmmdpb.DatabaseImportStatus{State: string(i.State), ErrorCode: i.Error, SourceMajor: int32(i.SourceMajor)} //nolint:gosec // a PostgreSQL major
+		out.Import = &vmmdpb.DatabaseImportStatus{State: string(i.State), ErrorCode: i.Error, SourceMajor: int32(i.SourceMajor), OperationId: i.OperationID} //nolint:gosec // a PostgreSQL major
 		if !i.StartedAt.IsZero() {
 			out.Import.StartedAt = timestamppb.New(i.StartedAt)
 		}

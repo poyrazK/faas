@@ -3783,8 +3783,10 @@ type ImportDatabaseRequest struct {
 	TargetDatabase string                 `protobuf:"bytes,7,opt,name=target_database,json=targetDatabase,proto3" json:"target_database,omitempty"`
 	Owner          string                 `protobuf:"bytes,8,opt,name=owner,proto3" json:"owner,omitempty"`
 	SkipExtensions []string               `protobuf:"bytes,9,rep,name=skip_extensions,json=skipExtensions,proto3" json:"skip_extensions,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The import's name (a lowercase UUID; ADR-1370's copy_operation_id).
+	OperationId   string `protobuf:"bytes,10,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ImportDatabaseRequest) Reset() {
@@ -3880,14 +3882,23 @@ func (x *ImportDatabaseRequest) GetSkipExtensions() []string {
 	return nil
 }
 
+func (x *ImportDatabaseRequest) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
 type DatabaseImportProgress struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// none, running, done or failed.
-	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
-	ErrorCode     string                 `protobuf:"bytes,2,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	SourceMajor   int32                  `protobuf:"varint,5,opt,name=source_major,json=sourceMajor,proto3" json:"source_major,omitempty"`
+	State       string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	ErrorCode   string                 `protobuf:"bytes,2,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	StartedAt   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	SourceMajor int32                  `protobuf:"varint,5,opt,name=source_major,json=sourceMajor,proto3" json:"source_major,omitempty"`
+	// The import this progress describes.
+	OperationId   string `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3955,6 +3966,13 @@ func (x *DatabaseImportProgress) GetSourceMajor() int32 {
 		return x.SourceMajor
 	}
 	return 0
+}
+
+func (x *DatabaseImportProgress) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
 }
 
 type ResizeDatabaseRequest struct {
@@ -4696,7 +4714,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x0fstandby_node_id\x18\x12 \x01(\tR\rstandbyNodeId\x12%\n" +
 	"\x0estandby_synced\x18\x13 \x01(\bR\rstandbySynced\x129\n" +
 	"\n" +
-	"created_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xa1\x02\n" +
+	"created_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xc4\x02\n" +
 	"\x15ImportDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x12\n" +
@@ -4707,7 +4725,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\bpassword\x18\x06 \x01(\tR\bpassword\x12'\n" +
 	"\x0ftarget_database\x18\a \x01(\tR\x0etargetDatabase\x12\x14\n" +
 	"\x05owner\x18\b \x01(\tR\x05owner\x12'\n" +
-	"\x0fskip_extensions\x18\t \x03(\tR\x0eskipExtensions\"\xe8\x01\n" +
+	"\x0fskip_extensions\x18\t \x03(\tR\x0eskipExtensions\x12!\n" +
+	"\foperation_id\x18\n" +
+	" \x01(\tR\voperationId\"\x8b\x02\n" +
 	"\x16DatabaseImportProgress\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +
@@ -4716,7 +4736,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"started_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12!\n" +
-	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\"\xc7\x01\n" +
+	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
+	"\foperation_id\x18\x06 \x01(\tR\voperationId\"\xc7\x01\n" +
 	"\x15ResizeDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1d\n" +

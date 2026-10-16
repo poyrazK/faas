@@ -147,7 +147,7 @@ INSERT INTO orders (total) SELECT g * 1.5 FROM generate_series(1, 50000) g;`); e
 	}
 	port := tlsShim(t, a.rt, source, cert)
 	spec := ImportSpec{Host: "localhost", Port: port, Source: dbguest.ImportSource{Database: "gregale", User: "src_mig", Password: "source-password",
-		TargetDatabase: "gregale", Owner: "gregale_schema_owner"}}
+		TargetDatabase: "gregale", Owner: "gregale_schema_owner", OperationID: uuid.NewString()}}
 	started := time.Now()
 	if status, err := s.Import(ctx, target, spec); err != nil || status.State != dbguest.ImportRunning {
 		t.Fatalf("import = %+v, %v", status, err)

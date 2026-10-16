@@ -5,6 +5,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,16 +26,19 @@ import (
 // databaseImportTimeout bounds one import, dump and restore together.
 const databaseImportTimeout = 12 * time.Hour
 
-// importJob is the guest's one import. Its state lives in memory: a VM
-// that stops mid-import rolled the restore back, so the target is empty
-// again and the import can simply start over.
+// importJob is the guest's one import. Its state lives in memory, and a
+// finished one is also recorded in the target (its lineage), so it outlives
+// the VM. A VM that stops mid-import rolled the restore back, so the target
+// is empty again and the import can simply start over.
 type importJob struct {
 	status dbguest.ImportStatus
 }
 
-// startImport begins copying src into this database in the background. A
-// running or finished import is reported unchanged; a failed one may be
-// started again.
+// startImport begins copying src into this database in the background,
+// under src.OperationID. A running or finished import under that ID is
+// reported unchanged, a failed one starts again, and any other ID while one
+// is running or done is refused. A copy finished before this VM booted is
+// found in the target's recorded lineage.
 func (g *databaseGuest) startImport(src *dbguest.ImportSource) dbguest.Response {
 	resp := g.response()
 	if g.currentState() != dbguest.StateReady {
@@ -40,13 +46,22 @@ func (g *databaseGuest) startImport(src *dbguest.ImportSource) dbguest.Response 
 		return resp
 	}
 	g.mu.Lock()
+	known := g.imp != nil
+	g.mu.Unlock()
+	if !known {
+		g.adoptRecordedImport()
+	}
+	g.mu.Lock()
 	if g.imp != nil && g.imp.status.State != dbguest.ImportFailed {
 		status := g.imp.status
 		g.mu.Unlock()
 		resp.Import = &status
+		if status.OperationID != src.OperationID {
+			resp.Error = dbguest.ErrCodeImportOperationMismatch
+		}
 		return resp
 	}
-	g.imp = &importJob{status: dbguest.ImportStatus{State: dbguest.ImportRunning, StartedAt: time.Now().UTC()}}
+	g.imp = &importJob{status: dbguest.ImportStatus{State: dbguest.ImportRunning, StartedAt: time.Now().UTC(), OperationID: src.OperationID}}
 	status := g.imp.status
 	g.mu.Unlock()
 	if err := g.serveImportBridge(); err != nil {
@@ -58,9 +73,16 @@ func (g *databaseGuest) startImport(src *dbguest.ImportSource) dbguest.Response 
 	return resp
 }
 
-// importResponse reports the import, if any.
+// importResponse reports the import, if any: one this VM ran, or one a
+// target records from before it booted.
 func (g *databaseGuest) importResponse() dbguest.Response {
 	resp := g.response()
+	g.mu.Lock()
+	known := g.imp != nil
+	g.mu.Unlock()
+	if !known && g.currentState() == dbguest.StateReady {
+		g.adoptRecordedImport()
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	status := dbguest.ImportStatus{State: dbguest.ImportNone}
@@ -69,6 +91,33 @@ func (g *databaseGuest) importResponse() dbguest.Response {
 	}
 	resp.Import = &status
 	return resp
+}
+
+// adoptRecordedImport takes a finished import recorded in a database's
+// comment (inside the restore transaction) as this VM's import, so its
+// operation ID outlives the VM that ran it.
+func (g *databaseGuest) adoptRecordedImport() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := g.queryIn(ctx, "postgres", importLineageQuery)
+	if err != nil {
+		g.log.Warn("database import: read recorded lineage", "err", err)
+		return
+	}
+	recorded := recordedImports(out)
+	if len(recorded) == 0 {
+		return
+	}
+	// One customer database per VM, so one record at most.
+	var id string
+	for _, rid := range recorded {
+		id = rid
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.imp == nil {
+		g.imp = &importJob{status: dbguest.ImportStatus{State: dbguest.ImportDone, OperationID: id}}
+	}
 }
 
 func (g *databaseGuest) finishImport(code string, sourceMajor int, err error) {
@@ -102,12 +151,34 @@ func (g *databaseGuest) runImport(src dbguest.ImportSource) {
 	code, major, err := g.importChecks(ctx, src)
 	if err == nil {
 		code, err = dbguest.ErrCodeImportFailed, g.importCopy(ctx, src)
+		err = g.importCommitted(ctx, src, err)
 	}
 	if err == nil {
 		// Fresh statistics: a restore leaves the planner without any.
 		_, err = g.queryIn(ctx, src.TargetDatabase, "ANALYZE")
 	}
 	g.finishImport(code, major, err)
+}
+
+// importCommitted decides from the target's recorded lineage whether the
+// restore committed, whatever the tools reported: a restore committed
+// under src.OperationID is done even if a tool failed after its COMMIT, and
+// one that did not commit failed even if no tool said so.
+func (g *databaseGuest) importCommitted(ctx context.Context, src dbguest.ImportSource, copyErr error) error {
+	id, err := g.recordedImport(ctx, src.TargetDatabase)
+	switch {
+	case err != nil:
+		return errors.Join(copyErr, fmt.Errorf("read recorded lineage: %w", err))
+	case id == src.OperationID:
+		if copyErr != nil {
+			g.log.Warn("database import: committed despite a tool error", "err", copyErr)
+		}
+		return nil
+	case copyErr != nil:
+		return copyErr
+	default:
+		return errors.New("restore did not commit")
+	}
 }
 
 // importChecks refuses a source newer than these binaries, extensions the
@@ -163,10 +234,61 @@ func (g *databaseGuest) importCopy(ctx context.Context, src dbguest.ImportSource
 	if err := os.Chown(databaseImportList, g.uid, g.gid); err != nil {
 		return err
 	}
-	if err := g.importTool(ctx, src, importRestoreArgs(g.major, src.TargetDatabase, src.Owner)); err != nil {
-		return fmt.Errorf("pg_restore: %w", err)
+	if _, err := g.queryIn(ctx, "postgres", importRoleStatement(src.Owner)); err != nil {
+		return fmt.Errorf("import role: %w", err)
+	}
+	if err := g.importApply(ctx, src); err != nil {
+		return fmt.Errorf("restore: %w", err)
 	}
 	return nil
+}
+
+// importApply pipes pg_restore's script into psql. Either one failing
+// fails the import; whether the copy committed is the target's recorded
+// lineage, which runImport reads afterwards.
+func (g *databaseGuest) importApply(ctx context.Context, src dbguest.ImportSource) error {
+	key := make([]byte, 16)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	script := importScriptArgs(g.major, hex.EncodeToString(key))
+	restore := g.asDatabaseUser(exec.CommandContext(ctx, script[0], script[1:]...))
+	var restoreErr bytes.Buffer
+	restore.Stderr = &limitedWriter{w: &restoreErr, n: 4096}
+	out, err := restore.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := restore.Start(); err != nil {
+		return fmt.Errorf("pg_restore: %w", err)
+	}
+	apply := importApplyArgs(g.major, src.TargetDatabase)
+	psql := g.asDatabaseUser(exec.CommandContext(ctx, apply[0], apply[1:]...))
+	psql.Stdin = io.MultiReader(strings.NewReader(importScriptPrologue(src.TargetDatabase, src.Owner, src.OperationID)), out)
+	psql.Stdout = io.Discard
+	var psqlErr bytes.Buffer
+	psql.Stderr = &limitedWriter{w: &psqlErr, n: 4096}
+	applyErr := psql.Run()
+	// psql read to the end or stopped at an error: either way pg_restore
+	// has nothing left to write to.
+	_ = out.Close()
+	restoreWait := restore.Wait()
+	if applyErr != nil {
+		return fmt.Errorf("psql: %w: %s", applyErr, strings.TrimSpace(psqlErr.String()))
+	}
+	if restoreWait != nil {
+		return fmt.Errorf("pg_restore: %w: %s", restoreWait, strings.TrimSpace(restoreErr.String()))
+	}
+	return nil
+}
+
+// recordedImport reads the operation ID target records, if any.
+func (g *databaseGuest) recordedImport(ctx context.Context, target string) (string, error) {
+	out, err := g.queryIn(ctx, "postgres", importLineageQuery)
+	if err != nil {
+		return "", err
+	}
+	return recordedImports(out)[target], nil
 }
 
 // importTool runs a dump or restore tool as the database user, with the

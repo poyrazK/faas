@@ -4,6 +4,7 @@ import (
 	"context"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -16,17 +17,21 @@ import (
 
 var _ managedpostgres.Importer = (*Provider)(nil)
 
-// Import starts copying the source into the database, waking it. A
-// running or finished import is reported, not restarted.
+// Import starts copying the source into the database under
+// req.OperationID, waking it. A running or finished import under that
+// operation is reported, not restarted, and one under another operation is
+// refused with ErrConflict; the target records a finished import's
+// operation, so this holds across VM restarts.
 func (p *Provider) Import(ctx context.Context, req managedpostgres.ImportRequest) (managedpostgres.ImportStatus, error) {
 	src := req.Source
-	if req.ResourceID == "" || src.Host == "" || src.Port < 1 || src.Port > 65535 {
+	if req.ResourceID == "" || src.Host == "" || src.Port < 1 || src.Port > 65535 || !dbguest.ValidOperationID(req.OperationID) {
 		return managedpostgres.ImportStatus{}, managedpostgres.ErrInvalid
 	}
 	progress, err := p.scheduler.ImportDatabase(ctx, &scheddpb.ImportDatabaseRequest{
 		DatabaseId: resourceUUID(req.ResourceID), Host: src.Host, Port: int32(src.Port), //nolint:gosec // port checked
 		SourceDatabase: src.Database, User: src.User, Password: src.Password,
 		TargetDatabase: p.cfg.Database, Owner: schemaOwner, SkipExtensions: src.SkipExtensions,
+		OperationId: req.OperationID,
 	})
 	if err != nil {
 		return managedpostgres.ImportStatus{}, providerError(err)
@@ -34,8 +39,10 @@ func (p *Provider) Import(ctx context.Context, req managedpostgres.ImportRequest
 	return importStatus(progress), nil
 }
 
-// ImportStatus reports the database's import; one whose VM stopped since
-// reports none, with the database empty again.
+// ImportStatus reports the database's import without waking it: a
+// database whose VM stopped since reports none. An unfinished import left
+// the database empty again; a finished one is reported by Import under its
+// operation.
 func (p *Provider) ImportStatus(ctx context.Context, resourceID string) (managedpostgres.ImportStatus, error) {
 	if resourceID == "" {
 		return managedpostgres.ImportStatus{}, managedpostgres.ErrInvalid
@@ -48,7 +55,8 @@ func (p *Provider) ImportStatus(ctx context.Context, resourceID string) (managed
 }
 
 func importStatus(in *scheddpb.DatabaseImportProgress) managedpostgres.ImportStatus {
-	out := managedpostgres.ImportStatus{State: managedpostgres.ImportState(in.GetState()), ErrorCode: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor())}
+	out := managedpostgres.ImportStatus{State: managedpostgres.ImportState(in.GetState()), ErrorCode: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()),
+		OperationID: in.GetOperationId()}
 	if out.State == "" {
 		out.State = managedpostgres.ImportNone
 	}

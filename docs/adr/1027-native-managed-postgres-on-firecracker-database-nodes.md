@@ -1417,8 +1417,13 @@ the control plane.
   3. Check that the target holds no user objects.
   4. `pg_dump -Fc --no-owner --no-privileges --no-publications
      --no-subscriptions` of the source.
-  5. `pg_restore --single-transaction --role=<schema owner>` of a TOC with
-     plpgsql and the skipped extensions removed, then `ANALYZE`.
+  5. Restore a TOC with plpgsql and the skipped extensions removed, then
+     `ANALYZE`. `pg_restore --single-transaction --restrict-key=<random>
+     --file=-` writes the dump as one transaction of SQL, which `psql -v
+     ON_ERROR_STOP=1` runs in the target as `gregale_import` after a
+     prologue: `BEGIN`, `SET ROLE <schema owner>`, and `COMMENT ON
+     DATABASE` recording the import's lineage (below). The script's own
+     `BEGIN` only warns, and its `COMMIT` ends the prologue's transaction.
 
   Everything restored belongs to the schema owner, so native credentials
   reach it like anything a migration created. `OpImportStatus` reports
@@ -1426,6 +1431,41 @@ the control plane.
   `source_newer`, `extension_unavailable`, `target_not_empty`,
   `import_failed`). The source password reaches the tools only through
   `PGPASSWORD`.
+- **The source writes the script, so the restore is not the superuser.**
+  The source is whatever server the customer names, and a hostile one
+  controls the SQL in its dump (definitions are its own catalog output).
+  Before this, the restore connected as the superuser with `--role`, so a
+  `RESET ROLE` in a definition ran as the superuser. Now the session is
+  `gregale_import`: LOGIN with no other attribute, a member of the schema
+  owner only, and reachable only by peer authentication from the postgres
+  OS user (`pg_ident` map `import`), which is the superuser anyway. A
+  `RESET ROLE` lands on it, so nothing in a script acts beyond the owner.
+  guest-init creates it and grants it the owner, and refuses an owner
+  with any role attribute; `postgres` as owner is invalid.
+  `--restrict-key` makes pg_restore open the script with `\restrict` under
+  a key the dump never sees, so psql refuses every meta-command in it
+  (`\!` included, CVE-2025-8714). That needs pg_restore and psql 14.19,
+  15.14, 16.10, 17.6 or 18 and later; an older image fails the import
+  (pg_restore does not know the option) rather than run an unrestricted
+  script.
+- **Import lineage (ADR-1370 slice 15).** Every import carries an
+  `OperationID` (a lowercase UUID; the activation's
+  `copy_operation_id`). The prologue records it as the target database's
+  comment, `gregale:import:v1:<id>`, inside the restore's transaction, so
+  a finished copy cannot exist without it, and a restore that stops short
+  never reaches its `COMMIT` and records nothing. pg_dump leaves database
+  comments out without `--create`, so the record never travels into
+  another copy. After the tools exit, guest-init decides from the
+  recorded lineage, not their exit codes, whether the copy committed. A
+  VM that boots without an import in memory adopts the recorded one as
+  done. `OpImport` under the same ID reports the import unchanged (a
+  failed one restarts); under another ID while one is running or done it
+  answers `import_operation_mismatch` with the status it holds, which
+  schedd returns as `ErrConflict`. `ImportStatus` carries the ID at every
+  layer. A customer who is a member of the owner can rewrite the comment;
+  that only harms their own cutover (an activation would see the wrong
+  ID or a copy it did not make), and the lineage proves no more than a
+  copy the customer could also drop afterwards.
 - **The guest never reaches the network.** Its tools connect to a socket
   guest-init relays to host vsock port 5436. vmmd's import relay (dbvm)
   dials only the endpoint the control plane named. It resolves the name
@@ -1440,7 +1480,9 @@ the control plane.
   endpoint and passes the login to the guest. Idle parking and eviction
   leave a database alone while its guest reports an import running. A VM
   that stops mid-import loses the import, and the target is empty again
-  (one transaction), so the import simply starts over.
+  (one transaction), so the import simply starts over. `ImportStatus`
+  does not wake a stopped database and reports none; `Import` under the
+  same operation wakes it and reports a recorded copy done.
   `managedpostgres.Importer` (`Import`, `ImportStatus`) is the portable
   surface; the native driver copies into its customer database as
   `gregale_schema_owner`.

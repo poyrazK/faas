@@ -83,6 +83,9 @@ func TestRequestValidate(t *testing.T) {
 		{name: "import uppercase user", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.User = "Admin" })}, wantErr: true},
 		{name: "import empty password", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Password = "" })}, wantErr: true},
 		{name: "import newline password", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Password = "a\nb" })}, wantErr: true},
+		{name: "import owned by the superuser", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Owner = "postgres" })}, wantErr: true},
+		{name: "import without an operation", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.OperationID = "" })}, wantErr: true},
+		{name: "import uppercase operation", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.OperationID = strings.ToUpper(s.OperationID) })}, wantErr: true},
 		{name: "import bad extension", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.SkipExtensions = []string{"neon; x"} })}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -96,7 +99,7 @@ func TestRequestValidate(t *testing.T) {
 
 func validImport() *ImportSource {
 	return &ImportSource{Database: "gregale", User: "gregale_mig_abc", Password: "p@ss w0rd'\"", TargetDatabase: "gregale", Owner: "gregale_schema_owner",
-		SkipExtensions: []string{"neon"}}
+		SkipExtensions: []string{"neon"}, OperationID: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}
 }
 
 func withImport(mutate func(*ImportSource)) *ImportSource {

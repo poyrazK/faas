@@ -368,6 +368,7 @@ func (s *Server) ImportDatabase(ctx context.Context, req *scheddpb.ImportDatabas
 	spec := dbsched.ImportSpec{Host: req.GetHost(), Port: int(req.GetPort()), Source: dbguest.ImportSource{
 		Database: req.GetSourceDatabase(), User: req.GetUser(), Password: req.GetPassword(),
 		TargetDatabase: req.GetTargetDatabase(), Owner: req.GetOwner(), SkipExtensions: req.GetSkipExtensions(),
+		OperationID: req.GetOperationId(),
 	}}
 	if err := spec.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid import source")
@@ -392,7 +393,7 @@ func (s *Server) DatabaseImportStatus(ctx context.Context, req *scheddpb.Databas
 }
 
 func importProgress(in dbguest.ImportStatus) *scheddpb.DatabaseImportProgress {
-	out := &scheddpb.DatabaseImportProgress{State: string(in.State), ErrorCode: in.Error, SourceMajor: int32(in.SourceMajor)} //nolint:gosec // a PostgreSQL major
+	out := &scheddpb.DatabaseImportProgress{State: string(in.State), ErrorCode: in.Error, SourceMajor: int32(in.SourceMajor), OperationId: in.OperationID} //nolint:gosec // a PostgreSQL major
 	if !in.StartedAt.IsZero() {
 		out.StartedAt = timestamppb.New(in.StartedAt)
 	}

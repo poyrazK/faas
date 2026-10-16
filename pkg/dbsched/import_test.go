@@ -14,7 +14,7 @@ import (
 
 func testImportSpec() ImportSpec {
 	return ImportSpec{Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, Source: dbguest.ImportSource{Database: "gregale", User: "gregale_mig_ab",
-		Password: "p", TargetDatabase: "gregale", Owner: "gregale_schema_owner"}}
+		Password: "p", TargetDatabase: "gregale", Owner: "gregale_schema_owner", OperationID: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}}
 }
 
 func TestImportWakesAndIdleParkingWaitsForIt(t *testing.T) {

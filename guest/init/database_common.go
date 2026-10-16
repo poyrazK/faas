@@ -134,17 +134,23 @@ func databaseInitdbArgs(major int) []string {
 // (databaseIdent). Tenant sessions arrive through the root-owned data
 // bridge, which the map does not name, and logical replication
 // connections never match a replication line.
+//
+// The import line admits the import role (databaseImportRole) only from
+// the postgres OS user, which import restores run as; that user is already
+// the superuser, so the line gives it nothing new.
 const databaseHBA = `# Managed by guest-init (ADR-1027). Do not edit.
 local all postgres peer
 local replication postgres peer
 local replication ` + databaseReplicationRole + ` peer map=replication
+local all ` + databaseImportRole + ` peer map=import
 local all all scram-sha-256
 `
 
 // databaseIdent maps the replication bridge's OS user to the replication
-// role and to nothing else.
+// role, and the postgres OS user to the import role, and nothing else.
 const databaseIdent = `# Managed by guest-init (ADR-1027). Do not edit.
 replication ` + databaseReplicationOSUser + ` ` + databaseReplicationRole + `
+import ` + databaseOSUser + ` ` + databaseImportRole + `
 `
 
 // Streaming replication (ADR-1027 production class).

@@ -153,16 +153,20 @@ CREATE FUNCTION account_count() RETURNS bigint LANGUAGE plpgsql AS $$ BEGIN RETU
 CREATE VIEW recent AS SELECT * FROM accounts ORDER BY id DESC LIMIT 10;
 CREATE SCHEMA billing;
 CREATE TABLE billing.invoices (id int PRIMARY KEY, account bigint REFERENCES accounts(id));
-INSERT INTO billing.invoices SELECT g, g FROM generate_series(1, 100) g;`)
+INSERT INTO billing.invoices SELECT g, g FROM generate_series(1, 100) g;
+-- pg_restore refreshes it, so it records the session the restore ran as.
+CREATE MATERIALIZED VIEW restored_by AS SELECT session_user::text AS session_role;`)
 
 	port := tlsSourceShim(t, rt, source, cert)
 	if err := rt.SetImportSource(target, ImportSource{Host: "localhost", Port: port}); err != nil {
 		t.Fatal(err)
 	}
-	importReq := func(skip ...string) dbguest.Request {
+	const operation, otherOperation = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a"
+	importAs := func(id string, skip ...string) dbguest.Request {
 		return dbguest.Request{Op: dbguest.OpImport, Import: &dbguest.ImportSource{Database: "gregale", User: "src_mig", Password: password,
-			TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: skip}}
+			TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: skip, OperationID: id}}
 	}
+	importReq := func(skip ...string) dbguest.Request { return importAs(operation, skip...) }
 	// pg_stat_statements is not trusted: the owner cannot create it.
 	if resp, err := rt.Control(ctx, target, importReq()); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
 		t.Fatalf("import = %+v, %v", resp, err)
@@ -176,13 +180,38 @@ INSERT INTO billing.invoices SELECT g, g FROM generate_series(1, 100) g;`)
 	}
 	status := awaitImport(ctx, t, rt, target)
 	took := time.Since(started)
-	if status.State != dbguest.ImportDone || status.SourceMajor != 17 {
+	if status.State != dbguest.ImportDone || status.SourceMajor != 17 || status.OperationID != operation {
 		t.Fatalf("import = %+v", status)
 	}
-	// A finished import is reported, not run again.
-	if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportDone {
-		t.Fatalf("second import = %+v, %v", resp, err)
+	// A finished import is reported under its operation, not run again,
+	// and another operation is refused, before and after a restart: the
+	// lineage committed with the copy.
+	expectLineage := func(when string) {
+		t.Helper()
+		if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Error != "" || resp.Import == nil ||
+			resp.Import.State != dbguest.ImportDone || resp.Import.OperationID != operation {
+			t.Fatalf("%s: same operation = %+v, %v", when, resp, err)
+		}
+		if resp, err := rt.Control(ctx, target, importAs(otherOperation, "pg_stat_statements")); err != nil || resp.Error != dbguest.ErrCodeImportOperationMismatch ||
+			resp.Import == nil || resp.Import.OperationID != operation {
+			t.Fatalf("%s: other operation = %+v, %v; want %s", when, resp, err, dbguest.ErrCodeImportOperationMismatch)
+		}
 	}
+	expectLineage("before a restart")
+	if err := rt.Stop(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Start(ctx, BootRequest{ID: target, Major: 17, VcpuCount: 1, MemSizeMiB: 384}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.WaitState(ctx, target, dbguest.StateReady); err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := rt.Control(ctx, target, dbguest.Request{Op: dbguest.OpImportStatus}); err != nil || resp.Import == nil ||
+		resp.Import.State != dbguest.ImportDone || resp.Import.OperationID != operation {
+		t.Fatalf("status after a restart = %+v, %v", resp, err)
+	}
+	expectLineage("after a restart")
 
 	admin(ctx, t, rt, target, `CREATE ROLE checker LOGIN PASSWORD 'checker-password' IN ROLE gregale_schema_owner; GRANT CONNECT ON DATABASE gregale TO checker;`)
 	cfg, err := pgx.ParseConfig("host=dbvm user=checker dbname=gregale sslmode=disable password=checker-password")
@@ -208,6 +237,18 @@ INSERT INTO billing.invoices SELECT g, g FROM generate_series(1, 100) g;`)
 	if count != 20000 || invoices != 100 || owner != "gregale_schema_owner" || comment != "customer accounts" || extOwner != "gregale_schema_owner" || statements {
 		t.Fatalf("imported: %d accounts, %d invoices, owner %s, comment %q, pgcrypto owner %s, pg_stat_statements %v",
 			count, invoices, owner, comment, extOwner, statements)
+	}
+	// The restore ran as the import role, never the superuser: no
+	// attribute, a member of the owner and of nothing else.
+	var restoredBy string
+	if err := conn.QueryRow(ctx, `SELECT session_role FROM restored_by`).Scan(&restoredBy); err != nil || restoredBy != "gregale_import" {
+		t.Fatalf("restore session = %q, %v; want gregale_import", restoredBy, err)
+	}
+	var importRole string
+	if err := conn.QueryRow(ctx, `SELECT r.rolname || '|' || r.rolsuper || '|' || r.rolcreaterole || '|' || r.rolcreatedb || '|' || r.rolreplication || '|' || r.rolbypassrls || '|' ||
+		(SELECT string_agg(g.rolname, ',') FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid WHERE m.member = r.oid)
+		FROM pg_roles r WHERE r.rolname = 'gregale_import'`).Scan(&importRole); err != nil || importRole != "gregale_import|false|false|false|false|false|gregale_schema_owner" {
+		t.Fatalf("import role = %q, %v", importRole, err)
 	}
 	var next int64
 	if err := conn.QueryRow(ctx, `INSERT INTO accounts (email) VALUES ('after@example.com') RETURNING id`).Scan(&next); err != nil || next != 20001 {

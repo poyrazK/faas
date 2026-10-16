@@ -54,9 +54,11 @@ func (s *Scheduler) Import(ctx context.Context, id string, spec ImportSpec) (dbg
 	return status, err
 }
 
-// ImportStatus reports a database's import. A database that is not
-// running has none: an import does not survive its VM stopping, and the
-// target is empty again (the restore is one transaction).
+// ImportStatus reports a database's import without waking it, so a
+// database that is not running reports none. An unfinished import did not
+// survive its VM stopping (the restore is one transaction, so the target
+// is empty again); a finished one is recorded in the target, and Import
+// under the same operation reports it done.
 func (s *Scheduler) ImportStatus(ctx context.Context, id string) (dbguest.ImportStatus, error) {
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {

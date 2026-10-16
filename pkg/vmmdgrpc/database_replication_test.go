@@ -319,7 +319,8 @@ func TestImportControlSplitsEndpointAndLogin(t *testing.T) {
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	ctx := unixCaller()
 	in := &vmmdpb.DatabaseImport{Host: "ep-quiet-1.us-east-2.aws.neon.tech", Port: 5432, Database: "gregale", User: "gregale_mig_ab",
-		Password: "never-logged", TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: []string{"neon"}}
+		Password: "never-logged", TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: []string{"neon"},
+		OperationId: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}
 	resp, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "import", Import: in})
 	if err != nil || resp.GetImport().GetState() != "running" || !resp.GetImport().GetStartedAt().AsTime().Equal(started) {
 		t.Fatalf("import = %+v, %v", resp, err)
@@ -329,7 +330,7 @@ func TestImportControlSplitsEndpointAndLogin(t *testing.T) {
 	}
 	got := rt.controls[len(rt.controls)-1]
 	if got.Op != dbguest.OpImport || got.Import == nil || got.Import.User != "gregale_mig_ab" || got.Import.Password != "never-logged" ||
-		got.Import.Owner != "gregale_schema_owner" || len(got.Import.SkipExtensions) != 1 {
+		got.Import.Owner != "gregale_schema_owner" || len(got.Import.SkipExtensions) != 1 || got.Import.OperationID != in.OperationId {
 		t.Fatalf("guest request %+v", got)
 	}
 	for name, req := range map[string]*vmmdpb.DatabaseControlRequest{

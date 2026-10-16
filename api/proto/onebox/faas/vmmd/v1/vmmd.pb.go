@@ -11967,8 +11967,12 @@ type DatabaseImport struct {
 	Owner          string `protobuf:"bytes,7,opt,name=owner,proto3" json:"owner,omitempty"`
 	// Source extensions not to copy (the source provider's own).
 	SkipExtensions []string `protobuf:"bytes,8,rep,name=skip_extensions,json=skipExtensions,proto3" json:"skip_extensions,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The import's name (a lowercase UUID; ADR-1370's copy_operation_id).
+	// The guest records it with a finished copy; another ID while one is
+	// running or done is refused (import_operation_mismatch).
+	OperationId   string `protobuf:"bytes,9,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DatabaseImport) Reset() {
@@ -12057,15 +12061,24 @@ func (x *DatabaseImport) GetSkipExtensions() []string {
 	return nil
 }
 
+func (x *DatabaseImport) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
 type DatabaseImportStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// none, running, done or failed.
 	State string `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	// Stable code of a failed import.
-	ErrorCode     string                 `protobuf:"bytes,2,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
-	SourceMajor   int32                  `protobuf:"varint,5,opt,name=source_major,json=sourceMajor,proto3" json:"source_major,omitempty"`
+	ErrorCode   string                 `protobuf:"bytes,2,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	StartedAt   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	SourceMajor int32                  `protobuf:"varint,5,opt,name=source_major,json=sourceMajor,proto3" json:"source_major,omitempty"`
+	// The import this status describes.
+	OperationId   string `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -12133,6 +12146,13 @@ func (x *DatabaseImportStatus) GetSourceMajor() int32 {
 		return x.SourceMajor
 	}
 	return 0
+}
+
+func (x *DatabaseImportStatus) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
 }
 
 type DatabaseControlResponse struct {
@@ -13280,7 +13300,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05after\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05after\x12 \n" +
 	"\vreplication\x18\x05 \x01(\tR\vreplication\x12!\n" +
 	"\fstandby_node\x18\x06 \x01(\tR\vstandbyNode\x12;\n" +
-	"\x06import\x18\a \x01(\v2#.onebox.faas.vmmd.v1.DatabaseImportR\x06import\"\xec\x01\n" +
+	"\x06import\x18\a \x01(\v2#.onebox.faas.vmmd.v1.DatabaseImportR\x06import\"\x8f\x02\n" +
 	"\x0eDatabaseImport\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
@@ -13289,7 +13309,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\bpassword\x18\x05 \x01(\tR\bpassword\x12'\n" +
 	"\x0ftarget_database\x18\x06 \x01(\tR\x0etargetDatabase\x12\x14\n" +
 	"\x05owner\x18\a \x01(\tR\x05owner\x12'\n" +
-	"\x0fskip_extensions\x18\b \x03(\tR\x0eskipExtensions\"\xe6\x01\n" +
+	"\x0fskip_extensions\x18\b \x03(\tR\x0eskipExtensions\x12!\n" +
+	"\foperation_id\x18\t \x01(\tR\voperationId\"\x89\x02\n" +
 	"\x14DatabaseImportStatus\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +
@@ -13298,7 +13319,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"started_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12!\n" +
-	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\"\xfd\x02\n" +
+	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
+	"\foperation_id\x18\x06 \x01(\tR\voperationId\"\xfd\x02\n" +
 	"\x17DatabaseControlResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12%\n" +
 	"\x0epostgres_major\x18\x02 \x01(\x05R\rpostgresMajor\x12\x1d\n" +
