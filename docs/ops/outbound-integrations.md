@@ -1099,6 +1099,144 @@ to the content policy (ADR-1340).
 - route fallbacks and translations;
 - key pool events.
 
+## AI batches
+
+OpenAI and Azure OpenAI `POST .../batches` and Anthropic
+`POST .../v1/messages/batches` are AI calls (ADR-1360). Before ADR-1360 they
+passed through unmetered, so batch spend skipped every cap.
+
+- **Estimate:** each request counts its body bytes at 4 bytes per token, plus
+  its output ceiling (`max_completion_tokens`, `max_output_tokens` or
+  `max_tokens`, else 4,096 tokens for a generation call). It is priced at 50%
+  of the price list, the providers' batch price.
+  - Anthropic's requests are read from the creation body (at most 32 MiB).
+  - For OpenAI, the gateway reads the input file from the provider
+    (`GET .../files/{id}/content`, at most 256 MiB), so the integration must
+    allow `GET` under that path.
+- **Refusals:** the provider is not called when the batch cannot be sized or
+  kept.
+
+  | Response | Reason |
+  | --- | --- |
+  | `400 outbound_ai_batch_unreadable` | The input file or body cannot be read or parsed. |
+  | `413 outbound_ai_batch_too_large` | The input passes the sizes above, or the estimate passes one reservation's bound. |
+  | `429` | The reservation passes a cap, as for any call. |
+- **Reservation:** the batch is admitted like a call, then kept in
+  `outbound_ai_batches` until it settles. Admission counts open batches in the
+  statement that already totals leases, so later calls see the batch's spend.
+  - A provider refusal releases the reservation.
+  - A creation response without a batch ID settles at the reservation as
+    unknown usage.
+  - A reservation the provider never confirmed is released after 60 minutes.
+- **Settlement:** outboundd checks open batches every 60 seconds, the first
+  time 60 seconds after creation. When the provider ends a batch (completed,
+  failed, expired or cancelled; Anthropic `ended`):
+  1. it reads the results file;
+  2. it records each model's usage at the batch price, under the batch's
+     caller and keyed by the batch and the model, so a retry counts once;
+  3. it releases the reservation.
+
+  A batch without a successful result settles as an error with no usage. A
+  batch still open after 72 hours settles at its reservation as unknown
+  usage. Settled rows are kept for 7 days.
+- **Content:** the content policy checks Anthropic's inline requests like
+  any body, but an OpenAI input file is only sized, never scanned. Batches are
+  not moderated, and their results are not captured or exported.
+
+`outbound_ai_batches_settled_total` counts settled batches by outcome.
+
+## AI access tokens
+
+An access token lets a caller outside Gregale act as one app on the AI gateway:
+local development, CI or a notebook (ADR-1360).
+`gregale ai tokens create --app my-api --name laptop --expires-in-hours 24`
+(or `POST /v1/apps/{slug}/ai-access-tokens`) issues one.
+
+- **Secret:** `ggai_` and 43 characters, shown once. Gregale keeps only its
+  SHA-256 hash and its first 12 characters, to recognise it.
+- **Use:** set the SDK's base URL to the public host, with
+  `/i/<integration-id>` or `/r/<route-id>` (for OpenAI, append `/v1`). Put the
+  token where the SDK puts its API key: `Authorization: Bearer`, `x-api-key`,
+  `x-goog-api-key` or `api-key`.
+- **Headers removed:** every such key header, a Gemini `?key=` parameter and
+  every Gregale identity header, before the provider credential is added.
+- **Scope:** the app's bound AI integrations and the account's routes, or only
+  the integrations listed with `--integration`. A token call is the app's call:
+  its bindings, guardrails, caps, content policy and usage apply.
+- **Limits:**
+  - 20 live tokens per app;
+  - a lifetime of 1 to 2,160 hours (default 168);
+  - a revoked token works for at most 30 more seconds (outboundd caches
+    lookups);
+  - `last_used_at` is updated at most once a minute;
+  - expired and revoked tokens are deleted after 30 days.
+- **Errors:**
+  - `401 outbound_access_token_invalid`: missing, unknown, revoked or expired;
+  - `403 outbound_access_token_not_allowed`: the integration is outside the
+    token's scope;
+  - `503 outbound_access_token_unavailable`: the lookup failed.
+
+**Operator setup.** The public listener is off by default.
+
+1. Set `public_listen_addr = "127.0.0.1:8097"` in `/etc/faas/outboundd.toml`
+   and restart outboundd. The address must be loopback; outboundd refuses
+   others. The listener serves only `/i/` and `/r/` paths, with no metrics or
+   readiness endpoints.
+2. Set `faas_ai_gateway_public_enabled: true` for the `public_edge` role. It
+   adds a Caddy site for `faas_ai_gateway_public_host` (default
+   `ai.<domain>`, covered by the Origin CA wildcard) that proxies to
+   `faas_ai_gateway_public_upstream`.
+3. Add a proxied Cloudflare DNS record for the host.
+
+## AI evaluations
+
+`gregale ai evaluate <route-id> --position 2 --judge <id> --judge-model gpt-5
+--canary-percent 10` (or `POST /v1/outbound/ai-routes/{route}/evaluations`)
+evaluates a route target against the route's first target before any user
+sees it (ADR-1360). It waits for the verdict; `gregale ai evaluate show
+<evaluation-id>` reads it again and `gregale ai evaluate list <route-id>` lists
+a route's evaluations.
+
+- **Samples:** the latest captured calls of the first target's integration
+  (default 20, at most 50):
+  - with a 2xx status and a whole capture;
+  - OpenAI chat completions or Responses calls;
+  - sent by apps or Runs, not by replays, moderation checks or evaluations.
+
+  The first target must be an OpenAI or Azure OpenAI integration with
+  `request_log_content` on.
+- **Candidate:** each sample replays on the target, with its model, without
+  streaming, translated for its provider.
+- **Judge:** the judge integration's model receives the request's user text
+  (as moderation reads it) and both answers, in a random order. It replies
+  `{"winner": "A"|"B"|"tie"}`.
+- **Verdict:** each sample is a `win`, `tie`, `loss`, `candidate_error`
+  (counted as a loss) or `judge_error` (counted as a tie). The evaluation
+  passes when losses and candidate errors are at most `max_loss_rate` percent
+  of the sample (default 20).
+- **Canary:** a passing evaluation starts its canary, unless the route already
+  has an active canary or the target changed since the evaluation started.
+  `canary_started` says whether it did.
+- **Failures:** an evaluation fails, without a verdict, with one of:
+
+  | Code | Reason |
+  | --- | --- |
+  | `outbound_ai_evaluation_no_captures` | No sample matched. |
+  | `outbound_ai_evaluation_unsupported` | The first target is not an OpenAI or Azure OpenAI integration. |
+  | `outbound_ai_evaluation_target_unavailable` | The target's integration is gone. |
+  | `outbound_ai_evaluation_judge_unavailable` | The judge's integration is gone. |
+  | `outbound_ai_evaluation_judge_failed` | More than half the samples got no verdict. |
+  | `outbound_ai_evaluation_interrupted` | It ran for more than 90 minutes. |
+- **Cost:** candidate and judge calls run in process through their
+  integrations, so caps, rate limits and price lists apply. They appear in
+  usage under the caller `evaluation`. Four samples run at a time, and each
+  call has 120 seconds.
+- **Limits:** 20 evaluations per route per UTC day
+  (`429 outbound_ai_evaluation_limit`). Evaluations are kept for 30 days.
+
+`outbound_ai_evaluations_total` counts finished evaluations by result (`pass`,
+`fail` or `failed`).
+
 ## Runs
 
 When vmmd serves the relay, an outbound-enabled Run gets

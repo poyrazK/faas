@@ -6659,6 +6659,9 @@ type OutboundAiBatch struct {
 	BindingAppID           pgtype.UUID
 	Provider               string
 	ProviderBatchID        pgtype.Text
+	RequestPath            string
+	RequestQuery           string
+	Model                  string
 	Requests               int32
 	ReservedTokens         int64
 	ReservedCostMillicents int64

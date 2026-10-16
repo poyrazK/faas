@@ -34,6 +34,9 @@
   - **A public listener.** outboundd gains an optional listener that serves only token callers, on `/i/` and `/r/` paths. Caddy routes a configured host to it when `faas_ai_gateway_public_enabled` is set, and DNS for that host is an operator step. With the flag off nothing changes.
   - **Token checks** are cached for `OutboundAIAccessTokenCacheSeconds`, so a revoked token can work for that long. `last_used_at` is written at most once a minute per token.
   - **Evaluations need captures.** An integration without request-log content capture (ADR-996) has nothing to replay, and its evaluation fails with `outbound_ai_evaluation_no_captures`. Captured requests are already redacted, so the candidate and the judge see redacted text.
+  - **outboundd starts an evaluated canary.** A passing evaluation inserts the canary row that apid would, holding the route's row lock as apid does. It is the canary the customer asked apid for when creating the evaluation, as ADR-1340's rollback is a write the customer asked for when starting the canary. apid still owns the route and its targets.
+  - **Batches are checked less than calls.** The content policy checks an Anthropic batch's inline requests like any body, but an OpenAI batch's input file is only sized, never scanned. Moderation does not run on batches: one check per request would cost as much as the batch. Batch results are not captured or exported.
+  - **A batch's creation call counts twice, briefly.** Its lease and its batch row both hold the estimate until the creation call returns. Admission overcounts for that moment and never undercounts.
   - **New tables:**
     - `outbound_ai_evaluations` and `outbound_ai_evaluation_items` are operational;
     - `outbound_ai_access_tokens` is account identity (only hashes);
@@ -60,8 +63,13 @@
   - its path is an OpenAI chat completions or Responses call, which replays on any provider through the translators.
 - The judge receives the redacted user text (as ADR-1340's moderation reads it) and the two answers' text. It replies with a JSON object `{"winner": "A"|"B"|"tie"}`. A reply without one counts as a tie and is reported as `judge_error`.
 - A candidate call that fails counts as a loss and is reported as `candidate_error`.
+- Samples sent by the gateway itself (replays, moderation checks, evaluations) are skipped.
+- The first target must be an OpenAI or Azure OpenAI integration, since its captures are replayed through the translators.
+- `OutboundAIEvaluationParallelCalls` samples run at a time, each call within `OutboundAIEvaluationCallTimeoutSeconds`.
+- An evaluation with more than `OutboundAIEvaluationJudgeErrorMaxPercent` percent judge errors fails with `outbound_ai_evaluation_judge_failed` instead of passing on ties.
+- A passing evaluation starts its canary only when the route has no active canary and the target at its position still has the integration and model it was evaluated with.
 - An evaluation runs once; `OutboundAIEvaluationsPerDay` bounds evaluations per route per UTC day.
 
 ## Batch estimate
 
-Each request's input is its body bytes divided by `OutboundAIReserveBytesPerToken`. Its output is its own output ceiling, or `OutboundAIDefaultOutputReserveTokens`. Cost is priced per request model at `OutboundAIBatchPricePercent` of the integration's price.
+A batch's first status check waits one `OutboundAIBatchPollIntervalSeconds`. Each request's input is its body bytes divided by `OutboundAIReserveBytesPerToken`. Its output is its own output ceiling, or `OutboundAIDefaultOutputReserveTokens`. Cost is priced per request model at `OutboundAIBatchPricePercent` of the integration's price.

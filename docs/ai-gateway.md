@@ -31,6 +31,14 @@ account during the preview; contact support to have it turned on for yours.
   compare errors, latency and cost with the current one. Gregale rolls the
   canary back on its own when the new model does worse; promote it when it
   does not.
+- **Evaluations.** Before a canary, replay your latest real calls on the new
+  model and let a judge model compare its answers with the current ones. A
+  passing evaluation can start the canary for you.
+- **Access tokens.** Call the gateway from your laptop, CI or a notebook as one
+  of your apps, with the same caps and usage, using an expiring token in place
+  of the provider key.
+- **Batches.** OpenAI, Azure OpenAI and Anthropic batch jobs are capped before
+  they are created and settled at the batch price when they finish.
 - **Key pools.** Extra provider keys with per-key cooldown after a 429.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
@@ -87,6 +95,29 @@ gregale ai usage <id>
 Name the end user of a call with the `X-Gregale-AI-User` header (an opaque ID,
 not an e-mail address) to get per-user usage and limits.
 
+### Outside Gregale
+
+To call the gateway from your laptop, CI or a notebook as one of your apps,
+create an access token and use it as the SDK's API key:
+
+```sh
+gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
+OPENAI_BASE_URL="https://ai.gregale.dev/i/$INTEGRATION_ID/v1"   OPENAI_API_KEY="$GREGALE_AI_TOKEN"
+```
+
+The token is shown once. Revoke it with `gregale ai tokens revoke --app my-api
+<token-id>`.
+
+### Before a canary
+
+```sh
+gregale ai evaluate <route-id> --position 2 --judge <id> --judge-model gpt-5 --canary-percent 10
+```
+
+This replays up to 50 of your latest captured calls (turn on
+`--request-log-content` for the route's first integration) and starts the
+canary only if the new model does not do worse.
+
 ## Limits and errors
 
 | Response | Meaning |
@@ -98,6 +129,9 @@ not an e-mail address) to get per-user usage and limits.
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. |
+| `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
+| `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
+| `413 outbound_ai_batch_too_large` | The batch is larger than the gateway can size. |
 
 Request bodies a content policy must inspect are limited to 4 MiB. Usage,
 alerts, the request log and captures each have their own retention; see the
@@ -119,5 +153,9 @@ catalog, used for budgets and reports.
   traffic you may store.
 - A moderation check costs one call of the check integration before each
   checked call; the provider bills it to that integration's key.
+- Evaluation calls (the new model and the judge) are billed by your providers
+  too, and count toward your caps.
+- OpenAI batch input files are not checked by the content policy, and
+  batches are not moderated.
 - Feedback and incidents: contact support with the integration ID and request
   ID from `gregale ai logs`.

@@ -99,6 +99,27 @@ These ADR-1340 features are customer settings; none pages.
   - Lines pile up when no gateway owns the app (an app with no owner node).
     They expire after 24 hours, so a longer outage loses them.
 
+## Batches, access tokens and evaluations
+
+These ADR-1360 features are customer settings; none pages.
+
+- **Batches.** `outbound_ai_batches_settled_total{outcome="unknown"}` rising
+  means batches reach 72 hours without the provider ending them, or the
+  gateway cannot read their status.
+  - Open batches: `SELECT provider, state, checks, created_at FROM
+    outbound_ai_batches WHERE state <> 'settled' ORDER BY created_at`.
+  - A batch that holds a customer at a cap is released by its settlement.
+    Never delete an open row by hand: its usage would then never be recorded.
+- **Access tokens.** The public listener is off unless `public_listen_addr`
+  is set. A burst of `401 outbound_access_token_invalid` on one host is
+  usually a leaked or stale token; the customer revokes it with
+  `gregale ai tokens revoke`. To close the public host, unset
+  `public_listen_addr` and restart outboundd.
+- **Evaluations.** `outbound_ai_evaluations_total{result="failed"}` counts
+  evaluations that could not run. Most failures name the customer's setup
+  (no captures, a deleted judge integration). Many `outbound_ai_evaluation_interrupted`
+  failures point at outboundd restarts during long evaluations.
+
 ## Failure drills
 
 `pkg/outbound/ai_gateway_drills_test.go` runs these against Postgres on every
