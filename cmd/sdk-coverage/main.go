@@ -1113,11 +1113,27 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/edge-rules/rollback":          "RollbackEdgeRules",
 	"GET /v1/apps/{slug}/edge-rules/stats":              "GetEdgeRuleStats",
 	"GET /v1/apps/{slug}/edge-rules/events":             "ListEdgeRuleEvents",
-	"GET /v1/edge-rule-lists":                           "ListEdgeRuleLists",
-	"POST /v1/edge-rule-lists":                          "CreateEdgeRuleList",
-	"GET /v1/edge-rule-lists/{name}":                    "GetEdgeRuleList",
-	"PATCH /v1/edge-rule-lists/{name}":                  "UpdateEdgeRuleList",
-	"DELETE /v1/edge-rule-lists/{name}":                 "DeleteEdgeRuleList",
+
+	// Environment cache workflow routes use the typed client's resource names.
+	"GET /v1/apps/{slug}/cache-policy":                           "GetEnvironmentCachePolicy",
+	"PUT /v1/apps/{slug}/cache-policy":                           "SetEnvironmentCachePolicy",
+	"GET /v1/apps/{slug}/cache-policy/convergence":               "GetEnvironmentCacheConvergence",
+	"GET /v1/apps/{slug}/cache-policy/history":                   "ListEnvironmentCachePolicyHistory",
+	"GET /v1/apps/{slug}/cache-policy/history/{revision}":        "GetEnvironmentCachePolicyRevision",
+	"POST /v1/apps/{slug}/cache/purges":                          "CreateEnvironmentCachePurge",
+	"GET /v1/apps/{slug}/cache/purges/{request}":                 "GetEnvironmentCachePurge",
+	"POST /v1/apps/{slug}/cache/schedules":                       "CreateEnvironmentCacheSchedule",
+	"GET /v1/apps/{slug}/cache/schedules":                        "ListEnvironmentCacheSchedules",
+	"GET /v1/apps/{slug}/cache/schedules/{schedule}":             "GetEnvironmentCacheSchedule",
+	"DELETE /v1/apps/{slug}/cache/schedules/{schedule}":          "CancelEnvironmentCacheSchedule",
+	"POST /v1/apps/{slug}/cache/schedules/{schedule}/reschedule": "RescheduleEnvironmentCache",
+	"GET /v1/apps/{slug}/cache/schedules/activity":               "GetEnvironmentCacheScheduleActivity",
+	"GET /v1/apps/{slug}/cache/schedules/activity/checkpoint":    "GetEnvironmentCacheScheduleActivityCheckpoint",
+	"GET /v1/edge-rule-lists":                                    "ListEdgeRuleLists",
+	"POST /v1/edge-rule-lists":                                   "CreateEdgeRuleList",
+	"GET /v1/edge-rule-lists/{name}":                             "GetEdgeRuleList",
+	"PATCH /v1/edge-rule-lists/{name}":                           "UpdateEdgeRuleList",
+	"DELETE /v1/edge-rule-lists/{name}":                          "DeleteEdgeRuleList",
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// recommender. Auto-derivation would produce
 	// "GetAppsSlugThrottle-suggestions" (literal hyphen) due to the
