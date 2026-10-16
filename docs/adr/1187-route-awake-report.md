@@ -4,6 +4,10 @@
 - Date: 2026-10-13
 - Related: ADR-127 (request telemetry), ADR-976 (route advisor), ADR-122/214 (edge response cache), ADR-847 (synthetic route probes), ADR-982 (apid packages)
 
+Amended by ADR-1199: awake minutes no customer request explains are credited
+to synthetic route probes and scheduled prewarm, which also count as cover in
+each route's what-if.
+
 ## Context
 
 On a scale-to-zero platform a route's cost is mostly the awake time it

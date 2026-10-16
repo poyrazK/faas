@@ -11,6 +11,13 @@ const (
 	// RouteAwakeSuggestCallLessOften: a client calls the route more often
 	// than the idle timeout, so the app never parks.
 	RouteAwakeSuggestCallLessOften = "call_less_often"
+
+	// Awake sources other than customer requests (ADR-1199).
+	// RouteAwakeSourceRouteProbe: synthetic canary probes the app answered
+	// (ADR-847). RouteAwakeSourcePrewarm: instances a scheduled prewarm
+	// admitted.
+	RouteAwakeSourceRouteProbe = "route_probe"
+	RouteAwakeSourcePrewarm    = "prewarm"
 )
 
 // RouteAwakeResponse is GET /v1/apps/{slug}/routes/awake: how long a
@@ -31,15 +38,33 @@ type RouteAwakeResponse struct {
 	MBSeconds          int64   `json:"mb_seconds"`
 	GBHours            float64 `json:"gb_hours"`
 	Wakes              int64   `json:"wakes"`
-	// UnattributedSeconds is awake time no recorded request explains:
-	// synthetic probes, scheduled prewarm, minimum instances, queue, cron and
-	// waitUntil work, or telemetry the plan's rate cap dropped.
+	// UnattributedSeconds is awake time no recorded request, probe or
+	// prewarm explains: minimum instances, queue, cron and waitUntil work,
+	// probes older than a day, or telemetry the plan's rate cap dropped.
 	UnattributedSeconds int64 `json:"unattributed_seconds"`
+	// Sources is awake time credited to causes other than customer requests
+	// (ADR-1199), for minutes no request explains.
+	Sources []RouteAwakeSource `json:"sources"`
+	// MinInstances is the app's current minimum instance count; above zero
+	// the app never parks, so unattributed time is expected.
+	MinInstances int `json:"min_instances"`
 	// OtherRoutesSeconds is awake time attributed to routes outside the
 	// busiest RoutesLimit.
 	OtherRoutesSeconds int64             `json:"other_routes_seconds"`
 	RoutesLimit        int               `json:"routes_limit"`
 	Routes             []RouteAwakeRoute `json:"routes"`
+}
+
+// RouteAwakeSource is the awake time one non-request cause explains.
+type RouteAwakeSource struct {
+	// Source is route_probe or prewarm.
+	Source string `json:"source"`
+	// Events are probe requests the app answered without a 5xx or an auth
+	// rejection, or instances a prewarm admitted.
+	Events       int64   `json:"events"`
+	AwakeSeconds int64   `json:"awake_seconds"`
+	AwakeShare   float64 `json:"awake_share"`
+	GBHours      float64 `json:"gb_hours"`
 }
 
 // RouteAwakeRoute is one route's share of the app's awake time.

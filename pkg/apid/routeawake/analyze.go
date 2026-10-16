@@ -2,7 +2,9 @@
 // (ADR-1187). Awake time is the app's billed running time per minute; it is
 // attributed to the routes whose requests restarted the idle timer, and for
 // each busy route the report estimates how much awake time, and how many cold
-// wakes, the app would have had without that route's requests.
+// wakes, the app would have had without that route's requests. Awake time no
+// request explains is credited to route probes and scheduled prewarms when
+// one of them kept the app awake (ADR-1199).
 package routeawake
 
 import (
@@ -36,6 +38,15 @@ type RouteMinute struct {
 	AnonymousRequests int64
 }
 
+// SourceMinute is one minute of an awake cause other than customer requests
+// (ADR-1199): route probes the app answered, or instances a scheduled prewarm
+// admitted.
+type SourceMinute struct {
+	At     time.Time
+	Source string
+	Events int64
+}
+
 // Inputs are the window, the app's settings and its minutes.
 type Inputs struct {
 	App          string
@@ -44,6 +55,7 @@ type Inputs struct {
 	RAMMB        int
 	Awake        []Minute
 	Routes       []RouteMinute
+	Sources      []SourceMinute
 }
 
 type routeKey struct{ method, path string }
@@ -64,15 +76,24 @@ type hit struct {
 	requests int64
 }
 
+// source accumulates one non-request cause; sourceHits index sources.
+type source struct {
+	name       string
+	events     int64
+	attributed int64
+}
+
 type timeline struct {
-	in       Inputs
-	minutes  int
-	keep     int // minutes a request keeps the app awake after its own minute
-	mbs      []int64
-	hits     [][]hit
-	routes   []*route
-	other    int
-	credited []bool // awake minutes some request explains
+	in         Inputs
+	minutes    int
+	keep       int // minutes a request keeps the app awake after its own minute
+	mbs        []int64
+	hits       [][]hit
+	routes     []*route
+	other      int
+	credited   []bool // awake minutes some request explains
+	sourceHits [][]hit
+	sources    []*source
 }
 
 // Analyze computes the report body; the caller fills in the slug and window.
@@ -97,6 +118,17 @@ func Analyze(in Inputs) api.RouteAwakeResponse {
 		}
 	}
 	unattributed := t.attribute()
+	out.Sources = []api.RouteAwakeSource{}
+	for _, src := range t.sources {
+		row := api.RouteAwakeSource{Source: src.name, Events: src.events, AwakeSeconds: t.seconds(src.attributed), GBHours: gbHours(src.attributed)}
+		if out.MBSeconds > 0 {
+			row.AwakeShare = float64(src.attributed) / float64(out.MBSeconds)
+		}
+		out.Sources = append(out.Sources, row)
+	}
+	slices.SortStableFunc(out.Sources, func(a, b api.RouteAwakeSource) int {
+		return cmp.Or(cmp.Compare(b.AwakeSeconds, a.AwakeSeconds), cmp.Compare(a.Source, b.Source))
+	})
 	out.AwakeSeconds = t.seconds(out.MBSeconds)
 	out.GBHours = gbHours(out.MBSeconds)
 	out.UnattributedSeconds = t.seconds(unattributed)
@@ -123,7 +155,7 @@ func newTimeline(in Inputs) *timeline {
 		n = int((in.Until.Sub(in.From) + time.Minute - 1) / time.Minute)
 	}
 	t := &timeline{in: in, minutes: n, keep: (in.IdleTimeoutS+59)/60 + 1,
-		mbs: make([]int64, n), hits: make([][]hit, n), credited: make([]bool, n)}
+		mbs: make([]int64, n), hits: make([][]hit, n), credited: make([]bool, n), sourceHits: make([][]hit, n)}
 	for _, m := range in.Awake {
 		if i, ok := t.index(m.At); ok {
 			t.mbs[i] += m.MBSeconds
@@ -168,6 +200,21 @@ func newTimeline(in Inputs) *timeline {
 			}
 		}
 	}
+	sourceIndex := map[string]int{}
+	for _, m := range in.Sources {
+		i, ok := t.index(m.At)
+		if !ok || m.Events <= 0 {
+			continue
+		}
+		idx, seen := sourceIndex[m.Source]
+		if !seen {
+			idx = len(t.sources)
+			sourceIndex[m.Source] = idx
+			t.sources = append(t.sources, &source{name: m.Source})
+		}
+		t.sources[idx].events += m.Events
+		t.sourceHits[i] = append(t.sourceHits[i], hit{route: idx, requests: m.Events})
+	}
 	return t
 }
 
@@ -180,31 +227,39 @@ func (t *timeline) index(at time.Time) (int, bool) {
 }
 
 // attribute credits each awake minute to the requests of the latest minute
-// that still keeps the app awake, split by request count, and returns the
-// MB-seconds no request explains.
+// that still keeps the app awake, split by request count. Customer requests
+// come first; a minute none of them explains goes to the latest probe or
+// prewarm minute that still keeps the app awake. It returns the MB-seconds
+// nothing explains.
 func (t *timeline) attribute() int64 {
 	var unattributed int64
-	last := -1
+	last, lastSource := -1, -1
 	for i, mbs := range t.mbs {
 		if len(t.hits[i]) > 0 {
 			last = i
 		}
+		if len(t.sourceHits[i]) > 0 {
+			lastSource = i
+		}
 		if mbs == 0 {
 			continue
 		}
-		if last < 0 || i-last > t.keep {
+		switch {
+		case last >= 0 && i-last <= t.keep:
+			t.credited[i] = true
+			split(mbs, t.hits[last], func(i int, part int64) { t.routes[i].attributed += part })
+		case lastSource >= 0 && i-lastSource <= t.keep:
+			split(mbs, t.sourceHits[lastSource], func(i int, part int64) { t.sources[i].attributed += part })
+		default:
 			unattributed += mbs
-			continue
 		}
-		t.credited[i] = true
-		split(mbs, t.hits[last], t.routes)
 	}
 	return unattributed
 }
 
 // split divides mbs across hits by request count; the remainder goes to the
 // first hit so the parts always add up.
-func split(mbs int64, hits []hit, routes []*route) {
+func split(mbs int64, hits []hit, credit func(int, int64)) {
 	var total int64
 	for _, h := range hits {
 		total += h.requests
@@ -215,18 +270,19 @@ func split(mbs int64, hits []hit, routes []*route) {
 	given := int64(0)
 	for _, h := range hits {
 		part := mbs * h.requests / total
-		routes[h.route].attributed += part
+		credit(h.route, part)
 		given += part
 	}
-	routes[hits[0].route].attributed += mbs - given
+	credit(hits[0].route, mbs-given)
 }
 
 // whatIf estimates the awake MB-seconds saved and the change in wakes had
-// route r's requests never reached the app.
+// route r's requests never reached the app. Other routes, probes and prewarms
+// still keep it awake.
 func (t *timeline) whatIf(r int) (int64, int64) {
 	covered := make([]bool, t.minutes)
 	for i, hits := range t.hits {
-		if !slices.ContainsFunc(hits, func(h hit) bool { return h.route != r }) {
+		if len(t.sourceHits[i]) == 0 && !slices.ContainsFunc(hits, func(h hit) bool { return h.route != r }) {
 			continue
 		}
 		for j := i; j <= i+t.keep && j < t.minutes; j++ {

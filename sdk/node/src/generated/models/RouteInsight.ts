@@ -6,7 +6,7 @@
  * One finding for a route; also the payload of the routes.insight.detected and routes.insight.resolved webhooks.
  */
 export type RouteInsight = {
-  kind: 'kept_awake' | 'cacheable';
+  kind: 'kept_awake' | 'cacheable' | 'cache_stale' | 'cache_too_short';
   method: string;
   /**
    * Route template, for example /catalog.
@@ -18,7 +18,7 @@ export type RouteInsight = {
    */
   message: string;
   /**
-   * Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat counts for cacheable.
+   * Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat counts for cacheable; the rule's max-age, refills, stale refills and measured safe max-age for cache_stale and cache_too_short.
    */
   evidence: Record<string, any>;
   first_detected_at: string;

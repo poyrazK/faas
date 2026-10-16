@@ -2,7 +2,7 @@
 
 package state_test
 
-// adr: 1188
+// adr: 1188, 1199
 
 import (
 	"testing"
@@ -35,7 +35,8 @@ func TestRouteAdviceContentEvidencePG(t *testing.T) {
 	insert("same_300", 200)
 	insert("changed_300", 1)
 	insert("uncacheable", 5)
-	insert("", 40) // not observed
+	insert("stale", 7) // a cache rule refill whose body changed (ADR-1199)
+	insert("", 40)     // not observed
 	// The receiver's insert path persists the outcome.
 	accountID, appID, deploymentID := pgUUID(t, a.ID), pgUUID(t, app.ID), pgUUID(t, d.ID)
 	if err := s.InsertRequestTelemetryWithLogEvent(t.Context(), sqlc.InsertRequestTelemetryParams{
@@ -62,8 +63,8 @@ func TestRouteAdviceContentEvidencePG(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 	r := rows[0]
-	if r.Requests != 656 || r.ContentFirst != 10 || r.ContentUncacheable != 5 || r.ContentSame60 != 300 || r.ContentSame300 != 200 ||
-		r.ContentSame3600 != 100 || r.ContentChanged60 != 0 || r.ContentChanged300 != 1 || r.ContentChanged3600 != 0 {
+	if r.Requests != 663 || r.ContentFirst != 10 || r.ContentUncacheable != 5 || r.ContentSame60 != 300 || r.ContentSame300 != 200 ||
+		r.ContentSame3600 != 100 || r.ContentChanged60 != 0 || r.ContentChanged300 != 1 || r.ContentChanged3600 != 0 || r.ContentStale != 7 {
 		t.Fatalf("content stats = %+v", r)
 	}
 }

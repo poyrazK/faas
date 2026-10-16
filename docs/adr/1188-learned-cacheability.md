@@ -4,6 +4,10 @@
 - Date: 2026-10-14
 - Related: ADR-122 (edge response cache), ADR-127 (request telemetry), ADR-976 (route advisor), ADR-1187 (route awake report), ADR-124 (traffic mirroring)
 
+Amended by ADR-1199: the gateway also observes the bodies a cache rule
+stores, recording a new `stale` outcome, and existing rules are checked from
+those refills.
+
 ## Context
 
 On a scale-to-zero platform an edge cache hit never wakes the app, so a

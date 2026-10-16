@@ -1,6 +1,6 @@
 package apidserver_test
 
-// adr: 1187
+// adr: 1187, 1199
 
 import (
 	"context"
@@ -23,6 +23,7 @@ type routeAwakeTestStore struct {
 	MemStore *state.MemStore
 	minutes  []sqlc.RouteAwakeMinutesRow
 	routes   []sqlc.RouteAwakeRouteMinutesRow
+	sources  []sqlc.RouteAwakeSourceMinutesRow
 	params   sqlc.RouteAwakeRouteMinutesParams
 	err      error
 }
@@ -34,6 +35,10 @@ func (s *routeAwakeTestStore) RouteAwakeMinutes(context.Context, sqlc.RouteAwake
 func (s *routeAwakeTestStore) RouteAwakeRouteMinutes(_ context.Context, arg sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
 	s.params = arg
 	return s.routes, s.err
+}
+
+func (s *routeAwakeTestStore) RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error) {
+	return s.sources, s.err
 }
 
 // routeAwakeFixture is an app awake for the last two hours, pinged once a
@@ -57,6 +62,7 @@ func routeAwakeFixture(t *testing.T, e apidserver.TestEnv, appID string) *routeA
 func TestRouteAwakeReport(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	store := routeAwakeFixture(t, e, apidserver.MustSeedApp(t, e, "shop"))
+	store.sources = []sqlc.RouteAwakeSourceMinutesRow{{Minute: store.minutes[0].Minute, Source: api.RouteAwakeSourcePrewarm, Events: 1}}
 	(*(*e.S()).Store()) = statetest.NewMem(store)
 	res := e.Do(t, "GET", "/v1/apps/shop/routes/awake", nil, nil)
 	var out api.RouteAwakeResponse
@@ -74,6 +80,12 @@ func TestRouteAwakeReport(t *testing.T) {
 	}
 	if out.AwakeSeconds != 120*60 || out.UnattributedSeconds != 0 {
 		t.Fatalf("awake = %d unattributed = %d", out.AwakeSeconds, out.UnattributedSeconds)
+	}
+	// The prewarm reaches the report; customer requests explain every minute,
+	// so it is credited with none of them (ADR-1199).
+	if len(out.Sources) != 1 || out.Sources[0].Source != api.RouteAwakeSourcePrewarm || out.Sources[0].Events != 1 ||
+		out.Sources[0].AwakeSeconds != 0 || out.MinInstances != 0 {
+		t.Fatalf("sources = %+v min_instances = %d", out.Sources, out.MinInstances)
 	}
 }
 

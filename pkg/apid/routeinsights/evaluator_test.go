@@ -1,6 +1,6 @@
 package routeinsights_test
 
-// adr: 1198
+// adr: 1198, 1199
 
 import (
 	"context"
@@ -66,6 +66,35 @@ func TestCacheable(t *testing.T) {
 	}
 }
 
+// TestCacheRules checks existing cache rules against their refills
+// (ADR-1199).
+func TestCacheRules(t *testing.T) {
+	rules := []routeadvisor.ExistingRule{
+		{Kind: "cache", Path: "/prices", Enabled: true, MaxAgeSeconds: 3600},
+		{Kind: "cache", Path: "/catalog", Enabled: true, MaxAgeSeconds: 60},
+		{Kind: "cache", Path: "/off", Enabled: false, MaxAgeSeconds: 60},
+	}
+	routes := []routeadvisor.RouteStats{
+		{Method: "GET", Path: "/prices", Requests: 900, Content: routeadvisor.ContentStats{Same: []int64{0, 0, 30}, Changed: []int64{0, 0, 0}, Stale: 20}},
+		{Method: "GET", Path: "/catalog", Requests: 5000, Content: routeadvisor.ContentStats{Same: []int64{0, 30, 40}, Changed: []int64{0, 0, 0}}},
+		{Method: "GET", Path: "/off", Requests: 5000, Content: routeadvisor.ContentStats{Same: []int64{0, 30, 40}, Changed: []int64{0, 0, 0}}},
+		{Method: "GET", Path: "/uncached", Requests: 5000, Content: routeadvisor.ContentStats{Stale: 40}},
+	}
+	got := routeinsights.CacheRules(routes, rules)
+	if len(got) != 2 {
+		t.Fatalf("findings = %+v", got)
+	}
+	stale, short := got[0], got[1]
+	if stale.Kind != routeinsights.KindCacheStale || stale.Route != "/prices" || stale.Evidence["stale_refills"] != int64(20) ||
+		!strings.Contains(stale.Message, "20 of 50 refills (40%)") {
+		t.Fatalf("stale = %+v", stale)
+	}
+	if short.Kind != routeinsights.KindCacheTooShort || short.Route != "/catalog" || short.Evidence["safe_max_age_seconds"] != 3600 ||
+		!strings.Contains(short.Message, "A max-age of 3600s") {
+		t.Fatalf("too short = %+v", short)
+	}
+}
+
 // fakeStore serves one Pro app that is pinged every minute and has a stable
 // catalog, one Free app, and one app whose reads fail.
 type fakeStore struct {
@@ -106,6 +135,10 @@ func (f *fakeStore) RouteAwakeMinutes(_ context.Context, arg sqlc.RouteAwakeMinu
 		out = append(out, sqlc.RouteAwakeMinutesRow{Minute: ts(f.now.Add(-24 * time.Hour).Add(time.Duration(m) * time.Minute)), MbSeconds: 60 * (256 + api.PerVMOverheadMB)})
 	}
 	return out, nil
+}
+
+func (f *fakeStore) RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error) {
+	return nil, nil
 }
 
 func (f *fakeStore) RouteAwakeRouteMinutes(context.Context, sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {

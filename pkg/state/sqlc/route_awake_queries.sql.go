@@ -157,3 +157,69 @@ func (q *Queries) RouteAwakeRouteMinutes(ctx context.Context, db DBTX, arg Route
 	}
 	return items, nil
 }
+
+const routeAwakeSourceMinutes = `-- name: RouteAwakeSourceMinutes :many
+SELECT s.minute::timestamptz AS minute, s.source::text AS source, SUM(s.events)::bigint AS events
+FROM (
+    SELECT date_trunc('minute', o.window_start) AS minute, 'route_probe' AS source,
+           (o.requests - o.server_errors - o.unauthenticated)::bigint AS events
+    FROM route_probe_observations o
+    WHERE o.app_id = $1
+      AND o.account_id = $2
+      AND o.window_start >= $3
+      AND o.window_start < $4
+    UNION ALL
+    SELECT date_trunc('minute', p.fired_at) AS minute, 'prewarm' AS source, p.admitted_count::bigint AS events
+    FROM prewarm_intents p
+    WHERE p.app_id = $1
+      AND p.account_id = $2
+      AND p.fired_at >= $3
+      AND p.fired_at < $4
+      AND p.admitted_count > 0
+) s
+WHERE s.events > 0
+GROUP BY s.minute, s.source
+ORDER BY s.minute, s.source
+`
+
+type RouteAwakeSourceMinutesParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	SinceAt   pgtype.Timestamptz
+	UntilAt   pgtype.Timestamptz
+}
+
+type RouteAwakeSourceMinutesRow struct {
+	Minute pgtype.Timestamptz
+	Source string
+	Events int64
+}
+
+// Wakes and keep-alives that are not customer requests (ADR-1199), per minute
+// and source: synthetic route probes the app answered without a 5xx or an
+// auth rejection (ADR-847; probe observations are pruned after a day), and
+// scheduled prewarms that admitted instances.
+func (q *Queries) RouteAwakeSourceMinutes(ctx context.Context, db DBTX, arg RouteAwakeSourceMinutesParams) ([]RouteAwakeSourceMinutesRow, error) {
+	rows, err := db.Query(ctx, routeAwakeSourceMinutes,
+		arg.AppID,
+		arg.AccountID,
+		arg.SinceAt,
+		arg.UntilAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteAwakeSourceMinutesRow{}
+	for rows.Next() {
+		var i RouteAwakeSourceMinutesRow
+		if err := rows.Scan(&i.Minute, &i.Source, &i.Events); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

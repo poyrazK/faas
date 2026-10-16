@@ -2,7 +2,7 @@
 
 package state_test
 
-// adr: 1198
+// adr: 1198, 1199
 
 import (
 	"testing"
@@ -106,6 +106,15 @@ func TestRouteInsightsLifecyclePG(t *testing.T) {
 		bad.AccountID, bad.AppID, bad.Message, bad.Evidence, bad.ObservedAt = accountID, appID, "m", []byte(`{}`), at(0)
 		if err := s.UpsertRouteInsight(t.Context(), bad); err == nil {
 			t.Fatalf("%+v must violate a CHECK", bad)
+		}
+	}
+	// Cache rule checks (ADR-1199) are insight kinds too.
+	for _, kind := range []string{"cache_stale", "cache_too_short"} {
+		if err := s.UpsertRouteInsight(t.Context(), sqlc.UpsertRouteInsightParams{
+			AccountID: accountID, AppID: appID, Kind: kind, Method: "GET", Route: "/prices",
+			Message: "m", Evidence: []byte(`{"refills":50}`), ObservedAt: at(0),
+		}); err != nil {
+			t.Fatalf("%s: %v", kind, err)
 		}
 	}
 

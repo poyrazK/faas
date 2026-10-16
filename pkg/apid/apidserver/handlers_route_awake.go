@@ -37,7 +37,7 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("route awake report"))
 		return
 	}
-	awake, routes, err := routeawake.Load(r.Context(), store, acct.ID, app.ID, window.From, window.Until)
+	data, err := routeawake.Load(r.Context(), store, acct.ID, app.ID, window.From, window.Until)
 	if err != nil {
 		s.log.Warn("route awake read failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("route awake report"))
@@ -46,9 +46,9 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 	out := routeawake.Analyze(routeawake.Inputs{
 		App: app.Slug, From: window.From, Until: window.Until,
 		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), RAMMB: app.RAMMB,
-		Awake: awake, Routes: routes,
+		Awake: data.Awake, Routes: data.Routes, Sources: data.Sources,
 	})
-	out.Slug, out.WindowClamped = app.Slug, window.WindowClamped
+	out.Slug, out.WindowClamped, out.MinInstances = app.Slug, window.WindowClamped, app.MinInstances
 	out.From, out.Until = window.From.Format(time.RFC3339Nano), window.Until.Format(time.RFC3339Nano)
 	writeJSON(w, http.StatusOK, out)
 }

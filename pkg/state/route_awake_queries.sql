@@ -54,3 +54,30 @@ FROM filtered f
 LEFT JOIN top_routes t ON t.route = f.route AND t.method = f.method
 GROUP BY f.minute, COALESCE(t.route, ''), COALESCE(t.method, '')
 ORDER BY f.minute, COALESCE(t.route, ''), COALESCE(t.method, '');
+
+-- name: RouteAwakeSourceMinutes :many
+-- Wakes and keep-alives that are not customer requests (ADR-1199), per minute
+-- and source: synthetic route probes the app answered without a 5xx or an
+-- auth rejection (ADR-847; probe observations are pruned after a day), and
+-- scheduled prewarms that admitted instances.
+SELECT s.minute::timestamptz AS minute, s.source::text AS source, SUM(s.events)::bigint AS events
+FROM (
+    SELECT date_trunc('minute', o.window_start) AS minute, 'route_probe' AS source,
+           (o.requests - o.server_errors - o.unauthenticated)::bigint AS events
+    FROM route_probe_observations o
+    WHERE o.app_id = sqlc.arg(app_id)
+      AND o.account_id = sqlc.arg(account_id)
+      AND o.window_start >= sqlc.arg(since_at)
+      AND o.window_start < sqlc.arg(until_at)
+    UNION ALL
+    SELECT date_trunc('minute', p.fired_at) AS minute, 'prewarm' AS source, p.admitted_count::bigint AS events
+    FROM prewarm_intents p
+    WHERE p.app_id = sqlc.arg(app_id)
+      AND p.account_id = sqlc.arg(account_id)
+      AND p.fired_at >= sqlc.arg(since_at)
+      AND p.fired_at < sqlc.arg(until_at)
+      AND p.admitted_count > 0
+) s
+WHERE s.events > 0
+GROUP BY s.minute, s.source
+ORDER BY s.minute, s.source;

@@ -8,7 +8,9 @@
 -- that is not first in its window is a wake the cache would have avoided.
 -- The content_* counts are learned cacheability (ADR-1188): how observed
 -- anonymous GET bodies compared with the previous response for their URL,
--- bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s).
+-- bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s). content_stale
+-- counts refills under a cache rule whose body changed within the rule's
+-- max-age (ADR-1199).
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.status, rt.latency_ms, rt.cold_boot, rt.guest_outcome,
            rt.content_outcome, rt.count::bigint AS requests, rt.received_at,
@@ -35,7 +37,8 @@ WITH filtered AS MATERIALIZED (
            COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'same_3600'), 0)::bigint AS content_same_3600,
            COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_60'), 0)::bigint AS content_changed_60,
            COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_300'), 0)::bigint AS content_changed_300,
-           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_3600'), 0)::bigint AS content_changed_3600
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'changed_3600'), 0)::bigint AS content_changed_3600,
+           COALESCE(SUM(requests) FILTER (WHERE content_outcome = 'stale'), 0)::bigint AS content_stale
     FROM filtered GROUP BY route, method
 ), top_routes AS (
     SELECT * FROM totals
@@ -59,7 +62,7 @@ SELECT t.route, t.method, t.requests, t.anonymous_requests, t.anonymous_success,
        t.server_errors, t.timeouts, t.cold_boots, t.p95_latency_ms,
        t.content_first, t.content_uncacheable,
        t.content_same_60, t.content_same_300, t.content_same_3600,
-       t.content_changed_60, t.content_changed_300, t.content_changed_3600,
+       t.content_changed_60, t.content_changed_300, t.content_changed_3600, t.content_stale,
        COALESCE(c.cache_hits, 0)::bigint AS cache_hits,
        COALESCE(c.wakes_avoided, 0)::bigint AS wakes_avoided
 FROM top_routes t LEFT JOIN cache_estimate c USING (route, method)

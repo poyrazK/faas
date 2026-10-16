@@ -12,7 +12,8 @@ T = TypeVar("T", bound="RouteInsightEvidence")
 @_attrs_define
 class RouteInsightEvidence:
     """Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and repeat
-    counts for cacheable.
+    counts for cacheable; the rule's max-age, refills, stale refills and measured safe max-age for cache_stale and
+    cache_too_short.
 
     """
 

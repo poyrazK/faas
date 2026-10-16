@@ -1,8 +1,10 @@
 from typing import Literal
 
-RouteInsightKind = Literal["cacheable", "kept_awake"]
+RouteInsightKind = Literal["cache_stale", "cache_too_short", "cacheable", "kept_awake"]
 
 ROUTE_INSIGHT_KIND_VALUES: set[RouteInsightKind] = {
+    "cache_stale",
+    "cache_too_short",
     "cacheable",
     "kept_awake",
 }

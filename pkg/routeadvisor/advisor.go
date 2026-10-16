@@ -49,11 +49,15 @@ type ConsumerStats struct {
 }
 
 // ExistingRule is an app edge rule, enabled or not, used to avoid suggesting
-// a rule the customer already has or has already applied for review.
+// a rule the customer already has or has already applied for review. Enabled,
+// Priority and MaxAgeSeconds let cache rules be checked (ADR-1199).
 type ExistingRule struct {
-	Kind    string
-	Path    string
-	Methods []string
+	Kind          string
+	Path          string
+	Methods       []string
+	Enabled       bool
+	Priority      int
+	MaxAgeSeconds int
 }
 
 // Key identifies a route by method and path.
@@ -329,22 +333,27 @@ func PathGlob(route string) (string, bool) {
 // covered reports whether an existing rule of the kind already matches the
 // route, using a sample path with every parameter filled in.
 func covered(rules []ExistingRule, kind, method, route string) bool {
+	sample := samplePath(route)
+	return slices.ContainsFunc(rules, func(rule ExistingRule) bool { return matches(rule, kind, method, sample) })
+}
+
+// samplePath fills every parameter of a route template with "x".
+func samplePath(route string) string {
 	parts := strings.Split(route, "/")
 	for i, p := range parts {
 		if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
 			parts[i] = "x"
 		}
 	}
-	sample := strings.Join(parts, "/")
-	for _, rule := range rules {
-		if rule.Kind != kind || len(rule.Methods) > 0 && !slices.Contains(rule.Methods, method) {
-			continue
-		}
-		if ok, err := api.MatchEdgeRulePath(rule.Path, sample); err == nil && ok {
-			return true
-		}
+	return strings.Join(parts, "/")
+}
+
+func matches(rule ExistingRule, kind, method, sample string) bool {
+	if rule.Kind != kind || len(rule.Methods) > 0 && !slices.Contains(rule.Methods, method) {
+		return false
 	}
-	return false
+	ok, err := api.MatchEdgeRulePath(rule.Path, sample)
+	return err == nil && ok
 }
 
 func share(part, total int64) float64 {

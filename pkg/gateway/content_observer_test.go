@@ -1,6 +1,6 @@
 package gateway
 
-// adr: 1188
+// adr: 1188, 1199
 
 import (
 	"net/http"
@@ -159,7 +159,7 @@ func TestCollapseKeepsContentOutcomesApart(t *testing.T) {
 
 func TestContentOutcomesVocabulary(t *testing.T) {
 	outcomes := api.ContentOutcomes()
-	if len(outcomes) != 10 || !api.ValidContentOutcome("") || !api.ValidContentOutcome("same_3600") || api.ValidContentOutcome("same_7") {
+	if len(outcomes) != 11 || !api.ValidContentOutcome("") || !api.ValidContentOutcome("same_3600") || !api.ValidContentOutcome(api.ContentOutcomeStale) || api.ValidContentOutcome("same_7") {
 		t.Fatalf("outcomes = %v", outcomes)
 	}
 }
@@ -201,6 +201,81 @@ func TestServeHTTPRecordsContentOutcomes(t *testing.T) {
 		outcomes = append(outcomes, row.ContentOutcome)
 	}
 	want := []string{api.ContentOutcomeFirst, "same_60", "changed_60", ""}
+	if strings.Join(outcomes, ",") != strings.Join(want, ",") {
+		t.Fatalf("outcomes = %q, want %q", outcomes, want)
+	}
+}
+
+// TestContentObserverRefills classifies the bodies a 60s cache rule stores
+// (ADR-1199): unchanged refills report how long the body has stayed the same,
+// a change found within the max-age plus lag is stale, a later one is an
+// ordinary change.
+func TestContentObserverRefills(t *testing.T) {
+	o := newContentObserver(10)
+	t0 := time.Unix(1_800_000_000, 0)
+	maxAge := time.Minute
+	steps := []struct {
+		sum  uint64
+		at   time.Duration
+		want string
+	}{
+		{1, 0, api.ContentOutcomeFirst},
+		{1, 61 * time.Second, "same_300"},
+		{1, 122 * time.Second, "same_300"},
+		{1, 6 * time.Minute, "same_3600"}, // unchanged for six minutes across refills
+		{2, 6*time.Minute + 65*time.Second, api.ContentOutcomeStale},
+		{3, 6*time.Minute + 65*time.Second + 2*time.Minute, "changed_300"}, // too late to blame the rule
+		{3, 6*time.Minute + 65*time.Second + 2*time.Minute + 50*time.Second, "same_60"},
+	}
+	for i, step := range steps {
+		if got := o.observeRefill("k", step.sum, t0.Add(step.at), maxAge); got != step.want {
+			t.Fatalf("step %d: outcome %q, want %q", i, got, step.want)
+		}
+	}
+	if !api.ContentRefillStale(66*time.Second, time.Minute) || api.ContentRefillStale(67*time.Second, time.Minute) ||
+		!api.ContentRefillStale(3960*time.Second, time.Hour) || api.ContentRefillStale(time.Second, 0) {
+		t.Fatal("stale lag is max(10% of max-age, 5s)")
+	}
+}
+
+// TestServeHTTPRecordsCacheRuleRefills drives a cached route through the real
+// handler: hits record nothing, and each miss that stores a body records how
+// it compared with the previous one.
+func TestServeHTTPRecordsCacheRuleRefills(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	version := "v1"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("catalog " + version))
+	}))
+	t.Cleanup(upstream.Close)
+	backend := &fakeBackend{app: App{ID: appID, AccountID: accountID, Plan: api.PlanPro},
+		host: "shop.example", upstream: upstream.Listener.Addr().String()}
+	backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString(), DeploymentID: uuid.NewString()})
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	h.requestTelemetry = makeTestRecorder()
+	cache := NewResponseCache()
+	h.WithResponseCache(cache)
+	seedCacheRule(t, h, "shop.example", EdgeRuleCacheResolved{ID: "rule", PathGlob: "/catalog", MaxAgeSeconds: 60})
+	get := func() {
+		t.Helper()
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://shop.example/catalog", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+	}
+	get()
+	get() // a hit never reaches the app
+	cache.InvalidateAll()
+	get()
+	version = "v2"
+	cache.InvalidateAll()
+	get()
+	var outcomes []string
+	for _, row := range h.requestTelemetry.DrainBatch(16) {
+		outcomes = append(outcomes, row.ContentOutcome)
+	}
+	want := []string{api.ContentOutcomeFirst, "", "same_60", api.ContentOutcomeStale}
 	if strings.Join(outcomes, ",") != strings.Join(want, ",") {
 		t.Fatalf("outcomes = %q, want %q", outcomes, want)
 	}

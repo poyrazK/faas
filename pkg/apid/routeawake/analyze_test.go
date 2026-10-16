@@ -1,6 +1,6 @@
 package routeawake_test
 
-// adr: 1187
+// adr: 1187, 1199
 
 import (
 	"testing"
@@ -160,5 +160,44 @@ func TestMinutesOutsideTheWindowAreIgnored(t *testing.T) {
 	out := routeawake.Analyze(in)
 	if out.AwakeSeconds != 600 || out.Wakes != 0 || len(out.Routes) != 1 {
 		t.Fatalf("out = %+v", out)
+	}
+}
+
+// TestProbesAndPrewarmExplainAwakeTime credits minutes no request explains to
+// the probe or prewarm that kept the app awake (ADR-1199), and a route's
+// what-if keeps the minutes a prewarm would have covered anyway.
+func TestProbesAndPrewarmExplainAwakeTime(t *testing.T) {
+	s := newScenario(60).awakeRange(0, 60)
+	for m := 30; m < 60; m++ {
+		s.call("GET", "/health", m, 1, 1)
+	}
+	in := s.inputs()
+	in.Sources = []routeawake.SourceMinute{{At: at(0), Source: api.RouteAwakeSourcePrewarm, Events: 1}}
+	for m := 10; m < 20; m++ {
+		in.Sources = append(in.Sources, routeawake.SourceMinute{At: at(m), Source: api.RouteAwakeSourceRouteProbe, Events: 10})
+	}
+	out := routeawake.Analyze(in)
+	if len(out.Sources) != 2 {
+		t.Fatalf("sources = %+v", out.Sources)
+	}
+	probe, prewarm := out.Sources[0], out.Sources[1]
+	// Probes at 10..19 keep the app awake through minute 21; the prewarm at 0
+	// through minute 2. Minutes 3..9 and 22..29 stay unexplained.
+	if probe.Source != api.RouteAwakeSourceRouteProbe || probe.Events != 100 || probe.AwakeSeconds != 12*60 ||
+		prewarm.Source != api.RouteAwakeSourcePrewarm || prewarm.Events != 1 || prewarm.AwakeSeconds != 3*60 {
+		t.Fatalf("sources = %+v", out.Sources)
+	}
+	if out.UnattributedSeconds != 15*60 || find(t, out, "GET", "/health").AwakeSeconds != 30*60 {
+		t.Fatalf("unattributed = %d routes = %+v", out.UnattributedSeconds, out.Routes)
+	}
+
+	s = newScenario(12).awakeRange(0, 12)
+	for m := 0; m < 10; m++ {
+		s.call("GET", "/feed", m, 1, 0)
+	}
+	in = s.inputs()
+	in.Sources = []routeawake.SourceMinute{{At: at(5), Source: api.RouteAwakeSourcePrewarm, Events: 1}}
+	if saved := find(t, routeawake.Analyze(in), "GET", "/feed").IfRemoved.AwakeSecondsSaved; saved != 9*60 {
+		t.Fatalf("the prewarm keeps minutes 5..7 awake without the route: saved %d", saved)
 	}
 }

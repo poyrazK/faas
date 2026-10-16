@@ -2,10 +2,13 @@ package api
 
 import "encoding/json"
 
-// Route insight kinds and states (ADR-1198).
+// Route insight kinds and states (ADR-1198). The cache_* kinds check existing
+// cache rules from refill evidence (ADR-1199).
 const (
-	RouteInsightKeptAwake = "kept_awake"
-	RouteInsightCacheable = "cacheable"
+	RouteInsightKeptAwake     = "kept_awake"
+	RouteInsightCacheable     = "cacheable"
+	RouteInsightCacheStale    = "cache_stale"
+	RouteInsightCacheTooShort = "cache_too_short"
 
 	RouteInsightActive   = "active"
 	RouteInsightResolved = "resolved"

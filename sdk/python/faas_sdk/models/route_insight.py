@@ -31,7 +31,8 @@ class RouteInsight:
     """What was observed and what to change."""
     evidence: RouteInsightEvidence
     """Measured figures behind the insight: awake share, interval and savings for kept_awake; safe max-age and
-    repeat counts for cacheable."""
+    repeat counts for cacheable; the rule's max-age, refills, stale refills and measured safe max-age for
+    cache_stale and cache_too_short."""
     first_detected_at: datetime.datetime
     last_detected_at: datetime.datetime
     resolved_at: datetime.datetime | Unset = UNSET
