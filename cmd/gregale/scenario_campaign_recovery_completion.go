@@ -27,6 +27,9 @@ type testCampaignRecoveryCompletionBatch struct {
 	Blockers                 []string                       `json:"blockers"`
 }
 type testCampaignRecoveryCompletion struct {
+	FaultResourcesVerified   bool                                  `json:"fault_resources_verified"`
+	FaultResourcesAbsent     bool                                  `json:"fault_resources_absent"`
+	FaultResources           []testCampaignFaultObservation        `json:"fault_resources,omitempty"`
 	SchemaVersion            int                                   `json:"schema_version"`
 	ReadOnly                 bool                                  `json:"read_only"`
 	ObservedAt               time.Time                             `json:"observed_at"`
@@ -357,6 +360,8 @@ func invalidateTestCampaignRecoveryCompletion(report *testCampaignRecoveryComple
 		return
 	}
 	report.SnapshotStable = false
+	report.FaultResourcesAbsent = false
+	report.FaultResourcesVerified = false
 	report.RecoveryComplete = false
 	report.KnownSessionsAbsent = false
 	for i := range report.Batches {

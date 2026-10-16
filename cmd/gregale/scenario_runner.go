@@ -997,7 +997,7 @@ func configureTestWorkloadAccess(ctx context.Context, client testAccessClient, s
 	return err
 }
 
-func provisionTestConsumers(ctx context.Context, client testConsumerClient, appSlug string, specs []testConsumer, runID string, timeout time.Duration) ([]string, []string, error) {
+func provisionTestConsumers(ctx context.Context, client testConsumerClient, appSlug string, specs []testConsumer, runID string, timeout time.Duration, journals ...*testCampaignJournalWriter) ([]string, []string, error) {
 	if len(specs) == 0 {
 		return nil, nil, nil
 	}
@@ -1005,6 +1005,18 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 	env := make([]string, 0, 2*len(specs))
 	ids := make([]string, 0, len(specs))
 	for _, spec := range specs {
+		var journal *testCampaignJournalWriter
+		if len(journals) > 0 {
+			journal = journals[0]
+		}
+		record := testCampaignFaultConsumer{AppSlug: appSlug, ExternalRef: "gregale-test-" + runID + "-" + spec.Name, ExpiresAt: expiresAt}
+		if journal != nil {
+			record.AppID = journal.journal.Workloads[journal.primaryProject].AppID
+			if err := journal.consumer(spec.Name, record); err != nil {
+				return env, ids, err
+			}
+		}
+
 		consumer, err := client.CreateAPIConsumer(ctx, appSlug, api.CreateAPIConsumerRequest{
 			ExternalRef: "gregale-test-" + runID + "-" + spec.Name,
 			Name:        "Scenario " + spec.Name,
@@ -1013,6 +1025,13 @@ func provisionTestConsumers(ctx context.Context, client testConsumerClient, appS
 			return env, ids, fmt.Errorf("consumer %s: %w", spec.Name, err)
 		}
 		ids = append(ids, consumer.ID)
+		record.ID = consumer.ID
+		if journal != nil && consumer.AppID != record.AppID {
+			return env, ids, errors.New("consumer app identity differs from journal")
+		}
+		if err := journal.consumer(spec.Name, record); err != nil {
+			return env, ids, err
+		}
 		scopes := spec.Scopes
 		if len(scopes) == 0 {
 			scopes = []string{"read", "write"}
@@ -1173,6 +1192,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		if registered && allDestroyed {
 			if err := client.DeleteScenarioTest(cleanupCtx, receipt.RunID); err != nil {
 				receipt.addCleanupError(fmt.Sprintf("release test service namespace: %v", err))
+			} else if err := journal.registration("deleted"); err != nil {
+				receipt.addCleanupError("persist namespace deletion: " + err.Error())
 			}
 		}
 	}()
@@ -1251,11 +1272,19 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	for _, workload := range workloads {
 		members = append(members, api.ScenarioTestWorkload{Workload: workload.name, AppSlug: workload.session.App.Slug})
 	}
+	if err := journal.registration("registering"); err != nil {
+		receipt.Error = "persist registration intent: " + err.Error()
+		return
+	}
 	if err := client.RegisterScenarioTest(ctx, receipt.RunID, api.RegisterScenarioTestRequest{Members: members}); err != nil {
 		receipt.Error = fmt.Sprintf("register isolated service namespace: %v", err)
 		return
 	}
 	registered = true
+	if err := journal.registration("registered"); err != nil {
+		receipt.Error = "persist registration identity: " + err.Error()
+		return
+	}
 	for _, workload := range workloads {
 		tcpSpec := scenario.Services[workload.name]
 		if workload.name == scenario.Project {
@@ -1387,7 +1416,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			}
 		}
 	}
-	consumerEnv, createdIDs, err := provisionTestConsumers(ctx, client, session.App.Slug, scenario.Consumers, receipt.RunID, timeout)
+	consumerEnv, createdIDs, err := provisionTestConsumers(ctx, client, session.App.Slug, scenario.Consumers, receipt.RunID, timeout, journal)
 	for _, entry := range consumerEnv {
 		if _, value, ok := strings.Cut(entry, "="); ok {
 			diagnosticSecrets = append(diagnosticSecrets, value)

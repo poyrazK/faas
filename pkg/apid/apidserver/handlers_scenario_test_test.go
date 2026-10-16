@@ -41,6 +41,11 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 	if good.Code != http.StatusNoContent {
 		t.Fatalf("register: %d %s", good.Code, good.Body.String())
 	}
+	registration := e.Do(t, "GET", path, nil, nil)
+	var inventory api.ScenarioTestRegistration
+	if registration.Code != 200 || json.Unmarshal(registration.Body.Bytes(), &inventory) != nil || inventory.SchemaVersion != 1 || inventory.Members["api"] != apiSession.App.ID {
+		t.Fatalf("registration inventory: %d %s", registration.Code, registration.Body.String())
+	}
 	chaosPath := path + "/chaos"
 	installed := e.Do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{
 		DurationMS: 30_000,
@@ -105,7 +110,10 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 			t.Fatalf("destroy %s: %d %s", project, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := e.Do(t, "DELETE", path, nil, nil); rec.Code != http.StatusNoContent {
+	if rec := e.Do(t, "DELETE", path+"/registration?members_sha256="+api.ScenarioTestRegistrationSHA256(map[string]string{"api": "replacement"}), nil, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("changed registration deleted: %d", rec.Code)
+	}
+	if rec := e.Do(t, "DELETE", path+"/registration?members_sha256="+api.ScenarioTestRegistrationSHA256(inventory.Members), nil, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("cleanup: %d %s", rec.Code, rec.Body.String())
 	}
 }

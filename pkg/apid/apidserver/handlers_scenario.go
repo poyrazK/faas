@@ -1,8 +1,10 @@
 package apidserver
 
 import (
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
@@ -58,7 +60,25 @@ func (s *server) deleteScenarioTest(w http.ResponseWriter, r *http.Request, acct
 		s.notFound(w, "no such test environment")
 		return
 	}
-	if err := s.store.DeleteScenarioTestMembers(r.Context(), acct.ID, runID); err != nil {
+	if strings.HasSuffix(r.URL.Path, "/registration") && !r.URL.Query().Has("members_sha256") {
+		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Missing precondition", "membership digest required"))
+		return
+	}
+	expected := []string{}
+	if values, ok := r.URL.Query()["members_sha256"]; ok {
+		if len(values) != 1 {
+			api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid precondition", "one digest required"))
+			return
+		}
+		digest := values[0]
+		decoded, err := hex.DecodeString(digest)
+		if err != nil || len(decoded) != 32 || hex.EncodeToString(decoded) != digest {
+			api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid precondition", "canonical SHA-256 required"))
+			return
+		}
+		expected = append(expected, digest)
+	}
+	if err := s.store.DeleteScenarioTestMembers(r.Context(), acct.ID, runID, expected...); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Test environment is active", "destroy its developer sessions before deleting the environment"))
 			return
@@ -151,4 +171,22 @@ func (s *server) clearScenarioTestChaos(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) getScenarioTestRegistration(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	runID := r.PathValue("run_id")
+	if !validDevWorkspaceID(runID) || runID == "" {
+		s.notFound(w, "no such test environment")
+		return
+	}
+	members, err := s.store.ScenarioTestRegistration(r.Context(), acct.ID, runID)
+	if errors.Is(err, state.ErrNotFound) {
+		writeJSON(w, http.StatusOK, api.ScenarioTestRegistration{SchemaVersion: 1, Members: map[string]string{}})
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("read test registration"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ScenarioTestRegistration{SchemaVersion: 1, Members: members})
 }

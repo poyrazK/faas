@@ -58,3 +58,37 @@ func TestPgStoreScenarioTestMembers(t *testing.T) {
 		t.Fatalf("prune finished run = (%d, %v)", removed, err)
 	}
 }
+
+func TestPgStoreScenarioConditionalCleanup(t *testing.T) {
+	// adr: 984 — the database compares membership and deletes under the same run lock.
+	store, ctx := pgStore(t)
+	account, err := store.CreateAccount(ctx, "scenario-conditional-pg@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(time.Hour)
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "conditional-preview", RAMMB: 128, Status: state.AppActive, PreviewOfSlug: "conditional", PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := store.RegisterScenarioTestMembers(ctx, account.ID, runID, []state.ScenarioTestMember{{Workload: "checkout", AppID: app.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteScenarioTestMembers(ctx, account.ID, runID, api.ScenarioTestRegistrationSHA256(map[string]string{"checkout": "replacement"})); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("replacement membership: %v", err)
+	}
+	members, err := store.ScenarioTestRegistration(ctx, account.ID, runID)
+	if err != nil || members["checkout"] != app.ID {
+		t.Fatal("membership lost", members, err)
+	}
+	if err := store.DeleteScenarioTestMembers(ctx, account.ID, runID, api.ScenarioTestRegistrationSHA256(members)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ScenarioTestRegistration(ctx, account.ID, runID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("registration remains: %v", err)
+	}
+}

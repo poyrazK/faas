@@ -26,14 +26,16 @@ type testCampaignJournalWorkload struct {
 	State   string `json:"state"`
 }
 type testCampaignRunJournal struct {
+	Faults    *testCampaignFaultJournal              `json:"faults,omitempty"`
 	Binding   testCampaignJournalBinding             `json:"binding"`
 	RunID     string                                 `json:"run_id"`
 	UpdatedAt time.Time                              `json:"updated_at"`
 	Workloads map[string]testCampaignJournalWorkload `json:"workloads"`
 }
 type testCampaignJournalWriter struct {
-	directory string
-	journal   testCampaignRunJournal
+	directory      string
+	primaryProject string
+	journal        testCampaignRunJournal
 }
 
 func testCampaignJournalDirectory(directory, batch string) string {
@@ -87,7 +89,8 @@ func newTestCampaignRunJournal(directory, name, profile, runID string, scenario 
 	if binding.SchemaVersion != 1 || binding.Scenario != name || binding.Profile != profile {
 		return nil, errors.New("native run differs from journal binding")
 	}
-	writer := &testCampaignJournalWriter{directory: directory, journal: testCampaignRunJournal{
+	writer := &testCampaignJournalWriter{directory: directory, primaryProject: scenario.Project, journal: testCampaignRunJournal{
+		Faults:  &testCampaignFaultJournal{Registration: "pending", Consumers: map[string]testCampaignFaultConsumer{}},
 		Binding: binding, RunID: runID, Workloads: map[string]testCampaignJournalWorkload{}}}
 	writer.journal.Workloads[scenario.Project] = testCampaignJournalWorkload{Project: scenario.Project, State: "pending"}
 	for name := range scenario.Services {
@@ -199,6 +202,11 @@ func readTestCampaignJournalTargets(directory string, planHash string, cp testCa
 		if err != nil || len(id) != 16 || hex.EncodeToString(id) != journal.RunID || entry.Name() != journal.RunID+".json" ||
 			journal.Binding != expected || journal.UpdatedAt.IsZero() {
 			return nil, "", errors.New("invalid run journal identity")
+		}
+		if journal.Faults != nil {
+			if err := validateTestCampaignFaultJournal(journal, scenario); err != nil {
+				return nil, "", err
+			}
 		}
 		projects := map[string]string{scenario.Project: scenario.Project}
 		for name := range scenario.Services {

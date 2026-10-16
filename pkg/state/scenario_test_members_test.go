@@ -81,3 +81,26 @@ func TestScenarioTestMembersFenceAndCleanup(t *testing.T) {
 		t.Fatalf("prune deleted run = (%d, %v)", removed, err)
 	}
 }
+
+func TestScenarioTestConditionalCleanupRejectsChangedMembership(t *testing.T) {
+	// adr: 984 — recovered cleanup cannot delete a replacement namespace.
+	ctx := context.Background()
+	store := NewMemStore()
+	store.apps["owned"] = App{ID: "owned", Status: AppDeleted}
+	store.scenarioTestMembers = map[string]ScenarioTestMember{"owned": {AccountID: "account", RunID: "run", Workload: "checkout", AppID: "owned"}}
+	digest := api.ScenarioTestRegistrationSHA256(map[string]string{"checkout": "original"})
+	if err := store.DeleteScenarioTestMembers(ctx, "account", "run", digest); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed membership: %v", err)
+	}
+	current, err := store.ScenarioTestRegistration(ctx, "account", "run")
+	if err != nil || current["checkout"] != "owned" {
+		t.Fatal("changed namespace lost", err)
+	}
+	digest = api.ScenarioTestRegistrationSHA256(current)
+	if err := store.DeleteScenarioTestMembers(ctx, "account", "run", digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteScenarioTestMembers(ctx, "account", "run", digest); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("repeat cleanup: %v", err)
+	}
+}

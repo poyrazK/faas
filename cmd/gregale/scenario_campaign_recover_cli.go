@@ -13,6 +13,7 @@ import (
 
 func cmdTestCampaignRecover(args []string) int {
 	fs := newFlagSet("test policy recover", flag.ContinueOnError)
+	verifyFaults := fs.Bool("verify-faults", false, "also verify journaled consumers and scenario registration absence; requires --verify-completion")
 	verify := fs.Bool("verify-completion", false, "verify cleanup provenance and current recovery completion; requires --check-cleanup")
 	var explicitObservations testCampaignCleanupObservationPaths
 	fs.Var(&explicitObservations, "cleanup-observation", "additional cleanup observation path (repeatable; verification only)")
@@ -34,7 +35,7 @@ func cmdTestCampaignRecover(args []string) int {
 		}
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || !*inspect || *planPath == "" || *policyPath == "" || *directory == "" || (*verify && !*live) || (!*verify && len(explicitObservations) > 0) {
+	if (*verifyFaults && !*verify) || rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || !*inspect || *planPath == "" || *policyPath == "" || *directory == "" || (*verify && !*live) || (!*verify && len(explicitObservations) > 0) {
 		return printErr("Invalid recovery assessment options", errors.New("--inspect, --plan, --policy and --directory are required; --verify-completion requires --check-cleanup; observation paths require verification"))
 	}
 	resolver, err := loadTestCampaignBundleResolver(*handoff)
@@ -218,6 +219,9 @@ func cmdTestCampaignRecover(args []string) int {
 	}
 	if *verify {
 		completion := buildTestCampaignRecoveryCompletion(ctx, result, plan, cp, manifest.Scenarios, *directory, stamp, observationPaths, reader, resolver)
+		if *verifyFaults {
+			applyTestCampaignFaultCompletion(ctx, &completion, reader, plan, cp, manifest.Scenarios, *directory, len(result.Status.Lineage) > 0)
+		}
 		result.Completion = &completion
 	}
 	fresh, stampErr := testCampaignRecoveryAssessmentStamp(plan, o, resolver, observationPaths...)

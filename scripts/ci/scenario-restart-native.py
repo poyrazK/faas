@@ -104,6 +104,9 @@ def runner_configuration():
     api = API(os.environ["FAAS_API"], os.environ["FAAS_TOKEN"])
     status, who = api.get("/v1/account")
     require(status == 200 and isinstance(who, dict) and who.get("id") == account, "token does not identify the configured dedicated acceptance account")
+    status, registration = api.get("/v1/dev/test-runs/" + uuid.uuid4().hex)
+    require(status == 200 and isinstance(registration, dict) and registration.get("schema_version") == 1
+            and registration.get("members") == {}, "native recovery requires the versioned registration API before provisioning")
     return api, {"installed_platform_sha": installed, "account_id": account, "api_origin": os.environ["FAAS_API"], "native_runner": True}
 
 
@@ -1323,7 +1326,7 @@ def main():
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
     args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
-    summary = {"version": 21, "status": "failed", "runs": {}}
+    summary = {"version": 22, "status": "failed", "runs": {}}
     try:
         try:
             api, provenance = runner_configuration()

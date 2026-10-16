@@ -15,10 +15,12 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "./cmd/gregale"
 FILTER = (
-    "^(TestCampaign(Runner|Recovery|Bundle|Journal|Cancellation|Cleanup|Status)"
+    "^(TestCampaign(Runner|Recovery|Bundle|Journal|Fault|Cancellation|Cleanup|Status)"
     "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
+    "TestCampaignFaultCleanupIdentityAndRevocation",
+    "TestCampaignFaultCompletionDoesNotForgeExecution",
     "TestCampaignRecoveryAcceptanceCrashHandoffCleanupAndReconciliation",
     "TestCampaignRecoveryAcceptanceBlockingFailures",
     "TestCampaignRecoveryAcceptanceCompletedEvidenceCanPass",
@@ -32,6 +34,7 @@ REQUIRED = {
     "TestCampaignRecoveryProcessReapedDuringStatRead",
 }
 GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
+STATE_GCFLAGS = "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false"
 
 
 def test_events(path):
@@ -142,6 +145,16 @@ def main():
             toolchain["passed"] = False
             toolchain["error"] = "requires pinned toolchain %s, native GOOS/GOARCH and CGO_ENABLED=1 for race checks" % pinned
             return 1
+        registration_contracts = run("registration-contracts", [go, "test", "-p=1",
+            STATE_GCFLAGS, "-count=1",
+            "-run", "^(TestScenarioRegistration|TestScenarioTest(Members|Conditional))", "./pkg/api", "./pkg/state"])
+        if not registration_contracts["passed"]:
+            return 1
+        registration_api = run("registration-api", [go, "test", "-p=1", STATE_GCFLAGS,
+            "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-c=1 -dwarf=false", "-count=1",
+            "-run", "^TestScenarioTestRegistrationRequiresSameRunAndCleanup$", "./pkg/apid/apidserver"])
+        if not registration_api["passed"]:
+            return 1
         files = sorted(str(path.relative_to(ROOT)) for path in (ROOT / "cmd" / "gregale").glob("*.go"))
         gofmt = str(Path(metadata["GOROOT"]) / "bin" / ("gofmt.exe" if os.name == "nt" else "gofmt"))
         if args.format:
@@ -160,7 +173,7 @@ def main():
         # Keep compilation/test evidence even if formatting failed.
         with tempfile.TemporaryDirectory(prefix="gregale-recovery-build-") as temporary:
             binary = Path(temporary) / ("gregale.test.exe" if os.name == "nt" else "gregale.test")
-            compile_stage = run("compile", [go, "test", "-p=1", GCFLAGS, "-c", "-o", str(binary), PACKAGE])
+            compile_stage = run("compile", [go, "test", "-p=1", STATE_GCFLAGS, GCFLAGS, "-c", "-o", str(binary), PACKAGE])
             if not compile_stage["passed"]:
                 return 1
             discovery = run("discovery", [str(binary), "-test.list=" + FILTER], timeout=60)
@@ -172,7 +185,7 @@ def main():
                 return 1
             for name, extra, test_timeout, wall_timeout in (
                 ("tests", [], "10m", 900), ("race", ["-race"], "15m", 1200)):
-                stage = run(name, [go, "test", "-p=1", GCFLAGS] + extra +
+                stage = run(name, [go, "test", "-p=1", STATE_GCFLAGS, GCFLAGS] + extra +
                             ["-json", "-count=1", "-timeout=" + test_timeout, "-run", FILTER, PACKAGE],
                             timeout=wall_timeout, stdout=name + ".json")
                 details = test_events(output / (name + ".json"))

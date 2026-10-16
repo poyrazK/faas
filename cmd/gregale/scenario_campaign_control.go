@@ -155,6 +155,7 @@ func cmdTestCampaignControl(mode string, args []string) int {
 	directory := fs.String("directory", "", "private campaign directory")
 	handoff := fs.String("handoff", "", "active portable import index")
 	execute := fs.Bool("execute", false, "retry verified workload session deletion (cleanup only)")
+	faultMode := fs.Bool("faults", false, "also revoke journaled consumers and conditionally remove fault registrations; requires --journal")
 	journalMode := fs.Bool("journal", false, "inspect or clean saved run identities when no finalized report exists")
 	batchID := fs.String("batch", "", "single recorded batch to inspect or clean")
 	if err := fs.Parse(args); err != nil {
@@ -163,7 +164,7 @@ func cmdTestCampaignControl(mode string, args []string) int {
 		}
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *directory == "" ||
+	if (*faultMode && (!*journalMode || mode != "cleanup")) || rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *directory == "" ||
 		(mode == "cleanup" && (*policyPath == "" || *batchID == "")) || (mode == "cancel" && (*execute || *batchID != "" || *journalMode)) {
 		return printErr("Invalid campaign control options", errors.New("--plan and --directory required; cleanup also requires --policy and --batch"))
 	}
@@ -313,6 +314,23 @@ func cmdTestCampaignControl(mode string, args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	var faultJournals []testCampaignRunJournal
+	if *faultMode {
+		faultJournals, err = readTestCampaignFaultJournals(*directory, selected.ID, scenario)
+		if err != nil {
+			return printErr("Invalid fault inventory", err)
+		}
+		observations, faultErr := inspectTestCampaignFaults(ctx, client, faultJournals, false, false)
+		if faultErr == nil && *execute {
+			observations, faultErr = inspectTestCampaignFaults(ctx, client, faultJournals, true, false)
+		}
+		if saveErr := persistTestCampaignFaultObservation(*directory, observations); saveErr != nil {
+			return printErr("Could not persist fault observations", saveErr)
+		}
+		if faultErr != nil {
+			return printErr("Fault cleanup blocked", faultErr)
+		}
+	}
 	var actions []testCampaignCleanupAction
 	var cleanupErr error
 	if *journalMode {
@@ -323,6 +341,14 @@ func cmdTestCampaignControl(mode string, args []string) int {
 	if *journalMode && *execute {
 		if err := recordTestCampaignJournalCleanup(*directory, selected.ID, actions); err != nil && cleanupErr == nil {
 			cleanupErr = errors.New("could not persist journal cleanup progress")
+		}
+	}
+	if *faultMode && cleanupErr == nil {
+		observations, faultErr := inspectTestCampaignFaults(ctx, client, faultJournals, *execute, true)
+		if saveErr := persistTestCampaignFaultObservation(*directory, observations); saveErr != nil {
+			cleanupErr = saveErr
+		} else if faultErr != nil {
+			cleanupErr = faultErr
 		}
 	}
 	// Observations are separate from immutable receipts and cannot waive their

@@ -146,10 +146,11 @@ def run(repo, out, cli, api, manifest, project, cleanup_probe):
         command("recipient-resume-blocked", ["run", *imported, "--side", side, "--revision", revision], (1,))
         require((recipient / "work/checkpoint.json").read_bytes() == imported_checkpoint, "rejected resume changed checkpoint")
         verify_uncertain(recipient / "work", batch)
-        command("cleanup", ["cleanup", *imported, "--batch", batch, "--journal", "--execute"])
-        command("completion", ["recover", *imported, "--inspect", "--verify-completion", "--check-cleanup"])
+        command("cleanup", ["cleanup", *imported, "--batch", batch, "--journal", "--faults", "--execute"])
+        command("completion", ["recover", *imported, "--inspect", "--verify-completion", "--verify-faults", "--check-cleanup"])
         completion = read(out / "completion.json")["completion"]
         require(completion["known_sessions_absent"] and completion["resource_evidence_complete"]
+                and completion["fault_resources_verified"] and completion["fault_resources_absent"]
                 and not completion["test_execution_complete"] and not completion["recovery_complete"],
                 "cleanup forged execution completion or retained sessions")
         receipt = {"run_id": journal["run_id"], "workload_app_ids": {k: v["app_id"] for k, v in journal["workloads"].items()}}
@@ -186,7 +187,13 @@ def run(repo, out, cli, api, manifest, project, cleanup_probe):
             try:
                 if recovery is source:
                     command("failure-recover-lock", ["recover-lock", "--plan", str(plan), "--directory", str(directory), "--execute"])
-                command("failure-cleanup", ["cleanup", *recovery, "--batch", batch, "--journal", "--execute"])
+                command("failure-cleanup", ["cleanup", *recovery, "--batch", batch, "--journal", "--faults", "--execute"])
             except (ValueError, OSError, subprocess.SubprocessError):
                 result["cleanup_pending"] = True
+                try:
+                    # A fault-API outage must not prevent scoped VM/session
+                    # cleanup. Registration/consumer uncertainty remains explicit.
+                    command("failure-session-cleanup", ["cleanup", *recovery, "--batch", batch, "--journal", "--execute"])
+                except (ValueError, OSError, subprocess.SubprocessError):
+                    result["session_cleanup_pending"] = True
         (out / "verdict.json").write_text(json.dumps(result, indent=2) + "\n")

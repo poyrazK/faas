@@ -68,7 +68,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          for evidence in self-test.stderr.log native-harness.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log summary.json; do
+          for evidence in self-test.stderr.log native-harness.stderr.log registration-contracts.log registration-contracts.stderr.log registration-api.log registration-api.stderr.log formatting.diff compile.log compile.stderr.log tests.stderr.log race.stderr.log summary.json; do
             if [[ -f "$RECOVERY_GATE_OUTPUT/$evidence" ]]; then
               echo "::group::$evidence"
               cat "$RECOVERY_GATE_OUTPUT/$evidence"

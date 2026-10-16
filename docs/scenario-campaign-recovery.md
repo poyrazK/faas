@@ -35,9 +35,11 @@ delete by app ID; the final lookup and deletion are separate requests.
 Missing/truncated evidence or missing workload identities require manual inspection.
 
 Observations are saved separately as `cleanup-<timestamp>.json`; original
-receipts and checkpoints are unchanged. This command does not rerun user fixture
-commands, revoke consumers, remove scenario registrations, erase recorded cleanup
-failures, grant coverage, or refund attempted budget. Run reconciliation with
+receipts and checkpoints are unchanged. No mode reruns user fixture commands,
+erases recorded cleanup failures, grants coverage, or refunds attempted budget.
+Consumer revocation and scenario registration deletion require the explicit
+`--journal --faults` recovery mode described in
+[coordinator recovery](gregale-test-coordinator-recovery.md). Run reconciliation with
 `--check-cleanup` afterward. Recorded fixture/consumer cleanup errors remain
 blocking even when workload sessions are absent. Cancellation is preserved by
 the halted checkpoint during portable handoff; the request file itself is local.

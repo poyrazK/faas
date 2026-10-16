@@ -1912,7 +1912,8 @@ type Store interface {
 	RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error
 	ScenarioTestChaosMatchEvidence(ctx context.Context, accountID, runID string) (chaos.MatchEvidence, error)
 	// Membership is removed only after its apps are soft-deleted.
-	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error
+	DeleteScenarioTestMembers(ctx context.Context, accountID, runID string, expected ...string) error
+	ScenarioTestRegistration(ctx context.Context, accountID, runID string) (map[string]string, error)
 	// PruneScenarioTestMembers removes abandoned namespaces only after every
 	// member app is soft-deleted by the preview janitor.
 	PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error)

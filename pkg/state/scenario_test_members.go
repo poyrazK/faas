@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
@@ -70,6 +71,9 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 		return fmt.Errorf("begin scenario test registration: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, accountID+"/"+runID); err != nil {
+		return err
+	}
 	for _, member := range members {
 		var eligible bool
 		err := tx.QueryRow(ctx, `select account_id = $2 and preview_of_slug is not null and preview_pr_number = 0
@@ -704,9 +708,20 @@ func (m *MemStore) deleteScenarioChaosMatchesLocked(accountID, runID string) {
 	}
 }
 
-func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID string) error {
+func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID string, expected ...string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(expected) > 0 {
+		members := map[string]string{}
+		for _, member := range m.scenarioTestMembers {
+			if member.AccountID == accountID && member.RunID == runID {
+				members[member.Workload] = member.AppID
+			}
+		}
+		if len(members) > 0 && (len(expected) != 1 || api.ScenarioTestRegistrationSHA256(members) != expected[0]) {
+			return ErrConflict
+		}
+	}
 	found := false
 	for _, member := range m.scenarioTestMembers {
 		if member.AccountID == accountID && member.RunID == runID {
@@ -729,37 +744,84 @@ func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID
 	return nil
 }
 
-func (s *PgStore) DeleteScenarioTestMembers(ctx context.Context, accountID, runID string) error {
-	// Check and delete in one statement snapshot. A separate active-member
-	// check followed by an unconditional DELETE could erase a member that was
-	// registered between those statements while its app was still running.
-	result, err := s.pool.Exec(ctx, `delete from scenario_test_members m
-		where m.account_id = $1 and m.run_id = $2
-		and not exists (
-			select 1 from scenario_test_members member
-			join apps a on a.id = member.app_id
-			where member.account_id = $1 and member.run_id = $2
-			and a.status <> 'deleted'
-		)`, accountID, runID)
+func (s *PgStore) DeleteScenarioTestMembers(ctx context.Context, accountID, runID string, expected ...string) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
-		var active bool
-		if err := s.pool.QueryRow(ctx, `select exists(select 1 from scenario_test_members m
-			join apps a on a.id = m.app_id where m.account_id = $1 and m.run_id = $2
-			and a.status <> 'deleted')`, accountID, runID).Scan(&active); err != nil {
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, accountID+"/"+runID); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `select m.workload_name, m.app_id::text, a.status from scenario_test_members m join apps a on a.id=m.app_id where m.account_id=$1 and m.run_id=$2 for update of m`, accountID, runID)
+	if err != nil {
+		return err
+	}
+	members := map[string]string{}
+	active := false
+	for rows.Next() {
+		var name, id, status string
+		if err = rows.Scan(&name, &id, &status); err != nil {
+			rows.Close()
 			return err
 		}
-		if active {
-			return ErrConflict
-		}
+		members[name] = id
+		active = active || status != "deleted"
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if len(members) == 0 {
 		return ErrNotFound
 	}
-	if _, err := s.pool.Exec(ctx, `delete from scenario_test_chaos_matches where account_id = $1 and run_id = $2`, accountID, runID); err != nil {
-		return fmt.Errorf("delete scenario chaos matches: %w", err)
+	if active || (len(expected) > 0 && (len(expected) != 1 || api.ScenarioTestRegistrationSHA256(members) != expected[0])) {
+		return ErrConflict
 	}
-	return nil
+	if _, err = tx.Exec(ctx, `delete from scenario_test_members where account_id=$1 and run_id=$2`, accountID, runID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `delete from scenario_test_chaos_matches where account_id=$1 and run_id=$2`, accountID, runID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (m *MemStore) ScenarioTestRegistration(_ context.Context, accountID, runID string) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	members := map[string]string{}
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID == accountID && member.RunID == runID {
+			members[member.Workload] = member.AppID
+		}
+	}
+	if len(members) == 0 {
+		return nil, ErrNotFound
+	}
+	return members, nil
+}
+func (s *PgStore) ScenarioTestRegistration(ctx context.Context, accountID, runID string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `select workload_name,app_id::text from scenario_test_members where account_id=$1 and run_id=$2`, accountID, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	members := map[string]string{}
+	for rows.Next() {
+		var name, id string
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, err
+		}
+		members[name] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(members) == 0 {
+		return nil, ErrNotFound
+	}
+	return members, nil
 }
 
 func (s *PgStore) PruneScenarioTestMembers(ctx context.Context, maxRuns int) (int, error) {

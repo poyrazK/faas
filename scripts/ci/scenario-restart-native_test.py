@@ -792,7 +792,7 @@ class HarnessTests(unittest.TestCase):
                         with self.assertRaises(SystemExit):
                             native.main()
                 verdict = json.loads((directory / "verdict.json").read_text())
-                self.assertEqual(verdict["version"], 21)
+                self.assertEqual(verdict["version"], 22)
                 self.assertEqual(verdict["status"], "passed" if variant == "all" else "failed")
                 self.assertEqual(cleanup.call_count, {"all": 38, "crash-failed": 38, "transport-gate": 37, "incomplete": 3, "previous-gate": 30, "invalid": 1}[variant])
                 self.assertEqual(database_cleanup.call_count, 2 if variant in ("all", "crash-failed", "previous-gate", "transport-gate") else 0)

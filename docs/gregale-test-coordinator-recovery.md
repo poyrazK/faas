@@ -142,3 +142,59 @@ Portable tests exercise process identity pinning and rejection of replacement
 sessions or forged completion. They do not certify native VM recovery. The full
 gate still requires the designated native x86_64 KVM host and its configured
 dedicated acceptance account; a cloud workspace without KVM cannot qualify it.
+
+## Recovering fault registrations and consumers
+
+New campaign journals record registration intent before the namespace API call,
+and consumer creation intent before provisioning. They retain workload app IDs,
+consumer IDs, app slugs, run-specific external references and requested key expiry
+times. They never store consumer keys or run secrets. Namespace membership has
+no independent expiry deadline; deleting expired sessions alone does not prove
+that its registration rows are gone.
+
+After verifying all workers have terminated and recovering their locks, run:
+
+```sh
+gregale test policy cleanup --plan plan.json --policy policy.yaml \
+  --manifest gregale-test.yaml --directory campaign --batch coverage-batch-1 \
+  --journal --faults --execute
+```
+
+Omit `--execute` to inspect without mutation. Imported work also requires its
+active `--handoff` index. The existing work-directory and shared-claim locks still
+apply. Cleanup verifies the fault inventory, revokes exact recorded consumers,
+deletes verified workload sessions, and then conditionally deletes the namespace.
+Changed consumer ownership or external references, changed namespace membership,
+uncertain consumer creation, failed lookups and legacy journals without a fault
+inventory block this operation. Session cleanup without `--faults` retains its
+existing behavior. Retry the same command after an interruption; immutable IDs
+and live checks make already revoked/absent resources safe to revisit.
+
+The new registration read API returns versioned membership even after its apps
+are inactive. Empty membership is an explicit successful response, so an old
+server's unsupported route cannot masquerade as absence. Conditional deletion
+compares the exact membership digest and requires every member app to be deleted.
+Postgres serializes registration and deletion for the run within transactions;
+in-memory state applies the same checks under its mutex. Deploy this API before
+using fault cleanup. An unknown precondition is never sent to an older server
+without first verifying its read capability.
+
+Use `recover --inspect --verify-completion --check-cleanup --verify-faults` with
+the same plan, policy, manifest, directory and handoff arguments to add current
+fault-resource evidence to completion verification. `fault_resources_verified`
+indicates the full requested inventory was verified; `fault_resources_absent` requires every
+journaled consumer to be revoked/inaccessible and every namespace to be absent.
+Failures keep overall recovery incomplete. These checks never create missing
+execution reports, restore spent budget or waive recorded fixture failures.
+Live VM retirement remains independently checked by the native acceptance gate.
+
+Fault cleanup observations are stored separately as `fault-cleanup-*.json`.
+Portable bundles carry the fault inventory in their existing hash-bound journal
+snapshots; recipients need this CLI version. The native crash/transfer drill now
+requires fault cleanup and fault completion checks as well as session/VM absence.
+
+Fault verification currently covers the active work directory's attempted
+batches. If recovery lineage includes ancestors, their fault inventory requires
+separate inspection; the command reports this limitation and leaves fault
+completion false. It does not assume that an ancestor's registrations disappeared
+when its sessions did.
