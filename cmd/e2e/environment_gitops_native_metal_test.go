@@ -37,6 +37,13 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	if !metalAvailable(t) {
 		return
 	}
+	for _, provider := range []string{"github", "gitlab"} {
+		t.Run(provider, func(t *testing.T) { runEnvironmentGitOpsNative(t, provider) })
+	}
+}
+
+func runEnvironmentGitOpsNative(t *testing.T, providerName string) {
+	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
@@ -64,7 +71,7 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	candidateImageRef := registry.AddImage("library/gitops-next", candidateImage)
 	pullEntered, releasePull := registry.HoldRepository("library/gitops-pending")
 	t.Cleanup(releasePull)
-	provider := newGitOpsSourceFixture(t)
+	provider, providerEnv := newGitOpsProviderFixture(t, providerName)
 	fcVersion, err := fcvm.DetectFirecrackerVersion(t.Context())
 	if err != nil {
 		t.Fatalf("detect Firecracker version: %v", err)
@@ -90,12 +97,12 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake,
-		"FAAS_STORAGE_ROOT="+storageRoot, "FAAS_GITHUBD_SOCKET="+provider.socket,
+	daemonEnv := append(providerEnv, "FAAS_STORAGE_ROOT="+storageRoot,
 		"GREGALE_GITOPS_ACCEPTANCE=1", "FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT=1",
 		"FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH=1",
 		"FAAS_AUDIT_HMAC_KEY_FILE="+gitOpsAcceptanceHMACKeyFile(t, "audit-hmac.key"),
 		"FAAS_RECOVERY_HMAC_KEY_FILE="+gitOpsAcceptanceHMACKeyFile(t, "recovery-hmac.key"))
+	h := e2etest.Start(t, pool, e2etest.DeployWake, daemonEnv...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -107,9 +114,8 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider.setAccount(account.ID)
-	project, err := store.CreateProject(t.Context(), state.Project{AccountID: account.ID, Slug: "gitops-native",
-		RepoFullName: "example/shop", ProductionBranch: "main", InstallID: 42})
+	connectGitOpsProvider(t, provider, store, account.ID)
+	project, err := store.CreateProject(t.Context(), gitOpsProviderProject(providerName, "gitops-native", account.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,9 +132,7 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := store.CreateEnvironmentGitSource(t.Context(), account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{
-		RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main",
-		ManifestPath: "environments/production.yaml", Mode: "enforce", ApprovalPolicy: "manual"})
+	source, err := store.CreateEnvironmentGitSource(t.Context(), account.ID, project.ID, "production", gitOpsProviderSource(providerName, "enforce"))
 	if err != nil {
 		t.Fatal(err)
 	}

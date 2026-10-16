@@ -63,6 +63,16 @@ provenance, stale adoption and candidate identity. Real apid HTTP tests cover
 OAuth-scoped source binding, review/adoption and rejected archive substitution.
 No provider write API or real customer repository is needed for these tests.
 
+The existing native image API/worker resilience journey also has a GitLab
+variant using the fixed HTTPS client through a private test CA and a loopback
+proxy that only accepts the GitLab authority. Named scenarios and the private
+versioned [qualification report](../environment-gitops.md#native-qualification-evidence)
+require both providers, immutable run inputs and pre/post leak observations.
+This local report cannot enable enforcement. The journey uses manual approval
+and image workloads; it does not claim live GitLab access, protected-MR native
+qualification or native source-build acceptance. Execution remains pending an
+exclusive native host.
+
 API contracts: [approvals](https://docs.gitlab.com/api/merge_request_approvals/),
 [branch rules](https://docs.gitlab.com/user/project/repository/branches/protection_rules/),
 [merge request diff versions](https://docs.gitlab.com/api/merge_requests/#retrieve-merge-request-diff-versions).

@@ -23,6 +23,13 @@ func TestE2E_GitOpsSourceRevisionReviewAndRollback(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("real apid capability admission requires Linux /proc")
 	}
+	for _, provider := range []string{"github", "gitlab"} {
+		t.Run(provider, func(t *testing.T) { runGitOpsSourceRevisionReviewAndRollback(t, provider) })
+	}
+}
+
+func runGitOpsSourceRevisionReviewAndRollback(t *testing.T, providerName string) {
+	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
@@ -30,21 +37,20 @@ func TestE2E_GitOpsSourceRevisionReviewAndRollback(t *testing.T) {
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	provider := newGitOpsSourceFixture(t)
-	h := e2etest.Start(t, pool, e2etest.APID,
-		"FAAS_GITHUBD_SOCKET="+provider.socket,
+	provider, providerEnv := newGitOpsProviderFixture(t, providerName)
+	daemonEnv := append(providerEnv,
 		"FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED=false", "FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED=false",
 		"FAAS_AUDIT_HMAC_KEY_FILE="+gitOpsAcceptanceHMACKeyFile(t, "audit-hmac.key"),
 		"FAAS_RECOVERY_HMAC_KEY_FILE="+gitOpsAcceptanceHMACKeyFile(t, "recovery-hmac.key"))
+	h := e2etest.Start(t, pool, e2etest.APID, daemonEnv...)
 	key := h.SeedAccount(t.Context(), api.PlanPro, "gitops-source-review")
 	store := state.NewPgStore(pool)
 	account, err := store.AccountByEmail(t.Context(), "e2e+pro+gitops-source-review@test.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider.setAccount(account.ID)
-	project, err := store.CreateProject(t.Context(), state.Project{AccountID: account.ID, Slug: "gitops-source-review",
-		RepoFullName: "example/shop", ProductionBranch: "main", InstallID: 42})
+	connectGitOpsProvider(t, provider, store, account.ID)
+	project, err := store.CreateProject(t.Context(), gitOpsProviderProject(providerName, "gitops-source-review", account.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +68,7 @@ func TestE2E_GitOpsSourceRevisionReviewAndRollback(t *testing.T) {
 	}
 	client := api.NewClient(h.APIDURL, key)
 	if _, err := client.CreateEnvironmentGitSource(t.Context(), project.Slug, "production", api.CreateEnvironmentGitSourceRequest{
-		Repository: "example/shop", Ref: "refs/heads/main", ManifestPath: "environments/production.yaml",
+		Provider: providerName, Repository: "example/shop", Ref: "refs/heads/main", ManifestPath: "environments/production.yaml",
 		Mode: "report", ApprovalPolicy: "manual"}); err != nil {
 		t.Fatal(err)
 	}

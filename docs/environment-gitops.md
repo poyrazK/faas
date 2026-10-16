@@ -293,15 +293,19 @@ It intentionally has no serving candidate. Dedicated native x86_64 KVM
 capture, restore, guest, gateway and rollback acceptance is still required
 before production qualification polling or enforcement can be enabled.
 
-The opt-in native graph journey now includes an image API and a push worker
-with a reviewed queue binding. It requires an isolated designated x86_64 KVM
+The opt-in native graph journey includes an image API and a push worker
+with a reviewed queue binding for each of GitHub and GitLab. It requires an
+isolated designated x86_64 KVM
 host, a disposable PostgreSQL database, the qualified kernel and generic base,
 and guest-init built from the same checkout. Run it with
 `make test-environment-gitops-native` after setting `DATABASE_URL`,
 `FAAS_TEST_KERNEL`, `FAAS_TEST_MINIMAL_BASE_PATH`, `FAAS_GUEST_INIT`, and
 `GREGALE_GITOPS_NATIVE_HOST_CLASS=native`. The guarded runner requires a clean
 checkout, refuses active Gregale services, checks leaks before and after, and
-requires the named metal test to pass rather than skip. Set the host class to
+builds fresh daemon/fixture binaries rather than reusing a caller's prebuilt
+directory. It
+requires the named metal test, both provider cases and every required scenario
+to pass rather than skip. Set the host class to
 `nested-diagnostic` only for troubleshooting; that result cannot qualify a
 production gate. A passing journey must prove API serving through the gateway,
 a completed scoped customer queue delivery for each applied generation, and
@@ -311,16 +315,56 @@ prove mixed-graph serving; it never waits for an applied revision before
 admitting that first customer message.
 
 The resilience cases inject source unavailability through the real githubd RPC
-client, restart apid during that outage and while an image pull is held, and
+client or GitLab.com HTTPS client, restart apid during that outage and while an
+image pull is held, and
 supersede the held revision through HTTP review and approval. A later case
 restarts schedd after activation with an accepted customer delivery in flight.
 The reviewed rollback must obtain a fresh graph and native qualification at a
 new generation, preserve accepted queue identities, and serve another customer
 delivery before convergence. Slow gateway requests continue throughout these
 transitions; a failed request or a response from the superseded image fails the
-journey. The guarded runner allows up to 90 minutes and retains its pre-run and
+journey. The guarded runner allows up to 180 minutes for the two provider
+journeys and retains its pre-run and
 post-run leak checks. These cases still require execution on the exclusive
 native host; no passing dedicated native result has been established.
+
+### Native qualification evidence
+
+The runner creates a new private directory outside the checkout and always
+writes `report.json`, including on a blocked preflight or failed journey. Set
+`GREGALE_GITOPS_NATIVE_REPORT_DIR` to a new directory path to choose the location;
+an existing run is never overwritten. The report and raw logs have private
+permissions. `make test-environment-gitops-report` validates this evidence
+contract without a VM or database.
+
+The `gregale.dev/gitops-native-acceptance/v1` report binds the run to a clean
+commit, host OS/architecture/kernel and virtualization observation, pinned Go,
+Firecracker/jailer and PostgreSQL client versions, and SHA-256/size fingerprints
+of the kernel, base, base digest sidecar and guest-init. It rechecks these inputs
+after execution and fingerprints the private JSON event stream and diagnostic
+logs. The JSON does not contain database URLs, OAuth credentials, fixture paths,
+or raw test output.
+
+For both providers it requires structured Go test pass events for baseline
+serving, source outage/restart, held-revision supersession, scheduler restart
+with accepted work, reviewed rollback, override repair and retirement/recovery.
+A missing scenario, skip, failure, malformed/contradictory event stream, nonzero
+runner exit, changed inputs, or failed leak check prevents a pass. Human-readable
+`PASS` strings are not evidence. The post-run leak observation also runs when an
+attempt is interrupted; it never removes host resources to make the gate pass.
+
+`result: passed` and `native_acceptance_passed: true` require an exclusive native
+host and the complete matrix. `diagnostic_passed` always leaves native acceptance
+false. This is a local operator record, not a signed attestation or production
+authorization; no production gate consumes it or changes automatically.
+
+Provider boundaries are local fixtures. GitLab uses the fixed production HTTPS
+origin with a daemon-scoped loopback CONNECT proxy and test CA, plus sealed
+account OAuth credentials and immutable project/commit archive reads. TLS
+verification remains enabled; the proxy cannot dial arbitrary origins. Both
+journeys use manual approval and immutable image workloads. They do not establish
+live-provider access, protected-MR native qualification, or native source-build
+acceptance. Those limitations are explicit in the report's `coverage` object.
 
 ## Next implementation steps
 
