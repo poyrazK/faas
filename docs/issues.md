@@ -639,7 +639,7 @@ The current application-error alert surface has these boundaries (reviewed
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
 | Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation, interactive acknowledgment and per-rule channel overrides |
-| Response | Native acknowledgment, snoozing, reminders, backup-team escalation and handling history | A dedicated incident inbox and interactive Slack actions |
+| Response | Native response inbox, acknowledgment, snoozing, reminders, backup-team escalation and handling history | Interactive Slack actions and workspace OAuth installation |
 
 Native Slack delivery now connects application alerts to team channels.
 Native application issues now have dashboard acknowledgment and snoozing.
@@ -1879,9 +1879,9 @@ membership/ownership. Merging preserves the destination's response; source alias
 are not actionable and their response is not transferred. History is bounded across
 responses and historical actors do not establish present access.
 
-Native application reminders and escalation are described below. A snoozed-incident
-inbox/filter and Slack interactive actions remain future work. This dashboard feature adds no public API
-or SDK endpoint.
+Native application reminders, escalation and the response inbox are described below.
+Slack interactive actions remain future work. These dashboard features add no public
+API or SDK endpoint.
 
 ### Remind the team about an unacknowledged native issue
 
@@ -1971,4 +1971,39 @@ attempts and admitted responsibility. Opting out does not undo a handoff already
 recorded; disable native reminders to stop later response reminders. Changing
 native Slack policy clears the first-reminder clock with existing timers. Existing
 tracker escalation remains independent. Interactive Slack actions, workspace OAuth
-installation and a dedicated native incident inbox remain future work.
+installation remain future work; the native response inbox is described below.
+
+### Native issue response inbox
+
+Open **Native issue response inbox** from Issues or an individual response page at
+`/dashboard/apps/{slug}/issues/responses`. It lists open canonical issues you can
+currently handle. App owners see eligible app responses; current organization
+members see their direct assignments, assigned/backup teams and eligible native
+reminder delivery route. No occurrence evidence or general app access is granted.
+Removed members and old backup recipients lose access on subsequent reads/actions.
+
+The default **Unacknowledged and awake** filter excludes active snoozes. Choose
+**All open responses**, **Snoozed**, **Resurfaced from snooze**, **Escalated**, or
+**Latest response delivery failed**. Resurfaced means snooze expired and the issue
+remains unacknowledged; escalated can include acknowledged or snoozed responses.
+**My responsible teams** requires current membership in the reminder-responsible
+or eligible delivery team. It does not include an owner or direct account
+assignment solely because of that role. Issue assignment is unchanged by this view.
+
+Rows show environment, response state, reminder responsibility, current enabled
+route and eligibility times for remaining reminder/escalation attempts. Due times
+follow the workers' policy and snooze clocks. They do not guarantee admission or
+delivery; queue capacity, current routing and later state changes still apply.
+Missing timers mean no currently enabled remaining schedule for that response.
+
+Delivery status covers the latest reminder or escalation in the current response.
+The failure filter includes unrouted/queue-full admission and failed/dead transport;
+ordinary occurrence alerts and earlier responses are excluded. Retention may remove
+transport details. Open the response page for handling and response-delivery history.
+
+Acknowledge, snooze or clear snooze directly in a row. Each action checks the current
+response revision and current permissions using the existing handling controls.
+Stale actions return a conflict; refresh before trying again. Successful actions
+return to the first page with the selected filters. Acknowledgment and snoozing can
+remove the row from the current filter. Lists use 50-row pages ordered by issue ID;
+filter changes restart pagination. Changes between pages may change results.

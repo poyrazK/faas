@@ -2,7 +2,6 @@ package apidserver
 
 import (
 	"net/http"
-	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issuetriage"
@@ -80,9 +79,14 @@ func (s *server) dashboardApplicationTriageActionForAccount(w http.ResponseWrite
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
+	target, err := applicationResponseRedirect(r, app.Slug)
+	if err != nil {
+		writeNativeIssueTrackerError(w, err)
+		return
+	}
 	if err = st.UpdateIssueApplicationTriage(r.Context(), app.ID, app.AccountID, acct.ID, r.PathValue("issue_id"), revision, req); err != nil {
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
-	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(app.Slug)+"/issues/"+url.PathEscape(r.PathValue("issue_id"))+"/triage", http.StatusSeeOther)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Issue response · Gregale</title><style nonce="{{.Nonce}}">body{font:16px system-ui;background:#111827;color:#e5e7eb;margin:0}main{max-width:1000px;margin:36px auto;padding:24px}a{color:#93c5fd}section{padding:20px;background:#1f2937;border-radius:10px;margin:20px 0}input,textarea,button{padding:8px;margin:6px;background:#111827;color:#e5e7eb;border:1px solid #6b7280;border-radius:5px}li{margin:12px 0}code{overflow-wrap:anywhere}</style></head>
-<body><main>{{with .Data}}<h1>Issue response</h1>
+<body><main>{{with .Data}}<h1>Issue response</h1><p><a href="/dashboard/apps/{{.AppSlug}}/issues/responses">Native issue response inbox</a></p>
 <p>App {{.AppSlug}} · issue <code>{{.Triage.IssueID}}</code> · environment {{.Triage.Environment}}</p>
 {{if .IsOwner}}<a href="/dashboard/apps/{{.AppSlug}}/issues?issue={{.Triage.IssueID}}">Open issue evidence and assignment</a>{{end}}
 <p>Current owner: {{if .Triage.TeamID}}team {{.Triage.TeamName}}{{else if .Triage.AssigneeID}}{{.Triage.AssigneeName}}{{else}}unassigned{{end}}.</p>

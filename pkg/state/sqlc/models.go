@@ -3926,6 +3926,16 @@ type IssueApplicationReminderPolicy struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type IssueApplicationResponseAccess struct {
+	IssueID           pgtype.UUID
+	AppID             pgtype.UUID
+	OwnerAccountID    pgtype.UUID
+	ActorAccountID    pgtype.UUID
+	OwnerPlan         string
+	ResponsibleTeamID pgtype.UUID
+	RoutedTeamID      pgtype.UUID
+}
+
 type IssueApplicationSlackPolicy struct {
 	AppID             pgtype.UUID
 	Enabled           bool

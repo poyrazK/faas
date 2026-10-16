@@ -11,6 +11,115 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const issueApplicationResponseInbox = `-- name: IssueApplicationResponseInbox :many
+SELECT i.id,i.environment,COALESCE(tr.revision,0)::bigint AS revision,tr.acknowledged_at,tr.snoozed_until,tr.escalated_at,
+ access.responsible_team_id::uuid AS responsible_team_id,COALESCE(team.name,'')::text AS responsible_team_name,
+ access.routed_team_id,COALESCE(routed.name,'')::text AS routed_team_name,
+ COALESCE(latest.outcome,'')::text AS outcome,COALESCE(latest.delivery_status,'')::text AS delivery_status,
+ statement_timestamp()::timestamptz AS checked_at,
+ CASE WHEN ap.enabled AND rp.enabled AND tr.acknowledged_at IS NULL AND tr.reminder_started_at IS NOT NULL AND tr.reminder_count<rp.repeat_limit
+ THEN GREATEST(tr.reminder_started_at,tr.last_reminded_at,tr.snoozed_until,rp.updated_at)+rp.interval_minutes*interval '1 minute' END::timestamptz AS reminder_due_at,
+ CASE WHEN ap.enabled AND rp.enabled AND ep.enabled AND tr.acknowledged_at IS NULL AND tr.first_reminded_at IS NOT NULL AND tr.escalation_attempted_at IS NULL
+ THEN GREATEST(tr.first_reminded_at,tr.snoozed_until,rp.updated_at,ep.updated_at)+ep.delay_minutes*interval '1 minute' END::timestamptz AS escalation_due_at
+FROM issue_application_response_access access JOIN app_issues i ON i.id=access.issue_id
+LEFT JOIN issue_application_triage tr ON tr.issue_id=i.id
+LEFT JOIN app_issue_teams team ON team.id=access.responsible_team_id
+LEFT JOIN app_issue_teams routed ON routed.id=access.routed_team_id
+LEFT JOIN issue_application_slack_policies ap ON ap.app_id=i.app_id
+LEFT JOIN issue_application_reminder_policies rp ON rp.app_id=i.app_id
+LEFT JOIN issue_application_escalation_policies ep ON ep.app_id=i.app_id
+LEFT JOIN LATERAL (
+ SELECT rem.outcome,COALESCE(d.status,'')::text AS delivery_status FROM issue_application_reminders rem
+ LEFT JOIN issue_team_slack_deliveries d ON d.reminder_id=rem.id
+ WHERE rem.issue_id=i.id AND rem.response_id=tr.incident_id ORDER BY rem.created_at DESC,rem.id DESC LIMIT 1
+) latest ON true
+WHERE access.app_id=$1 AND access.owner_account_id=$2
+AND access.actor_account_id=$3 AND access.owner_plan=ANY($4::text[])
+AND i.state='open' AND ($5::uuid IS NULL OR i.id>$5)
+AND (NOT $6::boolean OR EXISTS(SELECT 1 FROM app_issue_team_members tm WHERE tm.account_id=access.actor_account_id AND tm.team_id IN(access.responsible_team_id,access.routed_team_id)))
+AND ($7::text='all'
+ OR ($7='unacknowledged' AND tr.acknowledged_at IS NULL AND (tr.snoozed_until IS NULL OR tr.snoozed_until<=statement_timestamp()))
+ OR ($7='snoozed' AND tr.snoozed_until>statement_timestamp())
+ OR ($7='resurfaced' AND tr.snoozed_until<=statement_timestamp() AND tr.acknowledged_at IS NULL)
+ OR ($7='escalated' AND tr.escalated_at IS NOT NULL)
+ OR ($7='delivery_failed' AND (latest.outcome IN('unrouted','queue_full') OR latest.delivery_status IN('failed','dead'))))
+ORDER BY i.id LIMIT $8
+`
+
+type IssueApplicationResponseInboxParams struct {
+	AppID          pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	ActorAccountID pgtype.UUID
+	EntitledPlans  []string
+	AfterID        pgtype.UUID
+	MyTeams        bool
+	ResponseFilter string
+	PageLimit      int32
+}
+
+type IssueApplicationResponseInboxRow struct {
+	ID                  pgtype.UUID
+	Environment         string
+	Revision            int64
+	AcknowledgedAt      pgtype.Timestamptz
+	SnoozedUntil        pgtype.Timestamptz
+	EscalatedAt         pgtype.Timestamptz
+	ResponsibleTeamID   pgtype.UUID
+	ResponsibleTeamName string
+	RoutedTeamID        pgtype.UUID
+	RoutedTeamName      string
+	Outcome             string
+	DeliveryStatus      string
+	CheckedAt           pgtype.Timestamptz
+	ReminderDueAt       pgtype.Timestamptz
+	EscalationDueAt     pgtype.Timestamptz
+}
+
+func (q *Queries) IssueApplicationResponseInbox(ctx context.Context, db DBTX, arg IssueApplicationResponseInboxParams) ([]IssueApplicationResponseInboxRow, error) {
+	rows, err := db.Query(ctx, issueApplicationResponseInbox,
+		arg.AppID,
+		arg.OwnerAccountID,
+		arg.ActorAccountID,
+		arg.EntitledPlans,
+		arg.AfterID,
+		arg.MyTeams,
+		arg.ResponseFilter,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueApplicationResponseInboxRow{}
+	for rows.Next() {
+		var i IssueApplicationResponseInboxRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Environment,
+			&i.Revision,
+			&i.AcknowledgedAt,
+			&i.SnoozedUntil,
+			&i.EscalatedAt,
+			&i.ResponsibleTeamID,
+			&i.ResponsibleTeamName,
+			&i.RoutedTeamID,
+			&i.RoutedTeamName,
+			&i.Outcome,
+			&i.DeliveryStatus,
+			&i.CheckedAt,
+			&i.ReminderDueAt,
+			&i.EscalationDueAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const issueApplicationTriageAudit = `-- name: IssueApplicationTriageAudit :exec
 INSERT INTO issue_application_triage_activity(issue_id,incident_id,revision,actor_id,action,snoozed_until,reason) VALUES($1,$2,$3,$4,$5,$6,$7)
 `
@@ -239,34 +348,19 @@ func (q *Queries) IssueApplicationTriageReset(ctx context.Context, db DBTX, issu
 const issueApplicationTriageScope = `-- name: IssueApplicationTriageScope :one
 SELECT i.id,i.state,i.assignee_team_id,i.assignee_account_id,i.environment,statement_timestamp()::timestamptz AS checked_at,
  COALESCE(t.name,'')::text AS team_name,COALESCE(ac.email::text,'')::text AS assignee_name
-FROM app_issues i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
-JOIN accounts owner ON owner.id=a.account_id
-LEFT JOIN app_issue_teams t ON t.id=i.assignee_team_id AND t.app_id=a.id
+FROM issue_application_response_access access JOIN app_issues i ON i.id=access.issue_id
+LEFT JOIN app_issue_teams t ON t.id=i.assignee_team_id AND t.app_id=i.app_id
 LEFT JOIN accounts ac ON ac.id=i.assignee_account_id
-LEFT JOIN issue_application_triage current_response ON current_response.issue_id=i.id
-WHERE i.id=$1 AND a.id=$2 AND a.account_id=$3
-AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.plan=ANY($4::text[]) AND owner.abuse_hold_at IS NULL AND owner.status='active'
-AND NOT EXISTS(SELECT 1 FROM issue_group_links gl WHERE gl.issue_id=i.id)
-AND (a.account_id=$5::uuid OR (
- EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=$5 AND m.removed_at IS NULL)
- AND (EXISTS(SELECT 1 FROM issue_application_triage tr JOIN app_issue_team_members tm ON tm.team_id=tr.escalation_team_id WHERE tr.issue_id=i.id AND tr.escalated_at IS NOT NULL AND tm.account_id=$5) OR i.assignee_account_id=$5::uuid OR EXISTS(
- SELECT 1 FROM app_issue_team_members tm WHERE tm.team_id=i.assignee_team_id AND tm.account_id=$5) OR EXISTS(
- SELECT 1 FROM issue_application_slack_policies p JOIN LATERAL (
- SELECT dst.team_id FROM issue_team_slack_destinations dst
- WHERE dst.app_id=a.id AND dst.account_id=a.account_id AND dst.enabled AND dst.team_id IN((CASE WHEN current_response.escalated_at IS NOT NULL THEN current_response.escalation_team_id ELSE i.assignee_team_id END),p.fallback_team_id)
- AND EXISTS(SELECT 1 FROM app_issue_team_members member WHERE member.team_id=dst.team_id AND (member.account_id=a.account_id OR EXISTS(
- SELECT 1 FROM org_memberships m WHERE m.org_id=a.org_id AND m.account_id=member.account_id AND m.removed_at IS NULL)))
- ORDER BY CASE WHEN dst.team_id=(CASE WHEN current_response.escalated_at IS NOT NULL THEN current_response.escalation_team_id ELSE i.assignee_team_id END) THEN 0 ELSE 1 END LIMIT 1
- ) route ON true JOIN app_issue_team_members tm ON tm.team_id=route.team_id AND tm.account_id=$5
- WHERE p.app_id=a.id AND p.enabled))))
+WHERE access.issue_id=$1 AND access.app_id=$2 AND access.owner_account_id=$3
+AND access.actor_account_id=$4 AND access.owner_plan=ANY($5::text[])
 `
 
 type IssueApplicationTriageScopeParams struct {
 	IssueID        pgtype.UUID
 	AppID          pgtype.UUID
 	OwnerAccountID pgtype.UUID
-	EntitledPlans  []string
 	ActorAccountID pgtype.UUID
+	EntitledPlans  []string
 }
 
 type IssueApplicationTriageScopeRow struct {
@@ -285,8 +379,8 @@ func (q *Queries) IssueApplicationTriageScope(ctx context.Context, db DBTX, arg 
 		arg.IssueID,
 		arg.AppID,
 		arg.OwnerAccountID,
-		arg.EntitledPlans,
 		arg.ActorAccountID,
+		arg.EntitledPlans,
 	)
 	var i IssueApplicationTriageScopeRow
 	err := row.Scan(
