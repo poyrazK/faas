@@ -239,10 +239,10 @@ type Config struct {
 	// node (ADR-1323). Zero selects api.RealtimeNodeOutboundBytesDefault.
 	OutboundNodeBytes int64
 	Heartbeat         time.Duration
-	PongWait           time.Duration
-	WriteWait          time.Duration
-	MaxConnectionAge   time.Duration
-	CallbackTimeout    time.Duration
+	PongWait          time.Duration
+	WriteWait         time.Duration
+	MaxConnectionAge  time.Duration
+	CallbackTimeout   time.Duration
 	// JWTAuthorizer verifies endpoint policies using oidc_jwt. A nil authorizer
 	// deliberately fails closed for JWT-configured endpoints.
 	JWTAuthorizer JWTAuthorizer
@@ -2152,7 +2152,7 @@ func (m *Manager) Stats() Stats {
 		OutboundNodeBytesLimit:        uint64(m.cfg.OutboundNodeBytes),
 		OutboundNodeBudgetDrops:       m.outboundNodeBudgetDrops.Load(),
 		OutboundShedDisconnects:       m.outboundShedDisconnects.Load(),
-		CallbackErrors:               m.callbackErrors.Load(),
+		CallbackErrors:                m.callbackErrors.Load(),
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
