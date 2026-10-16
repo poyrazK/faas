@@ -1558,7 +1558,7 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
-			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}},
+			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for scripts; crons rm does not prompt", Bool: true}}},
 			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale crons run --app my-api --interactive", "gregale crons run <cron-id>"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a task, review and confirm one manual run, then follow its request", Bool: true},
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
