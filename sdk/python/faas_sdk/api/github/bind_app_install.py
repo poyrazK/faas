@@ -92,10 +92,11 @@ def sync_detailed(
     writes through to pkg/state.PgStore.UpsertGithubInstallBinding
     per PR-B).
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before persisting. Mismatch → 403 forged.
-    Empty github_login → 403 github_login_required.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account. Requires the named, account-bound
+    bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
+    required. Live installation verification and githubd's current
+    repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
 
@@ -143,10 +144,11 @@ def sync(
     writes through to pkg/state.PgStore.UpsertGithubInstallBinding
     per PR-B).
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before persisting. Mismatch → 403 forged.
-    Empty github_login → 403 github_login_required.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account. Requires the named, account-bound
+    bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
+    required. Live installation verification and githubd's current
+    repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
 
@@ -189,10 +191,11 @@ async def asyncio_detailed(
     writes through to pkg/state.PgStore.UpsertGithubInstallBinding
     per PR-B).
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before persisting. Mismatch → 403 forged.
-    Empty github_login → 403 github_login_required.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account. Requires the named, account-bound
+    bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
+    required. Live installation verification and githubd's current
+    repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
 
@@ -238,10 +241,11 @@ async def asyncio(
     writes through to pkg/state.PgStore.UpsertGithubInstallBinding
     per PR-B).
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before persisting. Mismatch → 403 forged.
-    Empty github_login → 403 github_login_required.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account. Requires the named, account-bound
+    bind_app_to_repo CSRF proof. A separate GitHub sign-in claim is not
+    required. Live installation verification and githubd's current
+    repository access check still run before persistence.
 
     On success emits `auth.install.bound` for the audit trail.
 
