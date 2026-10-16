@@ -23,7 +23,7 @@ const (
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
-var authEmailSecrets = []string{"AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY"}
+var authEmailSecrets = authsettings.EmailSecrets
 
 // cmdAuthConfig shows the running app's settings, or changes them when any
 // setting flag is given. Secrets are write-only, so settings are read back
@@ -326,6 +326,9 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	email := "not configured (email sign-in links and invitations fail)"
 	if settings.Email.Configured {
 		email = "configured"
+		if settings.Email.Provider != "" {
+			email = settings.Email.Provider + ", from " + settings.Email.From
+		}
 	}
 	keys := settings.Keys.Signing
 	if n := len(settings.Keys.Verifying); n > 0 {
