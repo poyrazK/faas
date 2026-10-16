@@ -1377,6 +1377,18 @@ type Querier interface {
 	HeartbeatRuntimeUpgradeGateway(ctx context.Context, db DBTX, arg HeartbeatRuntimeUpgradeGatewayParams) (int64, error)
 	HoldProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg HoldProjectEnvironmentCloneConfigurationParams) (ProjectEnvironmentCloneConfigurationGuard, error)
 	HostingAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
+	HostingDomainAck(ctx context.Context, db DBTX, arg HostingDomainAckParams) (int64, error)
+	HostingDomainClaim(ctx context.Context, db DBTX, arg HostingDomainClaimParams) ([]HostingDomain, error)
+	HostingDomainCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingDomainCreate(ctx context.Context, db DBTX, arg HostingDomainCreateParams) (HostingDomain, error)
+	HostingDomainDelete(ctx context.Context, db DBTX, arg HostingDomainDeleteParams) (HostingDomain, error)
+	HostingDomainDeleteSite(ctx context.Context, db DBTX, siteID pgtype.UUID) error
+	HostingDomainFinish(ctx context.Context, db DBTX, arg HostingDomainFinishParams) (int64, error)
+	HostingDomainList(ctx context.Context, db DBTX, arg HostingDomainListParams) ([]HostingDomain, error)
+	HostingDomainPurge(ctx context.Context, db DBTX, arg HostingDomainPurgeParams) (int64, error)
+	HostingDomainReleaseBatch(ctx context.Context, db DBTX, leaseToken pgtype.UUID) error
+	HostingDomainReserve(ctx context.Context, db DBTX, arg HostingDomainReserveParams) error
+	HostingDomainSave(ctx context.Context, db DBTX, arg HostingDomainSaveParams) (HostingDomain, error)
 	HostingProjectEnvironmentOwned(ctx context.Context, db DBTX, arg HostingProjectEnvironmentOwnedParams) (bool, error)
 	HostingReleaseCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingReleaseCreate(ctx context.Context, db DBTX, arg HostingReleaseCreateParams) (HostingRelease, error)

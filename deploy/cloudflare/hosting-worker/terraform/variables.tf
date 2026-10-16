@@ -81,6 +81,18 @@ variable "durable_routing_enabled" {
   default     = false
 }
 
+variable "custom_domains_enabled" {
+  type        = bool
+  description = "Independent internal custom-hostname serving opt-in; requires an already enabled Cloudflare for SaaS zone with custom metadata support."
+  default     = false
+}
+
+variable "configure_custom_domains" {
+  type        = bool
+  description = "Provision the isolated SaaS fallback and zone-wide Worker route. Drain domains before removing this infrastructure opt-in."
+  default     = false
+}
+
 variable "dashboard_upload_origins" {
   type        = set(string)
   description = "Exact HTTPS operations-console origins allowed to PUT signed staging uploads. Empty disables browser CORS."

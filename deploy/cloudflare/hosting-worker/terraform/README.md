@@ -113,6 +113,24 @@ API for the operations deployment; do not point a development preview at
 production. This configuration neither enables the dashboard build flag nor
 changes any API/Worker feature switch.
 
+## Custom hostnames (independent opt-in)
+
+`configure_custom_domains` and `custom_domains_enabled` both default false. Enable Cloudflare for SaaS and custom
+metadata support on this dedicated zone before opting into infrastructure with `configure_custom_domains`. With attached durable
+routing, this changes the zone's Worker route to `*/*`, adds the reserved
+non-serving `customers.<hosting-domain>` DNS target, and configures it as the
+SaaS fallback. `custom_domains_enabled` separately controls Worker admission without removing
+that infrastructure. Main serving and API admission remain independently controlled;
+the API output leaves the domain management flag at `0`.
+
+The reusable internal Access policy stays Terraform-owned. Apid manages only
+tagged per-domain hostnames and Access applications with a separately injected
+domain token. Follow the [domain runbook](../../../../docs/internal-frontend-hosting-domains.md)
+for external DNS, credentials, ownership markers, rollout, and live evidence.
+Drain/qualify every custom domain before removing the SaaS infrastructure opt-in.
+Never expire `hosting/domains/` terminal heads or discard retained hostname
+reservations while reusing the pilot bucket.
+
 ## Portable validation
 
 These checks do not authenticate to Cloudflare or create cloud resources:

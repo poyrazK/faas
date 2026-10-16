@@ -140,6 +140,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	hostingDomains                             map[string]memHostingDomain
+	hostingDomainClaims                        map[string]string
 	hostingSites                               map[string]api.HostingSite
 	hostingReleases                            map[string]api.HostingRelease
 	hostingPublications                        map[string]hostingPublication

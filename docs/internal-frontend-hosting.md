@@ -118,6 +118,11 @@ feature switch is changed merely by shipping the dashboard code.
 
 ## Deploy and roll back
 
+An independently gated [custom-domain and managed HTTPS pilot](internal-frontend-hosting-domains.md)
+adds DNS verification, private Access applications, certificate status, and
+safe domain removal for durable sites. Its management, dashboard, and Worker
+switches all default off.
+
 Enable the internal CLI command on an operator workstation and authenticate
 with an operator account owning the project:
 

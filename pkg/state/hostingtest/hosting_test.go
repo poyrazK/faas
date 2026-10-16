@@ -18,6 +18,7 @@ import (
 type hostingTestStore interface {
 	state.Store
 	state.HostingStore
+	state.HostingDomainStore
 }
 
 func TestHostingStores(t *testing.T) {
@@ -40,6 +41,8 @@ func TestHostingStores(t *testing.T) {
 			t.Run("durable_release_cleanup", func(t *testing.T) { durableReleaseCleanup(t, store) })
 			t.Run("durable_snapshot_concurrency", func(t *testing.T) { durableSnapshotConcurrency(t, store) })
 			t.Run("publication_status", func(t *testing.T) { publicationStatusLifecycle(t, store) })
+			t.Run("custom_domains", func(t *testing.T) { customDomainLifecycle(t, store) })
+			t.Run("custom_domain_quota", func(t *testing.T) { customDomainQuota(t, store) })
 		})
 	}
 }

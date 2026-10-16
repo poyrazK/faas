@@ -61,7 +61,8 @@ function fixture() {
   async function request(path = "/", options = {}) {
     const headers = new Headers(options.headers);
     if (!headers.has("Cf-Access-Jwt-Assertion")) headers.set("Cf-Access-Jwt-Assertion", validToken);
-    const response = await serve(new Request(`https://${hostname}${path}`, { ...options, headers }), env, { waitUntil(p) { pending.push(p); } }, deps);
+    const { hostname: requestHost = hostname, ...init } = options;
+    const response = await serve(new Request(`https://${requestHost}${path}`, { ...init, headers }), env, { waitUntil(p) { pending.push(p); } }, deps);
     await Promise.all(pending.splice(0));
     return response;
   }
@@ -73,6 +74,81 @@ function fixture() {
   }
   return { env, route, calls, release, request, cached, objects, durable, advance(ms) { clock += ms; } };
 }
+
+function customFixture() {
+  const f = fixture();
+  f.durable();
+  f.env.HOSTING_DOMAIN = 'hosting.example';
+  f.env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED = 'true';
+  const custom = 'portal.customer.example';
+  const binding = { version: 1, id: '44444444-4444-4444-8444-444444444444', hostname: custom, site_id: site, canonical_hostname: hostname, origin_id: origin, access_aud: 'b'.repeat(64), generation: 1, enabled: true, deleted: false };
+  f.objects.set(`hosting/domains/${custom}.json`, JSON.stringify(binding));
+  return { ...f, binding, custom, customRequest(path = '/', options = {}) { return f.request(path, { ...options, hostname: custom }); } };
+}
+
+test('custom domains require their own flag and Access audience on warm hits, HEAD, and 304', async () => {
+  const f = customFixture(); f.release(first, { 'index.html': 'private custom site' });
+  const headers = { 'Cf-Access-Jwt-Assertion': await token({ aud: [f.binding.access_aud] }) };
+  const initial = await f.customRequest('/', { headers }); assert.equal(initial.status, 200);
+  assert.equal(initial.headers.get('X-Gregale-Domain-Generation'), '1');
+  assert.equal((await f.customRequest()).status, 403);
+  assert.equal((await f.customRequest('/', { method: 'HEAD' })).status, 403);
+  assert.equal((await f.customRequest('/', { headers: { 'If-None-Match': initial.headers.get('ETag') } })).status, 403);
+  const warm = await f.customRequest('/', { headers }); assert.equal(warm.headers.get('X-Gregale-Cache'), 'HIT');
+  assert.equal((await f.customRequest('/', { headers: { ...headers, 'If-None-Match': initial.headers.get('ETag') } })).status, 304);
+  f.env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED = 'false';
+  assert.equal((await f.customRequest('/', { headers })).status, 404);
+  assert.equal((await f.request()).status, 200);
+});
+
+test('custom domains always follow canonical suspension, rollback, and retirement state', async () => {
+  const f = customFixture(); f.release(first, { 'index.html': 'first' }); f.release(second, { 'index.html': 'second' });
+  const headers = { 'Cf-Access-Jwt-Assertion': await token({ aud: [f.binding.access_aud] }) };
+  assert.equal(await (await f.customRequest('/', { headers })).text(), 'first');
+  f.objects.set(`hosting/routes/${hostname}.json`, JSON.stringify({ ...f.durable(), generation: 2, active_release_id: second, ready_releases: [second] }));
+  f.advance(61000);
+  assert.equal(await (await f.customRequest('/', { headers })).text(), 'second');
+  assert.equal((await f.customRequest(`/_gregale/releases/${first}/index.html`, { headers })).status, 404);
+  f.objects.set(`hosting/routes/${hostname}.json`, JSON.stringify({ ...f.durable(), generation: 3, enabled: false }));
+  f.advance(61000);
+  assert.equal((await f.customRequest('/', { headers })).status, 503);
+  assert.equal(f.calls.routes, 0);
+});
+
+test('custom-domain tombstones deny cached files and never fall back to KV', async () => {
+  const f = customFixture(); f.release(first, { 'index.html': 'private site' });
+  const headers = { 'Cf-Access-Jwt-Assertion': await token({ aud: [f.binding.access_aud] }) };
+  await f.customRequest('/', { headers });
+  f.objects.set(`hosting/domains/${f.custom}.json`, JSON.stringify({ ...f.binding, generation: 2, enabled: false, deleted: true }));
+  f.advance(61000);
+  assert.equal((await f.customRequest('/', { headers })).status, 503);
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.calls.routes, 0);
+});
+
+test('custom domains reuse immutable canonical bytes after their own authentication and survive API outages', async () => {
+  const f = customFixture(); f.release(first, { 'index.html': 'shared private bytes', 'cold.js': 'cold asset' });
+  await f.request();
+  const headers = { 'Cf-Access-Jwt-Assertion': await token({ aud: [f.binding.access_aud], exp: now / 1000 + 3600 }) };
+  const cached = await f.customRequest('/', { headers });
+  assert.equal(cached.headers.get('X-Gregale-Cache'), 'HIT');
+  f.advance(20 * 60 * 1000);
+  assert.equal(await (await f.customRequest('/', { headers })).text(), 'shared private bytes');
+  const cold = await f.customRequest('/cold.js', { headers });
+  assert.equal(cold.headers.get('X-Gregale-Cache'), 'MISS');
+  assert.equal(await cold.text(), 'cold asset');
+  assert.equal(f.calls.routes, 0);
+});
+
+test('foreign and malformed domain bindings cannot reuse canonical authentication or content caches', async () => {
+  for (const patch of [{ origin_id: 'c'.repeat(64) }, { canonical_hostname: `other.${hostname}` }, { site_id: first }, { enabled: false }, { access_aud: 'hosting' }, { generation: 1.5 }]) {
+    const f = customFixture(); f.release(first, { 'index.html': 'secret' });
+    f.objects.set(`hosting/domains/${f.custom}.json`, JSON.stringify({ ...f.binding, ...patch }));
+    const headers = { 'Cf-Access-Jwt-Assertion': await token({ aud: [f.binding.access_aud] }) };
+    assert.equal((await f.customRequest('/', { headers })).status, 503);
+    assert.equal(f.calls.routes, 0);
+  }
+});
 
 test("durable heads are default-off and do not extend legacy leases", async () => {
   const f = fixture();

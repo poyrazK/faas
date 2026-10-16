@@ -5,6 +5,10 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
+	DomainsEnabled         bool   `json:"domains_enabled"`
+	DomainsPerSite         int    `json:"domains_per_site"`
+	DomainHostnameMaxBytes int    `json:"domain_hostname_max_bytes"`
+	DomainCNAMETarget      string `json:"domain_cname_target,omitempty"`
 	UploadBaseURL          string `json:"upload_base_url"`
 	FilesMax               int    `json:"files_max"`
 	FileMaxBytes           int64  `json:"file_max_bytes"`

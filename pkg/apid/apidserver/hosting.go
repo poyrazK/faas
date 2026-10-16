@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"net"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -72,6 +73,47 @@ func (h hostingHost) HostingUploadBaseURL() string {
 	return h.s.hostingConfig.Artifacts.UploadBaseURL()
 }
 
+func (h hostingHost) HostingDomainsEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingDomains, false)
+}
+func (h hostingHost) HostingDomainStore() state.HostingDomainStore {
+	store, _ := h.s.store.(state.HostingDomainStore)
+	return store
+}
+func (h hostingHost) HostingDomainProvider() hosting.DomainProvider {
+	if h.s.hostingConfig == nil || h.s.hostingConfig.Domains == nil {
+		return nil
+	}
+	return h.s.hostingConfig.Domains
+}
+func (h hostingHost) HostingReservedDomains() []string {
+	if h.s.hostingConfig == nil {
+		return nil
+	}
+	return h.s.hostingConfig.ReservedDomains
+}
+
+func (s *server) runHostingDomainReconciler(ctx context.Context) {
+	host := hostingHost{s}
+	store := host.HostingDomainStore()
+	if store == nil {
+		return
+	}
+	ticker := time.NewTicker(api.HostingReconcileInterval)
+	defer ticker.Stop()
+	for {
+		r := hostingapi.DomainReconciler{Store: store, Sites: host.HostingStore(), Provider: host.HostingDomainProvider(), Publisher: s.hostingConfig.Artifacts, OriginID: host.HostingOriginID(), DNS: net.DefaultResolver}
+		if err := r.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("hosting custom domain reconciliation pending")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 func (s *server) runHostingReconciler(ctx context.Context) {
 	if s.hostingConfig == nil {
 		return
@@ -81,6 +123,7 @@ func (s *server) runHostingReconciler(ctx context.Context) {
 	if store == nil {
 		return
 	}
+	go s.runHostingDomainReconciler(ctx)
 	ticker := time.NewTicker(api.HostingReconcileInterval)
 	defer ticker.Stop()
 	for {

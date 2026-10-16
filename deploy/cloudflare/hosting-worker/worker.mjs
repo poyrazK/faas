@@ -6,6 +6,7 @@ const MAX_FILES = 1000; // api.HostingFilesMax
 const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_ROUTE_BYTES = 8 * 1024; // api.HostingDurableRouteMaxBytes
 const ROUTE_CACHE_TTL_MS = 60_000; // api.HostingRouteCacheTTL
+const MAX_DOMAIN_HOSTNAME_BYTES = 64; // api.HostingDomainHostnameMaxBytes
 let accessKeys;
 
 function problem(status, code) {
@@ -105,6 +106,33 @@ async function durableRouteFor(url, env, ctx, deps) {
   return response.status === 204 ? undefined : JSON.parse(await response.text());
 }
 
+function canonicalHostname(hostname, domain) {
+  return /^[a-z0-9.-]+$/.test(domain || "") && UUID.test(hostname.split(".")[0]) &&
+    hostname === `${hostname.split(".")[0]}.${domain}`;
+}
+
+async function domainBindingFor(url, env, ctx, deps) {
+  if (!/^[a-z0-9.-]+$/.test(url.hostname) || url.hostname.length > MAX_DOMAIN_HOSTNAME_BYTES) throw new Error("invalid hostname");
+  const key = new Request(`https://${url.hostname}/_gregale/cache/domains/v1/${env.ORIGIN_ID}`);
+  let response = await deps.cache?.match(key);
+  const until = Number(response?.headers.get("X-Gregale-Route-Until"));
+  if (!(until > deps.now() && until <= deps.now() + ROUTE_CACHE_TTL_MS)) response = null;
+  if (!response) {
+    const object = await env.ARTIFACTS.get(`hosting/domains/${url.hostname}.json`);
+    if (!object || object.size > MAX_ROUTE_BYTES) throw new Error("domain unavailable");
+    const body = await new Response(object.body).text();
+    if (body.length > MAX_ROUTE_BYTES) throw new Error("invalid domain head");
+    response = new Response(body, { headers: { "Cache-Control": "public, max-age=60", "X-Gregale-Route-Until": String(deps.now() + ROUTE_CACHE_TTL_MS) } });
+    if (deps.cache) ctx.waitUntil(deps.cache.put(key, response.clone()));
+  }
+  const binding = JSON.parse(await response.text());
+  if (binding.version !== 1 || !UUID.test(binding.id) || !UUID.test(binding.site_id) ||
+      binding.hostname !== url.hostname || binding.canonical_hostname !== `${binding.site_id}.${env.HOSTING_DOMAIN}` ||
+      !DIGEST.test(binding.origin_id || "") || binding.origin_id !== env.ORIGIN_ID || !DIGEST.test(binding.access_aud || "") ||
+      !Number.isSafeInteger(binding.generation) || binding.generation < 1 || binding.enabled !== true || binding.deleted !== false) throw new Error("domain unavailable");
+  return binding;
+}
+
 async function manifestFor(requestURL, env, ctx, deps, site, release) {
   const key = new Request(`https://${requestURL.hostname}/_gregale/cache/manifests/${site}/${release}`);
   let response = await deps.cache?.match(key);
@@ -130,6 +158,8 @@ async function manifestFor(requestURL, env, ctx, deps, site, release) {
 }
 
 async function resolveFile(request, url, env, ctx, deps, route) {
+  const manifestURL = new URL(url);
+  manifestURL.hostname = route.hostname;
   let path = decodeURIComponent(url.pathname).replace(/^\//, "");
   let release = route.active_release_id;
   let pinned = false;
@@ -142,14 +172,14 @@ async function resolveFile(request, url, env, ctx, deps, route) {
   }
   if (!path || path.endsWith("/")) path += "index.html";
   if (!validPath(path)) return null;
-  const manifest = await manifestFor(url, env, ctx, deps, route.site_id, release);
+  const manifest = await manifestFor(manifestURL, env, ctx, deps, route.site_id, release);
   let file = manifest.files.get(path) || manifest.files.get(`${path}/index.html`);
   // Retain fingerprinted assets referenced by older HTML documents. HTML
   // itself only falls back within its selected release.
   if (!file && !pinned && !path.endsWith(".html")) {
     for (const old of route.ready_releases) {
       if (old === release) continue;
-      const candidate = (await manifestFor(url, env, ctx, deps, route.site_id, old)).files.get(path);
+      const candidate = (await manifestFor(manifestURL, env, ctx, deps, route.site_id, old)).files.get(path);
       if (candidate && !candidate.content_type.toLowerCase().startsWith("text/html")) return { file: candidate, release: old, pinned: false };
     }
   }
@@ -168,6 +198,7 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
     "X-Gregale-Release": release, "Referrer-Policy": "strict-origin-when-cross-origin",
   });
   if (route.version === 2) headers.set("X-Gregale-Route-Generation", String(route.generation));
+  if (route.domain_generation) headers.set("X-Gregale-Domain-Generation", String(route.domain_generation));
   // The browser revalidates internal content; the shared edge cache remains
   // usable only behind fresh identity and routing checks on every request.
   if (request.headers.get("If-None-Match") === etag) {
@@ -175,7 +206,7 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
     return new Response(null, { status: 304, headers });
   }
   if (request.method === "HEAD") return new Response(null, { headers });
-  const key = new Request(`https://${url.hostname}/_gregale/cache/files/${route.site_id}/${release}/${file.sha256}/${file.path}`);
+  const key = new Request(`https://${route.hostname}/_gregale/cache/files/${route.site_id}/${release}/${file.sha256}/${file.path}`);
   let response = await deps.cache?.match(key);
   headers.set("X-Gregale-Cache", response ? "HIT" : "MISS");
   if (!response) {
@@ -191,16 +222,29 @@ async function serveFile(request, url, env, ctx, deps, route, selected) {
 export async function serve(request, env, ctx, deps = { fetch, now: Date.now, cache: globalThis.caches?.default }) {
   if (env.FAAS_FRONTEND_HOSTING_ENABLED !== "true") return problem(404, "frontend_hosting_disabled");
   if (!env.ROUTES || !env.ARTIFACTS) return problem(503, "hosting_unconfigured");
-  if (!(await verifyAccess(request, env, deps))) return problem(403, "internal_access_required");
-  if (!new Set(["GET", "HEAD"]).has(request.method)) return problem(405, "method_not_allowed");
   try {
     const url = new URL(request.url);
+    let binding;
+    let routingURL = url;
+    if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED === "true" && !env.HOSTING_DOMAIN) return problem(503, "hosting_unconfigured");
+    if (env.HOSTING_DOMAIN && !canonicalHostname(url.hostname, env.HOSTING_DOMAIN)) {
+      if (env.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED !== "true") return problem(404, "frontend_hosting_domains_disabled");
+      if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED !== "true") return problem(503, "hosting_route_unavailable");
+      const assertion = request.headers.get("Cf-Access-Jwt-Assertion") || "";
+      if (assertion.length > 16384 || assertion.split(".").length !== 3) return problem(403, "internal_access_required");
+      binding = await domainBindingFor(url, env, ctx, deps);
+      routingURL = new URL(`https://${binding.canonical_hostname}/`);
+    }
+    if (!(await verifyAccess(request, binding ? { ...env, ACCESS_AUD: binding.access_aud } : env, deps))) return problem(403, "internal_access_required");
+    if (!new Set(["GET", "HEAD"]).has(request.method)) return problem(405, "method_not_allowed");
     let route;
     if (env.FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED === "true") {
-      route = await durableRouteFor(url, env, ctx, deps);
+      route = await durableRouteFor(routingURL, env, ctx, deps);
       // An existing disabled/deleted/invalid head never falls back to a stale KV lease.
-      if (route !== undefined && !validDurableRoute(route, url.hostname, env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
+      if (route !== undefined && !validDurableRoute(route, routingURL.hostname, env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");
     }
+    if (binding && (route === undefined || route.site_id !== binding.site_id)) return problem(503, "hosting_route_unavailable");
+    if (binding) route.domain_generation = binding.generation;
     if (route === undefined) {
       route = await env.ROUTES.get(`site:${url.hostname}`, { type: "json", cacheTtl: 60 });
       if (!validRoute(route, url.hostname, deps.now(), env.ORIGIN_ID)) return problem(503, "hosting_route_unavailable");

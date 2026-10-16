@@ -29,6 +29,7 @@ const (
 	runtimeConfigS3                     = "s3_enabled"
 	runtimeConfigFrontendHosting        = "frontend_hosting_enabled"
 	runtimeConfigFrontendHostingDurable = "frontend_hosting_durable_routing_enabled"
+	runtimeConfigFrontendHostingDomains = "frontend_hosting_domains_enabled"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -54,6 +55,7 @@ type runtimeConfigDefinition struct {
 }
 
 var runtimeConfigCatalog = []runtimeConfigDefinition{
+	{Key: runtimeConfigFrontendHostingDomains, Label: "Internal hosting custom domains", Description: "Admit operator-only custom domain management. Existing domains continue safety reconciliation when disabled; the Worker has an independent serving switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHosting, Label: "Internal frontend hosting", Description: "Enable operator-only static hosting management. Disabling expires leased routes within 120 seconds; durable sites continue serving. The independent Worker switch stops all traffic.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDurable, Label: "Internal durable frontend routing", Description: "Create new static sites with durable edge routing. Existing sites keep their routing mode. Disabling does not stop existing durable sites or their safety reconciliation; the Worker has a separate durable-routing switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -106,6 +108,8 @@ func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) st
 		envName = "FAAS_FRONTEND_HOSTING_ENABLED"
 	case runtimeConfigFrontendHostingDurable:
 		envName = "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"
+	case runtimeConfigFrontendHostingDomains:
+		envName = "FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED"
 	case runtimeConfigTenantSurfaces:
 		envName = "FAAS_TENANT_SURFACES_ENABLED"
 	case runtimeConfigDomainDoctor:

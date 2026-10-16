@@ -14,6 +14,11 @@ import (
 
 var ErrInvalidArtifact = errors.New("hosting artifact does not match its manifest")
 
+func ValidDigest(value string) bool {
+	data, err := hex.DecodeString(value)
+	return err == nil && len(data) == 32 && strings.ToLower(value) == value
+}
+
 // ValidPath accepts canonical, relative URL paths. Percent escapes are excluded
 // so the CLI, object store, CDN, and browser cannot interpret different paths.
 func ValidPath(name string) bool {

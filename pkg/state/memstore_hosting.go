@@ -242,6 +242,16 @@ func (m *MemStore) DeleteHostingSite(_ context.Context, account, site string) (a
 			m.hostingReleases[id] = r
 		}
 	}
+	for id, row := range m.hostingDomains {
+		if row.Domain.SiteID == site && row.Domain.State != "deleting" {
+			row.Domain.State = "deleting"
+			row.Domain.Revision++
+			row.Domain.Generation++
+			row.Domain.NextAttemptAt = now
+			row.Domain.LastErrorCode = ""
+			m.hostingDomains[id] = row
+		}
+	}
 	return s, nil
 }
 
@@ -249,6 +259,11 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.hostingSites[site]
+	for _, domain := range m.hostingDomains {
+		if domain.Domain.SiteID == site {
+			return ErrConflict
+		}
+	}
 	if s.AccountID != account || s.Status != "deleting" {
 		return ErrConflict
 	}

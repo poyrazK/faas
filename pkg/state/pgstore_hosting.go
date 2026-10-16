@@ -330,6 +330,9 @@ func (s *PgStore) DeleteHostingSite(ctx context.Context, account, site string) (
 	if err = q.HostingSiteRetireReleases(ctx, tx, sqlc.HostingSiteRetireReleasesParams{SiteID: i, Generation: generation}); err != nil {
 		return api.HostingSite{}, err
 	}
+	if err = q.HostingDomainDeleteSite(ctx, tx, i); err != nil {
+		return api.HostingSite{}, err
+	}
 	return hostingSiteRow(r), tx.Commit(ctx)
 }
 

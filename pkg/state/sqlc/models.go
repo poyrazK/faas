@@ -4063,6 +4063,33 @@ type GooseDbVersion struct {
 	Tstamp    pgtype.Timestamp
 }
 
+type HostingDomain struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	SiteID              pgtype.UUID
+	Hostname            string
+	ProviderOriginID    string
+	Challenge           string
+	State               string
+	Revision            int64
+	Generation          int64
+	PublishedGeneration int64
+	PublishedAt         pgtype.Timestamptz
+	Details             []byte
+	NextAttemptAt       pgtype.Timestamptz
+	Attempts            int64
+	LastErrorCode       string
+	LeaseToken          pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
+type HostingDomainClaim struct {
+	Hostname  string
+	DomainID  pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type HostingRelease struct {
 	ID                    pgtype.UUID
 	SiteID                pgtype.UUID

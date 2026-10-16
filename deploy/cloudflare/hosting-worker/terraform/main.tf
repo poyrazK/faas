@@ -28,6 +28,14 @@ resource "terraform_data" "isolation" {
       condition     = !var.worker_enabled || var.attach_route
       error_message = "Attach the isolated route before enabling the edge feature."
     }
+    precondition {
+      condition     = !var.configure_custom_domains || (var.attach_route && var.durable_routing_enabled)
+      error_message = "Custom domains require attached isolated routing and durable site routing."
+    }
+    precondition {
+      condition     = !var.custom_domains_enabled || var.configure_custom_domains
+      error_message = "Configure the isolated SaaS fallback before enabling custom-domain serving."
+    }
   }
 }
 
@@ -139,6 +147,8 @@ resource "cloudflare_worker_version" "hosting" {
     ], [for name, text in {
       FAAS_FRONTEND_HOSTING_ENABLED                 = tostring(var.worker_enabled)
       FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED = tostring(var.durable_routing_enabled)
+      FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED         = tostring(var.custom_domains_enabled)
+      HOSTING_DOMAIN                                = var.hosting_domain
       ACCESS_TEAM_DOMAIN                            = var.access_team_domain
       ACCESS_AUD                                    = cloudflare_zero_trust_access_application.hosting.aud
       INTERNAL_EMAILS                               = join(",", sort(tolist(var.internal_emails)))
@@ -176,7 +186,25 @@ resource "cloudflare_dns_record" "hosting" {
 resource "cloudflare_workers_route" "hosting" {
   count      = var.attach_route ? 1 : 0
   zone_id    = var.zone_id
-  pattern    = "*.${var.hosting_domain}/*"
+  pattern    = var.configure_custom_domains ? "*/*" : "*.${var.hosting_domain}/*"
   script     = cloudflare_worker.hosting.name
   depends_on = [cloudflare_dns_record.hosting]
+}
+
+# The zone is dedicated to internal static hosting. A Worker intercepts every
+# SaaS request before the reserved non-serving fallback can reach an origin.
+resource "cloudflare_dns_record" "saas" {
+  count      = var.configure_custom_domains ? 1 : 0
+  zone_id    = var.zone_id
+  name       = "customers.${var.hosting_domain}"
+  type       = "A"
+  content    = "192.0.2.1"
+  proxied    = true
+  ttl        = 1
+  depends_on = [cloudflare_workers_route.hosting]
+}
+resource "cloudflare_custom_hostname_fallback_origin" "hosting" {
+  count   = var.configure_custom_domains ? 1 : 0
+  zone_id = var.zone_id
+  origin  = cloudflare_dns_record.saas[0].name
 }

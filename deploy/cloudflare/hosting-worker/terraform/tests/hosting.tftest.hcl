@@ -18,6 +18,10 @@ variables {
 run "disabled_defaults" {
   command = plan
   assert {
+    condition     = !var.custom_domains_enabled && length(cloudflare_custom_hostname_fallback_origin.hosting) == 0 && length(cloudflare_dns_record.saas) == 0 && output.apid_environment.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED == "0"
+    error_message = "Custom domains and SaaS resources must be separately default-off."
+  }
+  assert {
     condition     = length(cloudflare_r2_bucket_cors.dashboard.rules) == 0
     error_message = "Default infrastructure must not permit browser uploads."
   }
@@ -44,6 +48,43 @@ run "disabled_defaults" {
   assert {
     condition     = !output.hosting.durable_routing_enabled && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"]) == "false"
     error_message = "Durable routing must require an independent explicit opt-in."
+  }
+}
+
+run "custom_domain_opt_in" {
+  command = plan
+  variables {
+    attach_route             = true
+    durable_routing_enabled  = true
+    configure_custom_domains = true
+    custom_domains_enabled   = true
+  }
+  assert {
+    condition     = cloudflare_workers_route.hosting[0].pattern == "*/*" && cloudflare_dns_record.saas[0].name == "customers.gregale-hosting.example" && cloudflare_dns_record.saas[0].content == "192.0.2.1" && cloudflare_dns_record.saas[0].proxied
+    error_message = "SaaS traffic must terminate at the isolated Worker, never at Gregale servers."
+  }
+  assert {
+    condition     = one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED"]) == "true" && output.apid_environment.FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED == "0"
+    error_message = "Worker custom routing must not enable API admission."
+  }
+}
+run "reject_custom_domains_without_durable_route" {
+  command = plan
+  variables { custom_domains_enabled = true }
+  expect_failures = [terraform_data.isolation]
+}
+
+run "domain_serving_off_preserves_fallback" {
+  command = plan
+  variables {
+    attach_route             = true
+    durable_routing_enabled  = true
+    configure_custom_domains = true
+    custom_domains_enabled   = false
+  }
+  assert {
+    condition     = length(cloudflare_custom_hostname_fallback_origin.hosting) == 1 && cloudflare_workers_route.hosting[0].pattern == "*/*" && one([for binding in cloudflare_worker_version.hosting.bindings : binding.text if binding.name == "FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED"]) == "false"
+    error_message = "Stopping custom-domain serving must not destroy its fallback or route."
   }
 }
 

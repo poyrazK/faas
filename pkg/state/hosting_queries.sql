@@ -79,6 +79,7 @@ WHERE site_id = sqlc.arg(site_id)::uuid AND state IN ('pending', 'ready');
 -- name: HostingSitePurge :execrows
 DELETE FROM hosting_sites s WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(id)::uuid AND s.status = 'deleting'
 AND NOT EXISTS(SELECT 1 FROM hosting_releases r WHERE r.site_id = s.id AND r.state <> 'deleted')
+AND NOT EXISTS(SELECT 1 FROM hosting_domains d WHERE d.site_id = s.id)
 AND (NOT s.durable_routing OR EXISTS(SELECT 1 FROM hosting_route_publications p WHERE p.site_id = s.id
  AND p.published_generation = p.generation AND p.published_at <= sqlc.arg(safe_before)::timestamptz));
 

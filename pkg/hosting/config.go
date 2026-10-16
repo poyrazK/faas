@@ -9,9 +9,11 @@ import (
 )
 
 type Config struct {
-	Domain    string
-	Artifacts *R2
-	Routes    *KV
+	Domain          string
+	Artifacts       *R2
+	Routes          *KV
+	Domains         *CloudflareDomains
+	ReservedDomains []string
 }
 
 // Load performs no network writes and provisions no resources. Operators must
@@ -19,7 +21,7 @@ type Config struct {
 func Load(getenv func(string) string, appsDomain string) (*Config, error) {
 	domain := strings.ToLower(strings.TrimSpace(getenv("FAAS_FRONTEND_HOSTING_DOMAIN")))
 	if domain == "" {
-		if getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "true" {
+		if getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_ENABLED") == "true" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "1" || getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED") == "true" {
 			return nil, errors.New("enabled hosting requires an isolated hosting domain and provider configuration")
 		}
 		return nil, nil
@@ -38,5 +40,25 @@ func Load(getenv func(string) string, appsDomain string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Config{Domain: domain, Artifacts: b, Routes: p}, nil
+	cfg := &Config{Domain: domain, Artifacts: b, Routes: p, ReservedDomains: []string{domain, appsDomain}}
+	for _, reserved := range strings.Split(getenv("FAAS_FRONTEND_HOSTING_RESERVED_DOMAINS"), ",") {
+		if reserved = strings.TrimSpace(reserved); reserved != "" {
+			if _, err := publicsuffix.EffectiveTLDPlusOne(reserved); err != nil {
+				return nil, errors.New("invalid reserved hosting domain")
+			}
+			cfg.ReservedDomains = append(cfg.ReservedDomains, reserved)
+		}
+	}
+	if getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ZONE_ID") != "" {
+		cfg.Domains, err = NewCloudflareDomains(getenv("FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID"), getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ZONE_ID"), getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ACCESS_POLICY_ID"), getenv("FAAS_FRONTEND_HOSTING_DOMAINS_CF_TOKEN"), getenv("FAAS_FRONTEND_HOSTING_DOMAINS_CNAME_TARGET"))
+		if err != nil {
+			return nil, err
+		}
+		if !strings.HasSuffix(cfg.Domains.Target(), "."+domain) {
+			return nil, errors.New("domain CNAME target must belong to the isolated hosting zone")
+		}
+	} else if value := getenv("FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED"); value == "1" || value == "true" {
+		return nil, errors.New("hosting custom domains require provider configuration")
+	}
+	return cfg, nil
 }
