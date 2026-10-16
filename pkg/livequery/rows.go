@@ -180,7 +180,7 @@ func (s resultShape) lineageOf(values []*string) []string {
 		parts := make([]string, len(positions))
 		null := false
 		for k, p := range positions {
-			if values[p] == nil {
+			if p < 0 || values[p] == nil {
 				null = true
 				break
 			}

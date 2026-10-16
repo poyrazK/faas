@@ -42,6 +42,11 @@ func (m *member) verify(ctx context.Context, tx pgx.Tx) error {
 			return err
 		}
 	}
+	for s, sq := range p.Subqueries {
+		if err := m.verifyKeyed(ctx, tx, fmt.Sprintf("subquery %d pairs", s), sq.SQL, m.semi[s], false); err != nil {
+			return err
+		}
+	}
 	_, rows, err := queryText(ctx, tx, p.SQL, m.args)
 	if err != nil {
 		return fmt.Errorf("oracle query: %w", err)

@@ -44,7 +44,10 @@ func TestCompileModes(t *testing.T) {
 		{`SELECT * FROM messages ORDER BY created_at DESC LIMIT 10`, ModeRecompute, false, "ORDER BY or LIMIT"},
 		{`SELECT count(*), sum(id), min(body) FROM messages`, ModeGroup, false, ""},
 		{`SELECT string_agg(body, ',') FROM messages`, ModeRecompute, false, "aggregate string_agg"},
-		{`SELECT * FROM channels WHERE id IN (SELECT channel_id FROM members WHERE user_id = $1)`, ModeRecompute, false, "subquery"},
+		{`SELECT * FROM channels WHERE id IN (SELECT channel_id FROM members WHERE user_id = $1)`, ModeLineage, false, ""},
+		{`SELECT * FROM channels c WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.channel_id = c.id)`, ModeLineage, false, ""},
+		{`SELECT * FROM channels WHERE id NOT IN (SELECT channel_id FROM members)`, ModeRecompute, false, "subquery form"},
+		{`SELECT (SELECT count(*) FROM members) FROM channels`, ModeRecompute, false, "subquery outside WHERE"},
 		{`SELECT DISTINCT channel_id FROM messages`, ModeGroup, false, ""},
 		{`SELECT DISTINCT ON (channel_id) channel_id, body FROM messages`, ModeRecompute, false, "DISTINCT ON or DISTINCT with aggregates"},
 	} {
@@ -57,6 +60,9 @@ func TestCompileModes(t *testing.T) {
 		}
 		if p.Mode != ModeRecompute {
 			for i, sql := range p.RowRestricted {
+				if p.Relations[i].Subquery {
+					continue
+				}
 				if !strings.Contains(sql, "unnest") {
 					t.Fatalf("%s: relation %d restriction missing: %s", tc.sql, i, sql)
 				}

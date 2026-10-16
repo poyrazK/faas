@@ -54,6 +54,9 @@ type Relation struct {
 	// Preserved lists relations on the preserved side of an outer join whose
 	// NULL-extended rows can appear or disappear when this relation changes.
 	Preserved []int
+	// Subquery marks the table of a keyed subquery in WHERE (alias
+	// __lq_q<n>). Result rows carry no lineage for it.
+	Subquery bool
 }
 
 // Plan is a compiled live query.
@@ -103,6 +106,13 @@ type Plan struct {
 	// otherwise affected groups are re-aggregated with OutputRestricted.
 	Agg *AggPlan
 
+	// Subqueries holds one pair cache per keyed subquery in WHERE.
+	Subqueries []SubqueryPlan
+
+	// outer lists the relations of the FROM clause; subquery relations
+	// follow them.
+	outer []int
+
 	// params holds one hidden, explicitly typed target per query parameter.
 	// Every derived query carries them, so parameter numbers and types stay
 	// fixed even where the clause that used a parameter was dropped.
@@ -119,6 +129,9 @@ func (p *Plan) withParams(targets []*pgq.Node) []*pgq.Node {
 
 // HasOuterJoins reports whether join lineage is maintained.
 func (p *Plan) HasOuterJoins() bool { return p.JoinSQL != "" }
+
+// expands reports whether changes can expand to other relations' keys.
+func (p *Plan) expands() bool { return p.JoinSQL != "" || len(p.Subqueries) > 0 }
 
 // timeDependent lists built-in STABLE functions whose result depends on the
 // current time rather than on pinned session settings.
@@ -307,13 +320,24 @@ func recomputeReason(sel *pgq.SelectStmt, hasAgg, hasWindow bool) string {
 		return "no FROM clause"
 	}
 	reason := ""
+	// Subqueries in WHERE are planned by compileSubqueries; elsewhere they
+	// recompute.
+	sublinks, whereSublinks := 0, 0
+	if sel.WhereClause != nil {
+		walkNodes(sel.WhereClause, func(n *pgq.Node) {
+			if n.GetSubLink() != nil {
+				whereSublinks++
+			}
+		})
+	}
 	walkNodes(sel, func(n *pgq.Node) {
+		if n.GetSubLink() != nil {
+			sublinks++
+		}
 		if reason != "" {
 			return
 		}
 		switch {
-		case n.GetSubLink() != nil:
-			reason = "subquery"
 		case n.GetRangeSubselect() != nil:
 			reason = "subquery in FROM"
 		case n.GetRangeFunction() != nil:
@@ -324,6 +348,9 @@ func recomputeReason(sel *pgq.SelectStmt, hasAgg, hasWindow bool) string {
 			reason = "grouping sets"
 		}
 	})
+	if reason == "" && sublinks != whereSublinks {
+		reason = "subquery outside WHERE"
+	}
 	return reason
 }
 
@@ -379,13 +406,16 @@ func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.Select
 	for _, root := range roots {
 		mark(root)
 	}
-
-	var lineage []*pgq.Node
-	for i, rel := range p.Relations {
-		for k, key := range rel.Keys {
-			lineage = append(lineage, resTarget(lineageColumn(i, k), columnRef(rel.Alias, key)))
-		}
+	outer := make([]int, len(p.Relations))
+	for i := range outer {
+		outer[i] = i
 	}
+	subs, err := p.compileSubqueries(ctx, conn, sel)
+	if err != nil {
+		return err
+	}
+	p.outer = outer
+	lineage := p.lineageTargets(outer)
 	grouped := len(sel.GroupClause) > 0 || hasAgg || sel.HavingClause != nil || plainDistinct(sel)
 	if !grouped {
 		p.Mode = ModeLineage
@@ -400,17 +430,28 @@ func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.Select
 	if hasOuter {
 		join := cloneSelect(plainSelect(sel.FromClause, nil))
 		join.TargetList = p.withParams(cloneSelect(&pgq.SelectStmt{TargetList: lineage}).TargetList)
-		sql, restricted, err := p.restricted(join)
+		sql, restricted, err := p.restricted(join, outer)
 		if err != nil {
 			return err
 		}
 		p.JoinSQL, p.JoinRestricted = sql, restricted
 	}
-	return nil
+	return p.compileSemiJoins(sel, subs)
+}
+
+// lineageTargets returns hidden lineage columns for the given relations.
+func (p *Plan) lineageTargets(rels []int) []*pgq.Node {
+	var out []*pgq.Node
+	for _, i := range rels {
+		for k, key := range p.Relations[i].Keys {
+			out = append(out, resTarget(lineageColumn(i, k), columnRef(p.Relations[i].Alias, key)))
+		}
+	}
+	return out
 }
 
 func (p *Plan) restrictRows(sel *pgq.SelectStmt) error {
-	sql, restricted, err := p.restricted(sel)
+	sql, restricted, err := p.restricted(sel, p.outer)
 	if err != nil {
 		return err
 	}
@@ -418,15 +459,17 @@ func (p *Plan) restrictRows(sel *pgq.SelectStmt) error {
 	return nil
 }
 
-// restricted deparses sel and one variant per relation restricted to a set of
-// that relation's primary keys.
-func (p *Plan) restricted(sel *pgq.SelectStmt) (string, []string, error) {
+// restricted deparses sel and, for each of the given relations, a variant
+// restricted to a set of that relation's primary keys. Other relations get
+// no variant ("").
+func (p *Plan) restricted(sel *pgq.SelectStmt, rels []int) (string, []string, error) {
 	full, err := batchSelect(sel, p.ParamTypes)
 	if err != nil {
 		return "", nil, err
 	}
 	out := make([]string, len(p.Relations))
-	for i, rel := range p.Relations {
+	for _, i := range rels {
+		rel := p.Relations[i]
 		var arrays, conds []string
 		for k, key := range rel.Keys {
 			param := p.NParams + 1 + k

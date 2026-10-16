@@ -38,6 +38,7 @@ type member struct {
 	result *keyedSet // lineage mode: result rows; recompute mode: rows by multiset ID
 	input  *keyedSet // group mode: input rows (values = group keys)
 	join   *keyedSet // outer joins: lineage of the FROM clause
+	semi   []*keyedSet // keyed subqueries: pairs of FROM rows and subquery rows
 	groups map[string]*keyedRow
 	agg    map[string]*aggGroup // incremental aggregates: state by group
 }
@@ -139,7 +140,7 @@ func (g *planGroup) readRestricted(ctx context.Context, tx pgx.Tx, restricted []
 		out[m] = map[string]*keyedRow{}
 	}
 	for i, set := range keys {
-		if len(set) == 0 {
+		if len(set) == 0 || restricted[i] == "" {
 			continue
 		}
 		fresh, _, err := g.readKeyed(ctx, tx, restricted[i], ms, keyArrays(set, len(g.plan.Relations[i].Keys)), groupValues)
@@ -322,6 +323,21 @@ func (g *planGroup) rebuild(ctx context.Context, tx pgx.Tx, ms []*member) error 
 			}
 		}
 	}
+	for _, m := range ms {
+		m.semi = make([]*keyedSet, len(p.Subqueries))
+	}
+	for s, sq := range p.Subqueries {
+		fresh, _, err := g.readKeyed(ctx, tx, sq.SQL, ms, nil, false)
+		if err != nil {
+			return err
+		}
+		for m, rows := range fresh {
+			m.semi[s] = newKeyedSet(len(p.Relations))
+			for id, r := range rows {
+				m.semi[s].put(id, r)
+			}
+		}
+	}
 	return nil
 }
 
@@ -333,7 +349,7 @@ func (g *planGroup) rebuild(ctx context.Context, tx pgx.Tx, ms []*member) error 
 func (g *planGroup) expand(ctx context.Context, tx pgx.Tx, ms []*member, keys []map[string]struct{}) ([]map[string]struct{}, error) {
 	p := g.plan
 	g.lastKeys, g.lastExpanded = keys, keys
-	if !p.HasOuterJoins() {
+	if !p.expands() {
 		return keys, nil
 	}
 	out := make([]map[string]struct{}, len(keys))
@@ -355,7 +371,7 @@ func (g *planGroup) expand(ctx context.Context, tx pgx.Tx, ms []*member, keys []
 		}
 	}
 	for i, set := range keys {
-		if len(set) == 0 || len(p.Relations[i].Preserved) == 0 {
+		if len(set) == 0 || len(p.Relations[i].Preserved) == 0 || !p.HasOuterJoins() {
 			continue
 		}
 		only := make([]map[string]struct{}, len(keys))
@@ -375,15 +391,82 @@ func (g *planGroup) expand(ctx context.Context, tx pgx.Tx, ms []*member, keys []
 			}
 		}
 	}
-	joinRows, err := g.readRestricted(ctx, tx, p.JoinRestricted, out, ms, false)
-	if err != nil {
-		return nil, err
+	// A changed subquery row can change the condition for the outer rows it
+	// matched before (in the pair cache) or matches now.
+	for _, sq := range p.Subqueries {
+		set := keys[sq.Rel]
+		if len(set) == 0 {
+			continue
+		}
+		addOuter := func(lineage []string) {
+			for _, o := range p.outer {
+				if lineage[o] == "" {
+					continue
+				}
+				if _, ok := out[o][lineage[o]]; !ok {
+					g.stats.ExpandedKeys++
+					out[o][lineage[o]] = struct{}{}
+				}
+			}
+		}
+		only := make([]map[string]struct{}, len(keys))
+		only[sq.Rel] = set
+		for _, m := range ms {
+			for id := range m.semi[g.subIndex(sq.Rel)].matching(only) {
+				addOuter(m.semi[g.subIndex(sq.Rel)].rows[id].lineage)
+			}
+		}
+		fresh, _, err := g.readKeyed(ctx, tx, sq.Restricted[sq.Rel], ms, keyArrays(set, len(p.Relations[sq.Rel].Keys)), false)
+		if err != nil {
+			return nil, err
+		}
+		for _, rows := range fresh {
+			for _, r := range rows {
+				addOuter(r.lineage)
+			}
+		}
 	}
-	for _, m := range ms {
-		m.join.replace(out, joinRows[m])
+	if p.HasOuterJoins() {
+		joinRows, err := g.readRestricted(ctx, tx, p.JoinRestricted, out, ms, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range ms {
+			m.join.replace(out, joinRows[m])
+		}
+	}
+	for s, sq := range p.Subqueries {
+		pairs, err := g.readRestricted(ctx, tx, sq.Restricted, out, ms, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range ms {
+			m.semi[s].replace(g.semiKeys(sq, out), pairs[m])
+		}
 	}
 	g.lastExpanded = out
 	return out, nil
+}
+
+// subIndex returns the subquery plan index for a subquery relation.
+func (g *planGroup) subIndex(rel int) int {
+	for s, sq := range g.plan.Subqueries {
+		if sq.Rel == rel {
+			return s
+		}
+	}
+	return -1
+}
+
+// semiKeys limits keys to the relations a subquery's pair cache contains.
+func (g *planGroup) semiKeys(sq SubqueryPlan, keys []map[string]struct{}) []map[string]struct{} {
+	out := make([]map[string]struct{}, len(keys))
+	for i := range keys {
+		if sq.Restricted[i] != "" {
+			out[i] = keys[i]
+		}
+	}
+	return out
 }
 
 func (g *planGroup) maintainLineage(ctx context.Context, tx pgx.Tx, ms []*member, keys []map[string]struct{}) error {

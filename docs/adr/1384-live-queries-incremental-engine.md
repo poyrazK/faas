@@ -461,6 +461,22 @@ Phase 0 did not cover:
 - **Oracle soak** with aggregates, DISTINCT, numeric specials and
   multi-member plan groups: 25 seeds, 26,808 transactions, 1,097 incremental
   passes, 11,652 comparisons, zero divergences.
+- **Keyed subqueries.**
+  - Supported forms:
+    - EXISTS and NOT EXISTS anywhere in WHERE;
+    - IN and `op ANY` as top-level AND conditions;
+    - over one table with a primary key, without aggregates or nesting.
+  - The subquery table becomes a relation that result rows carry no lineage
+    for. A per-subquery pair cache (the FROM clause inner-joined with that
+    table on the subquery's condition, before WHERE) records which outer rows
+    each subquery row matches.
+  - A change to the subquery table re-reads the outer rows it matched before
+    or matches now. Unqualified references resolve as PostgreSQL scopes them:
+    the subquery table first, then the one FROM relation with the column.
+  - NOT IN recomputes, since one NULL changes its result for every row; so do
+    subqueries outside WHERE.
+  - Soak with these predicates mixed into joins and aggregates: 25 seeds,
+    26,728 transactions, 10,495 comparisons, zero divergences.
 
 ## Consequences
 

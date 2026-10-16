@@ -101,7 +101,22 @@ func (s oracleSchema) predicate(r *rand.Rand, aliases []string, tables map[strin
 	var preds []string
 	for range r.IntN(3) {
 		a := pickOne(r, aliases)
-		switch r.IntN(7) {
+		u := pickOne(r, s.tables)
+		uid := "q.id"
+		if s.composite[u] {
+			uid = "q.k1"
+		}
+		switch r.IntN(12) {
+		case 7:
+			preds = append(preds, fmt.Sprintf("%s.ref IN (SELECT %s FROM %s q WHERE q.a %% 2 = 0)", a, uid, u))
+		case 8:
+			preds = append(preds, fmt.Sprintf("EXISTS (SELECT 1 FROM %s q WHERE q.ref = %s)", u, s.idOf(tables[a], a)))
+		case 9:
+			preds = append(preds, fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s q WHERE q.ref = %s AND q.b IS NOT NULL)", u, s.idOf(tables[a], a)))
+		case 10:
+			preds = append(preds, fmt.Sprintf("(%s.a > 6 OR EXISTS (SELECT 1 FROM %s q WHERE q.ref = %s AND q.s IS NOT NULL))", a, u, s.idOf(tables[a], a)))
+		case 11:
+			preds = append(preds, fmt.Sprintf("%s.a NOT IN (SELECT q.a FROM %s q WHERE q.b IS NOT NULL)", a, u))
 		case 0:
 			*params = append(*params, int32(r.IntN(8)))
 			preds = append(preds, fmt.Sprintf("%s.a > $%d", a, len(*params)))
@@ -374,9 +389,15 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 			h.clients[id] = client{}
 		}
 	}
-	modes := map[Mode]int{}
+	modes := map[string]int{}
 	for _, g := range h.engine.groups {
-		modes[g.plan.Mode] += len(g.members)
+		modes[g.plan.Mode.String()] += len(g.members)
+		if len(g.plan.Subqueries) > 0 {
+			modes["keyed-subquery"] += len(g.members)
+		}
+		if g.plan.Agg != nil {
+			modes["incremental-agg"] += len(g.members)
+		}
 	}
 	t.Logf("seed %d: tables %v, queries by mode %v", seed, schema.tables, modes)
 
