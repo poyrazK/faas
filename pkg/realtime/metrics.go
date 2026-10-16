@@ -91,6 +91,9 @@ type StatsCollector struct {
 	outboundQueueBytesLimit         *prometheus.Desc
 	outboundQueueCountDrops         *prometheus.Desc
 	outboundQueueByteDrops          *prometheus.Desc
+	outboundNodeBytesLimit          *prometheus.Desc
+	outboundNodeBudgetDrops         *prometheus.Desc
+	outboundShedDisconnects         *prometheus.Desc
 	callbackErrors                  *prometheus.Desc
 	callbackOutboxFull              *prometheus.Desc
 	callbackOutboxAdmissionErrors   *prometheus.Desc
@@ -210,6 +213,9 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		outboundQueueBytesLimit:         prometheus.NewDesc(subsystem+"_outbound_queue_bytes_limit", "Configured maximum outbound payload bytes per realtime connection.", nil, nil),
 		outboundQueueCountDrops:         prometheus.NewDesc(subsystem+"_outbound_queue_count_limit_drops_total", "Realtime messages rejected because a connection's outbound message-count limit was reached.", nil, nil),
 		outboundQueueByteDrops:          prometheus.NewDesc(subsystem+"_outbound_queue_byte_limit_drops_total", "Realtime messages rejected because a connection's outbound byte limit was reached.", nil, nil),
+		outboundNodeBytesLimit:          prometheus.NewDesc(subsystem+"_outbound_node_bytes_limit", "Configured maximum outbound payload bytes queued across every realtime connection on the node.", nil, nil),
+		outboundNodeBudgetDrops:         prometheus.NewDesc(subsystem+"_outbound_node_budget_drops_total", "Realtime messages rejected because the node's outbound byte budget was reached.", nil, nil),
+		outboundShedDisconnects:         prometheus.NewDesc(subsystem+"_outbound_shed_disconnects_total", "Realtime connections closed to keep the node's outbound byte budget, largest backlog first.", nil, nil),
 		callbackErrors:                  prometheus.NewDesc(subsystem+"_callback_errors_total", "Realtime lifecycle callback failures since process start.", nil, nil),
 		callbackOutboxFull:              prometheus.NewDesc(subsystem+"_callback_outbox_full_total", "Callback events rejected because the durable outbox remained full until their admission deadline.", nil, nil),
 		callbackOutboxAdmissionErrors:   prometheus.NewDesc(subsystem+"_callback_outbox_admission_errors_total", "Callback events rejected because durable outbox admission failed for a reason other than capacity exhaustion.", nil, nil),
@@ -297,6 +303,9 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.outboundQueueBytesLimit, prometheus.GaugeValue, float64(stats.OutboundQueueBytesLimit))
 	ch <- prometheus.MustNewConstMetric(c.outboundQueueCountDrops, prometheus.CounterValue, float64(stats.OutboundQueueCountDrops))
 	ch <- prometheus.MustNewConstMetric(c.outboundQueueByteDrops, prometheus.CounterValue, float64(stats.OutboundQueueByteDrops))
+	ch <- prometheus.MustNewConstMetric(c.outboundNodeBytesLimit, prometheus.GaugeValue, float64(stats.OutboundNodeBytesLimit))
+	ch <- prometheus.MustNewConstMetric(c.outboundNodeBudgetDrops, prometheus.CounterValue, float64(stats.OutboundNodeBudgetDrops))
+	ch <- prometheus.MustNewConstMetric(c.outboundShedDisconnects, prometheus.CounterValue, float64(stats.OutboundShedDisconnects))
 	ch <- prometheus.MustNewConstMetric(c.callbackErrors, prometheus.CounterValue, float64(stats.CallbackErrors))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxFull, prometheus.CounterValue, float64(stats.CallbackOutboxFull))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxAdmissionErrors, prometheus.CounterValue, float64(stats.CallbackOutboxAdmissionErrors))
@@ -346,6 +355,9 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.outboundQueueBytesLimit,
 		c.outboundQueueCountDrops,
 		c.outboundQueueByteDrops,
+		c.outboundNodeBytesLimit,
+		c.outboundNodeBudgetDrops,
+		c.outboundShedDisconnects,
 		c.callbackErrors,
 		c.callbackOutboxFull,
 		c.callbackOutboxAdmissionErrors,

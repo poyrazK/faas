@@ -38,6 +38,11 @@ The numbers follow the plan ladder and sit at or above common managed-realtime f
 
 - **Node cap 6,000** (`RealtimeNodeConnectionsDefault`, `FAAS_REALTIME_MAX_CONNECTIONS`): about 310 MB of idle connections inside the 512 MB unit, leaving room for queued frames and subscription pumps. It changes only together with `MemoryMax`.
 - **Per-node share 50%** (`RealtimeAccountNodeSharePercent`): one account may hold at most half of a node's connections, so even a Scale account at its allowance cannot fill a node.
+- **Node outbound budget 64 MiB** (`RealtimeNodeOutboundBytesDefault`, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`; added 2026-10-15). Every connection keeps its own copy of the frames queued for it, up to 4 MiB, so the per-connection limit alone allows 6,000 × 4 MiB ≈ 24 GiB on one node. A single 1 MiB broadcast to 100 slow subscribers queues 100 MiB. The node budget bounds the sum of queued bytes:
+  - Above 75% of the budget, realtimed disconnects the connections holding the largest backlogs (at least 1/16 of the per-connection limit, 256 KiB by default) with close code 1013 until queued bytes fall to 50%. Those are the slow consumers; resumable clients reconnect and recover from retained history.
+  - A frame that would exceed the budget is refused like a full per-connection queue: legacy clients miss it and resumable clients are told to reconnect.
+  - realtimed runs with `GOMEMLIMIT=384MiB`, keeping 128 MiB of the 512 MB unit for stacks, socket buffers and runtime overhead, as gatewayd-public does. 6,000 idle connections (~310 MB) plus a full budget fit under it.
+  - Metrics: `realtimed_outbound_node_bytes_limit`, `realtimed_outbound_node_budget_drops_total`, `realtimed_outbound_shed_disconnects_total`, next to `realtimed_outbound_pending_bytes`.
 
 ### Enforcement
 

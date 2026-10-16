@@ -682,7 +682,18 @@ reported by `realtimed_outbound_pending_bytes` and the per-connection
 `realtimed_outbound_queue_bytes_limit` gauge. Separate
 `realtimed_outbound_queue_count_limit_drops_total` and
 `realtimed_outbound_queue_byte_limit_drops_total` counters identify which
-bounded queue limit rejected a frame. In a split deployment, the control-plane
+bounded queue limit rejected a frame.
+
+The node outbound budget (ADR-1323, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
+default 64 MiB) bounds queued bytes across every connection on the node, shown
+by `realtimed_outbound_node_bytes_limit`. Above 75% of it, realtimed closes the
+connections holding the largest backlogs (at least 1/16 of the per-connection
+byte limit) with close code 1013 until queued bytes fall to 50%, counted by
+`realtimed_outbound_shed_disconnects_total`. A frame that would exceed the
+budget is refused and counted by `realtimed_outbound_node_budget_drops_total`.
+Sustained shedding means slow clients or broadcasts larger than the node can
+buffer; raise the budget only together with the unit's `MemoryMax` and
+`GOMEMLIMIT`. In a split deployment, the control-plane
 Prometheus discovers active realtime owners from apid; sum counters across
 nodes and sum the pending-bytes gauge for fleet usage.
 
@@ -690,6 +701,9 @@ nodes and sum the pending-bytes gauge for fleet usage.
 sum(rate(realtimed_outbound_queue_count_limit_drops_total[5m]))
 sum(rate(realtimed_outbound_queue_byte_limit_drops_total[5m]))
 sum(realtimed_outbound_pending_bytes)
+max(realtimed_outbound_pending_bytes / realtimed_outbound_node_bytes_limit)
+sum(rate(realtimed_outbound_shed_disconnects_total[5m]))
+sum(rate(realtimed_outbound_node_budget_drops_total[5m]))
 ```
 
 Resumable-channel health is visible through `realtimed_current_resume_subscriptions`,
@@ -719,7 +733,7 @@ sum(rate(realtimed_resume_slow_consumer_disconnects_total[5m]))
 
 Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_MAX_MESSAGE_BYTES`, `FAAS_REALTIME_OUTBOUND_QUEUE`,
-`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`,
+`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
 `FAAS_REALTIME_HEARTBEAT`, `FAAS_REALTIME_PONG_WAIT`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when

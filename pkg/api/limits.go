@@ -1482,8 +1482,15 @@ var realtimeLimits = map[Plan]RealtimeLimits{
 // every RealtimeConnectionSyncInterval and learns the other nodes' counts in
 // return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
 // node whose own sync is that stale enforces its local count only.
+//
+// RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
+// across a whole node. Each connection may queue up to 4 MiB, so without it
+// 6,000 connections could buffer ~24 GiB; 64 MiB fits beside a full node of
+// idle connections under the unit's 384 MiB GOMEMLIMIT. realtimed disconnects
+// the largest backlogs before the budget is reached.
 const (
 	RealtimeNodeConnectionsDefault    = 6_000
+	RealtimeNodeOutboundBytesDefault  = 64 << 20
 	RealtimeAccountNodeSharePercent   = 50
 	RealtimeConnectionSyncInterval    = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter  = 30 * time.Second

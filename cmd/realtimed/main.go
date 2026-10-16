@@ -128,6 +128,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
 		OutboundQueueBytes:   int64(envInt("FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", 4<<20)),
+		OutboundNodeBytes:    int64(envInt("FAAS_REALTIME_OUTBOUND_NODE_BYTES", api.RealtimeNodeOutboundBytesDefault)),
 		Heartbeat:            envDuration("FAAS_REALTIME_HEARTBEAT", 30*time.Second),
 		PongWait:             envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
 		WriteWait:            envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),

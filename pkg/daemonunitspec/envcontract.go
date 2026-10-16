@@ -516,6 +516,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_MAX_AGE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_MAX_CONNECTIONS", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "6000", Note: "node connection cap sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax"},
 	{Name: "FAAS_REALTIME_MAX_MESSAGE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_OUTBOUND_NODE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "67108864", Note: "outbound payload budget across every connection on the node; the largest backlogs are disconnected first (ADR-1323); raise only with MemoryMax"},
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "4194304", Note: "per-connection outbound payload budget, including a frame being written"},
 	{Name: "FAAS_REALTIME_PONG_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

@@ -235,7 +235,10 @@ type Config struct {
 	// Maximum outbound payload bytes per connection, including a frame being
 	// written. Zero selects the conservative default.
 	OutboundQueueBytes int64
-	Heartbeat          time.Duration
+	// Maximum outbound payload bytes queued across every connection on the
+	// node (ADR-1323). Zero selects api.RealtimeNodeOutboundBytesDefault.
+	OutboundNodeBytes int64
+	Heartbeat         time.Duration
 	PongWait           time.Duration
 	WriteWait          time.Duration
 	MaxConnectionAge   time.Duration
@@ -291,6 +294,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.OutboundQueueBytes <= 0 {
 		c.OutboundQueueBytes = defaultOutboundQueueBytes
+	}
+	if c.OutboundNodeBytes <= 0 {
+		c.OutboundNodeBytes = api.RealtimeNodeOutboundBytesDefault
 	}
 	if c.Heartbeat <= 0 {
 		c.Heartbeat = defaultHeartbeat
@@ -395,6 +401,9 @@ type Stats struct {
 	OutboundQueueBytesLimit            uint64  `json:"outbound_queue_bytes_limit"`
 	OutboundQueueCountDrops            uint64  `json:"outbound_queue_count_drops"`
 	OutboundQueueByteDrops             uint64  `json:"outbound_queue_byte_drops"`
+	OutboundNodeBytesLimit             uint64  `json:"outbound_node_bytes_limit"`
+	OutboundNodeBudgetDrops            uint64  `json:"outbound_node_budget_drops"`
+	OutboundShedDisconnects            uint64  `json:"outbound_shed_disconnects"`
 	CallbackErrors                     uint64  `json:"callback_errors"`
 	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
 	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
@@ -558,6 +567,9 @@ type Manager struct {
 	outboundPendingBytes          atomic.Int64
 	outboundQueueCountDrops       atomic.Uint64
 	outboundQueueByteDrops        atomic.Uint64
+	outboundNodeBudgetDrops       atomic.Uint64
+	outboundShedDisconnects       atomic.Uint64
+	outboundShed                  chan struct{}
 	callbackErrors                atomic.Uint64
 	callbackOutboxFull            atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
@@ -589,6 +601,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		resumeSignalRates:       make(map[channelKey]*resumeSignalRate),
 		channelRouteInstance:    uuid.NewString(),
 		resumeMetrics:           newResumeMetrics(),
+		outboundShed:            make(chan struct{}, 1),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -597,6 +610,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 	}
 	m.startUsageRecorder()
 	m.startConnectionSync()
+	m.startOutboundShed()
 	return m
 }
 
@@ -1642,9 +1656,10 @@ func (m *Manager) SendToPrincipal(ctx context.Context, endpointID, principal, me
 	return status, nil
 }
 
-// queueOutbound applies both the item-count and byte budgets to legacy and
-// resumable protocol frames. The byte budget includes a frame currently being
-// written, bounding buffered payload memory per connection.
+// queueOutbound applies the item-count, per-connection byte and node byte
+// budgets to legacy and resumable protocol frames. The byte budgets include a
+// frame currently being written, bounding buffered payload memory per
+// connection and across the node.
 func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1673,10 +1688,14 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 				m.outboundQueueByteDrops.Add(1)
 				return ErrOutboundQueueFull
 			}
+			if !m.reserveNodeOutbound(delta) {
+				m.droppedMessages.Add(1)
+				m.outboundNodeBudgetDrops.Add(1)
+				return ErrOutboundQueueFull
+			}
 			msg.Data = append([]byte(nil), msg.Data...)
 			pending.message = msg
 			c.outboundBytes += delta
-			m.outboundPendingBytes.Add(delta)
 			return nil
 		}
 	}
@@ -1688,6 +1707,11 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 	if size > m.cfg.OutboundQueueBytes || c.outboundBytes > m.cfg.OutboundQueueBytes-size {
 		m.droppedMessages.Add(1)
 		m.outboundQueueByteDrops.Add(1)
+		return ErrOutboundQueueFull
+	}
+	if !m.reserveNodeOutbound(size) {
+		m.droppedMessages.Add(1)
+		m.outboundNodeBudgetDrops.Add(1)
 		return ErrOutboundQueueFull
 	}
 	msg.Data = append([]byte(nil), msg.Data...)
@@ -1706,13 +1730,15 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 			c.pendingSignals[msg.signalKey] = pending
 		}
 		c.outboundBytes += size
-		m.outboundPendingBytes.Add(size)
 		return nil
 	case <-ctx.Done():
+		m.outboundPendingBytes.Add(-size)
 		return ctx.Err()
 	case <-c.done:
+		m.outboundPendingBytes.Add(-size)
 		return ErrConnectionClosed
 	default:
+		m.outboundPendingBytes.Add(-size)
 		m.droppedMessages.Add(1)
 		m.outboundQueueCountDrops.Add(1)
 		return ErrOutboundQueueFull
@@ -2123,7 +2149,10 @@ func (m *Manager) Stats() Stats {
 		OutboundQueueBytesLimit:       uint64(m.cfg.OutboundQueueBytes),
 		OutboundQueueCountDrops:       m.outboundQueueCountDrops.Load(),
 		OutboundQueueByteDrops:        m.outboundQueueByteDrops.Load(),
-		CallbackErrors:                m.callbackErrors.Load(),
+		OutboundNodeBytesLimit:        uint64(m.cfg.OutboundNodeBytes),
+		OutboundNodeBudgetDrops:       m.outboundNodeBudgetDrops.Load(),
+		OutboundShedDisconnects:       m.outboundShedDisconnects.Load(),
+		CallbackErrors:               m.callbackErrors.Load(),
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
