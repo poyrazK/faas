@@ -90,6 +90,12 @@ func testCampaignRecoveryAssessmentStamp(plan testCampaignPolicyPlan, o testCamp
 		}
 		paths = append(paths, filepath.Join(physical, "checkpoint.json"), filepath.Join(physical, testCampaignRecoverySealName),
 			filepath.Join(physical, testCampaignHandoffName), filepath.Join(physical, testCampaignImportName))
+		paths = append(paths, filepath.Join(physical, "runner.lock"), filepath.Join(physical, testCampaignContinuationOwnerName))
+		ancestorPaths, err := testCampaignFaultAncestorStampPaths(physical)
+		if err != nil {
+			return "", err
+		}
+		paths = append(paths, ancestorPaths...)
 		var parent testCampaignCheckpoint
 		if readTestCampaignJSON(filepath.Join(physical, "checkpoint.json"), &parent) != nil || parent.LineageVersion != 1 {
 			break

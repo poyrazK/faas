@@ -146,7 +146,7 @@ def run(repo, out, cli, api, manifest, project, cleanup_probe):
         command("recipient-resume-blocked", ["run", *imported, "--side", side, "--revision", revision], (1,))
         require((recipient / "work/checkpoint.json").read_bytes() == imported_checkpoint, "rejected resume changed checkpoint")
         verify_uncertain(recipient / "work", batch)
-        command("cleanup", ["cleanup", *imported, "--batch", batch, "--journal", "--faults", "--execute"])
+        command("cleanup", ["cleanup", *imported, "--journal", "--faults", "--fault-history", "--execute"])
         command("completion", ["recover", *imported, "--inspect", "--verify-completion", "--verify-faults", "--check-cleanup"])
         completion = read(out / "completion.json")["completion"]
         require(completion["known_sessions_absent"] and completion["resource_evidence_complete"]
@@ -187,7 +187,7 @@ def run(repo, out, cli, api, manifest, project, cleanup_probe):
             try:
                 if recovery is source:
                     command("failure-recover-lock", ["recover-lock", "--plan", str(plan), "--directory", str(directory), "--execute"])
-                command("failure-cleanup", ["cleanup", *recovery, "--batch", batch, "--journal", "--faults", "--execute"])
+                command("failure-cleanup", ["cleanup", *recovery, "--journal", "--faults", "--fault-history", "--execute"])
             except (ValueError, OSError, subprocess.SubprocessError):
                 result["cleanup_pending"] = True
                 try:

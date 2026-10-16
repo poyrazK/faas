@@ -155,6 +155,7 @@ func cmdTestCampaignControl(mode string, args []string) int {
 	directory := fs.String("directory", "", "private campaign directory")
 	handoff := fs.String("handoff", "", "active portable import index")
 	execute := fs.Bool("execute", false, "retry verified workload session deletion (cleanup only)")
+	faultHistory := fs.Bool("fault-history", false, "inspect or clean fault resources across the verified recovery chain; requires --journal --faults; omit --batch")
 	faultMode := fs.Bool("faults", false, "also revoke journaled consumers and conditionally remove fault registrations; requires --journal")
 	journalMode := fs.Bool("journal", false, "inspect or clean saved run identities when no finalized report exists")
 	batchID := fs.String("batch", "", "single recorded batch to inspect or clean")
@@ -164,9 +165,9 @@ func cmdTestCampaignControl(mode string, args []string) int {
 		}
 		return 1
 	}
-	if (*faultMode && (!*journalMode || mode != "cleanup")) || rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *directory == "" ||
-		(mode == "cleanup" && (*policyPath == "" || *batchID == "")) || (mode == "cancel" && (*execute || *batchID != "" || *journalMode)) {
-		return printErr("Invalid campaign control options", errors.New("--plan and --directory required; cleanup also requires --policy and --batch"))
+	if (*faultHistory && (!*faultMode || *batchID != "")) || (*faultMode && (!*journalMode || mode != "cleanup")) || rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *directory == "" ||
+		(mode == "cleanup" && (*policyPath == "" || (*batchID == "" && !*faultHistory))) || (mode == "cancel" && (*execute || *batchID != "" || *journalMode)) {
+		return printErr("Invalid campaign control options", errors.New("--plan and --directory required; cleanup requires --policy and either --batch or --fault-history (--journal --faults)"))
 	}
 	resolver, err := loadTestCampaignBundleResolver(*handoff)
 	if err != nil {
@@ -260,6 +261,22 @@ func cmdTestCampaignControl(mode string, args []string) int {
 	}
 	if err := registerTestCampaignHandoffWork(resolver, testCampaignJSONHash(plan), *directory, cp.Side, cp.Revision); err != nil {
 		return printErr("Invalid handoff work directory", err)
+	}
+	if *faultHistory {
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Cleanup authentication failed", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		result, err := cleanupTestCampaignFaultHistory(ctx, client, plan, cp, manifest.Scenarios, *directory, resolver, *execute)
+		if encodeErr := json.NewEncoder(os.Stdout).Encode(result); encodeErr != nil {
+			return printErr("Could not write history observations", encodeErr)
+		}
+		if err != nil {
+			return printErr("Fault history remains unresolved", err)
+		}
+		return 0
 	}
 	var selected *testCampaignCostBatch
 	for i := range plan.Batches {

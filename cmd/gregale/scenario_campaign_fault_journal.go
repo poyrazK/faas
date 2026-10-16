@@ -52,14 +52,14 @@ type testCampaignFaultObservation struct {
 }
 
 // Read and validate all journals before issuing even the first mutation.
-func readTestCampaignFaultJournals(directory, batch string, scenario testScenario) ([]testCampaignRunJournal, error) {
+func readTestCampaignFaultJournals(directory, batch string, scenario testScenario, portable ...bool) ([]testCampaignRunJournal, error) {
 	paths, err := filepath.Glob(filepath.Join(testCampaignJournalDirectory(directory, batch), "*.json"))
 	if err != nil {
 		return nil, err
 	}
 	journals := []testCampaignRunJournal{}
 	for _, path := range paths {
-		if filepath.Base(path) == "binding.json" {
+		if filepath.Base(path) == "binding.json" || (len(portable) == 1 && portable[0] && filepath.Base(path) == "inventory.json") {
 			continue
 		}
 		var j testCampaignRunJournal
@@ -197,55 +197,78 @@ func persistTestCampaignFaultObservation(directory string, observations []testCa
 	return persistTestCampaignProcess(filepath.Join(directory, "fault-cleanup-"+time.Now().UTC().Format("20060102T150405.000000000")+".json"), observations)
 }
 
-func applyTestCampaignFaultCompletion(ctx context.Context, completion *testCampaignRecoveryCompletion, reader testCampaignCleanupReader, plan testCampaignPolicyPlan, cp testCampaignCheckpoint, scenarios map[string]testScenario, directory string, hasAncestors bool) {
-	completion.FaultResourcesVerified = !hasAncestors && completion.ResourceEvidenceComplete
-	completion.FaultResourcesAbsent = !hasAncestors && completion.ResourceEvidenceComplete
-	if hasAncestors {
-		completion.Blockers = append(completion.Blockers, "Ancestor fault inventories require separate verification; current work alone cannot certify them.")
+func applyTestCampaignFaultCompletion(ctx context.Context, completion *testCampaignRecoveryCompletion, reader testCampaignCleanupReader, plan testCampaignPolicyPlan, cp testCampaignCheckpoint, scenarios map[string]testScenario, directory string, hasAncestors bool, resolvers ...*testCampaignBundleResolver) {
+	completion.FaultResourcesVerified = false
+	completion.FaultResourcesAbsent = false
+	fail := func() {
+		completion.RecoveryComplete = false
+		completion.Blockers = append(completion.Blockers, "Fault history, resource identities or current absence remain unverified.")
 	}
-	faultClient, ok := reader.(testCampaignFaultClient)
+	if hasAncestors != (plan.Recovery != nil) || len(resolvers) > 1 {
+		fail()
+		return
+	}
+	var resolver *testCampaignBundleResolver
+	if len(resolvers) == 1 {
+		resolver = resolvers[0]
+	}
+	client, ok := reader.(testCampaignFaultClient)
 	if !ok {
-		completion.FaultResourcesAbsent = false
-		completion.FaultResourcesVerified = false
-	} else {
-		for _, batch := range plan.Batches {
-			if batch.Side != cp.Side {
-				continue
-			}
-			if _, attempted := cp.Batches[batch.ID]; !attempted {
-				continue
-			}
-			if _, _, err := readTestCampaignJournalTargets(directory, testCampaignJSONHash(plan), cp, batch, scenarios[batch.Scenario]); err != nil {
+		fail()
+		return
+	}
+	sources, err := collectTestCampaignFaultHistory(plan, cp, scenarios, directory, resolver)
+	if err != nil {
+		fail()
+		return
+	}
+	completion.FaultSources = sources
+	completion.FaultHistorySnapshotSHA256 = testCampaignJSONHash(sources)
+	observations, err := inspectTestCampaignFaults(ctx, client, testCampaignFaultHistoryJournals(sources), false, false)
+	completion.FaultResources = observations
+	if err != nil {
+		fail()
+		return
+	}
+	completion.FaultResourcesVerified = completion.ResourceEvidenceComplete
+	completion.FaultResourcesAbsent = completion.ResourceEvidenceComplete
+	for _, observation := range observations {
+		if observation.Registration != "absent" {
+			completion.FaultResourcesAbsent = false
+		}
+		for _, state := range observation.Consumers {
+			if state != "absent" && state != "revoked" {
 				completion.FaultResourcesAbsent = false
+			}
+		}
+	}
+	for _, source := range sources {
+		if source.Directory == directory {
+			continue
+		}
+		for _, target := range source.Targets {
+			if completion.LiveLookups >= 1024 {
+				completion.KnownSessionsAbsent = false
 				completion.FaultResourcesVerified = false
 				continue
 			}
-			journals, err := readTestCampaignFaultJournals(directory, batch.ID, scenarios[batch.Scenario])
-			if err != nil {
-				completion.FaultResourcesAbsent = false
-				completion.FaultResourcesVerified = false
-				continue
-			}
-			observations, err := inspectTestCampaignFaults(ctx, faultClient, journals, false, false)
-			completion.FaultResources = append(completion.FaultResources, observations...)
-			if err != nil {
-				completion.FaultResourcesAbsent = false
-				completion.FaultResourcesVerified = false
-			}
-			for _, observation := range observations {
-				if observation.Registration != "absent" {
-					completion.FaultResourcesAbsent = false
-				}
-				for _, state := range observation.Consumers {
-					if state != "absent" && state != "revoked" {
-						completion.FaultResourcesAbsent = false
-					}
+			completion.LiveLookups++
+			_, err := reader.GetDevSession(ctx, target.Project, target.RunID)
+			if !isNotFound(err) {
+				completion.KnownSessionsAbsent = false
+				if err != nil {
+					completion.FaultResourcesVerified = false
 				}
 			}
 		}
 	}
-	if !completion.FaultResourcesAbsent {
-		completion.Blockers = append(completion.Blockers, "Fault registration or consumer absence remains unverified.")
-		completion.RecoveryComplete = false
+	fresh, err := collectTestCampaignFaultHistory(plan, cp, scenarios, directory, resolver)
+	if err != nil || testCampaignJSONHash(fresh) != completion.FaultHistorySnapshotSHA256 {
+		completion.FaultResourcesVerified = false
+		completion.FaultResourcesAbsent = false
+		completion.SnapshotStable = false
+	}
+	if !completion.FaultResourcesVerified || !completion.FaultResourcesAbsent || !completion.KnownSessionsAbsent {
+		fail()
 	}
 }

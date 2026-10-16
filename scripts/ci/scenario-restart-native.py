@@ -1326,7 +1326,7 @@ def main():
         raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM, interrupted)
     args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
-    summary = {"version": 22, "status": "failed", "runs": {}}
+    summary = {"version": 23, "status": "failed", "runs": {}}
     try:
         try:
             api, provenance = runner_configuration()

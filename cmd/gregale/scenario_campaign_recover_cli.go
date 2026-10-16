@@ -220,7 +220,7 @@ func cmdTestCampaignRecover(args []string) int {
 	if *verify {
 		completion := buildTestCampaignRecoveryCompletion(ctx, result, plan, cp, manifest.Scenarios, *directory, stamp, observationPaths, reader, resolver)
 		if *verifyFaults {
-			applyTestCampaignFaultCompletion(ctx, &completion, reader, plan, cp, manifest.Scenarios, *directory, len(result.Status.Lineage) > 0)
+			applyTestCampaignFaultCompletion(ctx, &completion, reader, plan, cp, manifest.Scenarios, *directory, len(result.Status.Lineage) > 0, resolver)
 		}
 		result.Completion = &completion
 	}

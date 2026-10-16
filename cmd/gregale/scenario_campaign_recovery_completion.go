@@ -27,27 +27,29 @@ type testCampaignRecoveryCompletionBatch struct {
 	Blockers                 []string                       `json:"blockers"`
 }
 type testCampaignRecoveryCompletion struct {
-	FaultResourcesVerified   bool                                  `json:"fault_resources_verified"`
-	FaultResourcesAbsent     bool                                  `json:"fault_resources_absent"`
-	FaultResources           []testCampaignFaultObservation        `json:"fault_resources,omitempty"`
-	SchemaVersion            int                                   `json:"schema_version"`
-	ReadOnly                 bool                                  `json:"read_only"`
-	ObservedAt               time.Time                             `json:"observed_at"`
-	PlanSHA256               string                                `json:"plan_sha256"`
-	CheckpointSHA256         string                                `json:"checkpoint_sha256"`
-	EvidenceSnapshotSHA256   string                                `json:"evidence_snapshot_sha256"`
-	SnapshotStable           bool                                  `json:"snapshot_stable"`
-	ResourceEvidenceComplete bool                                  `json:"resource_evidence_complete"`
-	KnownSessionsAbsent      bool                                  `json:"known_sessions_absent"`
-	TestExecutionComplete    bool                                  `json:"test_execution_complete"`
-	PolicyPassed             bool                                  `json:"policy_passed"`
-	RecoveryComplete         bool                                  `json:"recovery_complete"`
-	LiveLookups              int                                   `json:"live_lookups"`
-	LinkedObservations       int                                   `json:"linked_observations"`
-	Observations             []testCampaignRecoveryObservationLink `json:"observations"`
-	Batches                  []testCampaignRecoveryCompletionBatch `json:"batches"`
-	Blockers                 []string                              `json:"blockers"`
-	Notes                    []string                              `json:"notes"`
+	FaultSources               []testCampaignFaultSource             `json:"fault_sources,omitempty"`
+	FaultHistorySnapshotSHA256 string                                `json:"fault_history_snapshot_sha256,omitempty"`
+	FaultResourcesVerified     bool                                  `json:"fault_resources_verified"`
+	FaultResourcesAbsent       bool                                  `json:"fault_resources_absent"`
+	FaultResources             []testCampaignFaultObservation        `json:"fault_resources,omitempty"`
+	SchemaVersion              int                                   `json:"schema_version"`
+	ReadOnly                   bool                                  `json:"read_only"`
+	ObservedAt                 time.Time                             `json:"observed_at"`
+	PlanSHA256                 string                                `json:"plan_sha256"`
+	CheckpointSHA256           string                                `json:"checkpoint_sha256"`
+	EvidenceSnapshotSHA256     string                                `json:"evidence_snapshot_sha256"`
+	SnapshotStable             bool                                  `json:"snapshot_stable"`
+	ResourceEvidenceComplete   bool                                  `json:"resource_evidence_complete"`
+	KnownSessionsAbsent        bool                                  `json:"known_sessions_absent"`
+	TestExecutionComplete      bool                                  `json:"test_execution_complete"`
+	PolicyPassed               bool                                  `json:"policy_passed"`
+	RecoveryComplete           bool                                  `json:"recovery_complete"`
+	LiveLookups                int                                   `json:"live_lookups"`
+	LinkedObservations         int                                   `json:"linked_observations"`
+	Observations               []testCampaignRecoveryObservationLink `json:"observations"`
+	Batches                    []testCampaignRecoveryCompletionBatch `json:"batches"`
+	Blockers                   []string                              `json:"blockers"`
+	Notes                      []string                              `json:"notes"`
 }
 type testCampaignCompletionEvidence struct {
 	receiptHash, journalHash       string

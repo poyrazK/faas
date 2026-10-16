@@ -164,7 +164,7 @@ func (w *testCampaignJournalWriter) update(name, id, state string) error {
 
 // Journals authorize only resource inspection/cleanup, never assertion coverage.
 func readTestCampaignJournalTargets(directory string, planHash string, cp testCampaignCheckpoint,
-	batch testCampaignCostBatch, scenario testScenario) (map[string]testCampaignCleanupAction, string, error) {
+	batch testCampaignCostBatch, scenario testScenario, portable ...bool) (map[string]testCampaignCleanupAction, string, error) {
 	path := testCampaignJournalDirectory(directory, batch.ID)
 	if err := testCampaignPrivateDirectory(path); err != nil {
 		return nil, "", err
@@ -181,14 +181,19 @@ func readTestCampaignJournalTargets(directory string, planHash string, cp testCa
 	if err != nil {
 		return nil, "", err
 	}
-	if len(entries) > 1025 {
+	limit := 1025
+	allowInventory := len(portable) == 1 && portable[0]
+	if allowInventory {
+		limit++
+	}
+	if len(entries) > limit {
 		return nil, "", errors.New("journal exceeds 1024 runs")
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	targets := map[string]testCampaignCleanupAction{}
 	journals := []testCampaignRunJournal{}
 	for _, entry := range entries {
-		if entry.Name() == "binding.json" {
+		if entry.Name() == "binding.json" || (allowInventory && entry.Name() == "inventory.json") {
 			continue
 		}
 		if !entry.Type().IsRegular() {

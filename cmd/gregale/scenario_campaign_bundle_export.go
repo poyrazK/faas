@@ -132,7 +132,7 @@ func collectTestCampaignBundle(plan testCampaignPolicyPlan, checkpoint testCampa
 					return bundle, errors.New("uncheckpointed journal requires local inspection before handoff")
 				}
 			} else {
-				if err := collectTestCampaignPortableJournal(nodePath, physical, id, add); err != nil {
+				if err := collectTestCampaignPortableJournal(nodePath, physical, id, add, resolver != nil && testCampaignBundleImmutableDirectory(physical, resolver)); err != nil {
 					return bundle, err
 				}
 			}

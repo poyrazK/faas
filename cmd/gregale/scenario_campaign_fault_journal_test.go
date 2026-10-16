@@ -101,7 +101,7 @@ func TestCampaignFaultCompletionDoesNotForgeExecution(t *testing.T) {
 	plan, scenarios, _ := campaignRunnerTestPlan(t, 1)
 	directory := t.TempDir()
 	batch := plan.Batches[0]
-	cp := testCampaignCheckpoint{SchemaVersion: 1, PlanSHA256: testCampaignJSONHash(plan), Side: batch.Side, Revision: strings.Repeat("a", 40), Batches: map[string]testCampaignCheckpointBatch{batch.ID: {Status: "running"}}}
+	cp := testCampaignCheckpoint{SchemaVersion: 1, LineageVersion: 1, PlanSHA256: testCampaignJSONHash(plan), Side: batch.Side, Revision: strings.Repeat("a", 40), Batches: map[string]testCampaignCheckpointBatch{batch.ID: {Status: "running"}}}
 	if err := writeTestCampaignJSON(filepath.Join(directory, "checkpoint.json"), cp); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +122,9 @@ func TestCampaignFaultCompletionDoesNotForgeExecution(t *testing.T) {
 	}
 	cp.Halted = true
 	cp.Batches[batch.ID] = testCampaignCheckpointBatch{Status: "uncertain"}
+	if err := writeTestCampaignJSON(filepath.Join(directory, "checkpoint.json"), cp); err != nil {
+		t.Fatal(err)
+	}
 	client := &campaignFaultAPI{members: map[string]string{project: "owned"}}
 	report := testCampaignRecoveryCompletion{RecoveryComplete: true, ResourceEvidenceComplete: true}
 	applyTestCampaignFaultCompletion(context.Background(), &report, client, plan, cp, scenarios, directory, false)

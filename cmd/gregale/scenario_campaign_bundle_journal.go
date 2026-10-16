@@ -34,7 +34,7 @@ func testCampaignPortableJournalPath(name string) (string, string, bool) {
 
 // The portable inventory binds the exact set of snapshots independently of
 // decoding their contents; recovery never rewrites hash-bound source evidence.
-func collectTestCampaignPortableJournal(nodePath, physical, batchID string, add func(string, []byte) error) error {
+func collectTestCampaignPortableJournal(nodePath, physical, batchID string, add func(string, []byte) error, portable ...bool) error {
 	directory := testCampaignJournalDirectory(physical, batchID)
 	if _, err := os.Lstat(directory); os.IsNotExist(err) {
 		return nil
@@ -48,13 +48,26 @@ func collectTestCampaignPortableJournal(nodePath, physical, batchID string, add 
 	if err != nil {
 		return err
 	}
-	if len(entries) == 0 || len(entries) > 1025 {
+	allowInventory := len(portable) == 1 && portable[0]
+	limit := 1025
+	if allowInventory {
+		limit++
+	}
+	if len(entries) == 0 || len(entries) > limit {
 		return errors.New("journal requires binding and at most 1024 run snapshots")
+	}
+	if allowInventory {
+		if _, err := validateTestCampaignFaultPortableInventory(directory); err != nil {
+			return err
+		}
 	}
 	prefix := nodePath + "/batch-" + batchID + ".journal"
 	inventory := testCampaignPortableJournalInventory{SchemaVersion: 1, Files: []testCampaignBundleInventoryFile{}}
 	for _, entry := range entries {
 		name := entry.Name()
+		if name == "inventory.json" && allowInventory {
+			continue
+		}
 		if !entry.Type().IsRegular() || (name != "binding.json" && !testCampaignPortableJournalRun.MatchString(name)) {
 			return errors.New("journal has an unexpected file or symlink")
 		}

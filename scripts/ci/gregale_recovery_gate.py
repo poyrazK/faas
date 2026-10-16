@@ -19,6 +19,10 @@ FILTER = (
     "|TestRecovery(Assessment|Completion)|TestCleanupObservation|TestPortableJournal)"
 )
 REQUIRED = {
+    "TestCampaignFaultHistoryCLIUsesActiveOwner",
+    "TestCampaignFaultHistoryCleanupAcrossGenerations",
+    "TestCampaignFaultHistoryBlocksBeforeMutation",
+    "TestCampaignFaultHistoryPortableWithoutOriginalPaths",
     "TestCampaignFaultCleanupIdentityAndRevocation",
     "TestCampaignFaultCompletionDoesNotForgeExecution",
     "TestCampaignRecoveryAcceptanceCrashHandoffCleanupAndReconciliation",

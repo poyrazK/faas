@@ -193,8 +193,46 @@ Portable bundles carry the fault inventory in their existing hash-bound journal
 snapshots; recipients need this CLI version. The native crash/transfer drill now
 requires fault cleanup and fault completion checks as well as session/VM absence.
 
-Fault verification currently covers the active work directory's attempted
-batches. If recovery lineage includes ancestors, their fault inventory requires
-separate inspection; the command reports this limitation and leaves fault
-completion false. It does not assume that an ancestor's registrations disappeared
-when its sessions did.
+## Fault cleanup across recovery history
+
+The active owner can now inspect or clean all attempted generations with:
+
+```sh
+gregale test policy cleanup --plan continuation-plan.json --policy policy.yaml \
+  --manifest gregale-test.yaml --directory active-work \
+  --journal --faults --fault-history --execute
+```
+
+Omit `--execute` for inspection. Do not supply `--batch` in history mode. Imported
+work requires its active `--handoff bundle-index.json`. Cleanup uses the active
+work directory's runner/shared-claim locks and registered continuation ownership.
+It never reopens a frozen ancestor for execution or rewrites ancestor checkpoints,
+reports, journals, inventories, or ownership ledgers.
+
+History follows verified checkpoint/reconciliation links, up to 32 parents.
+Portable parents resolve only through the import index; original sender paths
+are never consulted. Every attempted batch requires a complete fault journal.
+Finalized batches also require their unchanged bound report and matching workload
+identities. Legacy boundaries, missing inventories, unfinished workers, ancestor
+runner locks, duplicate run IDs, extra portable snapshots and replacement owners
+block the operation. The combined inventory is bounded to 1024 workload/run
+identities and 64 MiB of journal evidence.
+
+All generations are inspected before the first mutation. Cleanup revokes recorded
+consumers, deletes only verified sessions, then conditionally removes their fault
+namespaces. It rechecks the graph and journal snapshot between phases. Failed or
+interrupted operations remain safely retryable; progress comes from live API
+checks. Observations are written only in active work as
+`fault-history-cleanup-*.json`, with source plan/checkpoint/journal hashes. These
+local observations are not execution receipts or portable authority.
+
+`recover --inspect --verify-completion --check-cleanup --verify-faults` now
+checks the same full history automatically. Its `fault_sources` and
+`fault_history_snapshot_sha256` describe the verified inventory, and ancestor
+sessions are rechecked before reporting session absence. A live or unresolved
+generation keeps overall recovery incomplete. Missing execution evidence,
+recorded cleanup failures and spent budget retain their existing meaning.
+
+Re-exporting a recipient retains ancestor journal inventories without duplicating
+inventory files. Subsequent recipients can verify and clean the full graph even
+when the original machines and earlier recipients no longer exist.
