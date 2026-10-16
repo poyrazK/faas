@@ -125,7 +125,7 @@ func (s *server) routeAdviceInputs(ctx context.Context, reader routeAdviceReader
 	if err != nil {
 		return in, fmt.Errorf("route advice stats: %w", err)
 	}
-	in.Routes = routeAdviceRoutes(stats)
+	in.Routes = routeadvisor.RoutesFromStats(stats)
 	consumers, err := reader.RouteAdviceConsumers(ctx, sqlc.RouteAdviceConsumersParams{AppID: appID, AccountID: accountID, SinceAt: since, UntilAt: until})
 	if err != nil {
 		return in, fmt.Errorf("route advice consumers: %w", err)
@@ -170,24 +170,6 @@ func (s *server) routeAdviceRulesAndHosts(ctx context.Context, app state.App) ([
 		}
 	}
 	return existing, hosts, nil
-}
-
-func routeAdviceRoutes(rows []sqlc.RouteAdviceRouteStatsRow) []routeadvisor.RouteStats {
-	out := make([]routeadvisor.RouteStats, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, routeadvisor.RouteStats{
-			Method: row.Method, Path: strings.TrimPrefix(row.Route, row.Method+" "),
-			Requests: row.Requests, AnonymousRequests: row.AnonymousRequests, AnonymousSuccess: row.AnonymousSuccess,
-			ServerErrors: row.ServerErrors, Timeouts: row.Timeouts, ColdBoots: row.ColdBoots,
-			P95LatencyMs: int(row.P95LatencyMs), CacheHits: row.CacheHits, WakesAvoided: row.WakesAvoided,
-			Content: routeadvisor.ContentStats{
-				First: row.ContentFirst, Uncacheable: row.ContentUncacheable,
-				Same:    []int64{row.ContentSame60, row.ContentSame300, row.ContentSame3600},
-				Changed: []int64{row.ContentChanged60, row.ContentChanged300, row.ContentChanged3600},
-			},
-		})
-	}
-	return out
 }
 
 func routeAdviceConsumers(rows []sqlc.RouteAdviceConsumersRow) []routeadvisor.ConsumerStats {

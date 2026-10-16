@@ -60,3 +60,6 @@ would save at least 10% of your app's awake time.
 | `call_less_often` | A client, usually a poller with credentials, calls the route more often than your idle timeout. | Call it less often than the idle timeout, or push changes to the client instead of being polled. |
 
 See also: [Route advisor](route-advisor.md) for the rules themselves.
+
+Routes that keep your app awake are also recorded every six hours as
+[route insights](route-insights.md), which can notify a webhook.
