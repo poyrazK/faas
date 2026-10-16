@@ -5145,7 +5145,7 @@ paths:
       summary: Revoke an AI gateway access token.
       description: Requires MFA and deploy-write scope. outboundd may accept the token for up to 30 seconds more (ADR-1360).
       responses:
-        '204': { description: Token revoked. }
+        '204': { description: Access token revoked. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
