@@ -22,7 +22,7 @@ func financialDraftSpec() financial.BudgetSpec {
 	return financial.BudgetSpec{Name: "Preview spending", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000000, NotifyMillicents: []int64{800000}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual"}
 }
 
-// adr: 566 — only the monitored notification response may activate.
+// adr: 566 — notifications and monitored compute-only preview stopping activate.
 func TestFinancialBudgetNotificationActivation(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
 	spec := financialDraftSpec()
@@ -31,7 +31,12 @@ func TestFinancialBudgetNotificationActivation(t *testing.T) {
 	if p.Status != "active" || !p.NotificationReady || p.Runtime == nil || p.Runtime.Evaluation != nil {
 		t.Fatalf("active notifications: %+v", p)
 	}
-	for _, action := range []string{"reject_traffic", "stop_previews", "suspend_background", "suspend_workloads"} {
+	spec.Action, spec.DrainSeconds = "stop_previews", 30
+	stopping := decodeFinancialBudget(t, e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "activate-preview-stopping"}), http.StatusCreated)
+	if stopping.Status != "active" || !stopping.EnforcementReady || !stopping.NotificationReady || len(stopping.Runtime.Stops) != 0 {
+		t.Fatalf("preview stopping activation: %+v", stopping)
+	}
+	for _, action := range []string{"reject_traffic", "suspend_background", "suspend_workloads"} {
 		spec.Action = action
 		rec := e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "unsupported-" + action})
 		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "financial_budget_activation_unavailable") {
@@ -42,7 +47,7 @@ func TestFinancialBudgetNotificationActivation(t *testing.T) {
 	if rec := e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "strict-pending"}); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("strict policy activated: %d %s", rec.Code, rec.Body)
 	}
-	spec.Action, spec.Mode, spec.Enabled = "notify", "monitored", false
+	spec.Action, spec.Mode, spec.Enabled, spec.DrainSeconds = "notify", "monitored", false, 0
 	p = decodeFinancialBudget(t, e.Do(t, "PUT", "/v1/billing/budgets/"+p.ID, api.UpdateFinancialBudgetRequest{ExpectedRevision: p.Revision, Spec: spec}, map[string]string{"Idempotency-Key": "disable-notifications"}), http.StatusOK)
 	if p.Status != "draft" || p.NotificationReady {
 		t.Fatalf("disabled policy remained active: %+v", p)
@@ -58,7 +63,7 @@ func decodeFinancialBudget(t *testing.T, rec *httptest.ResponseRecorder, status 
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Header().Get("Cache-Control") != "private, no-store" || out.EnforcementReady {
+	if rec.Header().Get("Cache-Control") != "private, no-store" || out.EnforcementReady != (out.Spec.Enabled && financial.PreviewStopping(out.Spec) && out.DeletedAt == nil) {
 		t.Fatalf("unsafe policy response: %+v", out)
 	}
 	return out
@@ -158,7 +163,7 @@ func TestFinancialBudgetAuthorizationAndActivation(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
 	spec := financialDraftSpec()
 	enabled := spec
-	enabled.Enabled = true
+	enabled.Enabled, enabled.Action = true, "suspend_workloads"
 	bad := e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: enabled}, map[string]string{"Idempotency-Key": "activate"})
 	if bad.Code != http.StatusUnprocessableEntity || !strings.Contains(bad.Body.String(), "financial_budget_activation_unavailable") {
 		t.Fatalf("activation: %d %s", bad.Code, bad.Body)

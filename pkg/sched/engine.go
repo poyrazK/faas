@@ -2267,6 +2267,9 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	if err != nil {
 		return CoordOutcome{}, err
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID); err != nil {
+		return CoordOutcome{}, err
+	}
 	ctx = withWakeEnvironment(ctx, selected)
 	coordinatorKey := selected.coordinatorKey()
 	call, isLeader, err := e.wakeCoord.Enter(coordinatorKey, e.wakeFanoutForEnvironment(selected))
@@ -2899,6 +2902,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 	environmentKey := runtimeEnvironmentAdmissionKey(scaling.Scope, scaling.EnvironmentID)
 	productionEnvironment := reaperProductionScope(scaling.Scope)
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		release()
 		return WakeResult{}, err
@@ -4053,6 +4060,10 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
 	tPublished := time.Now()
+	if errors.Is(publishErr, state.ErrFinancialBudgetHeld) {
+		cleanupErr := e.retireFinancialBudgetRuntime(ctx, state.Instance{ID: bootInput.insID, AppID: bootInput.appID, NodeID: bootInput.nodeID})
+		return WakeResult{}, errors.Join(publishErr, cleanupErr)
+	}
 	if errors.Is(publishErr, state.ErrConflict) {
 		if mode == string(state.InstanceModeMirror) {
 			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
@@ -6334,6 +6345,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	primed, err := e.publishOwnedRuntimeWithStandards(ctx, out, publication)
 	if err != nil {
+		if errors.Is(err, state.ErrFinancialBudgetHeld) {
+			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))
+		}
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
@@ -7485,7 +7499,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return e.seedFinancialPreviewCommandLedger(ctx, apps)
 }
 
 // vmstateHostPathFor returns the deterministic host path the single-box

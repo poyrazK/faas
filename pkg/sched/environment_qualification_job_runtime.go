@@ -85,6 +85,9 @@ func (e *Engine) withEnvironmentWorkloadQualificationJob(ctx context.Context,
 	if err != nil || !dep.EnvironmentWorkloadHeld() {
 		return result, errors.Join(state.ErrConflict, err)
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return result, err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return result, err
 	}

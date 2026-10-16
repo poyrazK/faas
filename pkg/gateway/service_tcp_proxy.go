@@ -228,6 +228,11 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 	if err != nil {
 		return "", "release", err
 	}
+	if check := p.cfg.Services.admitRuntime; check != nil {
+		if err := check(ctx, target.AppID, deploymentID); err != nil {
+			return "", "budget_admission", err
+		}
+	}
 	conn, cleanup, err := p.chaosConn(ctx, conn, callerAppID, target, int(dst.Port()))
 	if err != nil {
 		return "", "chaos_unavailable", err

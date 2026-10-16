@@ -22,7 +22,7 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 	}
 	out.Status = "unavailable"
 	monitor, ok := store.(state.FinancialBudgetMonitorStore)
-	if !ok || !financial.NotificationOnly(p.Spec) {
+	if !ok || !financial.Monitored(p.Spec) {
 		return out, nil
 	}
 	start := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -32,6 +32,35 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 	}
 	out.Status, out.NotificationReady, out.Runtime = "active", true, &runtime
 	out.Reasons = []string{"notification_only_workloads_continue"}
+	if financial.PreviewStopping(p.Spec) {
+		stopping, ok := store.(state.FinancialBudgetStopStore)
+		_, commands := store.(state.FinancialPreviewCommandStore)
+		if !ok || !commands {
+			out.Status, out.NotificationReady = "unavailable", false
+			return out, nil
+		}
+		stops, err := stopping.ActiveFinancialBudgetStops(ctx, p.AccountID, now)
+		if err != nil {
+			return out, err
+		}
+		for _, stop := range stops {
+			if stop.PolicyID == p.ID && stop.Revision == p.Revision {
+				stop.Targets, err = stopping.FinancialBudgetStopTargets(ctx, p.AccountID, stop.ID)
+				if err != nil {
+					return out, err
+				}
+				for i := range stop.Targets {
+					if now.Before(stop.Targets[i].ObservedAt) || now.Sub(stop.Targets[i].ObservedAt) > api.FinancialEvidenceFreshness {
+						stop.Targets[i].State = "unavailable"
+						stop.Targets[i].LastError = "scheduler_observation_stale"
+					}
+				}
+				runtime.Stops = append(runtime.Stops, stop.BudgetStop)
+			}
+		}
+		out.EnforcementReady = true
+		out.Reasons = []string{"monitored_preview_stopping", "production_can_continue", "overshoot_possible"}
+	}
 	if runtime.Evaluation == nil {
 		out.Reasons = append(out.Reasons, "awaiting_first_evaluation")
 	} else if now.Before(runtime.Evaluation.EvaluatedAt) || now.Sub(runtime.Evaluation.EvaluatedAt) > api.FinancialEvidenceFreshness {

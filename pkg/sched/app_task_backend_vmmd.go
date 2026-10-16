@@ -16,6 +16,7 @@ type ResolvedAppTaskRuntime struct {
 	NodeID  string
 	Spec    AppTaskRestoreSpec
 	release func()
+	ready   func(context.Context) error
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -73,6 +74,15 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			resolved.release()
 		}
 		return nil, identityErr
+	}
+	if resolved.ready != nil {
+		if err := resolved.ready(ctx); err != nil {
+			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+			if cleanupErr == nil && resolved.release != nil {
+				resolved.release()
+			}
+			return nil, errors.Join(err, cleanupErr)
+		}
 	}
 	return &routedVmmdAppTaskSession{
 		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release,

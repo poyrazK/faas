@@ -69,7 +69,7 @@ func TestFinancialBudgetPreviewAPI(t *testing.T) {
 		t.Fatalf("preview: %d %s", preview.Code, preview.Body)
 	}
 	var out api.FinancialBudgetPreviewResponse
-	if err := json.Unmarshal(preview.Body.Bytes(), &out); err != nil || out.EnforcementReady || len(out.Reasons) == 0 {
+	if err := json.Unmarshal(preview.Body.Bytes(), &out); err != nil || !out.EnforcementReady || len(out.Reasons) == 0 {
 		t.Fatalf("preview claims activation: %+v %v", out, err)
 	}
 	rows, err := (*e.Store()).ListFinancialBudgets(t.Context(), (*e.Acct()).ID)

@@ -54,6 +54,9 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
+		if err := state.CheckFinancialBudgetAdmission(ctx, store, target, "", time.Now().UTC()); err != nil {
+			return gateway.ServiceCaller{}, err
+		}
 		var callerTest, targetTest state.ScenarioTestMember
 		var callerTestErr, targetTestErr = state.ErrNotFound, state.ErrNotFound
 		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {

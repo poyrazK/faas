@@ -12,6 +12,9 @@ import (
 )
 
 func (e *Engine) checkApplicationStandardAdmission(ctx context.Context, app state.App) error {
+	if err := e.checkFinancialBudgetAdmission(ctx, app, ""); err != nil {
+		return err
+	}
 	if app.OrgID == "" { // Legacy unowned MemStore fixtures have no enrollment.
 		return nil
 	}
@@ -41,6 +44,9 @@ func (e *Engine) checkApplicationStandardAdmissionByID(ctx context.Context, appI
 }
 
 func (e *Engine) checkCapturedApplicationStandardAdmission(ctx context.Context, id string, app state.App, account state.Account, deployment state.Deployment) error {
+	if err := e.checkFinancialBudgetAdmission(ctx, app, deployment.ID); err != nil {
+		return err
+	}
 	if app.OrgID == "" {
 		return nil
 	}

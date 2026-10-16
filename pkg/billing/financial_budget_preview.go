@@ -41,8 +41,15 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 	// Promotion is pending the durable decisions, owner integrations and
 	// native lifecycle acceptance in ADR-566. A preview never activates intent.
 	out.EnforcementReady = false
+	_, stopping := store.(state.FinancialBudgetStopStore)
+	_, commands := store.(state.FinancialPreviewCommandStore)
+	if stopping && commands && financial.PreviewStopping(spec) {
+		out.EnforcementReady = true
+	}
 	if financial.NotificationOnly(spec) {
 		out.Reasons = append(out.Reasons, "notification_only_workloads_continue")
+	} else if financial.PreviewStopping(spec) && out.EnforcementReady {
+		out.Reasons = append(out.Reasons, "monitored_preview_stopping", "production_can_continue", "overshoot_possible")
 	} else {
 		out.Reasons = append(out.Reasons, "enforcement_integration_pending")
 	}
@@ -132,7 +139,11 @@ func financialBudgetMembers(ctx context.Context, store state.Store, account stri
 				return nil, err
 			}
 			for _, deployment := range deployments {
-				if deployment.Scope == environment.Slug {
+				matches, err := state.MatchFinancialBudgetEnvironment(ctx, store, app, environment.ID, deployment.ID)
+				if err != nil {
+					return nil, fmt.Errorf("%w: runtime scope ownership unavailable", ErrFinancialUnavailable)
+				}
+				if matches {
 					member.target.EnvironmentID, member.target.DeploymentID = environment.ID, deployment.ID
 					out = append(out, member)
 				}
@@ -184,6 +195,9 @@ func financialBudgetEffect(action string, background bool) string {
 	default:
 		if background {
 			return "block_dispatch_then_terminate_at_drain_deadline"
+		}
+		if action == "stop_previews" {
+			return "block_traffic_and_wakes_then_stop_at_drain_deadline"
 		}
 		return "block_traffic_and_wakes_then_park_at_drain_deadline"
 	}

@@ -39,7 +39,7 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 		}
 		var active []state.FinancialBudget
 		for _, p := range rows {
-			if p.DeletedAt == nil && p.Spec.Enabled && financial.NotificationOnly(p.Spec) {
+			if p.DeletedAt == nil && p.Spec.Enabled && financial.Monitored(p.Spec) {
 				active = append(active, p)
 			}
 		}
@@ -115,6 +115,10 @@ func financialBudgetAlertMail(a state.FinancialBudgetAlertDelivery, recipient st
 		coverage = "Usage coverage is partial; additional costs may be missing."
 	}
 	amount := func(n int64) string { return fmt.Sprintf("EUR %d.%05d", n/100000, n%100000) }
-	body := fmt.Sprintf("Your budget %q reached its %s notification threshold.\n\nKnown recorded usage: %s\nUsage month: %s (UTC)\nScope: %s %s\nBasis: %s\nEvidence through: %s\n%s\n\nThis is a spending notification. Workloads continue running. It covers the selected usage meters, not your total invoice.\n\nAlert ID: %s\nPolicy revision: %d\n", a.Spec.Name, amount(a.ThresholdMillicents), amount(*a.Evaluation.KnownMillicents), a.Evaluation.PeriodStart.Format("2006-01"), a.Spec.Scope.Kind, a.Spec.Scope.ID, a.Spec.Basis, a.Evaluation.AsOf.Format(time.RFC3339), coverage, a.ID, a.PolicyRevision)
+	effect := "This is a spending notification. Workloads continue running."
+	if financial.PreviewStopping(a.Spec) {
+		effect = "This policy stops matching previews at its recorded compute limit. Production can continue. Metering, drain and teardown delays can exceed the budget. Check budget runtime for actual stopping status; this email is not a teardown acknowledgement."
+	}
+	body := fmt.Sprintf("Your budget %q reached its %s notification threshold.\n\nKnown recorded usage: %s\nUsage month: %s (UTC)\nScope: %s %s\nBasis: %s\nEvidence through: %s\n%s\n\n%s It covers the selected usage meters, not your total invoice.\n\nAlert ID: %s\nPolicy revision: %d\n", a.Spec.Name, amount(a.ThresholdMillicents), amount(*a.Evaluation.KnownMillicents), a.Evaluation.PeriodStart.Format("2006-01"), a.Spec.Scope.Kind, a.Spec.Scope.ID, a.Spec.Basis, a.Evaluation.AsOf.Format(time.RFC3339), coverage, effect, a.ID, a.PolicyRevision)
 	return mail.Message{To: []string{recipient}, Subject: "Gregale budget spending alert", TextBody: body, MessageID: "financial-budget-" + a.ID}
 }

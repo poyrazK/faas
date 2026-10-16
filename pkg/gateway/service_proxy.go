@@ -263,6 +263,8 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
+	// AdmitRuntime checks current budget holds after selecting the runtime.
+	AdmitRuntime              func(context.Context, string, string) error
 	Provider                  ServiceEndpointProvider
 	Resolve                   ServiceProxyResolver
 	Authorize                 ServiceProxyAuthorizer
@@ -338,6 +340,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	admitRuntime              func(context.Context, string, string) error
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
 	provider                  ServiceEndpointProvider
@@ -444,6 +447,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
+		admitRuntime:              cfg.AdmitRuntime,
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
 		provider:                  cfg.Provider,
@@ -876,6 +880,17 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !overridePresent && versionKey != "" {
 		if resolver, ok := p.provider.(versionAffinityResolver); ok {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
+		}
+	}
+	if p.admitRuntime != nil {
+		if err := p.admitRuntime(dependencyCtx, target.AppID, versionDeploymentID); err != nil {
+			var problem *api.Problem
+			if errors.As(err, &problem) {
+				api.WriteProblem(dispatchWriter, problem)
+			} else {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "budget admission is unavailable")
+			}
+			return
 		}
 	}
 	var responseFault *scenarioHTTPResponseFault

@@ -188,10 +188,12 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 	}
 	if spec.Enabled {
 		_, monitoring := store.(state.FinancialBudgetMonitorStore)
-		if monitoring && financial.NotificationOnly(spec) {
+		_, stopping := store.(state.FinancialBudgetStopStore)
+		_, commandOwnership := store.(state.FinancialPreviewCommandStore)
+		if monitoring && (financial.NotificationOnly(spec) || stopping && commandOwnership && financial.PreviewStopping(spec)) {
 			return true
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Only monitored notify policies can be activated. Save enabled=false for stopping or strict policies; their runtime integrations are not available."))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify policies or monitored compute-only stop_previews policies. Other actions and strict limits must remain disabled drafts."))
 		return false
 	}
 	return true
