@@ -230,6 +230,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 // row, a different project or a changed shape; the caller then renews the
 // lease and syncs a fresh deployment as for a new session.
 func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits) (state.App, bool) {
+	// ci-light timing validation (draft PR, not for merge).
 	tomb, err := s.store.AppBySlugIncludingDeleted(r.Context(), slug)
 	if err != nil || tomb.DeletedAt == nil || tomb.AccountID != acct.ID ||
 		tomb.PreviewOfSlug != project || tomb.PreviewPrNumber != 0 ||

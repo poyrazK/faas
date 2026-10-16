@@ -53,6 +53,7 @@ func (s *PgStore) BindDeploymentRuntimeRelease(ctx context.Context, depID, key, 
 	return mapErr(err)
 }
 func (s *PgStore) RuntimeReleaseForArtifact(ctx context.Context, account, key string) (RuntimeRelease, error) {
+	// ci-light timing validation (draft PR, not for merge).
 	acct, err := uuid.Parse(account)
 	if err != nil {
 		return RuntimeRelease{}, ErrInvalidArgument

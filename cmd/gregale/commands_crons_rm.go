@@ -10,6 +10,7 @@ import (
 // a no-op for scripts that pass it to every rm verb; any other flag is named
 // as unknown instead of falling through to a bare usage line (H10-97).
 func cmdCronsRm(args []string) int {
+	// ci-light timing validation (draft PR, not for merge).
 	fs := newFlagSet("crons-rm", flag.ContinueOnError)
 	fs.Bool("yes", false, "accepted for scripts; crons rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
