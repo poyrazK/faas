@@ -19610,7 +19610,8 @@ ORDER BY window_start, method, path;
 -- path on both so a quiet canary is judged on evidence. An app with several
 -- serving predecessors returns several rows and is skipped by the caller.
 SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
- d.id::text AS candidate_id, s.id::text AS stable_id
+ d.id::text AS candidate_id, s.id::text AS stable_id,
+ coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)::jsonb AS probe_paths
 FROM apps a
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps

@@ -47,6 +47,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"head_wakes":                      {Path: "gregale app <slug> --head-wakes", AppFlags: []string{"head-wakes"}},
 	"crawler_policy":                  {Path: "gregale app <slug> --crawler-policy", AppFlags: []string{"crawler-policy"}},
 	"release_policy":                  {Path: "gregale app <slug> --release-policy", AppFlags: []string{"release-policy"}},
+	"release_probe_paths":             {Path: "gregale app <slug> --release-probe-paths", AppFlags: []string{"release-probe-paths"}},
 	"pre_auth_rate_limit":             {Path: "gregale app <slug> --pre-auth / --pre-auth-rps / --pre-auth-burst (route overrides stay API-only)", AppFlags: []string{"pre-auth", "pre-auth-rps", "pre-auth-burst"}},
 	"health_path":                     {Path: "gregale app <slug> --health-path", AppFlags: []string{"health-path"}},
 	"health_path_wakes":               {Path: "gregale app <slug> --health-path-wakes / --no-health-path-wakes", AppFlags: []string{"health-path-wakes", "no-health-path-wakes"}},

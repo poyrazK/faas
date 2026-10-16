@@ -619,6 +619,9 @@ type CreateAppRequest struct {
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// ReleasePolicy (ADR-1160): "safe" (default) or "immediate".
 	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1351): up to ReleaseProbePathsMax GET paths the
+	// default rollout probe checks instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -1024,6 +1027,9 @@ type UpdateAppRequest struct {
 	// ReleasePolicy (ADR-1160) replaces the app's default rollout for
 	// production releases: "safe" or "immediate".
 	ReleasePolicy *string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1351) replaces the paths the default rollout
+	// probe checks; an empty list restores "/".
+	ReleaseProbePaths *[]string `json:"release_probe_paths,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1930,6 +1936,9 @@ type AppResponse struct {
 	// ReleasePolicy is the effective default rollout for production
 	// releases (ADR-1160): "safe" or "immediate".
 	ReleasePolicy string `json:"release_policy"`
+	// ReleaseProbePaths are the paths the default rollout probe checks; empty
+	// means "/" (ADR-1351).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"

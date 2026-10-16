@@ -1903,6 +1903,9 @@ type AppManifest struct {
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
 	// ReleasePolicy (ADR-1160): "" / "safe" or "immediate".
 	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1351): GET paths the default rollout probe checks
+	// instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1948,7 +1951,7 @@ func (m AppManifest) IsZero() bool {
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
-		m.ReleasePolicy == ""
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {

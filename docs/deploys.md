@@ -243,7 +243,20 @@ with 5xx more often than the previous one, the rollout is aborted and traffic
 returns to the previous revision. If the probes are clean, each stage
 advances after its first minute.
 
-When probes cannot give an answer (for example, `/` requires a login), a
+To probe the routes that matter instead of `/`, name up to three of them
+([ADR-1351](adr/1351-app-chosen-rollout-probe-routes.md)):
+
+```bash
+gregale app my-api --release-probe-paths /healthz,/api/orders
+gregale app my-api --release-probe-paths ""   # back to /
+```
+
+Probes are always `GET`, and the twenty a minute are split across the paths.
+Pick cheap, read-only routes your app answers without a login; each path must
+be concrete, with no query, wildcard, or `{parameter}`. The setting is
+`release_probe_paths` in the app manifest and the API.
+
+When probes cannot give an answer (for example, the probed path requires a login), a
 stage whose only problem is too few samples waits up to 5 more minutes after
 its 2 minutes and then advances, provided the new revision returned no 5xx
 responses, had no OOM kills, and was never restarted by its liveness probe.
@@ -276,7 +289,7 @@ stage advanced:
 
 ```text
 Rollout held at 1% traffic (step 1/4): waiting for enough traffic to compare: this release 3 requests, the current one 41 (20 each needed); probes 4 and 3 so far
-Rollout: 10% traffic · step 2/4 · rolling_out · advanced on synthetic probes of /: this release 0/30 probe 5xx, the current one 0/30
+Rollout: 10% traffic · step 2/4 · rolling_out · advanced on synthetic probes: this release 0/30 probe 5xx, the current one 0/30
 ```
 
 `gregale deployment summary <id>` shows the latest decision and the current

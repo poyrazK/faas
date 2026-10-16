@@ -32,10 +32,10 @@ func describeRolloutDecision(d *api.RolloutDecision) string {
 		return "healthy"
 	case api.RolloutRuleAdvanceProbeEvidence:
 		if c != nil && s != nil {
-			return fmt.Sprintf("advanced on synthetic probes of /: this release %d/%d probe 5xx, the current one %d/%d",
+			return fmt.Sprintf("advanced on synthetic probes: this release %d/%d probe 5xx, the current one %d/%d",
 				c.ProbeServerErrors, c.ProbeRequests, s.ProbeServerErrors, s.ProbeRequests)
 		}
-		return "advanced on synthetic probes of /"
+		return "advanced on synthetic probes"
 	case api.RolloutRuleAdvanceLowTraffic:
 		if c != nil && s != nil {
 			return fmt.Sprintf("too little traffic to compare after the %s bound and no errors seen (this release %d requests, the current one %d)",

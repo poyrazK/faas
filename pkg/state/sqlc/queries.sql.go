@@ -34663,7 +34663,8 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 
 const listDefaultRouteProbeTargets = `-- name: ListDefaultRouteProbeTargets :many
 SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
- d.id::text AS candidate_id, s.id::text AS stable_id
+ d.id::text AS candidate_id, s.id::text AS stable_id,
+ coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)::jsonb AS probe_paths
 FROM apps a
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
@@ -34683,6 +34684,7 @@ type ListDefaultRouteProbeTargetsRow struct {
 	Slug        string
 	CandidateID string
 	StableID    string
+	ProbePaths  []byte
 }
 
 // ADR-1160: request apps on the safe release policy with an in-flight
@@ -34704,6 +34706,7 @@ func (q *Queries) ListDefaultRouteProbeTargets(ctx context.Context, db DBTX, bat
 			&i.Slug,
 			&i.CandidateID,
 			&i.StableID,
+			&i.ProbePaths,
 		); err != nil {
 			return nil, err
 		}

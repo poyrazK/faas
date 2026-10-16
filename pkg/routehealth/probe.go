@@ -4,7 +4,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -48,8 +47,7 @@ func ValidateProbe(route api.RouteHealthRoute) error {
 		return errors.New("synthetic probes are limited to GET and HEAD selectors")
 	}
 	path := route.Probe.Path
-	if len(path) == 0 || len(path) > api.RouteHealthMaxPathBytes || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#*\\{}") ||
-		strings.IndexFunc(path, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+	if !api.ValidProbePath(path) {
 		return errors.New("probe path must be a concrete absolute path without queries, fragments, wildcards or parameters")
 	}
 	if !ProbeMatchesSelector(route.Path, path) {

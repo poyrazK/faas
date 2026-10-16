@@ -16,7 +16,37 @@ const DefaultProbePath = "/"
 // DefaultProbeRoute is the selector the default probe records its results
 // under in route_probe_observations.
 func DefaultProbeRoute() api.RouteHealthRoute {
-	return api.RouteHealthRoute{Method: http.MethodGet, Path: DefaultProbePath, Probe: &api.RouteHealthProbe{Path: DefaultProbePath}}
+	return probeRoute(DefaultProbePath)
+}
+
+// DefaultProbeRoutes are the selectors the default probe checks for an app:
+// its release_probe_paths (ADR-1351), or "/" when it names none. Paths the
+// manifest validator would reject are skipped, and none left means "/".
+func DefaultProbeRoutes(paths []string) []api.RouteHealthRoute {
+	routes := make([]api.RouteHealthRoute, 0, len(paths))
+	for _, p := range paths {
+		if api.ValidProbePath(p) && len(routes) < api.ReleaseProbePathsMax {
+			routes = append(routes, probeRoute(p))
+		}
+	}
+	if len(routes) == 0 {
+		return []api.RouteHealthRoute{DefaultProbeRoute()}
+	}
+	return routes
+}
+
+// DefaultProbeRequests is how many probes each of n default routes gets per
+// deployment and round, so one round still meets the circuit breaker's
+// request floor in total (ADR-1321, ADR-1351).
+func DefaultProbeRequests(n int) int {
+	if n <= 1 {
+		return api.DefaultRouteProbeRequestsPerRound
+	}
+	return (api.DefaultRouteProbeRequestsPerRound + n - 1) / n
+}
+
+func probeRoute(path string) api.RouteHealthRoute {
+	return api.RouteHealthRoute{Method: http.MethodGet, Path: path, Probe: &api.RouteHealthProbe{Path: path}}
 }
 
 // DefaultProbesEnabled reports whether default probes run. The operator kill
@@ -42,7 +72,7 @@ func MergeProbeTargets(gated, defaults []state.RouteProbeTarget) []ProbeTarget {
 	}
 	for _, t := range defaults {
 		if i, ok := index[t.AppID+"/"+t.CandidateID]; ok {
-			out[i].Default, out[i].StableID = true, t.StableID
+			out[i].Default, out[i].StableID, out[i].ProbePaths = true, t.StableID, t.ProbePaths
 			continue
 		}
 		out = append(out, ProbeTarget{RouteProbeTarget: t, Default: true})

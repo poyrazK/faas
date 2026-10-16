@@ -1328,6 +1328,7 @@ var cliCommands = []cliCommand{
 			{Name: "pre-auth-rps", Short: "pre-auth requests per second per source", Value: "N"},
 			{Name: "pre-auth-burst", Short: "pre-auth burst per source", Value: "N"},
 			{Name: "release-policy", Short: "default rollout for production releases (ADR-1160)", Value: "safe|immediate", ClosedSet: []string{"safe", "immediate"}},
+			{Name: "release-probe-paths", Short: "GET paths (at most 3) the default rollout probe checks instead of /; empty restores / (ADR-1351)", Value: "PATH,PATH"},
 			{Name: "health-path", Short: "set the monitor-facing health path", Value: "PATH"},
 			{Name: "health-path-wakes", Short: "allow health probes to wake the app"},
 			{Name: "no-health-path-wakes", Short: "answer health probes without waking the app"},

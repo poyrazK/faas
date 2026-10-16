@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -15,9 +16,12 @@ import (
 
 // RouteProbeTarget is an app with probe selectors and an in-flight canary
 // (ADR-847). StableID is set only for ADR-1160 default probe targets; ADR-847
-// targets read the predecessor from the route health report.
+// targets read the predecessor from the route health report. ProbePaths are
+// the app's release_probe_paths for a default target (ADR-1351); empty means
+// "/".
 type RouteProbeTarget struct {
 	AccountID, AppID, Slug, CandidateID, StableID string
+	ProbePaths                                    []string
 }
 
 // RouteProbeObservation is one minute of probe results for one deployment
@@ -70,7 +74,12 @@ func (s *PgStore) ListDefaultRouteProbeTargets(ctx context.Context) ([]RouteProb
 	}
 	out := make([]RouteProbeTarget, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, RouteProbeTarget{AccountID: r.AccountID, AppID: r.AppID, Slug: r.Slug, CandidateID: r.CandidateID, StableID: r.StableID})
+		var paths []string
+		if err := json.Unmarshal(r.ProbePaths, &paths); err != nil {
+			// A manifest that fails to decode keeps the default probe of "/".
+			paths = nil
+		}
+		out = append(out, RouteProbeTarget{AccountID: r.AccountID, AppID: r.AppID, Slug: r.Slug, CandidateID: r.CandidateID, StableID: r.StableID, ProbePaths: paths})
 	}
 	return singleCanaryProbeTargets(out), nil
 }
@@ -290,7 +299,8 @@ func (m *MemStore) ListDefaultRouteProbeTargets(_ context.Context) ([]RouteProbe
 			}
 			for _, stable := range m.deployments {
 				if stable.ID != d.ID && inScope(stable, appID) {
-					out = append(out, RouteProbeTarget{AccountID: app.AccountID, AppID: appID, Slug: app.Slug, CandidateID: d.ID, StableID: stable.ID})
+					out = append(out, RouteProbeTarget{AccountID: app.AccountID, AppID: appID, Slug: app.Slug, CandidateID: d.ID, StableID: stable.ID,
+						ProbePaths: append([]string(nil), app.Manifest.ReleaseProbePaths...)})
 				}
 			}
 		}

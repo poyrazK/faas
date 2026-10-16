@@ -9676,6 +9676,9 @@ const (
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
+	// ReleaseProbePathsMax bounds an app's release_probe_paths (ADR-1351);
+	// a round splits DefaultRouteProbeRequestsPerRound across them.
+	ReleaseProbePathsMax = 3
 )
 
 // ServiceWakeAhead bounds opt-in wake-ahead along measured service edges

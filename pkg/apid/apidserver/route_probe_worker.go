@@ -180,20 +180,30 @@ func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget
 		}
 	}
 	if target.Default {
-		// The default probe meets the circuit breaker's request floor in one
-		// round (ADR-1321), also when a gated selector already covers it.
-		route := release.DefaultProbeRoute()
-		for i, p := range plans {
-			if p.selector.Method == route.Method && p.selector.Probe.Path == route.Probe.Path {
-				if p.requests < api.DefaultRouteProbeRequestsPerRound {
-					plans[i].requests = api.DefaultRouteProbeRequestsPerRound
-				}
-				return plans, stableID, nil
-			}
-		}
-		plans = append(plans, routeProbePlan{selector: route, requests: api.DefaultRouteProbeRequestsPerRound})
+		plans = withDefaultProbePlans(plans, release.DefaultProbeRoutes(target.ProbePaths))
 	}
 	return plans, stableID, nil
+}
+
+// withDefaultProbePlans adds the default probe's routes: the app's
+// release_probe_paths or "/" (ADR-1351). Together they meet the circuit
+// breaker's request floor in one round (ADR-1321), also when a gated selector
+// already probes one of them.
+func withDefaultProbePlans(plans []routeProbePlan, routes []api.RouteHealthRoute) []routeProbePlan {
+	requests := release.DefaultProbeRequests(len(routes))
+next:
+	for _, route := range routes {
+		for i, p := range plans {
+			if p.selector.Method == route.Method && p.selector.Probe.Path == route.Probe.Path {
+				if p.requests < requests {
+					plans[i].requests = requests
+				}
+				continue next
+			}
+		}
+		plans = append(plans, routeProbePlan{selector: route, requests: requests})
+	}
+	return plans
 }
 
 // sendRouteProbes sends each plan's probes per deployment with bounded

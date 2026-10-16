@@ -1,8 +1,10 @@
 package release
 
 import (
+	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,13 +28,42 @@ func TestMergeProbeTargets(t *testing.T) {
 		t.Fatalf("targets = %+v, want %+v", got, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if !reflect.DeepEqual(got[i], want[i]) {
 			t.Fatalf("target %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
 }
 
 // adr: 1160
+// TestDefaultProbeRoutes pins ADR-1351: the app's paths replace "/", invalid
+// or surplus paths are dropped, and a round's probes split so the total still
+// meets the request floor.
+func TestDefaultProbeRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		paths []string
+		want  []string
+	}{
+		{nil, []string{"/"}},
+		{[]string{"/healthz"}, []string{"/healthz"}},
+		{[]string{"/healthz", "bad", "/api/orders"}, []string{"/healthz", "/api/orders"}},
+		{[]string{"bad"}, []string{"/"}},
+		{[]string{"/a", "/b", "/c", "/d"}, []string{"/a", "/b", "/c"}},
+	} {
+		routes := DefaultProbeRoutes(tc.paths)
+		if len(routes) != len(tc.want) {
+			t.Fatalf("DefaultProbeRoutes(%q) = %d routes, want %q", tc.paths, len(routes), tc.want)
+		}
+		for i, r := range routes {
+			if r.Method != "GET" || r.Path != tc.want[i] || r.Probe == nil || r.Probe.Path != tc.want[i] {
+				t.Fatalf("DefaultProbeRoutes(%q)[%d] = %+v, want GET %s", tc.paths, i, r, tc.want[i])
+			}
+		}
+		if total := DefaultProbeRequests(len(routes)) * len(routes); total < api.DefaultRouteProbeRequestsPerRound {
+			t.Fatalf("%d routes get %d probes in total, below the %d floor", len(routes), total, api.DefaultRouteProbeRequestsPerRound)
+		}
+	}
+}
+
 func TestDefaultProbesFollowTheSafeDefaultKillSwitch(t *testing.T) {
 	if !DefaultProbesEnabled() {
 		t.Fatal("default probes off without the kill switch")
