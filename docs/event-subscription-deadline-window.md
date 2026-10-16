@@ -103,7 +103,7 @@ using durable alerts; the watch sends no messages itself.
 
 These are rolling aggregate cohorts, not fixed delivery membership. An upcoming
 count can fall because work completed, acquired an age override, was pruned, or
-became expired. Resolution only confirms the selected count stayed below threshold;
+became expired. Resolution only confirms the selected count stayed at or below its recovery threshold;
 it does not certify delivery success. Enable the separate expired-count condition
 when aging out must remain visible. Expired-count resolution also does not prove
 business completion. Neither condition predicts or extends deadlines.
@@ -178,7 +178,7 @@ incident. With the current 14 known labels, at most 28 reason conditions plus tw
 optional total conditions can be selected in a deadline window; the existing
 notification queue bound is unchanged.
 
-A reason-specific alert resolves when its own count stays below threshold. Work
+A reason-specific alert resolves when its own count stays at or below its recovery threshold. Work
 can change waiting reason while remaining pending, move from upcoming to expired,
 or leave retained coverage without completing business processing. A resolution
 therefore does not mean deliveries succeeded or the overall backlog recovered.
@@ -191,3 +191,57 @@ investigate current identities.
 The Go watch also exposes [confirmation progress](event-delivery-confirmation-progress.md)
 for these conditions, including pending sustain, growth baselines, resume evidence
 and notification-outbox blockage.
+
+## Separate opening and recovery counts
+
+Each deadline count can use a lower recovery threshold to avoid opening and closing
+incidents repeatedly near the warning boundary. For example:
+
+```go
+upcomingRecovery := int64(20)
+options := faas.EventDeliveryHealthWatchOptions{
+    Window: "5m",
+    Interval: 5 * time.Second,
+    Timeout: 10 * time.Minute,
+    MaxAge: 30 * time.Second,
+    RateRisk: &faas.EventDeliveryRateRiskOptions{
+        DeadlineWindow: &faas.EventDeliveryDeadlineWindowOptions{
+            Within: 5 * time.Minute,
+            Upcoming: 50,
+            UpcomingRecovery: &upcomingRecovery,
+            UpcomingReasons: map[string]int64{"subscription_paused": 10},
+            UpcomingReasonsRecovery: map[string]int64{"subscription_paused": 2},
+        },
+        Sustain: time.Minute,
+        RecoverySustain: 2 * time.Minute,
+    },
+}
+```
+
+The total opens after at least two eligible observations at or above 50 spanning
+one minute. Once firing, it stays open at 21..49 and resolves only after at least
+two observations at or below 20 spanning two minutes. A value above 20 resets the
+recovery timer. The paused-reason incident independently opens at 10 and recovers
+at 2, using the same duration settings. Before an incident opens, values below its
+warning threshold remain clear. Resumed incidents require fresh warning or recovery
+confirmation; observations in the middle band keep them unknown.
+
+`UpcomingRecovery` and `ExpiredRecovery` are optional pointers. Nil defaults to
+warning minus one; a pointer to zero explicitly requires the count to reach zero.
+`UpcomingReasonsRecovery` and `ExpiredReasonsRecovery` are optional maps keyed by
+known waiting reasons. An omitted key defaults to that reason's warning minus one;
+an explicit zero requires zero. Every supplied recovery count must be nonnegative
+and strictly below its enabled warning count. Unknown reasons, disabled conditions,
+and equal, greater or negative recovery settings are rejected. Recovery counts for
+totals and reasons do not inherit from each other. Pointers and maps are copied
+before validation and polling; do not mutate inputs concurrently with the initial call.
+
+The effective recovery threshold already appears in conditions, alerts and version 2
+checkpoints. Resume requires the same effective warning and recovery policy.
+Omitting a recovery setting and explicitly supplying its default are equivalent.
+Existing checkpoints using warning minus one continue to work. Older clients reject
+checkpoints with a custom lower boundary; upgrade the resuming client first. Warning
+and recovery timers are never restored as fresh proof. Confirmation diagnostics keep
+showing pending recovery only while its boundary is satisfied. This option adds no
+requests, endpoint, schema changes or delivery actions, and does not change other
+rate-risk metrics. Aggregate count recovery still does not certify delivery success.

@@ -324,6 +324,9 @@ func validDeliveryHealthRecoveryPolicy(c EventDeliveryHealthCondition) bool {
 	if processingWindowMetric(c.Metric) {
 		return c.RecoveryThreshold == c.Threshold && c.RecoverySustainSeconds == c.SustainSeconds
 	}
+	if _, _, _, deadlineCount := deadlineCountWindow(c.Metric); deadlineCount {
+		return math.Trunc(c.RecoveryThreshold) == c.RecoveryThreshold && c.RecoveryThreshold < c.Threshold && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
+	}
 	if deliveryRateRiskMetric(c.Metric) {
 		return c.RecoveryThreshold == c.Threshold-1 && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
 	}

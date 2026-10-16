@@ -1344,3 +1344,9 @@ Delivery-health `Confirmations` now explain rate/deadline warning and recovery
 sustain, growth baseline waits, resume requirements and notification capacity.
 Entries join conditions by metric and add no requests or checkpoint proof. See
 [confirmation diagnostics](../../docs/event-delivery-confirmation-progress.md).
+
+Deadline count alerts accept `UpcomingRecovery` / `ExpiredRecovery` pointers and
+`UpcomingReasonsRecovery` / `ExpiredReasonsRecovery` maps for separate inclusive
+recovery boundaries. Defaults remain warning minus one; explicit zero requires
+zero. Recovery must be below an enabled warning count. See
+[configuration and checkpoint compatibility](../../docs/event-subscription-deadline-window.md#separate-opening-and-recovery-counts).
