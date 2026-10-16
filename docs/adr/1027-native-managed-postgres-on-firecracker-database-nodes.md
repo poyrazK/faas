@@ -854,8 +854,11 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   - `roleSessionsRemain` is the zero observation. Admin batches return no
     rows, so it reports presence: a check raises its own SQLSTATE while a
     session (`GRS01`) or a prepared transaction (`GRP01`) remains.
-  - They become the native `SessionTerminator` (slice 7 defines it on
-    `main`). Native reports whether something remains, not how many.
+  - The provider implements `SessionTerminator` (ADR-1370 slice 7a's
+    types, cherry-picked) with `TerminateSessions` and `ObserveSessions`.
+    Every request must name the same database. Repeated identities name
+    one role. A database schedd no longer has holds nothing. Observation
+    fields are presence (1), as the interface allows.
   - A disposable PostgreSQL 16 test covers four cases. Terminating ends only
     the set's sessions. A revoked login fails with `28000`. A prepared
     transaction is still reported after its session ends. Resolving it

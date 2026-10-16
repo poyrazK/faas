@@ -143,10 +143,24 @@ func TestRevokedRolesLoseTheirSessionsAndTheObservationSeesWhatRemains(t *testin
 	if err := p.RevokeCredentials(ctx, sourceReq); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if err := p.terminateRoleSessions(ctx, resourceID, set); err != nil {
+	// Through the SessionTerminator capability, as an activation calls it.
+	if err := p.TerminateSessions(ctx, []managedpostgres.CredentialRequest{sourceReq}); err != nil {
 		t.Fatal(err)
 	}
-	waitClear()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		obs, err := p.ObserveSessions(ctx, []managedpostgres.CredentialRequest{sourceReq})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if obs == (managedpostgres.SessionObservation{}) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("revoked identity still holds %+v", obs)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if _, err := connect(source); pgState(err) != "28000" {
 		t.Fatalf("revoked login = %v, want 28000", err)
 	}
@@ -182,7 +196,7 @@ func TestRevokedRolesLoseTheirSessionsAndTheObservationSeesWhatRemains(t *testin
 	if err := p.terminateRoleSessions(ctx, resourceID, prepSet); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		sessions, prepared, err := p.roleSessionsRemain(ctx, resourceID, prepSet)
 		if err != nil {

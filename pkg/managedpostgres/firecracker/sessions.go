@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -21,6 +22,68 @@ import (
 // Admin batches return no rows, only an error code and SQLSTATE, so the
 // observation reports presence: a check raises its own SQLSTATE while
 // something remains.
+
+var _ managedpostgres.SessionTerminator = (*Provider)(nil)
+
+// TerminateSessions ends the open sessions of revoked credentials. A
+// database that no longer exists has none.
+func (p *Provider) TerminateSessions(ctx context.Context, reqs []managedpostgres.CredentialRequest) error {
+	resourceID, roles, err := sessionRoles(reqs)
+	if err != nil {
+		return err
+	}
+	err = p.terminateRoleSessions(ctx, resourceID, roles)
+	if errors.Is(err, managedpostgres.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// ObserveSessions reports, as presence (1), whether revoked credentials
+// still hold sessions or prepared transactions.
+func (p *Provider) ObserveSessions(ctx context.Context, reqs []managedpostgres.CredentialRequest) (managedpostgres.SessionObservation, error) {
+	resourceID, roles, err := sessionRoles(reqs)
+	if err != nil {
+		return managedpostgres.SessionObservation{}, err
+	}
+	sessions, prepared, err := p.roleSessionsRemain(ctx, resourceID, roles)
+	if errors.Is(err, managedpostgres.ErrNotFound) {
+		return managedpostgres.SessionObservation{}, nil
+	}
+	if err != nil {
+		return managedpostgres.SessionObservation{}, err
+	}
+	var obs managedpostgres.SessionObservation
+	if sessions {
+		obs.Sessions = 1
+	}
+	if prepared {
+		obs.PreparedTransactions = 1
+	}
+	return obs, nil
+}
+
+// sessionRoles derives the requests' roles; every request names the same
+// database.
+func sessionRoles(reqs []managedpostgres.CredentialRequest) (string, []string, error) {
+	if len(reqs) == 0 {
+		return "", nil, fmt.Errorf("%w: no credentials", managedpostgres.ErrInvalid)
+	}
+	resourceID := reqs[0].ProviderResourceID
+	seen := make(map[string]bool, len(reqs))
+	roles := make([]string, 0, len(reqs))
+	for _, req := range reqs {
+		if req.ProviderResourceID == "" || req.ProviderResourceID != resourceID || req.IdentityKey == "" {
+			return "", nil, fmt.Errorf("%w: credentials must name one database and an identity", managedpostgres.ErrInvalid)
+		}
+		role := credentialRoleName(req.ProviderResourceID, req.IdentityKey, req.Access)
+		if !seen[role] {
+			seen[role] = true
+			roles = append(roles, role)
+		}
+	}
+	return resourceID, roles, nil
+}
 
 const (
 	// sqlstateSessionsRemain: a revoked role still has a session.
