@@ -48,7 +48,7 @@ const scaleFromZeroQueue = "jobs"
 // Durations are measured from the send; zero means not observed.
 type workerColdStart struct {
 	instanceID    string
-	admit         time.Duration // instance row created (database clock)
+	admit         time.Duration // instance row first seen (polled every 20 ms)
 	bootStarted   time.Duration // wake.boot_started (database clock)
 	token         time.Duration // nth gregale:queues token minted by vmmd
 	lease         time.Duration // nth message leased
@@ -171,6 +171,23 @@ func measureWorkerScaleFromZero(t *testing.T, h *e2etest.Harness, key, slug, app
 	t.Helper()
 	ctx := context.Background()
 	minted0 := vmmdMintedQueueTokens(t, h)
+	// instances has no creation timestamp; workers that already exist (the
+	// deployment's prime and earlier cycles) are excluded by id.
+	earlier := map[string]bool{}
+	rows, err := h.Pool.Query(ctx, `select id::text from instances where app_id = $1 and mode = 'worker'`, appID)
+	if err != nil {
+		t.Fatalf("list earlier workers: %v", err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan earlier worker: %v", err)
+		}
+		earlier[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("list earlier workers: %v", err)
+	}
 	var sentDB time.Time
 	if err := h.Pool.QueryRow(ctx, `select clock_timestamp()`).Scan(&sentDB); err != nil {
 		t.Fatalf("read database clock: %v", err)
@@ -189,21 +206,23 @@ func measureWorkerScaleFromZero(t *testing.T, h *e2etest.Harness, key, slug, app
 	deadline := sent.Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
 		now := time.Since(sent)
-		rows, err := h.Pool.Query(ctx, `select id::text, state, created_at from instances
-			where app_id = $1 and mode = 'worker' and created_at >= $2 order by created_at, id`, appID, sentDB)
+		rows, err := h.Pool.Query(ctx, `select id::text, state from instances
+			where app_id = $1 and mode = 'worker' order by id`, appID)
 		if err != nil {
 			t.Fatalf("list workers: %v", err)
 		}
 		running := 0
 		for rows.Next() {
 			var id, st string
-			var created time.Time
-			if err := rows.Scan(&id, &st, &created); err != nil {
+			if err := rows.Scan(&id, &st); err != nil {
 				t.Fatalf("scan worker: %v", err)
+			}
+			if earlier[id] {
+				continue
 			}
 			w := byID[id]
 			if w == nil {
-				w = &workerColdStart{instanceID: id, admit: created.Sub(sentDB)}
+				w = &workerColdStart{instanceID: id, admit: now}
 				byID[id] = w
 				workers = append(workers, w)
 			}
