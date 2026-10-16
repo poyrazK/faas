@@ -576,6 +576,16 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(unused) != 2 {
 		t.Fatal("missing unused reservation guard downgrade")
 	}
+	// H10-94 redefines assert_clone_configuration_mutable after the guard
+	// migration, so the chain must unwind and replay it too.
+	purgeOrderRaw, err := migrations.FS.ReadFile("20261016084512417_clone_guard_account_purge_order.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	purgeOrder := strings.SplitN(string(purgeOrderRaw), "-- +goose Down", 2)
+	if len(purgeOrder) != 2 {
+		t.Fatal("missing account purge order downgrade")
+	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
@@ -598,6 +608,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
         )::text`
 	var before, after string
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, purgeOrder[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, unused[1]); err != nil {
@@ -628,6 +641,9 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, unused[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, purgeOrder[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {
