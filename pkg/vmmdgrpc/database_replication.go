@@ -2,6 +2,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"regexp"
 	"strings"
@@ -41,7 +42,13 @@ func NewDatabasePeerDialer(certPath, keyPath, caPath string) (DatabasePeerDialer
 	return func(ctx context.Context, target, nodeCN string) (*grpc.ClientConn, error) {
 		node := wire.NewInmemNodeVerifier()
 		node.Set([]string{nodeCN})
-		tlsCfg, err := wire.LoadClientTLSConfigWithPrefixAndVerifier("database_vms.peer_tls", certPath, keyPath, caPath, node)
+		// Peer connections are cached and reconnect with their dial-time
+		// config: each handshake re-reads the leaf, so a renewed one (the
+		// daily internal-PKI renewal) is presented without a restart.
+		reload := func() (*tls.Config, error) {
+			return wire.LoadClientTLSConfigWithPrefix("database_vms.peer_tls", certPath, keyPath, caPath)
+		}
+		tlsCfg, err := wire.LoadClientTLSConfigWithPrefixAndVerifierAndReload("database_vms.peer_tls", certPath, keyPath, caPath, node, reload)
 		if err != nil {
 			return nil, err
 		}

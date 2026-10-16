@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -96,6 +100,47 @@ func databasePeerDialer(cfg *Config) (vmmdgrpc.DatabasePeerDialer, error) {
 	return dial, nil
 }
 
+// databaseServerTLS loads vmmd's server leaf with SIGHUP-driven rotation,
+// as compute vmmd does (ADR-052 §5): the daily internal-PKI renewal
+// installs the new leaf and sends SIGHUP, and every later handshake uses
+// it. Without a handler, SIGHUP would end the process.
+func databaseServerTLS(ctx context.Context, cfg *Config, verifier wire.NodeVerifier, log *slog.Logger) (*tls.Config, error) {
+	boot, err := cfg.LoadServerTLSWithVerifier(verifier)
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: load server TLS: %w", err)
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		<-ctx.Done()
+		signal.Stop(hup)
+	}()
+	if boot == nil {
+		// No TLS (a single-box test): nothing to rotate, but SIGHUP
+		// must still not end the process.
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-hup:
+				}
+			}
+		}()
+		return nil, nil
+	}
+	rotator := wire.NewTLSRotator(boot)
+	serverTLS, err := cfg.LoadServerTLSWithPrefixAndVerifierAndReload(verifier, rotator.Reload(boot))
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: load server TLS (reload): %w", err)
+	}
+	rotator.Set(serverTLS)
+	go wire.WatchTLSReload(ctx, log, hup, rotator, func() (*tls.Config, error) {
+		return cfg.LoadServerTLSWithPrefixAndVerifierAndReload(verifier, nil)
+	})
+	return serverTLS, nil
+}
+
 // runDatabaseNode is vmmd on a database node (ADR-1027). It runs database
 // VMs and nothing else: no compute_nodes registration (so schedd never
 // places an app VM here), no tenant network, no snapshots. The firecracker
@@ -128,9 +173,9 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 	if peerDial != nil {
 		server.WithDatabasePeers(peerDial)
 	}
-	serverTLS, err := cfg.LoadServerTLSWithVerifier(databaseNodeVerifier(server))
+	serverTLS, err := databaseServerTLS(ctx, cfg, databaseNodeVerifier(server), log)
 	if err != nil {
-		return fmt.Errorf("vmmd: load server TLS: %w", err)
+		return err
 	}
 	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),

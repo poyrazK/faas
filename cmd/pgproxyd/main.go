@@ -79,7 +79,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	scheddTLS, err := wire.LoadClientTLSConfigWithPrefix("schedd_client", cfg.ScheddClientCertPath, cfg.ScheddClientKeyPath, cfg.ScheddClientCAPath)
+	scheddTLS, err := rotatingClientTLS(ctx, "schedd_client", cfg.ScheddClientCertPath, cfg.ScheddClientKeyPath, cfg.ScheddClientCAPath, log)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		return fmt.Errorf("pgproxyd: dial schedd: %w", err)
 	}
 	defer func() { _ = scheddConn.Close() }()
-	vmmdTLS, err := wire.LoadClientTLSConfigWithPrefix("vmmd_client", cfg.VmmdClientCertPath, cfg.VmmdClientKeyPath, cfg.VmmdClientCAPath)
+	vmmdTLS, err := rotatingClientTLS(ctx, "vmmd_client", cfg.VmmdClientCertPath, cfg.VmmdClientKeyPath, cfg.VmmdClientCAPath, log)
 	if err != nil {
 		return err
 	}
