@@ -113,6 +113,7 @@ func (s *keyedSet) replace(keys []map[string]struct{}, fresh map[string]*keyedRo
 
 // resultShape classifies a query's result columns.
 type resultShape struct {
+	sub     int // position of the member index column, or -1
 	visible []int
 	names   []string
 	lineage [][]int // relation -> key column positions
@@ -120,7 +121,7 @@ type resultShape struct {
 }
 
 func shapeOf(fields []string, relations []*Relation, groups int) (resultShape, error) {
-	s := resultShape{lineage: make([][]int, len(relations)), groups: make([]int, groups)}
+	s := resultShape{sub: -1, lineage: make([][]int, len(relations)), groups: make([]int, groups)}
 	for i := range s.groups {
 		s.groups[i] = -1
 	}
@@ -133,6 +134,8 @@ func shapeOf(fields []string, relations []*Relation, groups int) (resultShape, e
 	for pos, name := range fields {
 		var rel, key, g int
 		switch {
+		case name == hiddenPrefix+"sub":
+			s.sub = pos
 		case !strings.HasPrefix(name, hiddenPrefix):
 			s.visible = append(s.visible, pos)
 			s.names = append(s.names, name)

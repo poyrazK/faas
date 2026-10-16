@@ -92,6 +92,39 @@ func deparseSelect(sel *pgq.SelectStmt) (string, error) {
 	return out, nil
 }
 
+// batchSelect rewrites sel so one statement serves many members of a plan
+// group. Query parameter k becomes column p<k> of a member list unnested from
+// text arrays, and every later parameter shifts by one to make room for the
+// member index array, which is $1. Each result row carries its member index
+// as the hidden column __lq_sub.
+func batchSelect(sel *pgq.SelectStmt, paramTypes []string) (string, error) {
+	n := int32(len(paramTypes))
+	inner := cloneSelect(sel)
+	walkNodes(inner, func(node *pgq.Node) {
+		ref := node.GetParamRef()
+		if ref == nil {
+			return
+		}
+		if ref.Number <= n {
+			node.Node = columnRef(hiddenPrefix+"s", fmt.Sprintf("p%d", ref.Number)).Node
+			return
+		}
+		ref.Number++
+	})
+	body, err := deparseSelect(inner)
+	if err != nil {
+		return "", err
+	}
+	args := []string{"$1::int[]"}
+	cols := []string{"idx"}
+	for k, typ := range paramTypes {
+		args = append(args, fmt.Sprintf("$%d::text[]::%s[]", k+2, typ))
+		cols = append(cols, fmt.Sprintf("p%d", k+1))
+	}
+	return fmt.Sprintf("SELECT %[1]ss.idx AS %[1]ssub, %[1]sq.* FROM unnest(%[2]s) AS %[1]ss(%[3]s) CROSS JOIN LATERAL (%[4]s) AS %[1]sq",
+		hiddenPrefix, strings.Join(args, ", "), strings.Join(cols, ", "), body), nil
+}
+
 // parseExpr parses a boolean SQL expression by wrapping it in a SELECT.
 func parseExpr(expr string) (*pgq.Node, error) {
 	sel, err := parseSelect("SELECT 1 WHERE " + expr)

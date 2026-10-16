@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -300,9 +301,33 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 		t.Logf("q%d %v: %s", registered, q.args, q.sql)
 		registered++
 	}
+	// Exercise plan groups: more members of each parameterised query, and a
+	// duplicate subscription that shares a member.
+	for _, g := range slices.Clone(h.engine.groups) {
+		m := g.members[0]
+		dup := fmt.Sprintf("%s-dup", m.ids[0])
+		if _, err := h.engine.Register(ctx, dup, g.plan.SQL, m.args...); err != nil {
+			t.Fatal(err)
+		}
+		h.clients[dup] = client{}
+		for v := range 2 {
+			if g.plan.NParams == 0 {
+				break
+			}
+			args := make([]any, g.plan.NParams)
+			for k := range args {
+				args[k] = int32(r.IntN(8))
+			}
+			id := fmt.Sprintf("%s-m%d", m.ids[0], v)
+			if _, err := h.engine.Register(ctx, id, g.plan.SQL, args...); err != nil {
+				t.Fatal(err)
+			}
+			h.clients[id] = client{}
+		}
+	}
 	modes := map[Mode]int{}
-	for _, q := range h.engine.queries {
-		modes[q.plan.Mode]++
+	for _, g := range h.engine.groups {
+		modes[g.plan.Mode] += len(g.members)
 	}
 	t.Logf("seed %d: tables %v, queries by mode %v", seed, schema.tables, modes)
 

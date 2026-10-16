@@ -58,10 +58,18 @@ type Relation struct {
 
 // Plan is a compiled live query.
 type Plan struct {
-	SQL     string
-	NParams int
-	Mode    Mode
-	Reason  string // why ModeRecompute was chosen
+	SQL        string
+	NParams    int
+	ParamTypes []string
+	Mode       Mode
+	Reason     string // why ModeRecompute was chosen
+
+	// Every statement below is batched (see batchSelect): $1 is the member
+	// index array and $2..$(NParams+1) the members' parameter arrays; any
+	// further parameters follow.
+
+	// BatchedSQL is the query itself, batched (ModeRecompute).
+	BatchedSQL string
 
 	// Tables maps every table the result depends on to the relation indexes
 	// that read it (empty for ModeRecompute).
@@ -144,6 +152,7 @@ func Compile(ctx context.Context, conn *pgx.Conn, sql string) (*Plan, error) {
 			return nil, err
 		}
 		p.params = append(p.params, resTarget(paramColumn(k+1), val))
+		p.ParamTypes = append(p.ParamTypes, typ)
 	}
 	hasAgg, hasWindow, err := checkFunctions(ctx, conn, sel)
 	if err != nil {
@@ -166,6 +175,9 @@ func Compile(ctx context.Context, conn *pgx.Conn, sql string) (*Plan, error) {
 		p.Tables = map[uint32][]int{}
 		p.TableNames = map[uint32]string{}
 		if err := p.collectTables(ctx, conn, sel); err != nil {
+			return nil, err
+		}
+		if p.BatchedSQL, err = batchSelect(sel, p.ParamTypes); err != nil {
 			return nil, err
 		}
 	}
@@ -420,7 +432,7 @@ func (p *Plan) restrictRows(sel *pgq.SelectStmt) error {
 // restricted deparses sel and one variant per relation restricted to a set of
 // that relation's primary keys.
 func (p *Plan) restricted(sel *pgq.SelectStmt) (string, []string, error) {
-	full, err := deparseSelect(sel)
+	full, err := batchSelect(sel, p.ParamTypes)
 	if err != nil {
 		return "", nil, err
 	}
@@ -443,7 +455,7 @@ func (p *Plan) restricted(sel *pgq.SelectStmt) (string, []string, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		if out[i], err = deparseSelect(andWhere(sel, restriction)); err != nil {
+		if out[i], err = batchSelect(andWhere(sel, restriction), p.ParamTypes); err != nil {
 			return "", nil, err
 		}
 	}
@@ -603,13 +615,17 @@ func (p *Plan) compileOutput(ctx context.Context, conn *pgx.Conn, sel *pgq.Selec
 		out.TargetList = append(out.TargetList, resTarget(groupColumn(k), cloneNode(g)))
 	}
 	out.TargetList = p.withParams(out.TargetList)
-	if p.OutputSQL, err = deparseSelect(out); err != nil {
+	if p.OutputSQL, err = batchSelect(out, p.ParamTypes); err != nil {
 		return err
 	}
-	var arrays, cols, conds []string
+	// Groups are restricted per member: $(NParams+1) lists the member of each
+	// group key and the arrays after it the key values.
+	arrays := []string{fmt.Sprintf("$%d::int[]", p.NParams+1)}
+	cols := []string{"s"}
+	conds := []string{fmt.Sprintf("%sgk.s = %ss.idx", hiddenPrefix, hiddenPrefix)}
 	repl := map[string]*pgq.Node{}
 	for k, g := range groups {
-		arrays = append(arrays, fmt.Sprintf("$%d::text[]", p.NParams+1+k))
+		arrays = append(arrays, fmt.Sprintf("$%d::text[]", p.NParams+2+k))
 		cols = append(cols, fmt.Sprintf("c%d", k))
 		conds = append(conds, fmt.Sprintf("%sph.g%d IS NOT DISTINCT FROM %sgk.c%d::%s", hiddenPrefix, k, hiddenPrefix, k, p.GroupTypes[k]))
 		repl[fmt.Sprintf("g%d", k)] = g
@@ -620,7 +636,7 @@ func (p *Plan) compileOutput(ctx context.Context, conn *pgx.Conn, sel *pgq.Selec
 		return err
 	}
 	replacePlaceholders(expr, repl)
-	p.OutputRestricted, err = deparseSelect(andWhere(out, expr))
+	p.OutputRestricted, err = batchSelect(andWhere(out, expr), p.ParamTypes)
 	return err
 }
 

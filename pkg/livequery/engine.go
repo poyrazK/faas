@@ -32,7 +32,7 @@ type Row struct {
 	Values []*string
 }
 
-// Delta is one round's change to one live query.
+// Delta is one round's change to one subscription.
 type Delta struct {
 	Query    string
 	Snapshot string
@@ -46,104 +46,126 @@ type Delta struct {
 // Empty reports whether the delta changes nothing.
 func (d Delta) Empty() bool { return !d.Reset && len(d.Upserts) == 0 && len(d.Removes) == 0 }
 
-// Engine maintains live queries from a capture stream.
-type Engine struct {
-	pool    *pgxpool.Pool
-	capture *Capture
-
-	queries []*liveQuery
-	pending []*Txn
-	round   uint64
-
-	// VerifyEachRound re-runs every query at the round snapshot and fails the
-	// round if the maintained result differs. It is the differential oracle.
-	VerifyEachRound bool
-	// Trace, when set, receives a line per applied or held transaction.
-	Trace func(string)
-
-	Stats Stats
-}
-
-func describeTxn(txn *Txn) string {
-	var parts []string
-	for _, ch := range txn.Changes {
-		key := func(t Tuple) string {
-			if t == nil {
-				return "-"
-			}
-			var kv []string
-			for k, v := range t {
-				if v != nil && (k == "id" || k == "k1" || k == "k2") {
-					kv = append(kv, k+"="+*v)
-				}
-			}
-			sort.Strings(kv)
-			return strings.Join(kv, ",")
-		}
-		parts = append(parts, fmt.Sprintf("%c rel=%d old[%s] new[%s]", ch.Op, ch.Relation, key(ch.Old), key(ch.New)))
-	}
-	if len(txn.Truncated) > 0 {
-		parts = append(parts, fmt.Sprintf("truncate %v", txn.Truncated))
-	}
-	return strings.Join(parts, "; ")
-}
-
 // Stats counts what the engine did, so tests can show which paths ran.
 type Stats struct {
 	Rounds       int
 	Applied      int // transactions applied
 	Held         int // transactions decoded before a marker but not yet visible
-	Keyed        int // keyed maintenance passes (lineage or group)
-	Rebuilds     int // full re-evaluations (recompute mode, truncation)
+	Keyed        int // keyed maintenance passes (lineage or group), per plan group
+	Rebuilds     int // full re-evaluations (recompute mode, truncation), per plan group
 	Verified     int // oracle comparisons
 	ExpandedKeys int // preserved-side keys added for outer joins
+	Statements   int // maintenance statements executed (excluding the oracle)
+	// StatementTime is the time spent in maintenance statements, including
+	// reading their rows.
+	StatementTime time.Duration
+}
+
+// Engine maintains live queries from a capture stream. Subscriptions with the
+// same SQL form one plan group, compiled once and maintained by batched
+// statements; subscriptions with the same SQL and arguments share a member.
+type Engine struct {
+	pool    *pgxpool.Pool
+	capture *Capture
+
+	groups  []*planGroup
+	bySQL   map[string]*planGroup
+	byID    map[string]*member
+	pending []*Txn
+	round   uint64
+
+	// VerifyEachRound re-runs every subscription at the round snapshot and
+	// fails the round if the maintained result differs: the differential
+	// oracle.
+	VerifyEachRound bool
+	// Trace, when set, receives a line per applied or held transaction.
+	Trace func(string)
+	// LastApplied holds the transactions the last round applied.
+	LastApplied []*Txn
+	// StatementHook, when set, receives each maintenance statement and its
+	// duration (benchmarks use it to find the expensive ones).
+	StatementHook func(sql string, members int, d time.Duration)
+
+	Stats Stats
 }
 
 // NewEngine creates an engine over a pool and an open capture.
 func NewEngine(pool *pgxpool.Pool, capture *Capture) *Engine {
-	return &Engine{pool: pool, capture: capture}
+	return &Engine{pool: pool, capture: capture, bySQL: map[string]*planGroup{}, byID: map[string]*member{}}
 }
 
-type liveQuery struct {
-	id      string
-	plan    *Plan
-	args    []any
-	columns []string
-	ready   bool
-
-	result *keyedSet // lineage mode: result rows; recompute mode: rows by multiset ID
-	input  *keyedSet // group mode: input rows (values = group keys)
-	join   *keyedSet // outer joins: lineage of the FROM clause
-	groups map[string]*keyedRow
-
-	// Last round's changed and expanded keys, for divergence reports.
-	lastKeys, lastExpanded []map[string]struct{}
-}
-
-// Register compiles a query. Its initial result is computed in the next round.
+// Register subscribes id to a query. Its initial result arrives in the next
+// round.
 func (e *Engine) Register(ctx context.Context, id, sql string, args ...any) (*Plan, error) {
+	if _, dup := e.byID[id]; dup {
+		return nil, fmt.Errorf("livequery: subscription %s already exists", id)
+	}
 	conn, err := e.pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("livequery: acquire for compile: %w", err)
 	}
 	defer conn.Release()
-	plan, err := Compile(ctx, conn.Conn(), sql)
+	g := e.bySQL[sql]
+	if g == nil {
+		plan, err := Compile(ctx, conn.Conn(), sql)
+		if err != nil {
+			return nil, err
+		}
+		g = &planGroup{plan: plan, byArgs: map[string]*member{}, stats: &e.Stats, engine: e}
+		e.bySQL[sql] = g
+		e.groups = append(e.groups, g)
+	}
+	if g.plan.NParams != len(args) {
+		return nil, fmt.Errorf("livequery: query takes %d parameters, got %d", g.plan.NParams, len(args))
+	}
+	text, err := argText(ctx, conn.Conn(), g.plan.ParamTypes, args)
 	if err != nil {
 		return nil, err
 	}
-	if plan.NParams != len(args) {
-		return nil, fmt.Errorf("livequery: query takes %d parameters, got %d", plan.NParams, len(args))
+	key := encodeValues(text)
+	m := g.byArgs[key]
+	if m == nil {
+		m = &member{group: g, idx: int32(len(g.members)), args: args, argText: text}
+		g.members = append(g.members, m)
+		g.byArgs[key] = m
 	}
-	e.queries = append(e.queries, &liveQuery{id: id, plan: plan, args: args})
-	return plan, nil
+	m.ids = append(m.ids, id)
+	e.byID[id] = m
+	return g.plan, nil
 }
 
-// Result returns the engine's current rows for a query.
-func (e *Engine) Result(id string) []Row {
-	for _, q := range e.queries {
-		if q.id == id {
-			return q.rows()
+// argText renders arguments as PostgreSQL text, the form batched statements
+// pass them in, so identical arguments are recognised however the caller
+// typed them.
+func argText(ctx context.Context, conn *pgx.Conn, types []string, args []any) ([]*string, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	cols := make([]string, len(types))
+	for k, typ := range types {
+		cols[k] = fmt.Sprintf("$%d::%s::text", k+1, typ)
+	}
+	rows, err := conn.Query(ctx, "SELECT "+strings.Join(cols, ", "), args...)
+	if err != nil {
+		return nil, fmt.Errorf("livequery: render arguments: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*string, len(args))
+	if rows.Next() {
+		for k, raw := range rows.RawValues() {
+			if raw != nil {
+				v := string(raw)
+				out[k] = &v
+			}
 		}
+	}
+	return out, rows.Err()
+}
+
+// Result returns the engine's current rows for a subscription.
+func (e *Engine) Result(id string) []Row {
+	if m := e.byID[id]; m != nil {
+		return m.rows()
 	}
 	return nil
 }
@@ -191,14 +213,8 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	for _, txn := range e.pending {
 		full := FullXid(txn.Xid, ref)
 		if e.VerifyEachRound {
-			var pgVisible bool
-			if err := tx.QueryRow(ctx, "SELECT pg_visible_in_snapshot($1::text::xid8, pg_current_snapshot())",
-				strconv.FormatUint(full, 10)).Scan(&pgVisible); err != nil {
-				return nil, fmt.Errorf("livequery: check visibility: %w", err)
-			}
-			if pgVisible != snap.Visible(full) {
-				return nil, fmt.Errorf("livequery: round %d: xid %d visibility %v, PostgreSQL says %v (snapshot %s, ref %d)",
-					e.round, full, snap.Visible(full), pgVisible, snapText, ref)
+			if err := checkVisibility(ctx, tx, snap, full); err != nil {
+				return nil, fmt.Errorf("livequery: round %d (ref %d): %w", e.round, ref, err)
 			}
 		}
 		if snap.Visible(full) {
@@ -215,43 +231,77 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	e.Stats.Held += len(held)
 
 	var deltas []Delta
-	for _, q := range e.queries {
-		var d Delta
-		var err error
-		if !q.ready {
-			d, err = q.initialize(ctx, tx)
-		} else {
-			d, err = q.maintain(ctx, tx, changes, &e.Stats)
-		}
+	for _, g := range e.groups {
+		perMember, err := g.step(ctx, tx, changes)
 		if err != nil {
-			return nil, fmt.Errorf("livequery: query %s: %w", q.id, err)
+			return nil, fmt.Errorf("livequery: query %q: %w", g.plan.SQL, err)
 		}
-		d.Query, d.Snapshot, d.Xids = q.id, snapText, xids
-		deltas = append(deltas, d)
-	}
-	if e.Trace != nil {
-		e.Trace(fmt.Sprintf("round %d snapshot %s ref %d marker %s", e.round, snapText, ref, markerLSN))
-		for _, txn := range visible {
-			e.Trace(fmt.Sprintf("round %d applies xid %d end %s: %s", e.round, FullXid(txn.Xid, ref), txn.EndLSN, describeTxn(txn)))
-		}
-		for _, txn := range held {
-			e.Trace(fmt.Sprintf("round %d holds xid %d end %s", e.round, FullXid(txn.Xid, ref), txn.EndLSN))
-		}
-	}
-	if e.VerifyEachRound {
-		for _, q := range e.queries {
-			if err := q.verify(ctx, tx); err != nil {
-				return nil, fmt.Errorf("livequery: round %d snapshot %s: query %s: %w", e.round, snapText, q.id, err)
+		for _, m := range g.members {
+			d, ok := perMember[m]
+			if !ok {
+				d = Delta{}
 			}
-			e.Stats.Verified++
+			for _, id := range m.ids {
+				d.Query, d.Snapshot, d.Xids = id, snapText, xids
+				deltas = append(deltas, d)
+			}
+		}
+	}
+	e.trace(snapText, ref, markerLSN, visible, held)
+	if e.VerifyEachRound {
+		for _, g := range e.groups {
+			for _, m := range g.members {
+				if err := m.verify(ctx, tx); err != nil {
+					return nil, fmt.Errorf("livequery: round %d snapshot %s: subscription %v: %w", e.round, snapText, m.ids, err)
+				}
+				e.Stats.Verified++
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("livequery: commit round: %w", err)
 	}
 	e.pending = held
+	e.LastApplied = visible
 	e.confirm(visible, held, markerLSN)
 	return deltas, nil
+}
+
+func (e *Engine) trace(snapText string, ref uint64, marker pglogrepl.LSN, visible, held []*Txn) {
+	if e.Trace == nil {
+		return
+	}
+	e.Trace(fmt.Sprintf("round %d snapshot %s ref %d marker %s", e.round, snapText, ref, marker))
+	for _, txn := range visible {
+		e.Trace(fmt.Sprintf("round %d applies xid %d end %s: %s", e.round, FullXid(txn.Xid, ref), txn.EndLSN, describeTxn(txn)))
+	}
+	for _, txn := range held {
+		e.Trace(fmt.Sprintf("round %d holds xid %d end %s", e.round, FullXid(txn.Xid, ref), txn.EndLSN))
+	}
+}
+
+func describeTxn(txn *Txn) string {
+	var parts []string
+	for _, ch := range txn.Changes {
+		key := func(t Tuple) string {
+			if t == nil {
+				return "-"
+			}
+			var kv []string
+			for k, v := range t {
+				if v != nil && (k == "id" || k == "k1" || k == "k2") {
+					kv = append(kv, k+"="+*v)
+				}
+			}
+			sort.Strings(kv)
+			return strings.Join(kv, ",")
+		}
+		parts = append(parts, fmt.Sprintf("%c rel=%d old[%s] new[%s]", ch.Op, ch.Relation, key(ch.Old), key(ch.New)))
+	}
+	if len(txn.Truncated) > 0 {
+		parts = append(parts, fmt.Sprintf("truncate %v", txn.Truncated))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // roundLockAttempts bounds retries when a round's table locks time out or
@@ -306,8 +356,8 @@ func (e *Engine) tryBeginRound(ctx context.Context, tables string) (pgx.Tx, stri
 // lockList names every table any live query reads, in OID order.
 func (e *Engine) lockList() string {
 	names := map[uint32]string{}
-	for _, q := range e.queries {
-		for oid, name := range q.plan.TableNames {
+	for _, g := range e.groups {
+		for oid, name := range g.plan.TableNames {
 			names[oid] = name
 		}
 	}
@@ -390,8 +440,8 @@ func (e *Engine) confirm(visible, held []*Txn, marker pglogrepl.LSN) {
 func (e *Engine) collect(txns []*Txn) changeSet {
 	cs := changeSet{keys: map[uint32]map[string]struct{}{}, truncated: map[uint32]bool{}, missing: map[uint32]bool{}}
 	keyCols := map[uint32][]string{}
-	for _, q := range e.queries {
-		for _, rel := range q.plan.Relations {
+	for _, g := range e.groups {
+		for _, rel := range g.plan.Relations {
 			keyCols[rel.OID] = rel.Keys
 		}
 	}
@@ -409,12 +459,7 @@ func (e *Engine) collect(txns []*Txn) changeSet {
 			}
 			parts[k] = *v
 		}
-		set := cs.keys[table]
-		if set == nil {
-			set = map[string]struct{}{}
-			cs.keys[table] = set
-		}
-		set[joinKey(parts)] = struct{}{}
+		cs.keys[table][strings.Join(parts, keySep)] = struct{}{}
 	}
 	for _, txn := range txns {
 		for _, table := range txn.Truncated {
@@ -429,442 +474,4 @@ func (e *Engine) collect(txns []*Txn) changeSet {
 		}
 	}
 	return cs
-}
-
-func joinKey(parts []string) string {
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += keySep + p
-	}
-	return out
-}
-
-// touched reports whether the change set affects any table the query reads,
-// and whether only a full re-evaluation is safe.
-func (q *liveQuery) touched(cs changeSet) (any, full bool) {
-	for table := range q.plan.Tables {
-		if cs.truncated[table] || cs.missing[table] {
-			return true, true
-		}
-		if _, ok := cs.keys[table]; ok {
-			any = true
-		}
-	}
-	return any, false
-}
-
-// keysFor returns the changed keys per relation.
-func (q *liveQuery) keysFor(cs changeSet) []map[string]struct{} {
-	out := make([]map[string]struct{}, len(q.plan.Relations))
-	for i, rel := range q.plan.Relations {
-		out[i] = map[string]struct{}{}
-		for key := range cs.keys[rel.OID] {
-			out[i][key] = struct{}{}
-		}
-	}
-	return out
-}
-
-func (q *liveQuery) initialize(ctx context.Context, tx pgx.Tx) (Delta, error) {
-	if err := q.rebuild(ctx, tx); err != nil {
-		return Delta{}, err
-	}
-	q.ready = true
-	return Delta{Reset: true, Rows: q.rows()}, nil
-}
-
-func (q *liveQuery) maintain(ctx context.Context, tx pgx.Tx, cs changeSet, stats *Stats) (Delta, error) {
-	any, full := q.touched(cs)
-	if !any {
-		return Delta{}, nil
-	}
-	before := q.snapshotRows()
-	var err error
-	switch {
-	case full || q.plan.Mode == ModeRecompute:
-		stats.Rebuilds++
-		err = q.rebuild(ctx, tx)
-	case q.plan.Mode == ModeLineage:
-		stats.Keyed++
-		err = q.maintainLineage(ctx, tx, q.keysFor(cs), stats)
-	case q.plan.Mode == ModeGroup:
-		stats.Keyed++
-		err = q.maintainGroup(ctx, tx, q.keysFor(cs), stats)
-	}
-	if err != nil {
-		return Delta{}, err
-	}
-	return diffRows(before, q.snapshotRows()), nil
-}
-
-// rebuild evaluates the query from scratch at the round snapshot.
-func (q *liveQuery) rebuild(ctx context.Context, tx pgx.Tx) error {
-	p := q.plan
-	switch p.Mode {
-	case ModeRecompute:
-		names, rows, err := queryText(ctx, tx, p.SQL, q.args)
-		if err != nil {
-			return err
-		}
-		q.columns = names
-		q.result = newKeyedSet(0)
-		seen := map[string]int{}
-		for _, values := range rows {
-			enc := encodeValues(values)
-			seen[enc]++
-			q.result.put(rowID("r", enc, strconv.Itoa(seen[enc])), &keyedRow{values: values, enc: enc})
-		}
-		return nil
-	case ModeLineage:
-		fresh, shape, err := q.readKeyed(ctx, tx, p.RowSQL, nil, false)
-		if err != nil {
-			return err
-		}
-		q.columns = shape.names
-		q.result = newKeyedSet(len(p.Relations))
-		for id, r := range fresh {
-			q.result.put(id, r)
-		}
-	case ModeGroup:
-		fresh, _, err := q.readKeyed(ctx, tx, p.RowSQL, nil, true)
-		if err != nil {
-			return err
-		}
-		q.input = newKeyedSet(len(p.Relations))
-		for id, r := range fresh {
-			q.input.put(id, r)
-		}
-		q.groups = map[string]*keyedRow{}
-		if err := q.readGroups(ctx, tx, p.OutputSQL, nil); err != nil {
-			return err
-		}
-	}
-	if p.HasOuterJoins() {
-		fresh, _, err := q.readKeyed(ctx, tx, p.JoinSQL, nil, false)
-		if err != nil {
-			return err
-		}
-		q.join = newKeyedSet(len(p.Relations))
-		for id, r := range fresh {
-			q.join.put(id, r)
-		}
-	}
-	return nil
-}
-
-// readKeyed runs a lineage-bearing query. With groupValues, row values are
-// the hidden group keys instead of the visible columns.
-func (q *liveQuery) readKeyed(ctx context.Context, tx pgx.Tx, sql string, extra []any, groupValues bool) (map[string]*keyedRow, resultShape, error) {
-	names, rows, err := queryText(ctx, tx, sql, append(slices.Clone(q.args), extra...))
-	if err != nil {
-		return nil, resultShape{}, err
-	}
-	shape, err := shapeOf(names, q.plan.Relations, q.plan.NGroups)
-	if err != nil {
-		return nil, shape, err
-	}
-	out := make(map[string]*keyedRow, len(rows))
-	for _, values := range rows {
-		r := &keyedRow{lineage: shape.lineageOf(values)}
-		if groupValues {
-			r.values = pick(values, shape.groups)
-		} else {
-			r.values = pick(values, shape.visible)
-		}
-		r.enc = encodeValues(r.values)
-		out[rowID(r.lineage...)] = r
-	}
-	return out, shape, nil
-}
-
-// readGroups runs the grouped output query and stores rows by group key.
-func (q *liveQuery) readGroups(ctx context.Context, tx pgx.Tx, sql string, extra []any) error {
-	names, rows, err := queryText(ctx, tx, sql, append(slices.Clone(q.args), extra...))
-	if err != nil {
-		return err
-	}
-	shape, err := shapeOf(names, nil, q.plan.NGroups)
-	if err != nil {
-		return err
-	}
-	q.columns = shape.names
-	for _, values := range rows {
-		visible := pick(values, shape.visible)
-		q.groups[encodeValues(pick(values, shape.groups))] = &keyedRow{values: visible, enc: encodeValues(visible)}
-	}
-	return nil
-}
-
-// expand adds preserved-side keys for outer joins and refreshes the join
-// lineage. Rows NULL-extended on a changed relation may appear or vanish, so
-// the preserved rows that matched it before or match it now are re-read too.
-func (q *liveQuery) expand(ctx context.Context, tx pgx.Tx, keys []map[string]struct{}, stats *Stats) ([]map[string]struct{}, error) {
-	p := q.plan
-	if !p.HasOuterJoins() {
-		return keys, nil
-	}
-	out := make([]map[string]struct{}, len(keys))
-	for i := range keys {
-		out[i] = map[string]struct{}{}
-		for k := range keys[i] {
-			out[i][k] = struct{}{}
-		}
-	}
-	addPreserved := func(i int, lineage []string) {
-		for _, pr := range p.Relations[i].Preserved {
-			if lineage[pr] == "" {
-				continue
-			}
-			if _, ok := out[pr][lineage[pr]]; !ok {
-				stats.ExpandedKeys++
-				out[pr][lineage[pr]] = struct{}{}
-			}
-		}
-	}
-	for i, set := range keys {
-		if len(set) == 0 || len(p.Relations[i].Preserved) == 0 {
-			continue
-		}
-		only := make([]map[string]struct{}, len(keys))
-		only[i] = set
-		for id := range q.join.matching(only) {
-			addPreserved(i, q.join.rows[id].lineage)
-		}
-		fresh, _, err := q.readKeyed(ctx, tx, p.JoinRestricted[i], keyArrays(set, len(p.Relations[i].Keys)), false)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range fresh {
-			addPreserved(i, r.lineage)
-		}
-	}
-	joinRows, err := q.readRestricted(ctx, tx, p.JoinRestricted, out, false)
-	if err != nil {
-		return nil, err
-	}
-	q.join.replace(out, joinRows)
-	q.lastKeys, q.lastExpanded = keys, out
-	return out, nil
-}
-
-func describeKeys(keys []map[string]struct{}) string {
-	var parts []string
-	for i, set := range keys {
-		var ks []string
-		for k := range set {
-			ks = append(ks, strings.ReplaceAll(k, keySep, "|"))
-		}
-		sort.Strings(ks)
-		parts = append(parts, fmt.Sprintf("r%d=%v", i, ks))
-	}
-	return strings.Join(parts, " ")
-}
-
-// readRestricted re-reads the rows matching keys, one restricted query per
-// relation with changed keys.
-func (q *liveQuery) readRestricted(ctx context.Context, tx pgx.Tx, restricted []string, keys []map[string]struct{}, groupValues bool) (map[string]*keyedRow, error) {
-	out := map[string]*keyedRow{}
-	for i, set := range keys {
-		if len(set) == 0 {
-			continue
-		}
-		fresh, _, err := q.readKeyed(ctx, tx, restricted[i], keyArrays(set, len(q.plan.Relations[i].Keys)), groupValues)
-		if err != nil {
-			return nil, err
-		}
-		for id, r := range fresh {
-			out[id] = r
-		}
-	}
-	return out, nil
-}
-
-func (q *liveQuery) maintainLineage(ctx context.Context, tx pgx.Tx, keys []map[string]struct{}, stats *Stats) error {
-	keys, err := q.expand(ctx, tx, keys, stats)
-	if err != nil {
-		return err
-	}
-	fresh, err := q.readRestricted(ctx, tx, q.plan.RowRestricted, keys, false)
-	if err != nil {
-		return err
-	}
-	q.result.replace(keys, fresh)
-	return nil
-}
-
-func (q *liveQuery) maintainGroup(ctx context.Context, tx pgx.Tx, keys []map[string]struct{}, stats *Stats) error {
-	keys, err := q.expand(ctx, tx, keys, stats)
-	if err != nil {
-		return err
-	}
-	fresh, err := q.readRestricted(ctx, tx, q.plan.RowRestricted, keys, true)
-	if err != nil {
-		return err
-	}
-	affected := map[string][]*string{}
-	for id := range q.input.matching(keys) {
-		r := q.input.rows[id]
-		affected[r.enc] = r.values
-	}
-	for _, r := range fresh {
-		affected[r.enc] = r.values
-	}
-	q.input.replace(keys, fresh)
-	if len(affected) == 0 {
-		return nil
-	}
-	arrays := make([][]*string, q.plan.NGroups)
-	for enc, values := range affected {
-		delete(q.groups, enc)
-		for k := range arrays {
-			arrays[k] = append(arrays[k], values[k])
-		}
-	}
-	extra := make([]any, len(arrays))
-	for k := range arrays {
-		extra[k] = arrays[k]
-	}
-	return q.readGroups(ctx, tx, q.plan.OutputRestricted, extra)
-}
-
-// snapshotRows returns the current result by row ID.
-func (q *liveQuery) snapshotRows() map[string]*keyedRow {
-	out := map[string]*keyedRow{}
-	if q.plan.Mode == ModeGroup {
-		for enc, r := range q.groups {
-			out[rowID("g", enc)] = r
-		}
-		return out
-	}
-	for id, r := range q.result.rows {
-		out[id] = r
-	}
-	return out
-}
-
-func (q *liveQuery) rows() []Row {
-	snap := q.snapshotRows()
-	out := make([]Row, 0, len(snap))
-	for id, r := range snap {
-		out = append(out, Row{ID: id, Values: r.values})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
-func diffRows(before, after map[string]*keyedRow) Delta {
-	var d Delta
-	for id := range before {
-		if _, ok := after[id]; !ok {
-			d.Removes = append(d.Removes, id)
-		}
-	}
-	for id, r := range after {
-		if old, ok := before[id]; !ok || old.enc != r.enc {
-			d.Upserts = append(d.Upserts, Row{ID: id, Values: r.values})
-		}
-	}
-	sort.Strings(d.Removes)
-	sort.Slice(d.Upserts, func(i, j int) bool { return d.Upserts[i].ID < d.Upserts[j].ID })
-	return d
-}
-
-// verify compares the maintained result with the query run at the round
-// snapshot, as multisets of rows.
-func (q *liveQuery) verify(ctx context.Context, tx pgx.Tx) error {
-	// Internal caches first, so a failure names the layer that diverged.
-	if q.join != nil {
-		if err := q.verifyKeyed(ctx, tx, "join lineage", q.plan.JoinSQL, q.join, false); err != nil {
-			return err
-		}
-	}
-	if q.input != nil {
-		if err := q.verifyKeyed(ctx, tx, "group input", q.plan.RowSQL, q.input, true); err != nil {
-			return err
-		}
-	}
-	_, rows, err := queryText(ctx, tx, q.plan.SQL, q.args)
-	if err != nil {
-		return fmt.Errorf("oracle query: %w", err)
-	}
-	want := map[string]int{}
-	for _, values := range rows {
-		want[encodeValues(values)]++
-	}
-	got := map[string]int{}
-	for _, r := range q.snapshotRows() {
-		got[r.enc]++
-	}
-	for enc, n := range want {
-		if got[enc] != n {
-			return fmt.Errorf("divergence (mode %s): row %q expected %d times, maintained %d times", q.plan.Mode, printable(enc), n, got[enc])
-		}
-	}
-	for enc, n := range got {
-		if want[enc] != n {
-			var lineage []string
-			for _, r := range q.snapshotRows() {
-				if r.enc == enc {
-					lineage = r.lineage
-				}
-			}
-			return fmt.Errorf("divergence (mode %s): row %q (lineage %q) maintained %d times, expected %d times",
-				q.plan.Mode, printable(enc), lineage, n, want[enc])
-		}
-	}
-	return nil
-}
-
-// verifyKeyed compares a lineage-keyed cache with its query at the snapshot.
-func (q *liveQuery) verifyKeyed(ctx context.Context, tx pgx.Tx, layer, sql string, set *keyedSet, groupValues bool) error {
-	fresh, _, err := q.readKeyed(ctx, tx, sql, nil, groupValues)
-	if err != nil {
-		return fmt.Errorf("oracle %s: %w", layer, err)
-	}
-	for id, r := range fresh {
-		got, ok := set.rows[id]
-		if !ok {
-			return fmt.Errorf("divergence in %s: missing row lineage %q values %q", layer, r.lineage, printable(r.enc))
-		}
-		if got.enc != r.enc {
-			return fmt.Errorf("divergence in %s: row lineage %q values %q, expected %q", layer, r.lineage, printable(got.enc), printable(r.enc))
-		}
-	}
-	for id, r := range set.rows {
-		if _, ok := fresh[id]; !ok {
-			var now []string
-			for i, key := range r.lineage {
-				if key == "" {
-					continue
-				}
-				rows, _, err := q.readKeyed(ctx, tx, q.plan.JoinRestricted[i], keyArrays(map[string]struct{}{key: {}}, len(q.plan.Relations[i].Keys)), false)
-				if err != nil {
-					now = append(now, fmt.Sprintf("r%d error: %v", i, err))
-				}
-				for _, nr := range rows {
-					now = append(now, fmt.Sprintf("r%d:%q", i, nr.lineage))
-				}
-			}
-			return fmt.Errorf("divergence in %s: stale row lineage %q values %q; at snapshot these keys join as %v; round keys %s; expanded %s",
-				layer, r.lineage, printable(r.enc), now, describeKeys(q.lastKeys), describeKeys(q.lastExpanded))
-		}
-	}
-	return nil
-}
-
-func printable(enc string) string {
-	out := []byte{}
-	for i := 0; i < len(enc); i++ {
-		switch {
-		case enc[i] == 0 && i+1 < len(enc) && enc[i+1] == 'N':
-			out = append(out, "|NULL"...)
-			i++
-		case enc[i] == 0 && i+1 < len(enc) && enc[i+1] == 'V':
-			out = append(out, '|')
-			i++
-		default:
-			out = append(out, enc[i])
-		}
-	}
-	return string(out)
 }

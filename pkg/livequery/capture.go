@@ -34,8 +34,9 @@ type Change struct {
 
 // Txn is a committed transaction as decoded from the slot.
 type Txn struct {
-	Xid       uint32
-	EndLSN    pglogrepl.LSN
+	Xid        uint32
+	EndLSN     pglogrepl.LSN
+	CommitTime time.Time
 	Changes   []Change
 	Truncated []uint32
 }
@@ -244,6 +245,7 @@ func (d *decoder) decode(xld pglogrepl.XLogData) (Event, bool, error) {
 		txn := d.txn
 		d.txn = nil
 		txn.EndLSN = m.TransactionEndLSN
+		txn.CommitTime = m.CommitTime
 		return Event{Txn: txn, LSN: m.TransactionEndLSN}, true, nil
 	case *pglogrepl.LogicalDecodingMessage:
 		if !m.Transactional && m.Prefix == MarkerPrefix {
