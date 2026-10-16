@@ -314,8 +314,31 @@ func TestAutomationLiveSuiteResumeKnownRun(t *testing.T) {
 	for _, mode := range []string{"passed", "record-missing", "wrong-run", "version-changed", "deployment-changed", "app-changed", "failed"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newLiveSuiteFixture(t, "pending")
-			args := append(liveSuiteArgs(f.path), "--timeout", "100ms")
-			first := runLiveSuiteTest(t, args, 124)
+			o, err := parseAutomationLiveSuite(liveSuiteArgs(f.path)[3:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := authedClient()
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal, err := prepareAutomationLiveSuite(t.Context(), client, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Establish accepted, persisted work before expiring the invocation.
+			// A short wall-clock budget can expire before admission on busy CI.
+			if _, err := admitOrReadAutomationLiveSuiteCase(t.Context(), client, o.path, &journal, 0); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+			defer cancel()
+			out := captureAutomationStdout(t)
+			code := executeAutomationLiveSuite(ctx, client, o, &journal)
+			var first liveSuiteTestResult
+			if code != 124 || json.Unmarshal(out.Bytes(), &first) != nil || first.ExitCode != 124 {
+				t.Fatal("deadline did not stop the suite", code, out)
+			}
 			if first.Cases[0].RunID == "" || first.Outcome != "timed_out" || first.Summary["not_started"] != 1 {
 				t.Fatal("deadline lost accepted work", first)
 			}
