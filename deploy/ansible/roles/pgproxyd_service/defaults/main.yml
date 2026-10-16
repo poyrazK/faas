@@ -22,9 +22,10 @@ pgproxyd_schedd_target: ""
 pgproxyd_tls_cert_src: ""
 pgproxyd_tls_key_src: ""
 
-# Read-only control-plane DSN for the faas_pgproxyd role (Ansible Vault).
-# The role may only SELECT database_role_verifiers; database_node.yml
-# creates it on the control plane.
+# Read-only control-plane DSN for the faas_pgproxyd role, which may only
+# SELECT database_role_verifiers. The manifest renders it with the
+# password database_node.yml settles and creates the role with on the
+# control plane (generated once, or faas_pgproxyd_postgres_password).
 pgproxyd_db_url: ""
 
 # Query cancellation across instances: a client's cancel may reach another

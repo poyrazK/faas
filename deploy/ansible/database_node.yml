@@ -13,19 +13,64 @@
   hosts: control_plane
   become: true
   gather_facts: false
+  vars:
+    # The faas_pgproxyd password, generated once on the control plane and
+    # kept root-only. A faas_pgproxyd_postgres_password (Ansible Vault)
+    # wins when set. The database nodes' pgproxyd_db_url reads
+    # faas_pgproxyd_database_password from this host's facts, so the role
+    # and the DSN cannot drift.
+    faas_pgproxyd_password_file: /var/lib/faas/pgproxyd/postgres-password
   tasks:
-    - name: database nodes — require the faas_pgproxyd password
+    - name: database nodes — create the password's directory
+      ansible.builtin.file:
+        path: "{{ faas_pgproxyd_password_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: faas_pgproxyd_postgres_password | default('') | length == 0
+
+    - name: database nodes — generate the faas_pgproxyd password once
+      ansible.builtin.shell:
+        cmd: >-
+          set -euo pipefail;
+          umask 077;
+          openssl rand -hex 32 > "{{ faas_pgproxyd_password_file }}.tmp";
+          mv "{{ faas_pgproxyd_password_file }}.tmp" "{{ faas_pgproxyd_password_file }}"
+        executable: /bin/bash
+        creates: "{{ faas_pgproxyd_password_file }}"
+      when: faas_pgproxyd_postgres_password | default('') | length == 0
+
+    - name: database nodes — read the generated password
+      ansible.builtin.slurp:
+        src: "{{ faas_pgproxyd_password_file }}"
+      register: faas_pgproxyd_password_raw
+      no_log: true
+      when: faas_pgproxyd_postgres_password | default('') | length == 0
+
+    - name: database nodes — settle the faas_pgproxyd password
+      ansible.builtin.set_fact:
+        faas_pgproxyd_database_password: >-
+          {{ faas_pgproxyd_postgres_password
+             if faas_pgproxyd_postgres_password | default('') | length > 0
+             else (faas_pgproxyd_password_raw.content | b64decode | trim) }}
+      no_log: true
+
+    - name: database nodes — require a usable password
       ansible.builtin.assert:
         that:
-          - faas_pgproxyd_postgres_password | default('') | length > 0
+          - faas_pgproxyd_database_password | length >= 32
         fail_msg: >-
-          Set faas_pgproxyd_postgres_password (Ansible Vault); pgproxyd's
-          pgproxyd_db_url must use the same password.
+          The faas_pgproxyd password is shorter than 32 characters; remove
+          {{ faas_pgproxyd_password_file }} to generate a new one, or set a
+          longer faas_pgproxyd_postgres_password.
+        quiet: true
+      no_log: true
 
     - name: database nodes — create the read-only faas_pgproxyd role
       community.postgresql.postgresql_user:
         name: faas_pgproxyd
-        password: "{{ faas_pgproxyd_postgres_password }}"
+        password: "{{ faas_pgproxyd_database_password }}"
         role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE,NOINHERIT
         state: present
       become_user: postgres
@@ -71,6 +116,17 @@
   gather_facts: true
   vars:
     faas_box_role: database
+  pre_tasks:
+    - name: database nodes — require the control plane's faas_pgproxyd password
+      ansible.builtin.assert:
+        that:
+          - hostvars[groups['control_plane'] | first].faas_pgproxyd_database_password is defined
+        fail_msg: >-
+          Run database_node.yml with the control plane in the play, not
+          --limit to the database nodes: its first play settles the
+          faas_pgproxyd password pgproxyd_db_url uses.
+        quiet: true
+      when: pgproxyd_enabled | default(false) | bool
   roles:
     - role: cgroups_v2
     - role: grub

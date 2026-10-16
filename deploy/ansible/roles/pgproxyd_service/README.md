@@ -13,7 +13,7 @@ Inputs (all required when `pgproxyd_enabled: true`):
 | `pgproxyd_host_suffix` | SNI suffix; clients connect to `<database-id>.<suffix>` |
 | `pgproxyd_schedd_target` | control-plane schedd over the overlay |
 | `pgproxyd_tls_cert_src`, `pgproxyd_tls_key_src` | publicly trusted `*.<suffix>` certificate and key |
-| `pgproxyd_db_url` | read-only DSN of the `faas_pgproxyd` role; `gregalectl manifest ansible` derives it from `faas_pgproxyd_postgres_password` (Vault) |
+| `pgproxyd_db_url` | read-only DSN of the `faas_pgproxyd` role; `gregalectl manifest ansible` derives it from the password `database_node.yml` settles on the control plane (generated once, or `faas_pgproxyd_postgres_password` from Vault) |
 
 Optional, with more than one database node: `pgproxyd_instance_id` (a
 distinct 0-255 per node) and `pgproxyd_cancel_peers` (the other nodes'

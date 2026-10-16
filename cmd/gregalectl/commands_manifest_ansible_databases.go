@@ -163,9 +163,10 @@ func (d manifestDatabases) nodeVars(host manifest.Host, scheddTarget string) str
 	}
 	fmt.Fprintf(&b, "pgproxyd_host_suffix: %q\n", d.config.HostSuffix)
 	fmt.Fprintf(&b, "pgproxyd_schedd_target: %q\n", scheddTarget)
-	// The faas_pgproxyd password stays in Vault; database_node.yml creates
-	// the role with the same variable, so the two cannot drift.
-	fmt.Fprintf(&b, "pgproxyd_db_url: \"postgres://faas_pgproxyd:{{ faas_pgproxyd_postgres_password | urlencode | replace('/', '%%2F') }}@%s/faas?sslmode=disable\"\n",
+	// database_node.yml's first play settles the faas_pgproxyd password on
+	// the control plane (generated once, or the Vault value) and creates
+	// the role with it; the DSN reads the same fact, so the two cannot drift.
+	fmt.Fprintf(&b, "pgproxyd_db_url: \"postgres://faas_pgproxyd:{{ hostvars[groups['control_plane'] | first].faas_pgproxyd_database_password | urlencode | replace('/', '%%2F') }}@%s/faas?sslmode=disable\"\n",
 		net.JoinHostPort(d.controlPlane, strconv.Itoa(manifestControlPlanePostgresPort)))
 	fmt.Fprintf(&b, "pgproxyd_instance_id: %d\n", self.instanceID)
 	fmt.Fprintf(&b, "database_node_metrics_host: %q\n", urlHost(self.address))

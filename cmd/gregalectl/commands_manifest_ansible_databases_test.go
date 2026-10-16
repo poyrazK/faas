@@ -90,7 +90,7 @@ func TestRenderManifestAnsibleFiles_DatabaseNodes(t *testing.T) {
 		"pgproxyd_cancel_peers:\n  1: \"10.42.0.5:5432\"\n",
 		`database_node_metrics_host: "10.42.0.6"`,
 		`database_node_metrics_cidrs: ["10.42.0.1/32"]`,
-		`pgproxyd_db_url: "postgres://faas_pgproxyd:{{ faas_pgproxyd_postgres_password | urlencode | replace('/', '%2F') }}@10.42.0.1:5432/faas?sslmode=disable"`,
+		`pgproxyd_db_url: "postgres://faas_pgproxyd:{{ hostvars[groups['control_plane'] | first].faas_pgproxyd_database_password | urlencode | replace('/', '%2F') }}@10.42.0.1:5432/faas?sslmode=disable"`,
 		"faas_private_hosts:",
 	} {
 		if !strings.Contains(db2, want) {

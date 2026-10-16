@@ -487,12 +487,18 @@ Cancel instance ids follow the full manifest order, so marking a node
 renumbers nothing.
 
 pgproxyd's DSN is derived too: `postgres://faas_pgproxyd:…@<control
-plane>:5432/faas`, with the password taken from the Vault variable
-`faas_pgproxyd_postgres_password`, which `database_node.yml` also uses
-to create the role, so the two cannot drift.
+plane>:5432/faas`. `database_node.yml`'s first play settles the password
+on the control plane and creates the `faas_pgproxyd` role with it. It is
+generated once (`openssl rand -hex 32`) into the root-only
+`/var/lib/faas/pgproxyd/postgres-password`. A `faas_pgproxyd_postgres_password`
+(Ansible Vault) wins when set. The database nodes' DSN reads the same fact
+(`hostvars[control plane].faas_pgproxyd_database_password`), so the role
+and the DSN cannot drift. A run limited to the database nodes stops with a
+clear message instead of rendering an empty password.
 
-Still manual: pgproxyd's public `*.<suffix>` certificate (files) and the
-`faas_pgproxyd_postgres_password` Vault value.
+Still operator-provided: pgproxyd's public `*.<suffix>` certificate
+(files), as the edge's wildcard certificate is in Caddy. Renewals reload
+without a restart, and expiry alerts at 14 days and pages at 72 hours.
 
 **First PKI bundle.** A database node used to need an operator-issued
 bundle (`database_node_pki_source`). The `database_node_pki` role now
