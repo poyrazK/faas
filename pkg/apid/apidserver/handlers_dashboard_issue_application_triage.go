@@ -26,6 +26,8 @@ func (s *server) dashboardApplicationTriageAccess(w http.ResponseWriter, r *http
 	return st, app, true
 }
 func (s *server) dashboardApplicationTriageHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		writeDashboardUnauthorized(w, r)
@@ -48,6 +50,9 @@ func (s *server) dashboardApplicationTriageHandler(w http.ResponseWriter, r *htt
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	view := dashboard.NewIssueApplicationTriageView(app.Slug, token, triage, acct.ID == app.AccountID)
+	if !s.dashboardSlackAccountLinkView(w, r, app, acct.ID, &view) {
+		return
+	}
 	if err = dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Issue response", Body: "issue_application_triage", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
 		renderProblem(w, s.log, err)
 	}
@@ -72,6 +77,9 @@ func (s *server) dashboardApplicationTriageActionForAccount(w http.ResponseWrite
 	}
 	if err := r.ParseForm(); err != nil {
 		writeIssueError(w, state.ErrInvalidArgument)
+		return
+	}
+	if s.dashboardSlackAccountLinkAction(w, r, acct, app) {
 		return
 	}
 	revision, req, err := issuetriage.ParseAction(r.PostForm)

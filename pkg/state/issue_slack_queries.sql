@@ -125,3 +125,83 @@ DELETE FROM issue_team_slack_deliveries target WHERE target.status IN ('succeede
  SELECT d.id FROM issue_team_slack_deliveries d WHERE (d.activity_id IS NOT NULL OR d.reminder_id IS NOT NULL) AND d.status IN ('succeeded','dead','canceled') AND d.updated_at<sqlc.arg(before)
  ORDER BY d.delivery_seq LIMIT sqlc.arg(batch_size)
 );
+-- name: IssueSlackInteractionPolicy :one
+SELECT p.*,a.account_id,a.slug FROM issue_slack_interaction_policies p JOIN apps a ON a.id=p.app_id
+WHERE a.id=$1 AND a.deleted_at IS NULL AND a.status<>'deleted';
+-- name: IssueSlackInteractionPolicyPut :exec
+INSERT INTO issue_slack_interaction_policies(app_id,enabled,revision,workspace_id,slack_app_id,secret_sealed) VALUES($1,$2,$3,$4,$5,$6)
+ON CONFLICT(app_id) DO UPDATE SET enabled=excluded.enabled,revision=excluded.revision,workspace_id=excluded.workspace_id,slack_app_id=excluded.slack_app_id,secret_sealed=excluded.secret_sealed;
+-- name: IssueSlackIdentitiesRevoke :exec
+DELETE FROM issue_slack_identities WHERE app_id=$1;
+-- name: IssueSlackActionPrepare :exec
+INSERT INTO issue_slack_action_messages(delivery_id,policy_revision,response_id,response_revision)
+SELECT d.id,p.revision,tr.incident_id,COALESCE(tr.revision,0) FROM issue_team_slack_deliveries d
+JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
+JOIN issue_slack_interaction_policies p ON p.app_id=dst.app_id AND p.enabled
+JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id AND src.eligible
+LEFT JOIN issue_application_triage tr ON tr.issue_id=src.issue_id
+WHERE d.id=$1 AND d.claim_id=$2 AND d.status='in_flight' AND d.claim_until>clock_timestamp() AND d.notification_id IS NULL
+ON CONFLICT(delivery_id) DO NOTHING;
+-- name: IssueSlackActionPrepared :one
+SELECT EXISTS(SELECT 1 FROM issue_slack_action_messages m JOIN issue_team_slack_deliveries d ON d.id=m.delivery_id
+JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id JOIN issue_slack_interaction_policies p ON p.app_id=dst.app_id AND p.enabled AND p.revision=m.policy_revision
+WHERE d.id=$1 AND d.claim_id=$2 AND d.status='in_flight');
+-- name: IssueSlackActionSent :exec
+UPDATE issue_slack_action_messages SET message_ts=$2 WHERE delivery_id=$1;
+-- name: IssueSlackActionContext :one
+SELECT a.id AS app_id,a.account_id,a.slug,src.issue_id,m.response_id,m.response_revision,m.consumed_at,tr.incident_id AS current_response_id,COALESCE(tr.revision,0)::bigint AS current_response_revision
+FROM issue_slack_action_messages m JOIN issue_team_slack_deliveries d ON d.id=m.delivery_id
+JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id AND dst.revision=d.destination_revision AND dst.enabled
+JOIN apps a ON a.id=dst.app_id JOIN accounts owner ON owner.id=a.account_id JOIN issue_slack_interaction_policies p ON p.app_id=a.id AND p.enabled AND p.revision=m.policy_revision
+JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id AND src.eligible
+JOIN app_issues i ON i.id=src.issue_id AND i.state='open'
+LEFT JOIN issue_application_triage tr ON tr.issue_id=i.id
+WHERE a.id=sqlc.arg(app_id) AND d.id=sqlc.arg(delivery_id) AND d.status='succeeded' AND d.channel_id=sqlc.arg(channel_id)
+AND m.message_ts=sqlc.arg(message_ts) AND m.message_ts<>'' AND p.revision=sqlc.arg(policy_revision)
+AND a.deleted_at IS NULL AND a.status<>'deleted' AND owner.status='active' AND owner.abuse_hold_at IS NULL AND owner.plan=ANY(sqlc.arg(entitled_plans)::text[]);
+-- name: IssueSlackActionConsume :exec
+UPDATE issue_slack_action_messages SET consumed_at=clock_timestamp() WHERE delivery_id=$1;
+-- name: IssueSlackIdentityGet :one
+SELECT l.slack_user_id,l.account_id FROM issue_slack_identities l JOIN issue_slack_interaction_policies p ON p.app_id=l.app_id AND p.revision=l.policy_revision AND p.enabled
+JOIN accounts ac ON ac.id=l.account_id AND ac.status='active' AND ac.abuse_hold_at IS NULL
+WHERE l.app_id=$1 AND l.slack_user_id=$2 AND l.expires_at>clock_timestamp()
+AND l.mfa_enrolled_at IS NOT DISTINCT FROM ac.mfa_enrolled_at AND l.mfa_required=ac.mfa_required AND NOT(ac.mfa_required AND ac.mfa_enrolled_at IS NULL);
+-- name: IssueSlackIdentityMine :one
+SELECT l.slack_user_id,p.workspace_id,l.expires_at FROM issue_slack_identities l JOIN issue_slack_interaction_policies p ON p.app_id=l.app_id AND p.revision=l.policy_revision AND p.enabled
+WHERE l.app_id=$1 AND l.account_id=$2;
+-- name: IssueSlackIdentityCount :one
+SELECT count(*) FROM issue_slack_identities WHERE app_id=$1;
+-- name: IssueSlackIdentityPut :execrows
+INSERT INTO issue_slack_identities(app_id,slack_user_id,account_id,policy_revision,mfa_enrolled_at,mfa_required,expires_at)
+SELECT sqlc.arg(app_id),sqlc.arg(slack_user_id),ac.id,sqlc.arg(policy_revision),ac.mfa_enrolled_at,ac.mfa_required,sqlc.arg(expires_at) FROM accounts ac
+WHERE ac.id=sqlc.arg(account_id) AND ac.status='active' AND ac.abuse_hold_at IS NULL AND NOT(ac.mfa_required AND ac.mfa_enrolled_at IS NULL)
+ON CONFLICT(app_id,slack_user_id) DO UPDATE SET policy_revision=excluded.policy_revision,mfa_enrolled_at=excluded.mfa_enrolled_at,mfa_required=excluded.mfa_required,expires_at=excluded.expires_at WHERE issue_slack_identities.account_id=excluded.account_id;
+-- name: IssueSlackIdentityDelete :exec
+DELETE FROM issue_slack_identities WHERE app_id=$1 AND account_id=$2;
+-- name: IssueSlackChallengeGet :one
+SELECT * FROM issue_slack_link_challenges WHERE app_id=$1 AND request_key=$2;
+-- name: IssueSlackChallengeByToken :one
+SELECT ch.*,src.issue_id,p.workspace_id FROM issue_slack_link_challenges ch
+JOIN issue_slack_interaction_policies p ON p.app_id=ch.app_id AND p.enabled AND p.revision=ch.policy_revision
+JOIN issue_team_slack_deliveries d ON d.id=ch.delivery_id AND d.status='succeeded'
+JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id AND dst.enabled AND dst.revision=d.destination_revision
+JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id AND src.eligible
+JOIN issue_slack_action_messages m ON m.delivery_id=d.id AND m.consumed_at IS NULL
+JOIN app_issues i ON i.id=src.issue_id AND i.state='open'
+LEFT JOIN issue_application_triage tr ON tr.issue_id=src.issue_id
+WHERE ch.app_id=$1 AND ch.token=$2 AND ch.consumed_at IS NULL AND ch.expires_at>clock_timestamp()
+AND m.response_id IS NOT DISTINCT FROM tr.incident_id AND m.response_revision=COALESCE(tr.revision,0);
+-- name: IssueSlackChallengesExpire :exec
+DELETE FROM issue_slack_link_challenges WHERE app_id=$1 AND expires_at<=clock_timestamp();
+-- name: IssueSlackChallengeCount :one
+SELECT count(*) FROM issue_slack_link_challenges WHERE app_id=$1;
+-- name: IssueSlackChallengePut :exec
+INSERT INTO issue_slack_link_challenges(token,app_id,delivery_id,request_key,slack_user_id,policy_revision,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7);
+-- name: IssueSlackChallengeConsume :exec
+UPDATE issue_slack_link_challenges SET consumed_at=clock_timestamp() WHERE token=$1;
+
+-- name: IssueSlackIdentitiesExpire :exec
+DELETE FROM issue_slack_identities WHERE app_id=$1 AND expires_at<=clock_timestamp();
+
+-- name: IssueSlackInteractionNow :one
+SELECT statement_timestamp()::timestamptz;

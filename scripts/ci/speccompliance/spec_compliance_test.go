@@ -89,6 +89,7 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1241 Slack-signed provider callback; no account credentials
 	"GET /dashboard/apps/{slug}/issues/responses":          true, // ADR-1240 authenticated browser-only response inbox
 	"GET /dashboard/apps/{slug}/issues/{issue_id}/triage":  true, // ADR-1237 authenticated browser-only native response surface
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage": true, // ADR-1237 authenticated browser-only native response surface

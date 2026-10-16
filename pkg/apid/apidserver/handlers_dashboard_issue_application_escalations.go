@@ -40,5 +40,5 @@ func (s *server) dashboardApplicationEscalationView(w http.ResponseWriter, r *ht
 	view.ApplicationEscalationSaved = r.URL.Query().Get("saved") == "application-escalation"
 	view.ApplicationEscalationMin = api.IssueApplicationEscalationMinMinutes
 	view.ApplicationEscalationMax = api.IssueApplicationEscalationMaxMinutes
-	return true
+	return s.dashboardSlackInteractionView(w, r, app, view)
 }

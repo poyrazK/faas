@@ -6,6 +6,9 @@ import (
 )
 
 type IssueTrackerNotificationsView struct {
+	SlackInteractionsAvailable                                                   bool
+	SlackInteractionPolicy                                                       state.IssueSlackInteractionPolicy
+	SlackInteractionURL                                                          string
 	ApplicationEscalationAvailable, ApplicationEscalationSaved                   bool
 	ApplicationEscalationPolicy                                                  state.IssueApplicationEscalationPolicy
 	ApplicationEscalationMin, ApplicationEscalationMax                           int

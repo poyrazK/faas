@@ -638,8 +638,8 @@ The current application-error alert surface has these boundaries (reviewed
 | Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
 | Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
 | Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
-| Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation, interactive acknowledgment and per-rule channel overrides |
-| Response | Native response inbox, acknowledgment, snoozing, reminders, backup-team escalation and handling history | Interactive Slack actions and workspace OAuth installation |
+| Slack | Native team destinations for application alerts and tracker incidents, issue threads, retries and delivery status | Workspace OAuth installation and per-rule channel overrides |
+| Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Workspace OAuth installation |
 
 Native Slack delivery now connects application alerts to team channels.
 Native application issues now have dashboard acknowledgment and snoozing.
@@ -1063,7 +1063,7 @@ activity and generic webhooks still commit. These omissions are not backfilled.
 Terminal history expires after seven days, with bounded cleanup; an expired thread
 root can cause a later alert to start a fresh thread. Tracker retention remains
 independent. Native application acknowledgment and snoozing are described below;
-native escalation is described below; interactive Slack actions remain future work.
+native escalation and Slack handling actions are described below; workspace OAuth remains future work.
 
 ## GitHub and Linear tracker links
 
@@ -1880,8 +1880,8 @@ are not actionable and their response is not transferred. History is bounded acr
 responses and historical actors do not establish present access.
 
 Native application reminders, escalation and the response inbox are described below.
-Slack interactive actions remain future work. These dashboard features add no public
-API or SDK endpoint.
+Slack handling actions are described below. These features add no public API or
+SDK endpoint.
 
 ### Remind the team about an unacknowledged native issue
 
@@ -1922,7 +1922,7 @@ the selected due time. Messages already sending may arrive after cancellation.
 Reminders use the shared native queue/history cap and expire with its transport
 history; pruning old reminder history also removes its old deliveries. Generic
 issue activity/webhooks and tracker reminders remain independent. Native backup-team
-escalation is described below; interactive Slack actions remain future work.
+escalation and Slack handling actions are described below; workspace OAuth remains future work.
 
 ### Escalate an unacknowledged native issue to a backup team
 
@@ -1970,8 +1970,8 @@ Changed escalation settings cancel queued escalation jobs and preserve prior
 attempts and admitted responsibility. Opting out does not undo a handoff already
 recorded; disable native reminders to stop later response reminders. Changing
 native Slack policy clears the first-reminder clock with existing timers. Existing
-tracker escalation remains independent. Interactive Slack actions, workspace OAuth
-installation remain future work; the native response inbox is described below.
+tracker escalation remains independent. Workspace OAuth installation remains future
+work; the native response inbox and Slack handling actions are described below.
 
 ### Native issue response inbox
 
@@ -2007,3 +2007,49 @@ Stale actions return a conflict; refresh before trying again. Successful actions
 return to the first page with the selected filters. Acknowledgment and snoozing can
 remove the row from the current filter. Lists use 50-row pages ordered by issue ID;
 filter changes restart pagination. Changes between pages may change results.
+
+### Acknowledge or snooze a native issue in Slack
+
+App owners can enable **Slack response buttons** in **Tracker sync notifications**.
+Enter the workspace ID, Slack app ID and that app's signing secret. Configure the
+same Slack app used by team bot tokens, enable its **Interactivity** setting and
+copy the displayed **Request URL**. One Slack app/workspace is supported per Gregale
+app. The signing secret is sealed and never displayed; leaving it blank retains
+it for the same Slack app/workspace. This setup uses the existing manually supplied
+bot tokens; workspace OAuth installation remains future work.
+
+Future native alerts, reminders and escalations include **Acknowledge**, **Snooze
+1 hour** and **Snooze 24 hours**. Existing messages are not edited. Tracker-sync
+messages continue to use Gregale handling links. A stale native button may require
+opening the current response page instead.
+
+On your first click, Slack shows a private account-link confirmation. Open it
+yourself, sign in to Gregale, verify the displayed Slack user/workspace and confirm
+that they belong to you. Do not share the link. It expires after ten minutes and
+can be confirmed once. The signed-in Gregale account must already have response
+access. Linking does not acknowledge or snooze: click the Slack button again after
+confirming. An automatic retry of the original linking click performs no action.
+No account matching by email or self-entered Slack user ID is supported.
+
+A linked Slack identity can perform these response actions without signing in to
+the browser for each click. Gregale checks current response access, membership,
+account status, destination/policies and the captured response revision. Old
+messages cannot act on a regressed/reopened response. Duplicate or competing clicks
+do not extend snoozes or repeat handling. Actions use the same handling history and
+queued-delivery cancellation as dashboard actions. Slack success is not proof of
+investigation; open Gregale for the current response state.
+
+Links are scoped to the Gregale app and expire after 30 days. Use **Unlink my Slack
+account** on a response page to revoke your link. Changing response-button settings
+revokes all app links and old buttons. Identical saves with a blank signing secret
+preserve them. MFA enrollment/requirement changes revoke an account's links;
+membership removal immediately removes its response rights on subsequent actions.
+A Slack identity cannot overwrite another Gregale account's link, and one Gregale
+account can link only one Slack identity per app. Unlink before switching identities.
+
+Signed callbacks require fresh Slack signatures and the exact retained successful
+message/channel. Callback bodies and processing time are bounded. At most 100
+pending/recent link challenges and 200 linked identities are retained per app;
+expired rows are removed before admitting new ones. Message-button records expire
+with native delivery history. Slack Connect users from a different workspace and
+enterprise installations without a concrete workspace are not supported yet.

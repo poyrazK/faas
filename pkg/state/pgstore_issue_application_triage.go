@@ -118,6 +118,15 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 	if issueID(locked.AccountID) != owner {
 		return ErrNotFound
 	}
+	if err = applyApplicationTriageAction(ctx, q, tx, app, owner, actor, issue, revision, req); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+func applyApplicationTriageAction(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, owner, actor, issue string, revision int64, req IssueApplicationTriageAction) error {
+	if err := validateApplicationTriage(&req, revision); err != nil {
+		return err
+	}
 	scope, err := applicationTriageScope(ctx, q, tx, app, owner, actor, issue)
 	if err != nil {
 		return mapErr(err)
@@ -132,7 +141,7 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 	switch req.Action {
 	case "acknowledge":
 		if out.AcknowledgedAt != nil {
-			return tx.Commit(ctx)
+			return nil
 		}
 		if err = cancelApplicationReminders(ctx, q, tx, issueUUID(app), scope.ID); err != nil {
 			return err
@@ -145,7 +154,7 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 			return ErrInvalidArgument
 		}
 		if out.SnoozedUntil != nil && out.SnoozedUntil.Equal(*req.SnoozedUntil) && out.SnoozedBy == actor && out.SnoozeReason == req.Reason {
-			return tx.Commit(ctx)
+			return nil
 		}
 		out.SnoozedUntil = req.SnoozedUntil
 		out.SnoozedBy = actor
@@ -158,7 +167,7 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 		}
 	case "unsnooze":
 		if out.SnoozedUntil == nil {
-			return tx.Commit(ctx)
+			return nil
 		}
 		out.SnoozedUntil = nil
 		out.SnoozedBy = ""
@@ -174,8 +183,9 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 	if err = applicationTriageAudit(ctx, q, tx, out, actor, req); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
+
 func applicationTriageAudit(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, out IssueApplicationTriage, actor string, req IssueApplicationTriageAction) error {
 	if err := q.IssueApplicationTriageAudit(ctx, tx, sqlc.IssueApplicationTriageAuditParams{IssueID: issueUUID(out.IssueID), IncidentID: issueUUID(out.IncidentID), Revision: out.Revision, ActorID: issueUUID(actor), Action: req.Action, SnoozedUntil: trackerSnoozeValue(req.SnoozedUntil), Reason: req.Reason}); err != nil {
 		return err

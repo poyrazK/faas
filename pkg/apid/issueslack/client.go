@@ -189,6 +189,14 @@ func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) 
 		map[string]any{"type": "section", "text": map[string]any{"type": "plain_text", "text": detail}},
 		map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "link", "text": "Open issue", "url": link}, map[string]any{"type": "link", "text": "Acknowledge or snooze", "url": root + "/issues/" + url.PathEscape(c.IssueID) + "/triage"}}}}},
 	}}
+	if c.Interactive {
+		buttons := []any{}
+		for _, a := range []struct{ id, label string }{{"gregale_acknowledge", "Acknowledge"}, {"gregale_snooze_1h", "Snooze 1 hour"}, {"gregale_snooze_24h", "Snooze 24 hours"}} {
+			buttons = append(buttons, map[string]any{"type": "button", "action_id": a.id, "value": c.ID, "text": map[string]any{"type": "plain_text", "text": a.label}})
+		}
+		body["blocks"] = append(body["blocks"].([]any), map[string]any{"type": "actions", "elements": buttons})
+	}
+
 	if c.ThreadTS != "" {
 		if !state.ValidIssueSlackTimestamp(c.ThreadTS) {
 			return nil, state.ErrInvalidArgument

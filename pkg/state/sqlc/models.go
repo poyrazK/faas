@@ -4066,6 +4066,15 @@ type IssueResolution struct {
 	ActorAccountID    pgtype.UUID
 }
 
+type IssueSlackActionMessage struct {
+	DeliveryID       pgtype.UUID
+	PolicyRevision   int64
+	ResponseID       pgtype.UUID
+	ResponseRevision int64
+	MessageTs        string
+	ConsumedAt       pgtype.Timestamptz
+}
+
 type IssueSlackDeliverySource struct {
 	DeliveryID              pgtype.UUID
 	IssueID                 pgtype.UUID
@@ -4075,6 +4084,36 @@ type IssueSlackDeliverySource struct {
 	Details                 []byte
 	Eligible                bool
 	ApplicationRetryAllowed bool
+}
+
+type IssueSlackIdentity struct {
+	AppID          pgtype.UUID
+	SlackUserID    string
+	AccountID      pgtype.UUID
+	PolicyRevision int64
+	MfaEnrolledAt  pgtype.Timestamptz
+	MfaRequired    bool
+	ExpiresAt      pgtype.Timestamptz
+}
+
+type IssueSlackInteractionPolicy struct {
+	AppID        pgtype.UUID
+	Enabled      bool
+	Revision     int64
+	WorkspaceID  string
+	SlackAppID   string
+	SecretSealed []byte
+}
+
+type IssueSlackLinkChallenge struct {
+	Token          string
+	AppID          pgtype.UUID
+	DeliveryID     pgtype.UUID
+	RequestKey     string
+	SlackUserID    string
+	PolicyRevision int64
+	ExpiresAt      pgtype.Timestamptz
+	ConsumedAt     pgtype.Timestamptz
 }
 
 type IssueSourceMapArtifact struct {

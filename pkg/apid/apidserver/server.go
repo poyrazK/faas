@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -62,6 +63,7 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	issueSlackResponses                    *issueslack.Client
 	linearOAuthConfig                      issuetracker.LinearOAuthConfig
 	linearOAuthProvider                    issuetracker.LinearOAuthProvider
 	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
@@ -1243,6 +1245,7 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.object.ListBuckets))))

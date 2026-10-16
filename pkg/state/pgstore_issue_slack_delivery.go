@@ -117,6 +117,11 @@ func (s *PgStore) FinishIssueSlackDelivery(ctx context.Context, c IssueSlackClai
 			}
 		}
 	}
+	if r.Status == "succeeded" {
+		if err = q.IssueSlackActionSent(ctx, tx, sqlc.IssueSlackActionSentParams{DeliveryID: held.ID, MessageTs: r.MessageTS}); err != nil {
+			return err
+		}
+	}
 	next := r.RetryAt
 	if next.IsZero() {
 		next = time.Now()

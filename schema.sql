@@ -59163,3 +59163,52 @@ AND NOT EXISTS(SELECT 1 FROM public.issue_group_links gl WHERE gl.issue_id=i.id)
 AND (actor.id=a.account_id OR actor.id=i.assignee_account_id OR EXISTS(
  SELECT 1 FROM public.app_issue_team_members tm WHERE tm.account_id=actor.id AND
  (tm.team_id=i.assignee_team_id OR (tr.escalated_at IS NOT NULL AND tm.team_id=tr.escalation_team_id) OR tm.team_id=route.team_id)));
+
+CREATE TABLE public.issue_slack_interaction_policies (
+ app_id uuid PRIMARY KEY REFERENCES public.apps(id) ON DELETE CASCADE,
+ enabled boolean NOT NULL DEFAULT false,
+ revision bigint NOT NULL CHECK(revision>0),
+ workspace_id text NOT NULL CHECK(workspace_id ~ '^T[A-Z0-9]{8,31}$'),
+ slack_app_id text NOT NULL CHECK(slack_app_id ~ '^A[A-Z0-9]{8,31}$'),
+ secret_sealed bytea NOT NULL CHECK(octet_length(secret_sealed) BETWEEN 1 AND 8192)
+);
+CREATE TABLE public.issue_slack_action_messages (
+ delivery_id uuid PRIMARY KEY REFERENCES public.issue_team_slack_deliveries(id) ON DELETE CASCADE,
+ policy_revision bigint NOT NULL CHECK(policy_revision>0),
+ response_id uuid,
+ response_revision bigint NOT NULL CHECK(response_revision>=0),
+ message_ts text NOT NULL DEFAULT '' CHECK(message_ts='' OR message_ts ~ '^[0-9]{1,20}\.[0-9]{1,10}$'),
+ consumed_at timestamptz
+);
+CREATE TABLE public.issue_slack_identities (
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ slack_user_id text NOT NULL CHECK(slack_user_id ~ '^[UW][A-Z0-9]{8,31}$'),
+ account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+ policy_revision bigint NOT NULL CHECK(policy_revision>0),
+ mfa_enrolled_at timestamptz,
+ mfa_required boolean NOT NULL,
+ expires_at timestamptz NOT NULL,
+ PRIMARY KEY(app_id,slack_user_id), UNIQUE(app_id,account_id)
+);
+CREATE INDEX issue_slack_identities_account ON public.issue_slack_identities(account_id);
+CREATE TABLE public.issue_slack_link_challenges (
+ token text PRIMARY KEY CHECK(token ~ '^[0-9a-f]{64}$'),
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ delivery_id uuid NOT NULL REFERENCES public.issue_slack_action_messages(delivery_id) ON DELETE CASCADE,
+ request_key text NOT NULL CHECK(request_key ~ '^[0-9a-f]{64}$'),
+ slack_user_id text NOT NULL CHECK(slack_user_id ~ '^[UW][A-Z0-9]{8,31}$'),
+ policy_revision bigint NOT NULL CHECK(policy_revision>0),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz,
+ UNIQUE(app_id,request_key)
+);
+CREATE INDEX issue_slack_link_challenges_expiry ON public.issue_slack_link_challenges(app_id,expires_at);
+
+CREATE FUNCTION public.issue_slack_revoke_mfa_links() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ DELETE FROM public.issue_slack_identities WHERE account_id=NEW.id;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER issue_slack_revoke_mfa_links AFTER UPDATE OF mfa_enrolled_at,mfa_required ON public.accounts
+FOR EACH ROW WHEN (OLD.mfa_enrolled_at IS DISTINCT FROM NEW.mfa_enrolled_at OR OLD.mfa_required IS DISTINCT FROM NEW.mfa_required)
+EXECUTE FUNCTION public.issue_slack_revoke_mfa_links();

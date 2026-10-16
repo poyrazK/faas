@@ -28,6 +28,12 @@ func (w Worker) Step(ctx context.Context) (bool, error) {
 	if w.OpenToken != nil {
 		token, e := w.OpenToken(c.TokenSealed)
 		if e == nil {
+			if actions, ok := w.Store.(state.IssueSlackInteractionStore); ok {
+				c.Interactive, e = actions.PrepareIssueSlackActions(attempt, c)
+				if e != nil {
+					return true, e
+				}
+			}
 			ready, e := w.Store.IssueSlackDeliveryReady(attempt, c)
 			if e != nil {
 				return true, e

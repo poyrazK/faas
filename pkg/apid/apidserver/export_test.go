@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
 	"net"
@@ -1321,3 +1322,5 @@ func IssueNativeSetLinearOAuth(e pgHandlerEnv, cfg issuetracker.LinearOAuthConfi
 	e.s.linearOAuthConfig = cfg
 	e.s.linearOAuthProvider = provider
 }
+
+func (r *server) IssueSlackResponses() **issueslack.Client { return &r.issueSlackResponses }

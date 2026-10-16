@@ -7,6 +7,7 @@ import (
 )
 
 type IssueApplicationTriageView struct {
+	SlackLink                          state.IssueSlackAccountLink
 	AppSlug, CSRF                      string
 	Triage                             state.IssueApplicationTriage
 	IsOwner                            bool

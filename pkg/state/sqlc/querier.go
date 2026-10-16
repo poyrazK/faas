@@ -1708,9 +1708,20 @@ type Querier interface {
 	IssueSavedViewOwner(ctx context.Context, db DBTX, arg IssueSavedViewOwnerParams) (pgtype.UUID, error)
 	IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg IssueSetNewIssueAssigneeParams) (AppIssue, error)
 	IssueSetSplitRuleEnabled(ctx context.Context, db DBTX, arg IssueSetSplitRuleEnabledParams) (IssueSplitRule, error)
+	IssueSlackActionConsume(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error
+	IssueSlackActionContext(ctx context.Context, db DBTX, arg IssueSlackActionContextParams) (IssueSlackActionContextRow, error)
+	IssueSlackActionPrepare(ctx context.Context, db DBTX, arg IssueSlackActionPrepareParams) error
+	IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (bool, error)
+	IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSlackActionSentParams) error
 	IssueSlackCancelPrevious(ctx context.Context, db DBTX, arg IssueSlackCancelPreviousParams) error
 	IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.UUID, error)
 	IssueSlackCandidateDelivery(ctx context.Context, db DBTX, arg IssueSlackCandidateDeliveryParams) (IssueSlackCandidateDeliveryRow, error)
+	IssueSlackChallengeByToken(ctx context.Context, db DBTX, arg IssueSlackChallengeByTokenParams) (IssueSlackChallengeByTokenRow, error)
+	IssueSlackChallengeConsume(ctx context.Context, db DBTX, token string) error
+	IssueSlackChallengeCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueSlackChallengeGet(ctx context.Context, db DBTX, arg IssueSlackChallengeGetParams) (IssueSlackLinkChallenge, error)
+	IssueSlackChallengePut(ctx context.Context, db DBTX, arg IssueSlackChallengePutParams) error
+	IssueSlackChallengesExpire(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueSlackClaim(ctx context.Context, db DBTX, arg IssueSlackClaimParams) error
 	IssueSlackDeliveryList(ctx context.Context, db DBTX, arg IssueSlackDeliveryListParams) ([]IssueSlackDeliveryListRow, error)
 	IssueSlackDestinationGet(ctx context.Context, db DBTX, arg IssueSlackDestinationGetParams) (IssueTeamSlackDestination, error)
@@ -1720,6 +1731,16 @@ type Querier interface {
 	IssueSlackEnqueue(ctx context.Context, db DBTX, arg IssueSlackEnqueueParams) error
 	IssueSlackFinish(ctx context.Context, db DBTX, arg IssueSlackFinishParams) error
 	IssueSlackHeld(ctx context.Context, db DBTX, arg IssueSlackHeldParams) (IssueTeamSlackDelivery, error)
+	IssueSlackIdentitiesExpire(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackIdentitiesRevoke(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackIdentityCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueSlackIdentityDelete(ctx context.Context, db DBTX, arg IssueSlackIdentityDeleteParams) error
+	IssueSlackIdentityGet(ctx context.Context, db DBTX, arg IssueSlackIdentityGetParams) (IssueSlackIdentityGetRow, error)
+	IssueSlackIdentityMine(ctx context.Context, db DBTX, arg IssueSlackIdentityMineParams) (IssueSlackIdentityMineRow, error)
+	IssueSlackIdentityPut(ctx context.Context, db DBTX, arg IssueSlackIdentityPutParams) (int64, error)
+	IssueSlackInteractionNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	IssueSlackInteractionPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (IssueSlackInteractionPolicyRow, error)
+	IssueSlackInteractionPolicyPut(ctx context.Context, db DBTX, arg IssueSlackInteractionPolicyPutParams) error
 	IssueSlackReady(ctx context.Context, db DBTX, arg IssueSlackReadyParams) (bool, error)
 	IssueSlackRelease(ctx context.Context, db DBTX, arg IssueSlackReleaseParams) error
 	IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRetryParams) error
