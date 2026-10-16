@@ -1,6 +1,7 @@
 package livequery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,13 +19,12 @@ import (
 // live frames into the protocol's reference client, which refuses frames
 // that break the contract.
 type client struct {
-	plan   *Plan
 	result liveproto.Result
 }
 
 func (c *client) apply(t *testing.T, d Delta) {
 	t.Helper()
-	frames, err := d.Frames(c.plan, "db", c.result.Version, 0)
+	frames, err := d.Frames("db", c.result.Version, 0)
 	if err != nil {
 		t.Fatalf("render %s: %v", d.Query, err)
 	}
@@ -64,33 +64,99 @@ func (c *client) equal(rows []Row) error {
 }
 
 type harness struct {
-	t       *testing.T
-	pool    *pgxpool.Pool
-	engine  *Engine
-	clients map[string]*client
-	rounds  int
-	trace   []string
+	t        *testing.T
+	pool     *pgxpool.Pool
+	dsn      string
+	slot     string
+	capture  *Capture
+	engine   *Engine
+	clients  map[string]*client
+	rounds   int
+	restarts int
+	trace    []string
+	// history notes restarts and schema changes by round, for failures.
+	history []string
 }
 
 func newHarness(t *testing.T, schema string) *harness {
 	t.Helper()
 	dsn, pool := openLogicalDB(t)
 	mustExec(t, pool, schema)
-	mustExec(t, pool, `CREATE PUBLICATION gregale_live FOR ALL TABLES`)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	capture, err := OpenCapture(ctx, dsn, fmt.Sprintf("lq_%d", time.Now().UnixNano()), "gregale_live")
+	if err := Install(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, pool, `CREATE PUBLICATION gregale_live FOR ALL TABLES`)
+	h := &harness{t: t, pool: pool, dsn: dsn, slot: fmt.Sprintf("lq_%d", time.Now().UnixNano()), clients: map[string]*client{}}
+	capture, err := OpenSlot(ctx, dsn, h.slot, "gregale_live")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = capture.Close() })
-	e := NewEngine(pool, capture)
-	e.VerifyEachRound = true
-	h := &harness{t: t, pool: pool, engine: e, clients: map[string]*client{}}
+	h.capture = capture
+	t.Cleanup(func() {
+		_ = h.capture.Close()
+		h.dropSlot()
+	})
+	h.engine = NewEngine(pool, capture)
+	h.engine.VerifyEachRound = true
 	if os.Getenv("LIVEQUERY_TRACE") != "" {
-		e.Trace = func(line string) { h.trace = append(h.trace, line) }
+		h.engine.Trace = func(line string) { h.trace = append(h.trace, line) }
 	}
 	return h
+}
+
+// dropSlot drops the harness slot once its walsender lets go of it.
+func (h *harness) dropSlot() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		_, err := h.pool.Exec(ctx, `SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = $1`, h.slot)
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// restart checkpoints the engine, stops it and restores a new one from the
+// checkpoint over the slot, as livequeryd does across a park; with lose,
+// the slot is dropped in between, as when its WAL is gone.
+func (h *harness) restart(lose bool) { h.restartWith(lose, nil) }
+
+// restartWith runs down, when set, while the engine is stopped: after the
+// checkpoint and before the restore.
+func (h *harness) restartWith(lose bool, down func()) {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var buf bytes.Buffer
+	if err := h.engine.WriteCheckpoint(&buf); err != nil {
+		h.t.Fatal(err)
+	}
+	_ = h.capture.Close()
+	if down != nil {
+		down()
+	}
+	if lose {
+		h.dropSlot()
+	}
+	capture, err := OpenSlot(ctx, h.dsn, h.slot, "gregale_live")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if capture.Created != lose {
+		h.t.Fatalf("slot created = %v after a restart that lost it = %v", capture.Created, lose)
+	}
+	e, err := RestoreEngine(ctx, h.pool, capture, &buf)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	old := h.engine
+	e.VerifyEachRound, e.Trace, e.StatementHook, e.Stats = old.VerifyEachRound, old.Trace, old.StatementHook, old.Stats
+	h.engine, h.capture = e, capture
+	h.restarts++
+	h.history = append(h.history, fmt.Sprintf("after round %d: restart (slot lost %v)", h.rounds, lose))
 }
 
 func (h *harness) register(id, sql string, args ...any) *Plan {
@@ -99,7 +165,7 @@ func (h *harness) register(id, sql string, args ...any) *Plan {
 	if err != nil {
 		h.t.Fatalf("register %s: %v", id, err)
 	}
-	h.clients[id] = &client{plan: p}
+	h.clients[id] = &client{}
 	return p
 }
 
@@ -110,8 +176,13 @@ func (h *harness) round() []Delta {
 	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	recompiles := h.engine.Stats.Recompiles
 	deltas, err := h.engine.Round(ctx)
+	if n := h.engine.Stats.Recompiles - recompiles; n > 0 {
+		h.history = append(h.history, fmt.Sprintf("round %d: %d recompiles", h.rounds+1, n))
+	}
 	if err != nil {
+		h.t.Logf("history: %v", h.history)
 		for _, line := range h.trace {
 			h.t.Log(line)
 		}
@@ -126,6 +197,12 @@ func (h *harness) round() []Delta {
 	for _, d := range deltas {
 		c := h.clients[d.Query]
 		c.apply(h.t, d)
+		if d.Closed != nil {
+			if !c.result.Closed {
+				h.t.Fatalf("round %d query %s: closed delta did not close the client", h.rounds, d.Query)
+			}
+			continue
+		}
 		if err := c.equal(h.engine.Result(d.Query)); err != nil {
 			h.t.Fatalf("round %d query %s: %v", h.rounds, d.Query, err)
 		}
@@ -136,6 +213,9 @@ func (h *harness) round() []Delta {
 	// The round's progress frame: every client now sees every transaction
 	// the round applied, whether or not its rows changed (awaitTxId).
 	for _, c := range h.clients {
+		if c.result.Closed {
+			continue
+		}
 		c.deliver(h.t, ProgressFrame("db", deltas[0].Snapshot))
 		for _, xid := range deltas[0].Xids {
 			if !c.result.Sees(xid) {

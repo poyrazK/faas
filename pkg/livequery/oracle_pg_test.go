@@ -321,7 +321,29 @@ func (s oracleSchema) writer(ctx context.Context, pool *pgxpool.Pool, r *rand.Ra
 	return nil
 }
 
+// schemaChange returns a schema change for t: columns added and dropped, column
+// types that change how values print (numeric scale) or the result shape
+// (text and varchar), and indexes that change nothing. n moves only between
+// scaled types: back to unconstrained numeric, old rows would keep their
+// scale while new ones print without it, and min or max over equal values
+// that print differently returns whichever PostgreSQL meets last.
+func (s oracleSchema) schemaChange(r *rand.Rand, t string) string {
+	return pickOne(r, []string{
+		"ALTER TABLE " + t + " ADD COLUMN IF NOT EXISTS x int",
+		"ALTER TABLE " + t + " DROP COLUMN IF EXISTS x",
+		"ALTER TABLE " + t + " ALTER COLUMN n TYPE numeric(20,4)",
+		"ALTER TABLE " + t + " ALTER COLUMN n TYPE numeric(20,2)",
+		"ALTER TABLE " + t + " ALTER COLUMN s TYPE varchar(40)",
+		"ALTER TABLE " + t + " ALTER COLUMN s TYPE text",
+		"CREATE INDEX IF NOT EXISTS " + t + "_a_idx ON " + t + " (a)",
+		"DROP INDEX IF EXISTS " + t + "_a_idx",
+	})
+}
+
 func (s oracleSchema) statement(r *rand.Rand, t string, strs []any) (string, []any) {
+	if r.IntN(1000) < envInt("LIVEQUERY_ORACLE_DDL_PERMILLE", 5) {
+		return s.schemaChange(r, t), nil
+	}
 	maybeNull := func(v int) any {
 		if r.IntN(4) == 0 {
 			return nil
@@ -404,6 +426,8 @@ func TestOracleRandomWorkloads(t *testing.T) {
 			total.ExpandedKeys += stats.ExpandedKeys
 			total.WindowRanks += stats.WindowRanks
 			total.WindowRefills += stats.WindowRefills
+			total.Recompiles += stats.Recompiles
+			total.Skipped += stats.Skipped
 		})
 	}
 	t.Logf("oracle totals: %+v", total)
@@ -417,6 +441,7 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	r := rand.New(rand.NewPCG(seed, seed^0x5eed))
 	schema := randomSchema(r)
 	h := newHarness(t, schema.ddl())
+	h.engine.Checkpointed = true
 	ctx := context.Background()
 	// Seed data so the first queries have something to join.
 	if err := schema.writer(ctx, h.pool, rand.New(rand.NewPCG(seed, 1)), 60); err != nil {
@@ -425,12 +450,11 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	registered := 0
 	for attempts := 0; registered < nqueries && attempts < nqueries*5; attempts++ {
 		q := schema.randomQuery(r)
-		p, err := h.engine.Register(ctx, fmt.Sprintf("q%d", registered), q.sql, q.args...)
-		if err != nil {
+		if _, err := h.engine.Register(ctx, fmt.Sprintf("q%d", registered), q.sql, q.args...); err != nil {
 			t.Logf("skip query (%v): %s", err, q.sql)
 			continue
 		}
-		h.clients[fmt.Sprintf("q%d", registered)] = &client{plan: p}
+		h.clients[fmt.Sprintf("q%d", registered)] = &client{}
 		t.Logf("q%d %v: %s", registered, q.args, q.sql)
 		registered++
 	}
@@ -442,7 +466,7 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 		if _, err := h.engine.Register(ctx, dup, g.plan.SQL, m.args...); err != nil {
 			t.Fatal(err)
 		}
-		h.clients[dup] = &client{plan: g.plan}
+		h.clients[dup] = &client{}
 		for v := range 2 {
 			if g.plan.NParams == 0 {
 				break
@@ -455,7 +479,7 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 			if _, err := h.engine.Register(ctx, id, g.plan.SQL, args...); err != nil {
 				t.Fatal(err)
 			}
-			h.clients[id] = &client{plan: g.plan}
+			h.clients[id] = &client{}
 		}
 	}
 	modes := map[string]int{}
@@ -489,6 +513,10 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	}
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
+	// Restart the engine from a checkpoint now and then, sometimes losing
+	// the slot, as parking a database and recovering from a crash do.
+	rr := rand.New(rand.NewPCG(seed, 3))
+	restartPercent := envInt("LIVEQUERY_ORACLE_RESTART_PERCENT", 8)
 	for running := true; running; {
 		select {
 		case <-done:
@@ -498,6 +526,9 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 		default:
 		}
 		h.round()
+		if rr.IntN(100) < restartPercent {
+			h.restart(rr.IntN(4) == 0)
+		}
 	}
 	// Drain: transactions committed after the last round's snapshot.
 	for range 3 {
@@ -506,6 +537,6 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	if len(h.engine.pending) != 0 {
 		t.Fatalf("%d transactions still pending after the workload", len(h.engine.pending))
 	}
-	t.Logf("seed %d stats: %+v", seed, h.engine.Stats)
+	t.Logf("seed %d stats: %+v, %d restarts", seed, h.engine.Stats, h.restarts)
 	return h.engine.Stats
 }

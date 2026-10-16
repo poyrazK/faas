@@ -2,6 +2,8 @@ package livequery
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -14,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 )
 
 // pinnedSettings fixes the session settings that output functions and STABLE
@@ -39,16 +43,22 @@ type Delta struct {
 	Xids     []uint64 // transactions this round applied, as xid8
 	Reset    bool     // Rows replaces the whole result, in order for ordered queries
 	Rows     []Row
+	// Columns and Ordered describe the result on a reset; a schema change
+	// can change them.
+	Columns []liveproto.Column
+	Ordered bool
 	Upserts  []Row
 	Removes  []string
 	// Order is an ordered query's row IDs in order after the delta, set when
 	// rows were added or moved.
 	Order []string
+	// Closed ends the subscription; it receives nothing more.
+	Closed *QueryError
 }
 
 // Empty reports whether the delta changes nothing.
 func (d Delta) Empty() bool {
-	return !d.Reset && len(d.Upserts) == 0 && len(d.Removes) == 0 && d.Order == nil
+	return !d.Reset && len(d.Upserts) == 0 && len(d.Removes) == 0 && d.Order == nil && d.Closed == nil
 }
 
 // Stats counts what the engine did, so tests can show which paths ran.
@@ -63,6 +73,8 @@ type Stats struct {
 	ExpandedKeys int // preserved-side keys added for outer joins
 	WindowRanks   int // ordered windows re-ranked
 	WindowRefills int // ordered windows read again after losing rows
+	Recompiles    int // plan groups recompiled after schema changes
+	Skipped       int // re-delivered transactions already applied before a restart
 	Statements   int // maintenance statements executed (excluding the oracle)
 	// StatementTime is the time spent in maintenance statements, including
 	// reading their rows.
@@ -81,6 +93,16 @@ type Engine struct {
 	byID    map[string]*member
 	pending []*Txn
 	round   uint64
+	// epoch distinguishes this engine's round markers from those of an
+	// earlier incarnation that the slot may deliver again.
+	epoch string
+	// applied is the last round's snapshot: every transaction visible in it
+	// has been applied, so one decoded again after a restart is skipped.
+	applied *Snapshot
+	locked  map[uint32]bool // tables the current round locked
+	safe    pglogrepl.LSN   // what the slot may release once state is durable
+	ddlLog  uint32          // gregale_live.ddl_log, once resolved
+	closing []Delta         // subscriptions to close at the next round
 
 	// VerifyEachRound re-runs every subscription at the round snapshot and
 	// fails the round if the maintained result differs: the differential
@@ -93,13 +115,19 @@ type Engine struct {
 	// StatementHook, when set, receives each maintenance statement and its
 	// duration (benchmarks use it to find the expensive ones).
 	StatementHook func(sql string, members int, d time.Duration)
+	// Checkpointed engines confirm the slot only when a checkpoint is
+	// written, so it never moves past state a crash could lose.
+	Checkpointed bool
 
 	Stats Stats
 }
 
 // NewEngine creates an engine over a pool and an open capture.
 func NewEngine(pool *pgxpool.Pool, capture *Capture) *Engine {
-	return &Engine{pool: pool, capture: capture, bySQL: map[string]*planGroup{}, byID: map[string]*member{}}
+	epoch := make([]byte, 8)
+	_, _ = rand.Read(epoch) // crypto/rand.Read never fails
+	return &Engine{pool: pool, capture: capture, epoch: hex.EncodeToString(epoch),
+		bySQL: map[string]*planGroup{}, byID: map[string]*member{}}
 }
 
 // Register subscribes id to a query. Its initial result arrives in the next
@@ -193,12 +221,15 @@ type changeSet struct {
 // Round runs one snapshot-aligned maintenance round and returns the deltas.
 func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	e.round++
-	marker := strconv.FormatUint(e.round, 10)
+	marker := e.epoch + "." + strconv.FormatUint(e.round, 10)
 	tx, snapText, err := e.beginRound(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := e.resolveSchemaLog(ctx, tx); err != nil {
+		return nil, err
+	}
 	snap, err := ParseSnapshot(snapText)
 	if err != nil {
 		return nil, err
@@ -225,6 +256,10 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	var xids []uint64
 	for _, txn := range e.pending {
 		full := FullXid(txn.Xid, ref)
+		if e.applied != nil && e.applied.Visible(full) {
+			e.Stats.Skipped++
+			continue
+		}
 		if e.VerifyEachRound {
 			if err := checkVisibility(ctx, tx, snap, full); err != nil {
 				return nil, fmt.Errorf("livequery: round %d (ref %d): %w", e.round, ref, err)
@@ -243,8 +278,26 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	e.Stats.Applied += len(visible)
 	e.Stats.Held += len(held)
 
-	var deltas []Delta
+	deltas := e.closing
+	e.closing = nil
+	if sc := e.schemaChanges(visible); sc != nil {
+		if e.Trace != nil {
+			e.Trace(fmt.Sprintf("round %d schema change: tables %v broad %v", e.round, sc.tables, sc.broad))
+		}
+		closed, err := e.applySchemaChange(ctx, tx, sc)
+		if err != nil {
+			return nil, err
+		}
+		deltas = append(deltas, closed...)
+	}
+	for i := range deltas {
+		deltas[i].Snapshot, deltas[i].Xids = snapText, xids
+	}
 	for _, g := range e.groups {
+		if g.skip {
+			g.skip = false
+			continue
+		}
 		perMember, err := g.step(ctx, tx, changes)
 		if err != nil {
 			return nil, fmt.Errorf("livequery: query %q: %w", g.plan.SQL, err)
@@ -253,6 +306,9 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 			d, ok := perMember[m]
 			if !ok {
 				d = Delta{}
+			}
+			if d.Reset {
+				d.Columns, d.Ordered = g.plan.Columns, g.plan.Order != nil && g.plan.Order.Ordered
 			}
 			for _, id := range m.ids {
 				d.Query, d.Snapshot, d.Xids = id, snapText, xids
@@ -276,6 +332,7 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	}
 	e.pending = held
 	e.LastApplied = visible
+	e.applied = &snap
 	e.confirm(visible, held, markerLSN)
 	return deltas, nil
 }
@@ -326,19 +383,57 @@ const roundLockAttempts = 10
 // would make a table look empty to a snapshot that predates it. Holding
 // ACCESS SHARE on every live table from before the snapshot until the round
 // commits keeps them out; ordinary writes take weaker locks and proceed.
+//
+// Tables are locked by their current names, resolved from their OIDs just
+// before the round: a table renamed since its query compiled is still
+// locked, and one dropped is left out (the round that decodes the drop
+// closes its queries). A table dropped between resolving and locking makes
+// the round try again.
 func (e *Engine) beginRound(ctx context.Context) (pgx.Tx, string, error) {
-	tables := e.lockList()
 	for attempt := 1; ; attempt++ {
+		tables, locked, err := e.resolveLocks(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		e.locked = locked
 		tx, snap, err := e.tryBeginRound(ctx, tables)
 		if err == nil {
 			return tx, snap, nil
 		}
 		var pgErr *pgconn.PgError
-		retryable := errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "55P03")
+		retryable := errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "55P03" || pgErr.Code == "42P01")
 		if !retryable || attempt == roundLockAttempts {
 			return nil, "", err
 		}
 	}
+}
+
+// resolveLocks names the live tables that still exist, in OID order.
+func (e *Engine) resolveLocks(ctx context.Context) (string, map[uint32]bool, error) {
+	oids := e.lockList()
+	locked := map[uint32]bool{}
+	if len(oids) == 0 {
+		return "", locked, nil
+	}
+	rows, err := e.pool.Query(ctx, `SELECT c.oid, c.oid::regclass::text FROM pg_class c WHERE c.oid = ANY($1) ORDER BY c.oid`, oids)
+	if err != nil {
+		return "", nil, fmt.Errorf("livequery: resolve live tables: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var oid uint32
+		var name string
+		if err := rows.Scan(&oid, &name); err != nil {
+			return "", nil, fmt.Errorf("livequery: resolve live tables: %w", err)
+		}
+		locked[oid] = true
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return "", nil, fmt.Errorf("livequery: resolve live tables: %w", err)
+	}
+	return strings.Join(names, ", "), locked, nil
 }
 
 func (e *Engine) tryBeginRound(ctx context.Context, tables string) (pgx.Tx, string, error) {
@@ -366,24 +461,20 @@ func (e *Engine) tryBeginRound(ctx context.Context, tables string) (pgx.Tx, stri
 	return tx, snap, nil
 }
 
-// lockList names every table any live query reads, in OID order.
-func (e *Engine) lockList() string {
-	names := map[uint32]string{}
+// lockList returns every table any live query reads, in OID order.
+func (e *Engine) lockList() []uint32 {
+	set := map[uint32]bool{}
 	for _, g := range e.groups {
-		for oid, name := range g.plan.TableNames {
-			names[oid] = name
+		for oid := range g.plan.TableNames {
+			set[oid] = true
 		}
 	}
-	oids := make([]uint32, 0, len(names))
-	for oid := range names {
+	oids := make([]uint32, 0, len(set))
+	for oid := range set {
 		oids = append(oids, oid)
 	}
 	slices.Sort(oids)
-	parts := make([]string, len(oids))
-	for i, oid := range oids {
-		parts[i] = names[oid]
-	}
-	return strings.Join(parts, ", ")
+	return oids
 }
 
 // drain consumes capture events up to this round's marker.
@@ -430,9 +521,21 @@ func (e *Engine) DebugDrain(d time.Duration) []string {
 // confirm lets the slot release WAL that every applied transaction covers,
 // stopping before the first transaction still held for a later round.
 func (e *Engine) confirm(visible, held []*Txn, marker pglogrepl.LSN) {
-	if len(held) == 0 {
-		e.capture.Confirm(marker)
+	lsn := safeLSN(visible, held, marker)
+	if lsn == 0 {
 		return
+	}
+	if e.Checkpointed {
+		e.safe = max(e.safe, lsn)
+		return
+	}
+	e.capture.Confirm(lsn)
+}
+
+// safeLSN is the position up to which every transaction has been applied.
+func safeLSN(visible, held []*Txn, marker pglogrepl.LSN) pglogrepl.LSN {
+	if len(held) == 0 {
+		return marker
 	}
 	limit := held[0].EndLSN
 	for _, txn := range held {
@@ -444,9 +547,7 @@ func (e *Engine) confirm(visible, held []*Txn, marker pglogrepl.LSN) {
 			best = max(best, txn.EndLSN)
 		}
 	}
-	if best > 0 {
-		e.capture.Confirm(best)
-	}
+	return best
 }
 
 // collect gathers changed primary keys per table from visible transactions.

@@ -10,9 +10,14 @@ import (
 // live.changes. base is the result version the subscriber holds; a frame
 // moves it to base+1. An empty delta renders nothing: the round's
 // live.progress advances the subscriber's snapshot instead.
-func (d Delta) Frames(plan *Plan, database string, base uint64, expires int64) ([]any, error) {
+func (d Delta) Frames(database string, base uint64, expires int64) ([]any, error) {
 	if d.Empty() {
 		return nil, nil
+	}
+	if d.Closed != nil {
+		return []any{&liveproto.Error{
+			Type: liveproto.TypeError, Subscription: d.Query, Code: d.Closed.Code, Message: d.Closed.Message, Closed: true,
+		}}, nil
 	}
 	if d.Reset {
 		rows := liveproto.Rows{
@@ -21,8 +26,8 @@ func (d Delta) Frames(plan *Plan, database string, base uint64, expires int64) (
 			Version:      base + 1,
 			Snapshot:     d.Snapshot,
 			Expires:      expires,
-			Columns:      plan.Columns,
-			Ordered:      plan.Order != nil && plan.Order.Ordered,
+			Columns:      d.Columns,
+			Ordered:      d.Ordered,
 			Rows:         protoRows(d.Rows),
 		}
 		parts, err := rows.Split(api.LiveQueryServerFrameMaxBytes)

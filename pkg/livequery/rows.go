@@ -31,6 +31,31 @@ func encodeValues(values []*string) string {
 	return b.String()
 }
 
+// decodeValues reverses encodeValues. PostgreSQL text never contains NUL,
+// so the markers are unambiguous.
+func decodeValues(enc string) ([]*string, error) {
+	if enc == "" {
+		return nil, nil
+	}
+	parts := strings.Split(enc, "\x00")
+	if parts[0] != "" {
+		return nil, fmt.Errorf("livequery: encoded values do not start with a marker")
+	}
+	out := make([]*string, 0, len(parts)-1)
+	for _, p := range parts[1:] {
+		switch {
+		case p == "N":
+			out = append(out, nil)
+		case strings.HasPrefix(p, "V"):
+			v := p[1:]
+			out = append(out, &v)
+		default:
+			return nil, fmt.Errorf("livequery: bad encoded value marker %q", p)
+		}
+	}
+	return out, nil
+}
+
 // keyedRow is a row tracked by lineage: one primary key per relation, ""
 // where an outer join produced NULLs for that relation.
 type keyedRow struct {
@@ -201,8 +226,11 @@ func (s resultShape) lineageOf(values []*string) []string {
 }
 
 // queryText runs sql and returns field names and text-format rows.
+// Statements are described on every execution, never cached: a cached plan
+// fails once a schema change alters its result types.
 func queryText(ctx context.Context, tx pgx.Tx, sql string, args []any) ([]string, [][]*string, error) {
-	rows, err := tx.Query(ctx, sql, append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, args...)...)
+	opts := []any{pgx.QueryExecModeDescribeExec, pgx.QueryResultFormats{pgx.TextFormatCode}}
+	rows, err := tx.Query(ctx, sql, append(opts, args...)...)
 	if err != nil {
 		return nil, nil, err
 	}

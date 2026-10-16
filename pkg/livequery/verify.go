@@ -65,7 +65,13 @@ func (m *member) verify(ctx context.Context, tx pgx.Tx) error {
 	}
 	for enc, n := range want {
 		if got[enc] != n {
-			return fmt.Errorf("divergence (mode %s): row %q expected %d times, maintained %d times", p.Mode, printable(enc), n, got[enc])
+			var held []string
+			for _, r := range snap {
+				held = append(held, printable(r.enc))
+			}
+			sort.Strings(held)
+			return fmt.Errorf("divergence (mode %s): row %q expected %d times, maintained %d times; maintained rows %q",
+				p.Mode, printable(enc), n, got[enc], held)
 		}
 	}
 	for enc, n := range got {

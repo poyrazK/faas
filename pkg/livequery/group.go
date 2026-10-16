@@ -20,6 +20,12 @@ type planGroup struct {
 	stats   *Stats
 	engine  *Engine
 
+	// pendingPlan replaces plan at the next step after a schema change that
+	// kept the result's shape: every member is re-read and diffed.
+	pendingPlan *Plan
+	// skip leaves the group out of the current round.
+	skip bool
+
 	// Last round's changed and expanded keys, for divergence reports.
 	lastKeys, lastExpanded []map[string]struct{}
 }
@@ -199,6 +205,28 @@ func (g *planGroup) step(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*mem
 			fresh = append(fresh, m)
 		}
 	}
+	// A recompiled plan: capture the results under the old plan, then
+	// re-read everything under the new one.
+	force := g.pendingPlan != nil
+	before := make(map[*member]map[string]*keyedRow, len(ready))
+	beforeOrder := make(map[*member][]string, len(ready))
+	if force {
+		for _, m := range ready {
+			before[m] = m.snapshotRows()
+			if m.win != nil {
+				beforeOrder[m] = slices.Clone(m.win.visible())
+			}
+		}
+		g.plan, g.pendingPlan = g.pendingPlan, nil
+		for _, m := range g.members {
+			if err := m.reset(); err != nil {
+				return nil, err
+			}
+		}
+		for _, m := range ready {
+			m.ready = true // re-read below and diffed against before
+		}
+	}
 	if len(fresh) > 0 {
 		if err := g.rebuild(ctx, tx, fresh); err != nil {
 			return nil, err
@@ -212,15 +240,18 @@ func (g *planGroup) step(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*mem
 		return out, nil
 	}
 	touched, full := g.touched(cs)
+	if force {
+		touched, full = true, true
+	}
 	if !touched {
 		return out, nil
 	}
-	before := make(map[*member]map[string]*keyedRow, len(ready))
-	beforeOrder := make(map[*member][]string, len(ready))
-	for _, m := range ready {
-		before[m] = m.snapshotRows()
-		if m.win != nil {
-			beforeOrder[m] = slices.Clone(m.win.visible())
+	if !force {
+		for _, m := range ready {
+			before[m] = m.snapshotRows()
+			if m.win != nil {
+				beforeOrder[m] = slices.Clone(m.win.visible())
+			}
 		}
 	}
 	var err error

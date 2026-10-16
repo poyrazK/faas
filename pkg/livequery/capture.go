@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,6 +51,11 @@ type Event struct {
 
 // Capture streams committed transactions from a pgoutput logical slot.
 type Capture struct {
+	// Created reports that the slot did not exist (or was lost) and was
+	// created by this capture: nothing before it can be decoded, so a
+	// restored engine must re-read every query.
+	Created bool
+
 	conn      *pgconn.PgConn
 	events    chan Event
 	confirmed atomic.Uint64
@@ -64,6 +70,18 @@ type Capture struct {
 // streaming. dsn is an ordinary connection string; the replication parameter
 // is added here.
 func OpenCapture(ctx context.Context, dsn, slot, publication string) (*Capture, error) {
+	return openCapture(ctx, dsn, slot, publication, false)
+}
+
+// OpenSlot streams from a persistent slot, creating it when it does not
+// exist or was invalidated (wal_status lost). Streaming resumes after the
+// slot's confirmed position, so transactions confirmed before a restart are
+// not decoded again; those committed after it are, applied or not.
+func OpenSlot(ctx context.Context, dsn, slot, publication string) (*Capture, error) {
+	return openCapture(ctx, dsn, slot, publication, true)
+}
+
+func openCapture(ctx context.Context, dsn, slot, publication string, persistent bool) (*Capture, error) {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("livequery: parse capture dsn: %w", err)
@@ -76,20 +94,60 @@ func OpenCapture(ctx context.Context, dsn, slot, publication string) (*Capture, 
 	if err != nil {
 		return nil, fmt.Errorf("livequery: connect capture: %w", err)
 	}
-	if _, err := pglogrepl.CreateReplicationSlot(ctx, conn, slot, "pgoutput",
-		pglogrepl.CreateReplicationSlotOptions{Temporary: true, SnapshotAction: "NOEXPORT_SNAPSHOT"}); err != nil {
-		_ = conn.Close(ctx)
-		return nil, fmt.Errorf("livequery: create slot %s: %w", slot, err)
+	create := true
+	if persistent {
+		if create, err = prepareSlot(ctx, conn, slot); err != nil {
+			_ = conn.Close(ctx)
+			return nil, err
+		}
+	}
+	if create {
+		if _, err := pglogrepl.CreateReplicationSlot(ctx, conn, slot, "pgoutput",
+			pglogrepl.CreateReplicationSlotOptions{Temporary: !persistent, SnapshotAction: "NOEXPORT_SNAPSHOT"}); err != nil {
+			_ = conn.Close(ctx)
+			return nil, fmt.Errorf("livequery: create slot %s: %w", slot, err)
+		}
 	}
 	args := []string{"proto_version '1'", fmt.Sprintf("publication_names '%s'", publication), "messages 'true'"}
-	if err := pglogrepl.StartReplication(ctx, conn, slot, 0, pglogrepl.StartReplicationOptions{PluginArgs: args}); err != nil {
+	for {
+		err := pglogrepl.StartReplication(ctx, conn, slot, 0, pglogrepl.StartReplicationOptions{PluginArgs: args})
+		if err == nil {
+			break
+		}
+		// A previous capture's walsender may still hold the slot for a
+		// moment after its connection closed.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55006" && ctx.Err() == nil {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
 		_ = conn.Close(ctx)
 		return nil, fmt.Errorf("livequery: start replication on %s: %w", slot, err)
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	c := &Capture{conn: conn, events: make(chan Event, 1024), cancel: cancel, done: make(chan struct{})}
+	c := &Capture{Created: create, conn: conn, events: make(chan Event, 1024), cancel: cancel, done: make(chan struct{})}
 	go c.run(runCtx) //nolint:contextcheck // the Capture owns the stream's lifecycle; Close cancels it.
 	return c, nil
+}
+
+// prepareSlot reports whether a persistent slot must be created, dropping
+// one whose WAL is gone: it can no longer stream.
+func prepareSlot(ctx context.Context, conn *pgconn.PgConn, slot string) (bool, error) {
+	literal := "'" + strings.ReplaceAll(slot, "'", "''") + "'"
+	results, err := conn.Exec(ctx, "SELECT coalesce(wal_status, '') FROM pg_replication_slots WHERE slot_name = "+literal).ReadAll()
+	if err != nil {
+		return false, fmt.Errorf("livequery: look up slot %s: %w", slot, err)
+	}
+	if len(results) == 0 || len(results[0].Rows) == 0 {
+		return true, nil
+	}
+	if string(results[0].Rows[0][0]) != "lost" {
+		return false, nil
+	}
+	if err := pglogrepl.DropReplicationSlot(ctx, conn, slot, pglogrepl.DropReplicationSlotOptions{}); err != nil {
+		return false, fmt.Errorf("livequery: drop lost slot %s: %w", slot, err)
+	}
+	return true, nil
 }
 
 // Events delivers decoded transactions and markers in commit order. The
@@ -114,7 +172,8 @@ func (c *Capture) Err() error {
 	return c.err
 }
 
-// Close stops streaming and drops the temporary slot with the connection.
+// Close stops streaming. A temporary slot goes with the connection; a
+// persistent one keeps its confirmed position for the next OpenSlot.
 func (c *Capture) Close() error {
 	c.cancel()
 	<-c.done

@@ -75,9 +75,12 @@ Sources: <https://neon.com/blog/neon-now-has-realtime>,
 
 ```ts
 // Backend: seal a query for the signed-in user (local crypto, no network call).
-import { createLive } from '@gregale/data/live';
-const live = createLive({ secret: process.env.GREGALE_LIVE_SECRET! });
-const sealed = live.seal(
+import { createLiveSealer, sql } from '@gregale/data/live';
+const live = await createLiveSealer({
+  secret: process.env.GREGALE_LIVE_SECRET!,
+  database: process.env.GREGALE_LIVE_DATABASE!,
+});
+const sealed = await live.seal(
   sql`SELECT c.id, c.name, count(m.*) FILTER (WHERE m.created_at > r.read_at) AS unread
       FROM channel_members cm
       JOIN channels c ON c.id = cm.channel_id
@@ -88,7 +91,8 @@ const sealed = live.seal(
 );
 
 // Browser: subscribe through the app's realtime endpoint.
-const { rows, status, awaitTxId } = useLiveQuery(sealed, { refresh: fetchSealed });
+const connection = new LiveConnection({ connect: openRealtimeSocket });
+const { rows, status, awaitTxId } = useLiveQuery(connection, sealed, { refresh: fetchSealed, initialRows });
 
 // RLS mode: a Data API query with the user's JWT; policies decide visibility.
 const q = data.from('messages').select('*, author(*)').eq('channel_id', id)
@@ -279,10 +283,30 @@ system catalogs and `FOR UPDATE` are rejected. The compiler also rejects
 queries whose planner cost estimate exceeds the plan limit.
 
 **Schema changes.** pgoutput does not carry DDL, so enabling live queries
-installs a platform event trigger that records DDL in a platform table included
-in the publication. The engine recompiles affected queries at the round where
-the DDL commits. A query that no longer compiles ends with `live.error`
-`schema_changed`; the SDK re-subscribes with a freshly sealed query.
+installs a platform event trigger that logs every DDL command, with the tables
+it touched, in `gregale_live.ddl_log`. That table is published like any other,
+so the log row is decoded in the round where the command commits.
+
+- **Recompile.** The round recompiles every query that reads a touched table.
+  A command that touched anything else (a function, a type, a schema)
+  recompiles every query. Recompiling runs in a savepoint inside the round's
+  transaction, so a failure does not abort the round.
+- **Outcome for subscribers:**
+  - a query that no longer compiles ends with `live.error` `schema_changed`;
+    the SDK re-subscribes with a freshly sealed query;
+  - a query whose result columns or parameter types changed starts over with
+    a full `live.rows`;
+  - any other affected query is re-read at the round snapshot and diffed, so
+    its subscribers see ordinary changes.
+- **Consistency.** The round's locks keep DDL on live tables out of a round in
+  progress, so the catalog a round compiles against matches its snapshot.
+- **Renamed and dropped tables.** Live tables are locked by their current names,
+  resolved from their OIDs before each round. A renamed table is still locked,
+  and a dropped one is skipped until the round that decodes the drop closes
+  its queries.
+- **Uncached statements.** Maintenance statements are described on every
+  execution, never cached, because a cached plan fails once its result types
+  change.
 
 **Where maintenance runs.** On the primary in the first release; maintenance
 queries are read-only and indexed by construction. Running them on the
@@ -359,6 +383,18 @@ is a later step.
   - Subscribing to a parked database with no cached result wakes it through
     schedd.
 - **Engine or livequeryd restart:** resume from the checkpoint and the slot.
+  - **Checkpoint contents.** A checkpoint (`Engine.WriteCheckpointFile`,
+    written atomically) holds the engine's state as of its last round S:
+    registrations, member caches, aggregate state and windows.
+  - **Slot confirmation.** The engine confirms the persistent slot only when a
+    checkpoint is durable, so the slot never moves past state a crash could
+    lose. WAL is therefore retained since the last checkpoint, and livequeryd
+    checkpoints periodically as well as on park.
+  - **Resume.** A restored engine streams from the slot's confirmed position.
+    It skips transactions visible in S, which were already applied, and
+    applies the rest.
+  - **Recompiled plans.** Plans are compiled again at restore. Members whose
+    plan changed while the engine was down start over with a full result.
 - **Slot loss:** point-in-time restore, `max_slot_wal_keep_size` exceeded, or
   failover on majors below 17. Every query resnapshots and clients receive a
   full `live.rows` replacement.
@@ -567,6 +603,50 @@ Phase 0 did not cover:
   delta through JSON frames into the reference client, which checks
   versions, snapshots, transaction visibility and ordering. After each
   round, every client must see every applied transaction.
+- **Schema changes and checkpoints** (sections 4 and 6).
+  - A deterministic test covers each schema-change outcome: an index (no
+    effect), an added column (`SELECT *` starts over; the rest diff), a
+    column type change, a renamed column (closed), and a dropped table
+    (closed).
+  - A second test covers resuming from checkpoints: writes made before and
+    during a restart, back-to-back restores, a schema change while the
+    engine is down, and a lost slot.
+  - The oracle now adds random schema changes to its writers' transactions:
+    columns added and dropped, numeric scale and text/varchar type changes,
+    and indexes. It also restarts the engine from a checkpoint between
+    rounds, a quarter of the time losing the slot.
+  - The reference client caught one bug before the soak: a full result sent
+    after a schema change carried the subscription's original columns. A
+    reset now carries the current plan's columns.
+  - The first heavy soak reported two divergences that were PostgreSQL's
+    own nondeterminism, not engine errors. Altering a numeric column to a
+    scaled type and back left old rows printing `-3.0000` and new rows
+    `-3`. `min` and `max` over equal values return whichever row the scan
+    meets last, so either text is a correct answer, and a fresh query can
+    return either.
+    - The workload now moves numeric columns only between scaled types, so
+      equal values always print alike.
+    - Subscribers can see the same ambiguity: a live `min` or `max` over
+      equal values that print differently may show either form, as a
+      re-run query may.
+  - Soaks, with zero divergences:
+
+    | Workload | Seeds | Transactions | Comparisons | Recompiles | Restarts | Re-deliveries skipped |
+    |---|---|---|---|---|---|---|
+    | Heavy (2.5% of statements are schema changes, restart after 25% of rounds) | 100 | 68,777 | 22,472 | 6,480 | 358 | 69,760 |
+    | Default rates (0.5% schema changes, restart after 8% of rounds) | 25 | 17,404 | 5,349 | 792 | 36 | 7,948 |
+
+    A quarter of the restarts lost the slot.
+- **The JavaScript SDK** (`@gregale/data/live`, `@gregale/data/live/react`):
+  - `createLiveSealer` and the `sql` tag;
+  - `LiveConnection`, with renewal before expiry, reconnect from the version
+    held, and `awaitTxId` by snapshot visibility;
+  - the `useLiveQuery` hook, with server-rendered initial rows.
+
+  The SDK runs the same seal vector and session fixtures as the Go
+  packages. The contract gained one rule from the SDK work: after a client
+  subscribes again, a full result may start a new version sequence, since
+  a restarted realtimed no longer knows the versions it sent.
 
 ## Consequences
 
