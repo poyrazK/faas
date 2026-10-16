@@ -2319,6 +2319,10 @@ func toProblem(err error) *api.Problem {
 		return api.NewProblem(409, api.CodeFrozenInstanceRefused,
 			"Instance frozen", "the instance is frozen; thaw or destroy it instead")
 	}
+	if errors.Is(err, fcvm.ErrCompressUnavailable) {
+		return api.NewProblem(409, api.CodeFrozenCompressUnavailable,
+			"Compression unavailable", "this host has no memory-only swap to compress a frozen instance into")
+	}
 	if errors.Is(err, fcvm.ErrBeforeCheckpointFailed) {
 		return api.NewProblem(422, api.CodeBeforeCheckpointFailed,
 			"Before checkpoint callback failed",

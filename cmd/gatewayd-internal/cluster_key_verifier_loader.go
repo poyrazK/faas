@@ -204,7 +204,12 @@ func SubscribeClusterVerifierChanges(
 	if log == nil {
 		log = slog.Default()
 	}
-	notifs, err := db.SubscribeWithReconnect(ctx, pool,
+	// The verifier has no table poll of its own: a rotation notified while
+	// the LISTEN connection was down would leave gatewayd-internal rejecting
+	// every token minted with the new key until restart. SubscribeWithResync
+	// re-runs the load after a reconnect (ADR-1344 §5 rule 3); re-installing
+	// an unchanged key is harmless.
+	notifs, err := db.SubscribeWithResync(ctx, pool,
 		[]string{db.NotifyClusterSigningKeysChanged}, log)
 	if err != nil {
 		return fmt.Errorf("gatewayd-internal: subscribe cluster_signing_keys_changed: %w", err)
@@ -214,7 +219,7 @@ func SubscribeClusterVerifierChanges(
 			select {
 			case <-ctx.Done():
 				return
-			case _, ok := <-notifs:
+			case n, ok := <-notifs:
 				if !ok {
 					log.Warn("gatewayd-internal: cluster_signing_keys_changed channel closed unexpectedly")
 					return
@@ -235,7 +240,7 @@ func SubscribeClusterVerifierChanges(
 						"err", sErr.Error())
 					continue
 				}
-				log.Info("gatewayd-internal: cluster verifier rotated")
+				log.Info("gatewayd-internal: cluster verifier rotated", "trigger", n.Channel)
 			}
 		}
 	}()

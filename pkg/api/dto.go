@@ -7351,6 +7351,11 @@ type ApplyResponse struct {
 	ProjectID string             `json:"project_id"`
 	Apps      []ApplyResponseApp `json:"apps"`
 	Builds    []AppliedBuild     `json:"builds,omitempty"`
+	// Unchanged lists the slugs in Apps that this apply did not rebuild:
+	// nothing in them changed, or --only left them out. Apps is the whole
+	// project membership, so clients compare it with Builds plus Unchanged;
+	// a server that predates the field omits it (nil).
+	Unchanged []string `json:"unchanged"`
 }
 
 // ApplyResponseApp is the per-app line in the apply response.

@@ -1,7 +1,7 @@
 from typing import Literal
 
 ListPlatformTenantSelfOperationsState = Literal[
-    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded"
+    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded", "waiting"
 ]
 
 LIST_PLATFORM_TENANT_SELF_OPERATIONS_STATE_VALUES: set[ListPlatformTenantSelfOperationsState] = {
@@ -11,6 +11,7 @@ LIST_PLATFORM_TENANT_SELF_OPERATIONS_STATE_VALUES: set[ListPlatformTenantSelfOpe
     "requires_reconciliation",
     "running",
     "succeeded",
+    "waiting",
 }
 
 

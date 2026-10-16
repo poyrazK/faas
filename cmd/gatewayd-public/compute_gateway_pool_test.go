@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,26 +111,197 @@ func TestComputeGatewayPoolWatchInvalidationsNilPool(t *testing.T) {
 	pool.WatchInvalidations(context.Background(), nil)
 }
 
-// TestComputeGatewayPoolSnapshotEvictedOnInvalidation —
-// after a compute_node_changed payload lands, the snapshot's
-// refreshed-at stamp resets so the next Dial re-reads. We
-// drive the eviction by hand (no real pgxpool) by setting
-// refreshed=now then calling the snapshot reset that
-// WatchInvalidations performs internally; the test pins the
-// snapshot-staleness invariant end-to-end without spinning up
-// a Postgres fixture.
-func TestComputeGatewayPoolSnapshotEvictedOnInvalidation(t *testing.T) {
-	pool := newComputeGatewayPool(fakeComputeGatewayStore{}, slog.Default()).(*computeGatewayPool)
-	// Pre-populate refreshed so subsequent DialContext would
-	// normally hit the TTL cache. The WatchInvalidations payload
-	// path clears this stamp.
+// switchableComputeGatewayStore is a registry whose answer can change
+// between dials, standing in for a database that goes away and returns.
+type switchableComputeGatewayStore struct {
+	mu    sync.Mutex
+	nodes []state.ComputeNode
+	err   error
+	calls int
+}
+
+func (s *switchableComputeGatewayStore) ActiveComputeNodes(context.Context) ([]state.ComputeNode, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return append([]state.ComputeNode(nil), s.nodes...), s.err
+}
+
+func (s *switchableComputeGatewayStore) set(nodes []state.ComputeNode, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nodes, s.err = nodes, err
+}
+
+func (s *switchableComputeGatewayStore) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// acceptingTarget returns a tcp:// target that accepts and closes every
+// connection until the test ends.
+func acceptingTarget(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	return "tcp://" + listener.Addr().String()
+}
+
+func dialPool(t *testing.T, pool *computeGatewayPool) error {
+	t.Helper()
+	conn, err := pool.DialContext(context.Background(), "")
+	if err == nil {
+		conn.Close()
+	}
+	return err
+}
+
+// expire moves the pool's stamps back by age, as if that much time had
+// passed since the last successful read.
+func expire(pool *computeGatewayPool, age time.Duration) {
 	pool.mu.Lock()
-	pool.refreshed = time.Now()
-	pool.mu.Unlock()
+	defer pool.mu.Unlock()
+	pool.refreshed = pool.refreshed.Add(-age)
+	pool.loadedAt = pool.loadedAt.Add(-age)
+}
+
+func waitBackgroundRefresh(t *testing.T, pool *computeGatewayPool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		pool.mu.Lock()
+		busy := pool.refreshing
+		pool.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("background refresh did not finish")
+}
+
+// adr: 1344
+// TestComputeGatewayPoolServesLastKnownInventoryWhenRegistryFails pins
+// ADR-1344 §5 rule 1: once the registry has answered, a registry failure
+// keeps routing to the last-known nodes instead of failing every request.
+func TestComputeGatewayPoolServesLastKnownInventoryWhenRegistryFails(t *testing.T) {
+	target := acceptingTarget(t)
+	store := &switchableComputeGatewayStore{}
+	store.set([]state.ComputeNode{{Name: "live.faas", Active: true, GatewayTargetURL: &target}}, nil)
+	pool := newComputeGatewayPool(store, slog.New(slog.NewTextHandler(io.Discard, nil))).(*computeGatewayPool)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("initial dial: %v", err)
+	}
+
+	store.set(nil, errors.New("database offline"))
+	expire(pool, computeGatewayPoolTTL+time.Second)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("dial with registry down must use last-known inventory: %v", err)
+	}
+	waitBackgroundRefresh(t, pool)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("dial after failed background refresh: %v", err)
+	}
+	if got := store.callCount(); got != 2 {
+		t.Fatalf("registry reads = %d, want 2 (initial + one background retry per TTL)", got)
+	}
+}
+
+// adr: 1344
+// TestComputeGatewayPoolStaleInventoryIsBounded: past the stale bound the
+// pool stops trusting the old inventory and reports no capacity.
+func TestComputeGatewayPoolStaleInventoryIsBounded(t *testing.T) {
+	target := acceptingTarget(t)
+	store := &switchableComputeGatewayStore{}
+	store.set([]state.ComputeNode{{Name: "live.faas", Active: true, GatewayTargetURL: &target}}, nil)
+	pool := newComputeGatewayPool(store, slog.New(slog.NewTextHandler(io.Discard, nil))).(*computeGatewayPool)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("initial dial: %v", err)
+	}
+
+	store.set(nil, errors.New("database offline"))
+	expire(pool, computeGatewayPoolStaleTTL+time.Second)
+	if err := dialPool(t, pool); !errors.Is(err, gateway.ErrNoComputeCapacity) {
+		t.Fatalf("dial past stale bound error = %v, want ErrNoComputeCapacity", err)
+	}
+}
+
+// adr: 1344
+// TestComputeGatewayPoolBackgroundRefreshPicksUpNewInventory: an expired
+// TTL with a healthy registry serves the cached list once and replaces it
+// in the background.
+func TestComputeGatewayPoolBackgroundRefreshPicksUpNewInventory(t *testing.T) {
+	oldTarget := acceptingTarget(t)
+	newTarget := acceptingTarget(t)
+	store := &switchableComputeGatewayStore{}
+	store.set([]state.ComputeNode{{Name: "old.faas", Active: true, GatewayTargetURL: &oldTarget}}, nil)
+	pool := newComputeGatewayPool(store, slog.New(slog.NewTextHandler(io.Discard, nil))).(*computeGatewayPool)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("initial dial: %v", err)
+	}
+
+	store.set([]state.ComputeNode{{Name: "new.faas", Active: true, GatewayTargetURL: &newTarget}}, nil)
+	expire(pool, computeGatewayPoolTTL+time.Second)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("dial during background refresh: %v", err)
+	}
+	waitBackgroundRefresh(t, pool)
 	pool.mu.Lock()
-	pool.refreshed = time.Time{}
+	defer pool.mu.Unlock()
+	if len(pool.endpoints) != 1 || pool.endpoints[0].name != "new.faas" {
+		t.Fatalf("endpoints after refresh = %+v, want new.faas", pool.endpoints)
+	}
+}
+
+// adr: 1344
+// TestComputeGatewayPoolInvalidationRereadsAndFallsBack: compute_node_changed
+// forces a synchronous re-read; if the registry fails at that moment the
+// pool keeps the last-known inventory instead of dropping traffic.
+func TestComputeGatewayPoolInvalidationRereadsAndFallsBack(t *testing.T) {
+	oldTarget := acceptingTarget(t)
+	newTarget := acceptingTarget(t)
+	store := &switchableComputeGatewayStore{}
+	store.set([]state.ComputeNode{{Name: "old.faas", Active: true, GatewayTargetURL: &oldTarget}}, nil)
+	pool := newComputeGatewayPool(store, slog.New(slog.NewTextHandler(io.Discard, nil))).(*computeGatewayPool)
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("initial dial: %v", err)
+	}
+
+	store.set([]state.ComputeNode{{Name: "new.faas", Active: true, GatewayTargetURL: &newTarget}}, nil)
+	pool.invalidate()
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("dial after invalidation: %v", err)
+	}
+	pool.mu.Lock()
+	got := pool.endpoints[0].name
 	pool.mu.Unlock()
-	if !pool.refreshed.IsZero() {
-		t.Fatalf("snapshot refreshed-at should be zero after invalidation")
+	if got != "new.faas" {
+		t.Fatalf("invalidation did not re-read synchronously: endpoint %q", got)
+	}
+
+	store.set(nil, errors.New("database offline"))
+	pool.invalidate()
+	before := store.callCount()
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("dial after invalidation with registry down: %v", err)
+	}
+	if err := dialPool(t, pool); err != nil {
+		t.Fatalf("second dial with registry down: %v", err)
+	}
+	if reads := store.callCount() - before; reads != 1 {
+		t.Fatalf("registry reads while down = %d, want 1 (later dials wait for the TTL)", reads)
 	}
 }

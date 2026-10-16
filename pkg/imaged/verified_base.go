@@ -258,8 +258,12 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 	if err := h.writeProducedBaseScanSidecar(ctx, r, producer); err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: publish produced shared-base scan: %w", err)
 	}
-	generation := baseDigestSidecarValueWithSource(configDigest, r.guestDigest, producer.Input.SourceReference)
-	if err := markCachedBaseGeneration(r.be, r.key, r.digestKey, generation); err != nil {
+	// The cache generation is the immutable release ref, as on every other
+	// staging path: vmmd compares it with the configured runtime base. The
+	// multi-line digest sidecar value is not a valid generation, so marking
+	// with it failed the first stage of every new base and stopped the
+	// rc.266 rollout on fsn-2 (hunt #10, H10-91).
+	if err := markCachedBaseGeneration(r.be, r.key, r.digestKey, r.ref); err != nil {
 		return BaseStageResult{}, err
 	}
 	return BaseStageResult{OutImage: r.out, StorageKey: r.key, ConfigDigest: configDigest, Skipped: skipped, Producer: producer}, nil

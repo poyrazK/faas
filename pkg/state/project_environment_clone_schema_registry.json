@@ -2381,6 +2381,17 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_attempt_instances",
+    "columns": [
+      "attempt",
+      "generation",
+      "instance_id",
+      "operation_id",
+      "placed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_code_pins",
     "columns": [
       "app_id",
@@ -2541,6 +2552,36 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_webhook_bindings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "endpoint_id",
+      "event_types",
+      "operation_name",
+      "platform_tenant_id",
+      "scope",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "customer_operation_webhook_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "binding_version",
+      "body_sha256",
+      "endpoint_id",
+      "expires_at",
+      "operation_id",
+      "provider_event_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_workflow_claims",
     "columns": [
       "attempt",
@@ -2640,6 +2681,7 @@
       "created_at",
       "current_execution_id",
       "current_invocation_id",
+      "deadline_at",
       "definition_id",
       "execution_generation",
       "execution_kind",
@@ -3883,6 +3925,35 @@
       "worker_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "environment_workload_retirements",
+    "columns": [
+      "account_id",
+      "acknowledged_gateways",
+      "app_id",
+      "deployment_ids",
+      "environment_id",
+      "expected_gateways",
+      "generation",
+      "id",
+      "job_id",
+      "phase",
+      "plan_hash",
+      "project_id",
+      "queue_binding_ids",
+      "recovered_at",
+      "recovery_generation",
+      "recovery_revision_id",
+      "requested_at",
+      "resource",
+      "retired_at",
+      "revision_id",
+      "route_deployment_id",
+      "route_generation",
+      "source_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "environment_workload_serving_queue_acks",

@@ -7166,7 +7166,8 @@ func (m *MemStore) ListGithubInstallBindingsForAccount(_ context.Context, accoun
 // (PR-C). Idempotent on (AccountID, InstallationID) by map insert; the AccountID
 // FK isn't enforced in MemStore (in-memory), but the upsert still
 // rejects empty AccountID / AuditGithubLogin so test parity with
-// PgStore holds.
+// PgStore holds. Installation ownership is globally exclusive, just as the
+// PostgreSQL unique index requires.
 func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) error {
 	if inst.AccountID == "" {
 		return ErrNotFound
@@ -7179,6 +7180,11 @@ func (m *MemStore) UpsertGitHubInstall(_ context.Context, inst GitHubInstall) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.githubInstalls {
+		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
+			return ErrConflict
+		}
+	}
 	m.githubInstalls[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
 }
@@ -13114,7 +13120,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
 			out = append(out, t)
 		}
 	}
@@ -13375,6 +13381,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 		return Invocation{}, err
 	}
 	inv.DeploymentScope = scope
+	if m.workloadAdmissionRetiredLocked(inv.AppID, scope) {
+		return Invocation{}, ErrEnvironmentWorkloadRetired
+	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
@@ -13570,6 +13579,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
+	if m.workloadAdmissionRetiredLocked(inv.AppID, inv.DeploymentScope) {
+		return Invocation{}, ErrEnvironmentWorkloadRetired
+	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
 	}
@@ -13654,7 +13666,7 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 			if op.CurrentInvocationID != inv.ID {
 				return 0, ErrOperationStaleAttempt
 			}
-			if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+			if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 				return 0, err
 			}
 		}
@@ -13747,7 +13759,7 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 	inv.CompletedAt = &now
 	outcome := OutcomeSuccess
 	inv.Outcome = &outcome
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return err
 	}
 	if err := m.enqueueInvocationDestinationLocked(inv); err != nil {
@@ -13912,7 +13924,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		outcome := failOpts.Outcome
 		inv.Outcome = &outcome
 	}
-	if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+	if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 		return err
 	}
 	if inv.State == InvocationFailed || inv.State == InvocationDeadLetter {
@@ -13982,7 +13994,7 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return err
 	}
 	m.setInvocationLocked(id, inv)
@@ -14009,7 +14021,7 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	inv.QuotaReserved = false
 	now := time.Now()
 	inv.CompletedAt = &now
-	if err := m.operationTransitionLocked(inv, false); err != nil {
+	if err := m.operationTransitionLocked(&inv, false); err != nil {
 		return "", err
 	}
 	m.setInvocationLocked(id, inv)
@@ -26582,7 +26594,7 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 		inv.LastError = "deadline_at breached"
 		now := time.Now()
 		inv.CompletedAt = &now
-		if err := m.operationTransitionLocked(inv, uncertain); err != nil {
+		if err := m.operationTransitionLocked(&inv, uncertain); err != nil {
 			return nil, err
 		}
 		if err := m.enqueueInvocationDestinationLocked(inv); err != nil {

@@ -88,6 +88,25 @@ freezing.
 - A node legitimately holding this many idle instances is a placement
   question; the cap bounds Firecracker processes and jail uids.
 
+## Compressed frozen instances (zswap)
+
+On a host with the `zswap` Ansible role (ADR-906 decision 6), memory
+pressure first compresses a frozen VM into memory-only swap before it would
+park it. **Frozen compressions by outcome** shows `compressed` (kept frozen),
+`insufficient` (freed less than half; parked), `unavailable` (the host has
+no zswap setup; parked) and `error`. **zswap pool by node** shows the RAM
+the pool takes.
+
+- A compressed VM thaws more slowly while its pages fault back in; expect
+  `FaasFrozenThawSlow` on a node that compresses a lot.
+- `unavailable` on a host that should have zswap: check
+  `systemctl status faas-zswap.service`,
+  `cat /sys/module/zswap/parameters/enabled` (`Y`), `swapon --show`, and
+  `cat /sys/fs/cgroup/faas.slice/faas-tenant.slice/memory.zswap.writeback`
+  (`0`). vmmd opens swap to a frozen VM only when all three hold.
+- A running VM never swaps: its scope's `memory.swap.max` is `0`; only a
+  frozen VM's is `max`.
+
 ## FaasQuietResumeErrors
 
 vmmd failed to resume at least three quiet-paused instances on one node in

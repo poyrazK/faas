@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,6 +291,24 @@ func testOperationLifecycle(t *testing.T, s operationLifecycleStore) {
 	}
 	if got := read(delivered); got.State != api.OperationSucceeded || got.CompletionDelivery.State != "succeeded" {
 		t.Fatalf("completion delivered: %+v", got)
+	}
+	// ADR-1195: callback attempts follow the business outcome on the timeline.
+	timeline := readOperationTimeline(t, s.(state.OperationTimelineStore), acct.ID, delivered.ID, 2)
+	var outcomes []string
+	succeededAt := -1
+	for i, e := range timeline {
+		if e.Event != nil && e.Event.Type == "succeeded" {
+			succeededAt = i
+		}
+		if e.Delivery != nil {
+			if succeededAt < 0 {
+				t.Fatalf("delivery attempt precedes the business outcome: %+v", timeline)
+			}
+			outcomes = append(outcomes, fmt.Sprintf("%s/%d", e.Delivery.Outcome, e.Delivery.ResponseCode))
+		}
+	}
+	if strings.Join(outcomes, ",") != "retrying/503,succeeded/200" {
+		t.Fatalf("timeline delivery attempts = %v", outcomes)
 	}
 
 	disabled := admit(deliveryDef, "disabled-destination")

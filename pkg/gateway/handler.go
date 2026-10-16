@@ -5887,6 +5887,16 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	workloadAdmissionScope := app.Scope
+	if app.PinnedDeploymentScope != "" {
+		workloadAdmissionScope = app.PinnedDeploymentScope
+	}
+	// Authenticated candidate verification has its own exact-attempt guard.
+	// Ordinary requests are fenced before any edge/cache response can serve.
+	if !deploymentSmoke && !h.workloadAdmissionOpen(w, r, app.ID, workloadAdmissionScope) {
+		return
+	}
+
 	// ADR-847: a route probe pins one live deployment and keeps every customer
 	// auth gate; it is never combined with the smoke bypass.
 	probeDeploymentID, probeToken, routeProbe, probeHeaders := h.authorizedRouteProbe(r, app)
@@ -6766,6 +6776,9 @@ haveApp:
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"
+	}
+	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
+		return
 	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult

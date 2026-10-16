@@ -272,6 +272,13 @@ destination cannot inherit session authority. Application authentication remains
 subject to HTTPX's normal redirect policy. Gregale authorizes scope at every hop.
 See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
+## Application Auth tokens
+
+`pip install 'faas_sdk[auth]'`, then verify application Auth access tokens and
+check permissions with `faas_sdk.auth.AuthClient` (`verify`, `authorize` and
+their `_async` forms). See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 ## Runtime feature flags
 
 Managed Python ASGI applications can use Gregale's customer-aware runtime flag
