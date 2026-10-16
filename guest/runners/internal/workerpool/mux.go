@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -129,13 +130,13 @@ func (m *mux) expectAck(id string) (<-chan struct{}, bool) {
 	return done, true
 }
 
-var idPrefix = []byte(`{"__faas_id":"`)
+const idPrefix = `{"__faas_id":"`
 
 // lineID reads the request id a response line carries, or the id a cancel
 // acknowledgement names (ack). Adapters write the id first, so the common
 // case is read without decoding the whole line.
 func lineID(line []byte) (id string, ack, ok bool) {
-	if rest, found := bytes.CutPrefix(line, idPrefix); found {
+	if rest, found := bytes.CutPrefix(line, []byte(idPrefix)); found {
 		if end := bytes.IndexByte(rest, '"'); end >= 0 && bytes.IndexByte(rest[:end], '\\') < 0 {
 			return string(rest[:end]), false, true
 		}
@@ -163,6 +164,12 @@ func withID(payload []byte, id string) ([]byte, error) {
 	}
 	if len(payload) > requestLineMax {
 		return nil, fmt.Errorf("workerpool: a %d-byte request exceeds the %d-byte shared worker line limit", len(payload), requestLineMax)
+	}
+	// Check the complete allocation size, including the generated id. Keep
+	// this valid even if the line limit or id representation changes later.
+	const framing = len(idPrefix) + 3
+	if len(payload) > math.MaxInt-framing || len(id) > math.MaxInt-framing-len(payload) {
+		return nil, errors.New("workerpool: shared request framing exceeds addressable size")
 	}
 	out := make([]byte, 0, len(payload)+len(idPrefix)+len(id)+3)
 	out = append(append(append(out, idPrefix...), id...), '"')

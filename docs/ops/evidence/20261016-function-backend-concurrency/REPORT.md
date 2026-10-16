@@ -24,6 +24,7 @@ customer credential; only the test process held fixture administration rights.
 | API concurrency round-trip/bounds and event trigger handlers | Pass | [apid.log](apid.log) |
 | SDK build, canonical runtime drift and packed runtime import/typecheck | Pass | [sdk-package.log](sdk-package.log) |
 | Runner/rootfs lint and changed native harness lint | Pass | [lint.log](lint.log), [metal-lint.log](metal-lint.log) |
+| Post-main integration: explicit request-framing allocation guard | Race tests and lint pass | [framing-race.log](framing-race.log), [framing-lint.log](framing-lint.log) |
 | Docs links, ADR uniqueness and source policy checks | Pass | [docs.log](docs.log), [policies.log](policies.log) |
 | New CI workflow parsed with actionlint v1.7.7 | Pass locally; remote workflow not run | [workflow.log](workflow.log) |
 | Final `metal` test binary build with race instrumentation | Pass; compilation only | [native-build.log](native-build.log) |
@@ -49,6 +50,12 @@ does not free capacity early.
 After testing, SQL witnesses found **zero** fixture roles and **zero** private
 fixture databases. The owned container, anonymous data volume, certificate key
 and temporary credential files were removed.
+
+Before publishing PR #4768, the branch incorporated `main` at `4ba08b34e`.
+Node and Python SDK regeneration matched the combined OpenAPI spec. The review's
+allocation warning prompted an explicit `math.MaxInt` guard over the full request
+frame, including its generated ID; the worker-pool race suite and lint passed
+again. Hosted CI results are recorded on the pull request's published revision.
 
 ## Qualification boundary
 
