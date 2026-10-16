@@ -106,7 +106,7 @@ export type UpdateAppRequest = {
    */
   request_timeout_s?: number | null;
   /**
-   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   * Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy.
    */
   function_concurrency?: number | null;
   /**

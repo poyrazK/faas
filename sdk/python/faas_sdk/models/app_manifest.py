@@ -157,9 +157,8 @@ class AppManifest:
     request_timeout_s: int | None | Unset = UNSET
     """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     function_concurrency: int | None | Unset = UNSET
-    """Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker;
-    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
-    deploy."""
+    """Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY
+    (ADR-1342). 0 or 1 means one request per worker."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit

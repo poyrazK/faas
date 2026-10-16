@@ -80,7 +80,7 @@ export type AppManifest = {
    */
   request_timeout_s?: number | null;
   /**
-   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   * Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker.
    */
   function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;

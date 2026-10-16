@@ -246,8 +246,10 @@ func applyFunctionConcurrency(manifest api.AppManifest, app state.App) api.AppMa
 	if app.Manifest.FunctionConcurrency <= 1 {
 		return manifest
 	}
-	env := make(map[string]string, len(manifest.Env)+1)
-	maps.Copy(env, manifest.Env)
+	env := maps.Clone(manifest.Env)
+	if env == nil {
+		env = map[string]string{}
+	}
 	env[api.FunctionConcurrencyEnv] = strconv.Itoa(app.Manifest.FunctionConcurrency)
 	manifest.Env = env
 	return manifest

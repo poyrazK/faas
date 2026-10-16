@@ -33,6 +33,11 @@ const (
 // cancelAckGrace is how long a shared worker has to acknowledge a cancel.
 var cancelAckGrace = 5 * time.Second
 
+// requestLineMax bounds one request line sent to a shared worker. The Python
+// adapter's line reader stops at 1 GiB, so a longer line could never be read;
+// refusing it up front also keeps the line's size arithmetic in range.
+var requestLineMax = 1 << 30
+
 var errStreamOverflow = errors.New("workerpool: response buffer exceeded")
 
 // mux is a shared worker's request table.
@@ -154,6 +159,9 @@ func lineID(line []byte) (id string, ack, ok bool) {
 func withID(payload []byte, id string) ([]byte, error) {
 	if len(payload) < 2 || payload[0] != '{' {
 		return nil, errors.New("workerpool: a shared worker takes JSON object requests")
+	}
+	if len(payload) > requestLineMax {
+		return nil, fmt.Errorf("workerpool: a %d-byte request exceeds the %d-byte shared worker line limit", len(payload), requestLineMax)
 	}
 	out := make([]byte, 0, len(payload)+len(idPrefix)+len(id)+3)
 	out = append(append(append(out, idPrefix...), id...), '"')

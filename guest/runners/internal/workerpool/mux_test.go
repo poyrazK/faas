@@ -379,4 +379,10 @@ func TestLineIDAndWithID(t *testing.T) {
 	if _, err := withID([]byte(`[1]`), "4"); err == nil {
 		t.Fatal("withID accepted a non-object request")
 	}
+	previous := requestLineMax
+	requestLineMax = 8
+	t.Cleanup(func() { requestLineMax = previous })
+	if _, err := withID([]byte(`{"value":"x"}`), "4"); err == nil {
+		t.Fatal("withID accepted a request past the line limit")
+	}
 }

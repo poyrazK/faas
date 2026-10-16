@@ -109,9 +109,8 @@ class CreateAppRequest:
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
     ceiling is 30 seconds."""
     function_concurrency: int | Unset = UNSET
-    """Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker;
-    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
-    deploy."""
+    """Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request
+    per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."""
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
