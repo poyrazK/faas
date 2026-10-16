@@ -41,7 +41,7 @@ func putComputeGrant(t *testing.T, ctx context.Context, s *state.MemStore, acct 
 		PeriodStart: monthStart,
 		PeriodEnd:   monthStart.AddDate(0, 1, 0),
 		Price: financial.Price{
-			Version: "test-" + string(plan), Meter: "compute", Currency: "EUR", Unit: "mb_seconds",
+			Version: "test-" + string(plan), Meter: "compute", Currency: "USD", Unit: "mb_seconds",
 			UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour,
 			IncludedQuantity: api.IncludedMBSeconds(plan),
 		},

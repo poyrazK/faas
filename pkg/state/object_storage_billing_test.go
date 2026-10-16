@@ -34,7 +34,7 @@ func TestMemObjectStorageBillingPeriodIsIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	record := state.ObjectStorageBillingRecord{
-		AccountID: "acct", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "EUR", FinalizedAt: period.AddDate(0, 1, 0).Add(time.Hour),
+		AccountID: "acct", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "USD", FinalizedAt: period.AddDate(0, 1, 0).Add(time.Hour),
 	}
 	if got, err := store.RecordObjectStorageBillingPeriod(nil, record); err != nil || got.ID == "" {
 		t.Fatalf("first record = %#v, err=%v", got, err)
@@ -42,7 +42,7 @@ func TestMemObjectStorageBillingPeriodIsIdempotent(t *testing.T) {
 		t.Fatalf("idempotent retry = %#v, err=%v", again, err)
 	}
 	conflict := record
-	conflict.Currency = "USD"
+	conflict.Currency = "EUR"
 	if _, err := store.RecordObjectStorageBillingPeriod(nil, conflict); !errors.Is(err, state.ErrObjectBillingConflict) {
 		t.Fatalf("changed snapshot error = %v", err)
 	}
@@ -52,7 +52,7 @@ func TestMemObjectStorageBillingDeliveryIsIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	record, err := store.RecordObjectStorageBillingPeriod(nil, state.ObjectStorageBillingRecord{
-		AccountID: "acct", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "EUR", FinalizedAt: period.AddDate(0, 1, 0).Add(time.Hour),
+		AccountID: "acct", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "USD", FinalizedAt: period.AddDate(0, 1, 0).Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
