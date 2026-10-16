@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE environment_cache_schedule_event_counters (
+CREATE TABLE IF NOT EXISTS environment_cache_schedule_event_counters (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -7,7 +7,7 @@ CREATE TABLE environment_cache_schedule_event_counters (
  last_sequence bigint NOT NULL CHECK (last_sequence>0 AND last_sequence<=9007199254740991),
  PRIMARY KEY(app_id,environment_id)
 );
-CREATE TABLE environment_cache_schedule_events (
+CREATE TABLE IF NOT EXISTS environment_cache_schedule_events (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

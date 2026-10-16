@@ -1,3 +1,4 @@
+// adr: 1353 — purge generations isolate environments and fence late cache writes.
 package gateway
 
 import (

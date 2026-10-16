@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE environment_cache_schedules (
+CREATE TABLE IF NOT EXISTS environment_cache_schedules (
  schedule_id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -18,7 +18,7 @@ CREATE TABLE environment_cache_schedules (
  CHECK ((status='executing')=(lease_token IS NOT NULL AND lease_until IS NOT NULL)),
  CHECK ((status IN ('executed','failed','cancelled'))=(finished_at IS NOT NULL))
 );
-CREATE INDEX environment_cache_schedules_due ON environment_cache_schedules(execute_at) WHERE status IN ('scheduled','executing');
-CREATE INDEX environment_cache_schedules_target ON environment_cache_schedules(account_id,app_id,environment_id);
+CREATE INDEX IF NOT EXISTS environment_cache_schedules_due ON environment_cache_schedules(execute_at) WHERE status IN ('scheduled','executing');
+CREATE INDEX IF NOT EXISTS environment_cache_schedules_target ON environment_cache_schedules(account_id,app_id,environment_id);
 -- +goose Down
 DROP TABLE environment_cache_schedules;

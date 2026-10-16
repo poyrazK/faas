@@ -1,6 +1,7 @@
 -- +goose Up
 -- Preserve a monotonic revision when returning to live app inheritance.
-ALTER TABLE project_environment_cache_policies ADD COLUMN inherited boolean NOT NULL DEFAULT false;
+ALTER TABLE project_environment_cache_policies ADD COLUMN IF NOT EXISTS inherited boolean NOT NULL DEFAULT false;
+ALTER TABLE project_environment_cache_policies DROP CONSTRAINT IF EXISTS environment_cache_inherited_empty;
 ALTER TABLE project_environment_cache_policies ADD CONSTRAINT environment_cache_inherited_empty CHECK (NOT inherited OR rules='[]'::jsonb);
 
 -- +goose Down

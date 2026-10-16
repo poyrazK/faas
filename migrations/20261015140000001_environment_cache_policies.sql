@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_environment_cache_policies (
+CREATE TABLE IF NOT EXISTS project_environment_cache_policies (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -9,7 +9,7 @@ CREATE TABLE project_environment_cache_policies (
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(app_id,environment_id)
 );
-CREATE TABLE environment_cache_policy_receipts (
+CREATE TABLE IF NOT EXISTS environment_cache_policy_receipts (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  request_id uuid NOT NULL,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
