@@ -258,6 +258,10 @@ type ImportStatus struct {
 	// keeps it across a restart of the database, so ImportDone with the
 	// expected ID proves the copy's lineage.
 	OperationID string
+	// MissingExtensions names, for extension_unavailable, the source
+	// extensions the target cannot create: plain identifiers only, never
+	// connection data.
+	MissingExtensions []string
 }
 
 // Importer is a provider that copies a database from another backend into

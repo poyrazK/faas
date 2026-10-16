@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -342,5 +343,19 @@ func TestImportControlSplitsEndpointAndLogin(t *testing.T) {
 		if _, err := s.DatabaseControl(ctx, req); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("%s = %v, want InvalidArgument", name, err)
 		}
+	}
+}
+
+// A failed import reports the extensions the target lacks, and vmmd
+// forwards only plain identifiers whatever the guest says.
+func TestImportStatusForwardsOnlyReportableExtensions(t *testing.T) {
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady,
+		Import: &dbguest.ImportStatus{State: dbguest.ImportFailed, Error: dbguest.ErrCodeExtension,
+			MissingExtensions: []string{"pg_stat_statements", "password=leaked"}}}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	resp, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "import_status"})
+	if err != nil || resp.GetImport().GetErrorCode() != dbguest.ErrCodeExtension ||
+		!slices.Equal(resp.GetImport().GetMissingExtensions(), []string{"pg_stat_statements"}) {
+		t.Fatalf("import status = %+v, %v", resp, err)
 	}
 }

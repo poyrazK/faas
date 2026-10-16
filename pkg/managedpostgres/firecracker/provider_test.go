@@ -48,8 +48,9 @@ type fakeScheduler struct {
 	deleteErr    error
 	failVM       bool
 	// imports are the import requests; importState is what they report.
-	imports     []*scheddpb.ImportDatabaseRequest
-	importState string
+	imports       []*scheddpb.ImportDatabaseRequest
+	importState   string
+	importMissing []string
 	// snapshots are held snapshots by database/name.
 	snapshots map[string]*scheddpb.DatabaseSnapshot
 }
@@ -71,7 +72,7 @@ func (f *fakeScheduler) DatabaseImportStatus(_ context.Context, in *scheddpb.Dat
 	if _, ok := f.vms[in.GetDatabaseId()]; !ok {
 		return nil, status.Error(codes.NotFound, "no database")
 	}
-	return &scheddpb.DatabaseImportProgress{State: f.importState, SourceMajor: 16}, nil
+	return &scheddpb.DatabaseImportProgress{State: f.importState, SourceMajor: 16, MissingExtensions: f.importMissing}, nil
 }
 
 func newFakeScheduler() *fakeScheduler {
@@ -1042,6 +1043,12 @@ func TestImportCopiesIntoTheCustomerDatabaseAsItsOwner(t *testing.T) {
 	if got, err := p.ImportStatus(ctx, testDatabaseID); err != nil || got.State != managedpostgres.ImportRunning || got.SourceMajor != 16 {
 		t.Fatalf("status = %+v, %v", got, err)
 	}
+	// A failed copy names the missing extensions, never anything else.
+	sched.importState, sched.importMissing = "failed", []string{"timescaledb", "host=10.0.0.1"}
+	if got, err := p.ImportStatus(ctx, testDatabaseID); err != nil || got.State != managedpostgres.ImportFailed || !slices.Equal(got.MissingExtensions, []string{"timescaledb"}) {
+		t.Fatalf("failed status = %+v, %v", got, err)
+	}
+	sched.importState, sched.importMissing = "running", nil
 	if _, err := p.Import(ctx, managedpostgres.ImportRequest{ResourceID: testDatabaseID, OperationID: operationID, Source: managedpostgres.ImportSource{Host: "h", Port: 0}}); !errors.Is(err, managedpostgres.ErrInvalid) {
 		t.Fatalf("no port = %v, want ErrInvalid", err)
 	}

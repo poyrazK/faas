@@ -133,10 +133,22 @@ func (g *databaseGuest) finishImport(code string, sourceMajor int, err error) {
 	}
 	g.imp.status.FinishedAt = time.Now().UTC()
 	g.imp.status.SourceMajor = sourceMajor
-	g.imp.status.State, g.imp.status.Error = dbguest.ImportDone, ""
+	g.imp.status.State, g.imp.status.Error, g.imp.status.MissingExtensions = dbguest.ImportDone, "", nil
 	if err != nil {
 		g.imp.status.State, g.imp.status.Error = dbguest.ImportFailed, code
+		var missing *missingExtensionsError
+		if errors.As(err, &missing) {
+			g.imp.status.MissingExtensions = dbguest.ReportableExtensions(missing.names)
+		}
 	}
+}
+
+// missingExtensionsError names the source extensions the owner cannot
+// create.
+type missingExtensionsError struct{ names []string }
+
+func (e *missingExtensionsError) Error() string {
+	return "extensions not available to the owner: " + strings.Join(e.names, ", ")
 }
 
 // runImport checks the source and target, dumps the source and restores
@@ -204,7 +216,7 @@ func (g *databaseGuest) importChecks(ctx context.Context, src dbguest.ImportSour
 		return dbguest.ErrCodeImportFailed, major, err
 	}
 	if missing := missingExtensions(extensions, trusted, src.SkipExtensions); len(missing) > 0 {
-		return dbguest.ErrCodeExtension, major, fmt.Errorf("extensions not available to the owner: %s", strings.Join(missing, ", "))
+		return dbguest.ErrCodeExtension, major, &missingExtensionsError{names: missing}
 	}
 	used, err := g.queryIn(ctx, src.TargetDatabase, importTargetUsedQuery)
 	if err != nil {

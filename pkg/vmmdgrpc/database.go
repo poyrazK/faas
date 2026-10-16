@@ -392,7 +392,8 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}
 	}
 	if i := resp.Import; i != nil {
-		out.Import = &vmmdpb.DatabaseImportStatus{State: string(i.State), ErrorCode: i.Error, SourceMajor: int32(i.SourceMajor), OperationId: i.OperationID} //nolint:gosec // a PostgreSQL major
+		out.Import = &vmmdpb.DatabaseImportStatus{State: string(i.State), ErrorCode: i.Error, SourceMajor: int32(i.SourceMajor), OperationId: i.OperationID, //nolint:gosec // a PostgreSQL major
+			MissingExtensions: dbguest.ReportableExtensions(i.MissingExtensions)}
 		if !i.StartedAt.IsZero() {
 			out.Import.StartedAt = timestamppb.New(i.StartedAt)
 		}

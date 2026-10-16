@@ -175,6 +175,29 @@ type ImportStatus struct {
 	SourceMajor int `json:"source_major,omitempty"`
 	// OperationID is the import this status describes.
 	OperationID string `json:"operation_id,omitempty"`
+	// MissingExtensions names the source extensions the target cannot
+	// create, for extension_unavailable (ReportableExtensions).
+	MissingExtensions []string `json:"missing_extensions,omitempty"`
+}
+
+// maxReportedExtensions bounds MissingExtensions.
+const maxReportedExtensions = 16
+
+// ReportableExtensions keeps the names in names that are plain
+// identifiers, at most maxReportedExtensions of them. The names come from
+// the source server, so anything else (connection data included) never
+// leaves the guest, and the host filters again what a guest reports.
+func ReportableExtensions(names []string) []string {
+	var out []string
+	for _, name := range names {
+		if len(out) == maxReportedExtensions {
+			break
+		}
+		if identifierPattern.MatchString(name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // Import error codes.

@@ -330,7 +330,8 @@ func importStatus(in *vmmdpb.DatabaseImportStatus) dbguest.ImportStatus {
 	if in == nil {
 		return noImport
 	}
-	out := dbguest.ImportStatus{State: dbguest.ImportState(in.GetState()), Error: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()), OperationID: in.GetOperationId()}
+	out := dbguest.ImportStatus{State: dbguest.ImportState(in.GetState()), Error: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()), OperationID: in.GetOperationId(),
+		MissingExtensions: dbguest.ReportableExtensions(in.GetMissingExtensions())}
 	if in.GetStartedAt() != nil {
 		out.StartedAt = in.GetStartedAt().AsTime()
 	}

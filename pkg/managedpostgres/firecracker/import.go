@@ -56,7 +56,7 @@ func (p *Provider) ImportStatus(ctx context.Context, resourceID string) (managed
 
 func importStatus(in *scheddpb.DatabaseImportProgress) managedpostgres.ImportStatus {
 	out := managedpostgres.ImportStatus{State: managedpostgres.ImportState(in.GetState()), ErrorCode: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()),
-		OperationID: in.GetOperationId()}
+		OperationID: in.GetOperationId(), MissingExtensions: dbguest.ReportableExtensions(in.GetMissingExtensions())}
 	if out.State == "" {
 		out.State = managedpostgres.ImportNone
 	}

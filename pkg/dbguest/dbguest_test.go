@@ -2,6 +2,8 @@
 package dbguest
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -106,4 +108,19 @@ func withImport(mutate func(*ImportSource)) *ImportSource {
 	s := validImport()
 	mutate(s)
 	return s
+}
+
+// Only plain identifiers leave the guest, and only a bounded number.
+func TestReportableExtensions(t *testing.T) {
+	got := ReportableExtensions([]string{"pg_stat_statements", "host=10.0.0.1 password=x", "Neon", "", "timescaledb"})
+	if !slices.Equal(got, []string{"pg_stat_statements", "timescaledb"}) {
+		t.Fatalf("reportable = %q", got)
+	}
+	many := make([]string, 40)
+	for i := range many {
+		many[i] = "ext_" + strconv.Itoa(i)
+	}
+	if got := ReportableExtensions(many); len(got) != maxReportedExtensions || got[0] != "ext_0" {
+		t.Fatalf("reportable of 40 = %d names", len(got))
+	}
 }

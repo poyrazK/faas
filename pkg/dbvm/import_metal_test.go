@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -171,8 +172,9 @@ CREATE MATERIALIZED VIEW restored_by AS SELECT session_user::text AS session_rol
 	if resp, err := rt.Control(ctx, target, importReq()); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
 		t.Fatalf("import = %+v, %v", resp, err)
 	}
-	if status := awaitImport(ctx, t, rt, target); status.State != dbguest.ImportFailed || status.Error != dbguest.ErrCodeExtension {
-		t.Fatalf("import with an untrusted extension = %+v; want extension_unavailable", status)
+	if status := awaitImport(ctx, t, rt, target); status.State != dbguest.ImportFailed || status.Error != dbguest.ErrCodeExtension ||
+		!slices.Equal(status.MissingExtensions, []string{"pg_stat_statements"}) {
+		t.Fatalf("import with an untrusted extension = %+v; want extension_unavailable naming pg_stat_statements", status)
 	}
 	started := time.Now()
 	if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Import == nil {

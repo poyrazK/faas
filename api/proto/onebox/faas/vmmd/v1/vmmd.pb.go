@@ -12078,9 +12078,12 @@ type DatabaseImportStatus struct {
 	FinishedAt  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	SourceMajor int32                  `protobuf:"varint,5,opt,name=source_major,json=sourceMajor,proto3" json:"source_major,omitempty"`
 	// The import this status describes.
-	OperationId   string `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OperationId string `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	// For extension_unavailable: the source extensions the target cannot
+	// create (plain identifiers, at most 16).
+	MissingExtensions []string `protobuf:"bytes,7,rep,name=missing_extensions,json=missingExtensions,proto3" json:"missing_extensions,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DatabaseImportStatus) Reset() {
@@ -12153,6 +12156,13 @@ func (x *DatabaseImportStatus) GetOperationId() string {
 		return x.OperationId
 	}
 	return ""
+}
+
+func (x *DatabaseImportStatus) GetMissingExtensions() []string {
+	if x != nil {
+		return x.MissingExtensions
+	}
+	return nil
 }
 
 type DatabaseControlResponse struct {
@@ -13310,7 +13320,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0ftarget_database\x18\x06 \x01(\tR\x0etargetDatabase\x12\x14\n" +
 	"\x05owner\x18\a \x01(\tR\x05owner\x12'\n" +
 	"\x0fskip_extensions\x18\b \x03(\tR\x0eskipExtensions\x12!\n" +
-	"\foperation_id\x18\t \x01(\tR\voperationId\"\x89\x02\n" +
+	"\foperation_id\x18\t \x01(\tR\voperationId\"\xb8\x02\n" +
 	"\x14DatabaseImportStatus\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +
@@ -13320,7 +13330,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vfinished_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12!\n" +
 	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
-	"\foperation_id\x18\x06 \x01(\tR\voperationId\"\xfd\x02\n" +
+	"\foperation_id\x18\x06 \x01(\tR\voperationId\x12-\n" +
+	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\"\xfd\x02\n" +
 	"\x17DatabaseControlResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12%\n" +
 	"\x0epostgres_major\x18\x02 \x01(\x05R\rpostgresMajor\x12\x1d\n" +

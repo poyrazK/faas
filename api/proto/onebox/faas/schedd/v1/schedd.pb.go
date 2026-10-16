@@ -3898,9 +3898,12 @@ type DatabaseImportProgress struct {
 	FinishedAt  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	SourceMajor int32                  `protobuf:"varint,5,opt,name=source_major,json=sourceMajor,proto3" json:"source_major,omitempty"`
 	// The import this progress describes.
-	OperationId   string `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OperationId string `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	// For extension_unavailable: the source extensions the target cannot
+	// create (plain identifiers, at most 16).
+	MissingExtensions []string `protobuf:"bytes,7,rep,name=missing_extensions,json=missingExtensions,proto3" json:"missing_extensions,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DatabaseImportProgress) Reset() {
@@ -3973,6 +3976,13 @@ func (x *DatabaseImportProgress) GetOperationId() string {
 		return x.OperationId
 	}
 	return ""
+}
+
+func (x *DatabaseImportProgress) GetMissingExtensions() []string {
+	if x != nil {
+		return x.MissingExtensions
+	}
+	return nil
 }
 
 type ResizeDatabaseRequest struct {
@@ -4727,7 +4737,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05owner\x18\b \x01(\tR\x05owner\x12'\n" +
 	"\x0fskip_extensions\x18\t \x03(\tR\x0eskipExtensions\x12!\n" +
 	"\foperation_id\x18\n" +
-	" \x01(\tR\voperationId\"\x8b\x02\n" +
+	" \x01(\tR\voperationId\"\xba\x02\n" +
 	"\x16DatabaseImportProgress\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
 	"\n" +
@@ -4737,7 +4747,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\vfinished_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12!\n" +
 	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
-	"\foperation_id\x18\x06 \x01(\tR\voperationId\"\xc7\x01\n" +
+	"\foperation_id\x18\x06 \x01(\tR\voperationId\x12-\n" +
+	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\"\xc7\x01\n" +
 	"\x15ResizeDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1d\n" +

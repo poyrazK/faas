@@ -1297,6 +1297,9 @@ message DatabaseImportProgress {
   int32 source_major = 5;
   // The import this progress describes.
   string operation_id = 6;
+  // For extension_unavailable: the source extensions the target cannot
+  // create (plain identifiers, at most 16).
+  repeated string missing_extensions = 7;
 }
 
 message ResizeDatabaseRequest {

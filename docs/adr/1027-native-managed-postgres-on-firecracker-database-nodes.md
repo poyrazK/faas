@@ -1429,8 +1429,11 @@ the control plane.
   reach it like anything a migration created. `OpImportStatus` reports
   none/running/done/failed with a stable code (`source_unreachable`,
   `source_newer`, `extension_unavailable`, `target_not_empty`,
-  `import_failed`). The source password reaches the tools only through
-  `PGPASSWORD`.
+  `import_failed`). An `extension_unavailable` status also names the
+  missing extensions (`MissingExtensions`): plain identifiers only, at
+  most 16, filtered in the guest and again on the host, since the names
+  come from the source. The source password reaches the tools only
+  through `PGPASSWORD`.
 - **The source writes the script, so the restore is not the superuser.**
   The source is whatever server the customer names, and a hostile one
   controls the SQL in its dump (definitions are its own catalog output).
