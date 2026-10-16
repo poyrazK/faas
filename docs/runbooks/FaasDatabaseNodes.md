@@ -198,6 +198,18 @@ discarded. Evacuation retries the move on its next sweep. schedd's
 `dbsched: move failed` log names the failed step: copy, archive handoff or
 switch.
 
+## Internal mTLS leaves
+
+A database node's vmmd and pgproxyd authenticate to schedd and to each
+other with internal mTLS leaves. The daily internal-PKI renewal
+(`pki-renew.yml`) renews them with the rest of the fleet and sends both
+daemons SIGHUP. Neither restarts, and no session drops. Their expiry
+appears with every other host's under the FaasInternalMTLS* alerts; see
+the runbooks for those alerts. A database node is reached with the
+renewal workflow's deploy key and pinned through `COMPUTE_KNOWN_HOSTS`.
+Add both before declaring the node in the manifest, or the renewal run
+fails on it.
+
 ## Moving one database
 
 To take load off a node, or to move a noisy database, move it by its id

@@ -15,6 +15,21 @@
   ansible.builtin.include_tasks: release.yml
   when: database_node_release_tarball | length > 0
 
+# The daily internal-PKI renewal (pki_renew.yml) and the expiry exporter
+# run gregalectl on the node; the signed release ships it.
+- name: database_node — find the release's gregalectl
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/gregalectl
+  register: database_node_gregalectl
+
+- name: database_node — link gregalectl from the release
+  ansible.builtin.file:
+    src: /opt/faas/current/bin/gregalectl
+    dest: /usr/local/bin/gregalectl
+    state: link
+    force: true
+  when: database_node_gregalectl.stat.exists
+
 - name: database_node — stage the node's mTLS bundle (never the CA key)
   ansible.builtin.copy:
     src: "{{ database_node_pki_source }}/"

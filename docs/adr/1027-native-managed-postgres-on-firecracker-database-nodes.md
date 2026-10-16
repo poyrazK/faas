@@ -481,6 +481,32 @@ to create the role, so the two cannot drift.
 Still manual: pgproxyd's public `*.<suffix>` certificate (files), the
 `faas_pgproxyd_postgres_password` Vault value, and each node's PKI bundle.
 
+**Internal mTLS renewal.** The daily `pki_renew.yml` (workflow
+`pki-renew.yml`) used to cover only the control plane and compute nodes. A
+database node's vmmd server leaf and pgproxyd's schedd and vmmd client
+leaves expired unnoticed. After that schedd could not reach the node,
+and none of its databases woke. They now renew with the fleet:
+- **Playbook:** the renewal play includes `database_nodes`, passes the node
+  identity (`--cn <name>`, normalized to `<name>.faas`) and the overlay SAN
+  (`database_vmmd_overlay_ip`), and maps the `pgproxyd` directory to
+  `faas-pgproxyd.service`.
+- **Reload:** vmmd and pgproxyd are SIGHUP consumers. vmmd in database
+  mode used to branch off before compute vmmd's SIGHUP handler, so a
+  SIGHUP ended the process. It now rotates its server leaf (TLSRotator,
+  as compute vmmd does). Standby peer connections re-read their client
+  leaf on each handshake. pgproxyd rotates both client leaves.
+- **Verify:** `fleet_verify` knows only the registered daemon topology, so a
+  database node is verified by vmmd's and pgproxyd's `/readyz` on its
+  overlay ops listeners.
+- **Metrics:** `database_node.yml` installs the expiry exporter
+  (`internal_pki_renewal`), so the `FaasInternalMTLS*` alerts cover
+  database nodes. It also links `/usr/local/bin/gregalectl` from the
+  release, which both use.
+- **Operator:** database nodes need the renewal workflow's deploy key and
+  their host keys in `COMPUTE_KNOWN_HOSTS`. They renew last (the host
+  pattern's order), so an unreachable one fails the run without holding
+  up compute nodes.
+
 **Certificate renewal.** pgproxyd used to load its public certificate once,
 so every renewal meant a restart, which drops every client session. It now
 serves through `GetCertificate` and checks the files every 30 s, and

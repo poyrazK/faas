@@ -395,7 +395,7 @@ type pkiRenewalState struct {
 func cmdPKIMetrics(args []string) int {
 	fs := flag.NewFlagSet("pki metrics", flag.ContinueOnError)
 	rootDir := fs.String("root-dir", pki.DefaultRootDir, "active PKI root")
-	boxRole := fs.String("box-role", "", "host role: control-plane or compute-only")
+	boxRole := fs.String("box-role", "", "host role: control-plane, compute-only or database")
 	host := fs.String("host", "", "bounded host label")
 	output := fs.String("output", "", "node_exporter textfile destination (stdout when empty)")
 	renewalState := fs.String("renewal-state", "/var/lib/faas/pki-renewal/status.json", "renewal workflow state file")

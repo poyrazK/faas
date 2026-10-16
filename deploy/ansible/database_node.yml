@@ -61,7 +61,7 @@
 # Order: release + mTLS + firewall, then Firecracker with the release's
 # signed guest kernel, then the archive keeper, then vmmd in database mode
 # (which archives through it when dbbackupd_enabled), then pgproxyd, then
-# node_exporter for the host alerts.
+# node_exporter for the host alerts and the internal-PKI expiry exporter.
 - name: Converge database nodes
   hosts: database_nodes
   become: true
@@ -75,3 +75,6 @@
     - role: database_vmmd
     - role: pgproxyd_service
     - role: node_exporter
+    # Exports the internal mTLS leaves' expiry for the FaasInternalMTLS*
+    # alerts; pki_renew.yml renews them daily.
+    - role: internal_pki_renewal
