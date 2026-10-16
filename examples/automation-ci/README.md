@@ -42,7 +42,8 @@ error details are excluded.
 
 Policy reason codes are `candidate_target_mismatch`, `candidate_outdated`,
 `candidate_failed`, `regressions`, `candidate_incomplete`, `unknown_results`,
-`incompatible_cases` and `removed_cases`. Request/protocol errors use
+`incompatible_cases`, `removed_cases` and (with a coverage policy)
+`required_cases_missing`. Request/protocol errors use
 `authentication_required`, `request_failed`, `request_timed_out`,
 `invalid_response` or `interrupted`. The report retains every applicable policy
 reason; use `outcome` and `exit_code` for the final decision.
@@ -61,3 +62,16 @@ prove that omitted, never-selected cases were tested. Both suites and their run
 records remain subject to normal retention. Rerun the read-only gate after
 explicitly completing checks; intentional coverage or assertion changes require
 an explicitly selected compatible baseline and candidate.
+
+For required coverage, keep a policy JSON file in version control and pass
+`--policy path/to/policy.json` to the gate. For example:
+
+```json
+{"version":1,"required_cases":["paid-invoice","declined-payment"]}
+```
+
+The candidate must select every required case. Missing names return inconclusive
+(7), including names omitted by both suites. Reports include the policy content,
+its canonical SHA-256 hash and missing names. CI must make the policy file
+available locally (for example by checking out the reviewed commit first).
+Without `--policy`, the sample workflow only checks selected-suite coverage.

@@ -15,6 +15,7 @@ func automationLiveCLISubs() []cliSub {
 		cliFlag{Name: "wait", Bool: true, Short: "wait and require a current passing assertion verdict"})
 	return []cliSub{
 		{Name: "gate", Short: "Require passing retained suite evidence for an explicit candidate target; read-only", Flags: flags(
+			cliFlag{Name: "policy", Value: "FILE", Short: "versioned required-case coverage policy JSON"},
 			cliFlag{Name: "baseline", Value: "UUID", Req: true, Short: "retained baseline suite UUID"},
 			cliFlag{Name: "candidate", Value: "UUID", Req: true, Short: "distinct retained candidate suite UUID"},
 			cliFlag{Name: "expected-version", Value: "N", Req: true, Short: "expected candidate saved automation version"},

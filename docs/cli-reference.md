@@ -5642,12 +5642,13 @@ Start, observe and check saved cases against real execution
 
 Require passing retained suite evidence for an explicit candidate target; read-only
 
-`gregale automations live gate --app <SLUG> --name <NAME> --baseline <UUID> --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
+`gregale automations live gate --app <SLUG> --name <NAME> [--policy <FILE>] --baseline <UUID> --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
 | `--name <NAME>` | automation name | required |
+| `--policy <FILE>` | versioned required-case coverage policy JSON |  |
 | `--baseline <UUID>` | retained baseline suite UUID | required |
 | `--candidate <UUID>` | distinct retained candidate suite UUID | required |
 | `--expected-version <N>` | expected candidate saved automation version | required |

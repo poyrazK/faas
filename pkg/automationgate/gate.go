@@ -4,6 +4,7 @@ package automationgate
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -27,20 +28,25 @@ type Target struct {
 
 type Selection struct {
 	Name, BaselineID, CandidateID string
+	Coverage                      *CoveragePolicy
 	Expected                      Target
 }
 
 type Result struct {
-	Outcome         string   `json:"outcome"`
-	ExitCode        int      `json:"exit_code"`
-	Reasons         []string `json:"reasons"`
-	CandidatePassed int      `json:"candidate_passed"`
-	CandidateFailed int      `json:"candidate_failed"`
+	Outcome              string   `json:"outcome"`
+	ExitCode             int      `json:"exit_code"`
+	Reasons              []string `json:"reasons"`
+	CandidatePassed      int      `json:"candidate_passed"`
+	CandidateFailed      int      `json:"candidate_failed"`
+	MissingRequiredCases []string `json:"missing_required_cases,omitempty"`
 }
 
 func (s Selection) Validate() error {
 	if !validName(s.Name, api.AutomationNameMaxBytes) || !validID(s.BaselineID) || !validID(s.CandidateID) || sameID(s.BaselineID, s.CandidateID) || !validID(s.Expected.DeploymentID) || s.Expected.Version <= 0 || s.Expected.PublishedVersion <= 0 || s.Expected.PublishedVersion > s.Expected.Version {
 		return errors.New("provide an automation name, distinct baseline/candidate suite UUIDs, and positive expected saved/published versions and deployment UUID")
+	}
+	if s.Coverage != nil {
+		return s.Coverage.Validate()
 	}
 	return nil
 }
@@ -95,6 +101,23 @@ func Evaluate(s Selection, view api.AutomationLiveSuiteComparison) (Result, erro
 	}
 	if view.Summary.Removed > 0 {
 		result.Reasons = append(result.Reasons, "removed_cases")
+	}
+	if s.Coverage != nil {
+		present := make(map[string]bool)
+		for _, entry := range view.Cases {
+			if entry.Candidate != nil {
+				present[entry.Name] = true
+			}
+		}
+		for _, name := range s.Coverage.RequiredCases {
+			if !present[name] {
+				result.MissingRequiredCases = append(result.MissingRequiredCases, name)
+			}
+		}
+		sort.Strings(result.MissingRequiredCases)
+		if len(result.MissingRequiredCases) > 0 {
+			result.Reasons = append(result.Reasons, "required_cases_missing")
+		}
 	}
 	switch {
 	case targetBlocked:

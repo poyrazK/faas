@@ -452,6 +452,27 @@ command or build the current source. This observation does not enforce publishin
 or deployment, impose a maximum report age, or certify cases that were never
 selected. Retention still applies to suites and their linked run records.
 
+To require coverage even when both suites omit the same saved case, commit a
+versioned JSON policy and add `--policy automation-gate-policy.json` to the gate:
+
+```json
+{"version":1,"required_cases":["paid-invoice","declined-payment"]}
+```
+
+Required names must match candidate selections exactly. A missing required case
+adds `required_cases_missing` and returns inconclusive (7); failed assertions in
+the intended current candidate still take precedence (1). Existing pending,
+incompatible and outdated evidence checks continue to apply. Policies allow 1–32
+unique case names and at most 16 KiB. Invalid policies fail locally before any
+API request. Unknown or duplicate fields and trailing JSON are rejected.
+
+The JSON report includes `coverage_policy`, `policy_hash` (SHA-256 of canonical
+JSON with sorted required names), and `missing_required_cases` when nonempty.
+Whitespace and case-list order do not change the hash. Request-error reports
+retain policy provenance. Omitting `--policy` preserves the original strict gate
+behavior; it does not require coverage beyond the selected suites. The gate
+still performs only one comparison read and never starts or checks executions.
+
 ### Share suite results with your team
 
 Add `--share` when creating a new CLI suite to retain its selection and run links

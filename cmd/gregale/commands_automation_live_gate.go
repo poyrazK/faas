@@ -35,8 +35,10 @@ func cmdAutomationsLiveGate(args []string) int {
 
 func parseAutomationLiveGate(args []string) (automationLiveGateOptions, error) {
 	var o automationLiveGateOptions
+	var policyPath string
 	// The manifest handles help. Keep malformed flag values out of diagnostics.
 	fs := newFlagSet("automations live gate", flag.ContinueOnError, io.Discard)
+	fs.StringVar(&policyPath, "policy", "", "versioned required-case policy JSON file")
 	fs.StringVar(&o.app, "app", "", "app slug")
 	fs.StringVar(&o.Name, "name", "", "automation name")
 	fs.StringVar(&o.BaselineID, "baseline", "", "retained baseline suite UUID")
@@ -52,6 +54,13 @@ func parseAutomationLiveGate(args []string) (automationLiveGateOptions, error) {
 	}
 	if err := o.Validate(); err != nil {
 		return o, err
+	}
+	if policyPath != "" {
+		policy, err := readAutomationGatePolicy(policyPath)
+		if err != nil {
+			return o, errors.New("could not read a valid coverage policy; use version 1 with distinct required_cases in a regular JSON file")
+		}
+		o.Coverage = &policy
 	}
 	o.BaselineID = uuid.MustParse(o.BaselineID).String()
 	o.CandidateID = uuid.MustParse(o.CandidateID).String()
@@ -93,4 +102,25 @@ func automationLiveGateRequestError(ctx context.Context, o automationLiveGateOpt
 		code = exitCodeForStatus(status)
 	}
 	return failAutomationLiveGate(o, "request_failed", "The comparison could not be read. Resolve access or retained-evidence availability, then rerun with the same suite IDs and expected target.", code, status)
+}
+
+func readAutomationGatePolicy(path string) (automationgate.CoveragePolicy, error) {
+	var empty automationgate.CoveragePolicy
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return empty, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return empty, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > api.AutomationLiveGatePolicyMaxBytes {
+		return empty, errors.New("invalid coverage policy file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, api.AutomationLiveGatePolicyMaxBytes+1))
+	if err != nil {
+		return empty, err
+	}
+	return automationgate.ParseCoveragePolicy(data)
 }
