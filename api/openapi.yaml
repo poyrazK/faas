@@ -48344,6 +48344,169 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Named release track within this app and automation; does not change execution routing.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveBaseline
+      summary: Read the current named automation baseline promotion receipt.
+      description: Read-only; requires app read scope. Records the exact suite, revision, actor, promotion time and reviewed
+        coverage/age policy.
+      responses:
+        '200':
+          description: Immutable promotion receipt(s); reads do not certify current evidence validity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaseline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Named release track within this app and automation; does not change execution routing.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveBaselineHistory
+      summary: Read the last 100 promotions for a named automation baseline.
+      description: Newest revision first. History is immutable until bounded retention or automation deletion. Requires app
+        read scope.
+      responses:
+        '200':
+          description: Immutable promotion receipt(s); reads do not certify current evidence validity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaselineHistory'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Named release track within this app and automation; does not change execution routing.
+    - name: promotion_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected UUID. Retry uncertain requests only with the original ID and identical semantic request.
+    put:
+      tags:
+      - workflows
+      operationId: promoteAutomationLiveBaseline
+      summary: Deliberately promote passing retained evidence to a named baseline.
+      description: Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age
+        policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates.
+        An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes
+        or checks assertions. At most 20 names per automation, with 100 receipts per name; current suite groups are pinned within
+        the existing suite limit, while linked run retention still applies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteAutomationLiveBaselineRequest'
+      responses:
+        '200':
+          description: Immutable promotion receipt(s); reads do not certify current evidence validity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaseline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
   /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -69682,6 +69845,137 @@ components:
           type: string
           format: uuid
       description: One saved live case and its optional existing verification run identity.
+    AutomationLiveBaselinePolicy:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - required_cases
+      - max_candidate_age_seconds
+      properties:
+        version:
+          type: integer
+          enum:
+          - 2
+        required_cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        max_candidate_age_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036
+    PromoteAutomationLiveBaselineRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - suite_id
+      - expected_revision
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - policy
+      properties:
+        suite_id:
+          type: string
+          format: uuid
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9223372036854775806
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        expected_published_version:
+          type: integer
+          format: int64
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        policy:
+          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+    AutomationLiveBaseline:
+      type: object
+      additionalProperties: false
+      required:
+      - promotion_id
+      - app_id
+      - name
+      - baseline_name
+      - revision
+      - actor_account_id
+      - promoted_at
+      - suite
+      - policy
+      - policy_hash
+      - cases_passed
+      - oldest_run_created_at
+      - evidence_age_seconds
+      properties:
+        promotion_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseline_name:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        previous_promotion_id:
+          type: string
+          format: uuid
+        actor_account_id:
+          type: string
+          format: uuid
+        actor_api_key_id:
+          type: string
+          format: uuid
+        promoted_at:
+          type: string
+          format: date-time
+        suite:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        policy:
+          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+        policy_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        cases_passed:
+          type: integer
+          minimum: 1
+          maximum: 32
+        oldest_run_created_at:
+          type: string
+          format: date-time
+        evidence_age_seconds:
+          type: number
+          format: double
+          minimum: 0
+    AutomationLiveBaselineHistory:
+      type: object
+      additionalProperties: false
+      required:
+      - promotions
+      properties:
+        promotions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaseline'
     AutomationLiveSuiteComparison:
       type: object
       additionalProperties: false

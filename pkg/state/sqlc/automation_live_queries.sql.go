@@ -92,8 +92,24 @@ func (q *Queries) AutomationLiveStep(ctx context.Context, db DBTX, arg Automatio
 	return items, nil
 }
 
+const countAutomationLiveBaselines = `-- name: CountAutomationLiveBaselines :one
+SELECT count(DISTINCT baseline_name) FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2
+`
+
+type CountAutomationLiveBaselinesParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+func (q *Queries) CountAutomationLiveBaselines(ctx context.Context, db DBTX, arg CountAutomationLiveBaselinesParams) (int64, error) {
+	row := db.QueryRow(ctx, countAutomationLiveBaselines, arg.AppID, arg.Name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countProtectedAutomationLiveSuites = `-- name: CountProtectedAutomationLiveSuites :one
-SELECT count(*) FROM workflow_automation_live_suites WHERE app_id=$1::uuid AND name=$2::text AND managed AND created_at>$3::timestamptz
+SELECT count(*) FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text AND (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz))
 `
 
 type CountProtectedAutomationLiveSuitesParams struct {
@@ -160,6 +176,97 @@ func (q *Queries) GetAutomationForLiveVerification(ctx context.Context, db DBTX,
 		&i.UpdatedAt,
 		&i.TestSuite,
 		&i.TestReport,
+	)
+	return i, err
+}
+
+const getAutomationLiveBaselineHead = `-- name: GetAutomationLiveBaselineHead :one
+SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT 1
+`
+
+type GetAutomationLiveBaselineHeadParams struct {
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+}
+
+func (q *Queries) GetAutomationLiveBaselineHead(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHeadParams) (WorkflowAutomationLiveBaselinePromotion, error) {
+	row := db.QueryRow(ctx, getAutomationLiveBaselineHead, arg.AppID, arg.Name, arg.BaselineName)
+	var i WorkflowAutomationLiveBaselinePromotion
+	err := row.Scan(
+		&i.PromotionID,
+		&i.AppID,
+		&i.Name,
+		&i.BaselineName,
+		&i.Revision,
+		&i.SuiteID,
+		&i.Receipt,
+		&i.PromotedAt,
+	)
+	return i, err
+}
+
+const getAutomationLiveBaselineHistory = `-- name: GetAutomationLiveBaselineHistory :many
+SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT $4
+`
+
+type GetAutomationLiveBaselineHistoryParams struct {
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Limit        int32
+}
+
+func (q *Queries) GetAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHistoryParams) ([]WorkflowAutomationLiveBaselinePromotion, error) {
+	rows, err := db.Query(ctx, getAutomationLiveBaselineHistory,
+		arg.AppID,
+		arg.Name,
+		arg.BaselineName,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowAutomationLiveBaselinePromotion{}
+	for rows.Next() {
+		var i WorkflowAutomationLiveBaselinePromotion
+		if err := rows.Scan(
+			&i.PromotionID,
+			&i.AppID,
+			&i.Name,
+			&i.BaselineName,
+			&i.Revision,
+			&i.SuiteID,
+			&i.Receipt,
+			&i.PromotedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAutomationLiveBaselinePromotion = `-- name: GetAutomationLiveBaselinePromotion :one
+SELECT promotion_id, app_id, name, baseline_name, revision, suite_id, receipt, promoted_at FROM workflow_automation_live_baseline_promotions WHERE promotion_id=$1
+`
+
+func (q *Queries) GetAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, promotionID pgtype.UUID) (WorkflowAutomationLiveBaselinePromotion, error) {
+	row := db.QueryRow(ctx, getAutomationLiveBaselinePromotion, promotionID)
+	var i WorkflowAutomationLiveBaselinePromotion
+	err := row.Scan(
+		&i.PromotionID,
+		&i.AppID,
+		&i.Name,
+		&i.BaselineName,
+		&i.Revision,
+		&i.SuiteID,
+		&i.Receipt,
+		&i.PromotedAt,
 	)
 	return i, err
 }
@@ -252,6 +359,35 @@ func (q *Queries) GetAutomationLiveVerificationByKey(ctx context.Context, db DBT
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertAutomationLiveBaselinePromotion = `-- name: InsertAutomationLiveBaselinePromotion :exec
+INSERT INTO workflow_automation_live_baseline_promotions(promotion_id,app_id,name,baseline_name,revision,suite_id,receipt,promoted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type InsertAutomationLiveBaselinePromotionParams struct {
+	PromotionID  pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Revision     int64
+	SuiteID      pgtype.UUID
+	Receipt      []byte
+	PromotedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) InsertAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselinePromotionParams) error {
+	_, err := db.Exec(ctx, insertAutomationLiveBaselinePromotion,
+		arg.PromotionID,
+		arg.AppID,
+		arg.Name,
+		arg.BaselineName,
+		arg.Revision,
+		arg.SuiteID,
+		arg.Receipt,
+		arg.PromotedAt,
+	)
+	return err
 }
 
 const insertAutomationLiveSuite = `-- name: InsertAutomationLiveSuite :one
@@ -486,10 +622,31 @@ func (q *Queries) LockAutomationLiveRunState(ctx context.Context, db DBTX, id pg
 	return i, err
 }
 
+const pruneAutomationLiveBaselineHistory = `-- name: PruneAutomationLiveBaselineHistory :exec
+DELETE FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 AND revision <= $4
+`
+
+type PruneAutomationLiveBaselineHistoryParams struct {
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Revision     int64
+}
+
+func (q *Queries) PruneAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg PruneAutomationLiveBaselineHistoryParams) error {
+	_, err := db.Exec(ctx, pruneAutomationLiveBaselineHistory,
+		arg.AppID,
+		arg.Name,
+		arg.BaselineName,
+		arg.Revision,
+	)
+	return err
+}
+
 const pruneAutomationLiveSuites = `-- name: PruneAutomationLiveSuites :exec
 DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=$1::uuid AND suite.name=$2::text AND suite.id IN (
  SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=$1::uuid AND history.name=$2::text
- ORDER BY (history.managed AND history.created_at>$3::timestamptz) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
+ ORDER BY (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>$3::timestamptz)) DESC,history.created_at DESC,history.id DESC OFFSET $4::integer
 )
 `
 

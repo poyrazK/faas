@@ -52,7 +52,7 @@ SELECT * FROM workflow_automation_live_suites WHERE app_id=$1 AND name=$2 ORDER 
 -- name: PruneAutomationLiveSuites :exec
 DELETE FROM workflow_automation_live_suites AS suite WHERE suite.app_id=sqlc.arg(app_id)::uuid AND suite.name=sqlc.arg(name)::text AND suite.id IN (
  SELECT history.id FROM workflow_automation_live_suites AS history WHERE history.app_id=sqlc.arg(app_id)::uuid AND history.name=sqlc.arg(name)::text
- ORDER BY (history.managed AND history.created_at>sqlc.arg(protected_since)::timestamptz) DESC,history.created_at DESC,history.id DESC OFFSET sqlc.arg(retained)::integer
+ ORDER BY (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>sqlc.arg(protected_since)::timestamptz)) DESC,history.created_at DESC,history.id DESC OFFSET sqlc.arg(retained)::integer
 );
 
 -- name: DeleteAutomationLiveSuites :exec
@@ -66,4 +66,22 @@ ORDER BY (traffic_percent>0) DESC,created_at DESC,id DESC LIMIT 1;
 SELECT * FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2 FOR SHARE;
 
 -- name: CountProtectedAutomationLiveSuites :one
-SELECT count(*) FROM workflow_automation_live_suites WHERE app_id=sqlc.arg(app_id)::uuid AND name=sqlc.arg(name)::text AND managed AND created_at>sqlc.arg(protected_since)::timestamptz;
+SELECT count(*) FROM workflow_automation_live_suites AS history WHERE history.app_id=sqlc.arg(app_id)::uuid AND history.name=sqlc.arg(name)::text AND (EXISTS (SELECT 1 FROM workflow_automation_live_baseline_promotions AS pin WHERE pin.app_id=history.app_id AND pin.name=history.name AND pin.suite_id=history.id AND pin.revision=(SELECT max(head.revision) FROM workflow_automation_live_baseline_promotions AS head WHERE head.app_id=pin.app_id AND head.name=pin.name AND head.baseline_name=pin.baseline_name)) OR (history.managed AND history.created_at>sqlc.arg(protected_since)::timestamptz));
+
+-- name: GetAutomationLiveBaselineHead :one
+SELECT * FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT 1;
+
+-- name: GetAutomationLiveBaselinePromotion :one
+SELECT * FROM workflow_automation_live_baseline_promotions WHERE promotion_id=$1;
+
+-- name: GetAutomationLiveBaselineHistory :many
+SELECT * FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 ORDER BY revision DESC LIMIT $4;
+
+-- name: CountAutomationLiveBaselines :one
+SELECT count(DISTINCT baseline_name) FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2;
+
+-- name: InsertAutomationLiveBaselinePromotion :exec
+INSERT INTO workflow_automation_live_baseline_promotions(promotion_id,app_id,name,baseline_name,revision,suite_id,receipt,promoted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+
+-- name: PruneAutomationLiveBaselineHistory :exec
+DELETE FROM workflow_automation_live_baseline_promotions WHERE app_id=$1 AND name=$2 AND baseline_name=$3 AND revision <= $4;

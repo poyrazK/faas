@@ -194,6 +194,9 @@ export type { AutomationFailureTransition } from './AutomationFailureTransition.
 export type { AutomationHealthResponse } from './AutomationHealthResponse.js';
 export type { AutomationHealthRun } from './AutomationHealthRun.js';
 export type { AutomationHealthStepFailure } from './AutomationHealthStepFailure.js';
+export type { AutomationLiveBaseline } from './AutomationLiveBaseline.js';
+export type { AutomationLiveBaselineHistory } from './AutomationLiveBaselineHistory.js';
+export type { AutomationLiveBaselinePolicy } from './AutomationLiveBaselinePolicy.js';
 export type { AutomationLiveExpectation } from './AutomationLiveExpectation.js';
 export type { AutomationLiveReport } from './AutomationLiveReport.js';
 export type { AutomationLiveSuite } from './AutomationLiveSuite.js';
@@ -1758,6 +1761,7 @@ export type { ProjectScanRequest } from './ProjectScanRequest.js';
 export type { ProjectSourceRefScanRequest } from './ProjectSourceRefScanRequest.js';
 export type { ProjectSummaryResponse } from './ProjectSummaryResponse.js';
 export type { ProjectWorkloadResponse } from './ProjectWorkloadResponse.js';
+export type { PromoteAutomationLiveBaselineRequest } from './PromoteAutomationLiveBaselineRequest.js';
 export type { PromoteProjectEnvironmentRequest } from './PromoteProjectEnvironmentRequest.js';
 export type { PublicAuthBlock } from './PublicAuthBlock.js';
 export type { PublicAuthStatus } from './PublicAuthStatus.js';

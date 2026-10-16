@@ -506,6 +506,85 @@ age information. Keep the CI host clock synchronized; future timestamps fail
 closed without a clock-skew allowance. A long-running suite may need a larger
 age budget or a newly executed suite. The gate remains a single read.
 
+
+### Promote and use a named baseline
+
+A baseline name such as `production` or `staging` identifies a release track within
+an app and automation. It does not select an execution environment or change
+routing. Promotion is a deliberate metadata write; it never starts workflows or
+checks assertions. It requires a token with deploy-write scope. Reading the head,
+history or gate requires app-read scope.
+
+After explicitly running and checking a retained suite, promote it with a version
+2 policy. Use a new UUID for each deliberate promotion, and preserve it for retries:
+
+```sh
+gregale automations live baseline promote --app billing --name paid-invoice \
+  --baseline-name production --suite 00000000-0000-4000-8000-000000000010 \
+  --promotion-id 00000000-0000-4000-8000-000000000020 --expected-revision 0 \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --policy automation-gate-policy.json --json
+
+gregale automations live baseline show --app billing --name paid-invoice \
+  --baseline-name production --json
+gregale automations live baseline history --app billing --name paid-invoice \
+  --baseline-name production --json
+```
+
+`--expected-revision 0` explicitly creates a new name. For later promotions, read
+the current receipt and supply its revision. Concurrent writers cannot silently
+overwrite each other: a stale revision returns conflict (409; CLI exit 5).
+Promotion re-evaluates the exact target, every selected case, required coverage and
+original-run age from retained evidence. A failed, unchecked, incompatible,
+incomplete or outdated suite cannot be promoted. Reads and promotion work with
+the execution runtime disabled.
+
+Receipts record the promotion UUID, revision, predecessor, authenticated account
+and API-key ID, promotion time, suite target, policy/hash, passed count and oldest
+run age. They contain no run inputs, outputs or assertion values. An uncertain
+write must be retried only with its original promotion UUID, expected revision,
+suite, target, policy and authenticated actor/key. An identical retained retry
+returns the original receipt, even after a later promotion; it does not move the
+head back or renew evidence. A returned receipt certifies what happened at that
+promotion time, not current evidence availability.
+
+Use the name in CI instead of copying a baseline suite UUID:
+
+```sh
+gregale --non-interactive automations live gate --app billing --name paid-invoice \
+  --baseline-name production --candidate 00000000-0000-4000-8000-000000000011 \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 --json
+```
+
+Choose exactly one of `--baseline` and `--baseline-name`. Named gates inherit the
+reviewed version 2 policy from the receipt. If `--policy` is also supplied, its
+canonical hash must match; otherwise `baseline_policy_mismatch` is inconclusive
+(7). Promote a policy change explicitly before gating by name. Existing UUID
+mode retains its original optional-policy behavior.
+
+The named gate makes two GETs under one ten-second budget: resolve the receipt,
+then compare its exact suite UUID. It never changes a baseline. Reports add
+`baseline_name` and `resolved_baseline` (the exact receipt), alongside the resolved
+`baseline_id` and evaluated policy hash. If another promotion happens between
+reads, the report still identifies the original resolved revision. A candidate
+must be distinct from that resolved baseline; otherwise the command exits 1.
+Invalid receipts fail as protocol errors (3), and missing heads or suite groups
+use normal not-found handling (4), without fallback to a different suite.
+
+There are at most 20 baseline names per automation and 100 retained promotion
+receipts per name, newest revision first. Names use 1–63 lowercase ASCII letters,
+digits or hyphens, beginning and ending with a letter or digit. Promotion requests
+are at most 20 KiB; stored receipts at most 32 KiB. Promotion policy JSON must
+fit the existing 16 KiB policy limit after canonical serialization as well as on input. Reuse an existing release-track
+name instead of creating a new name for each build. Automation deletion removes
+its history. Clearing saved cases retains audit receipts but removes evidence.
+Current baseline suite groups are protected from normal suite pruning within the
+existing 100-group budget; linked run/report retention still applies. Replaced
+groups can be pruned normally. Missing or invalidated evidence blocks gates;
+receipts do not recreate or execute it.
+
 ### Share suite results with your team
 
 Add `--share` when creating a new CLI suite to retain its selection and run links

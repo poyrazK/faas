@@ -92,3 +92,25 @@ maximum age. The age limit participates in the policy hash. Version 1 hashes
 and behavior are unchanged. Keep the CI clock synchronized. Baseline age is not
 restricted. Missing timestamps (including an older server) return inconclusive
 with `candidate_evidence_age_unavailable`. These checks remain read-only.
+
+For a stable reviewed comparison point, explicitly promote a passing suite with
+`gregale automations live baseline promote` and a version 2 policy. Use
+`--expected-revision 0` for a new name and the current observed revision for later
+promotions. Keep a distinct `--promotion-id UUID` per deliberate promotion and
+preserve it for uncertain retries; replay returns its historical receipt without
+resetting a newer head.
+
+Then replace `--baseline UUID` in the gate invocation with
+`--baseline-name production`. The gate reads the head once, inherits its reviewed
+policy, and compares the exact resolved suite UUID. A supplied `--policy` must
+have the same canonical hash or the result is inconclusive (7). Reports include
+the full resolved receipt, its revision and promotion identity. These two reads
+share a ten-second budget and never promote, execute or check runs. Names are
+scoped to app and automation; they do not switch execution environments.
+
+Inspect `automations live baseline show` or `history` for the attributable audit
+trail. Promotion requires deploy-write scope; CI gate reads require only app-read
+scope. Baseline groups are pinned within normal suite capacity, but linked run
+retention and report invalidation still apply. The sample workflow continues to
+use explicit UUIDs; adapt its selector inputs and command together when adopting
+named baselines.

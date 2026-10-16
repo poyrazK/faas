@@ -207,3 +207,57 @@ def test_managed_suites_preserve_target_and_explicit_continuation():
         "linked_runs": 1,
     }
     assert AutomationLiveSuiteSummary.from_dict(summary).to_dict() == summary
+
+
+def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
+    from uuid import UUID
+
+    from faas_sdk.api.workflows.get_automation_live_baseline import _get_kwargs as get_head
+    from faas_sdk.api.workflows.get_automation_live_baseline_history import _get_kwargs as get_history
+    from faas_sdk.api.workflows.promote_automation_live_baseline import _get_kwargs as promote
+    from faas_sdk.models.automation_live_baseline import AutomationLiveBaseline
+    from faas_sdk.models.automation_live_baseline_history import AutomationLiveBaselineHistory
+    from faas_sdk.models.promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
+
+    promotion_id = UUID("00000000-0000-4000-8000-000000000020")
+    suite_id = "00000000-0000-4000-8000-000000000010"
+    deployment_id = "00000000-0000-4000-8000-000000000002"
+    policy = {"version": 2, "required_cases": ["happy"], "max_candidate_age_seconds": 3600}
+    request = {
+        "suite_id": suite_id,
+        "expected_revision": 0,
+        "expected_version": 7,
+        "expected_published_version": 4,
+        "expected_deployment_id": deployment_id,
+        "policy": policy,
+    }
+    body = PromoteAutomationLiveBaselineRequest.from_dict(request)
+    kwargs = promote("billing", "case/report", "production", promotion_id, body=body)
+    root = "/v1/apps/billing/automations/case%2Freport/live-baselines/production"
+    assert kwargs["method"] == "put" and kwargs["url"] == f"{root}/promotions/{promotion_id}"
+    assert kwargs["json"] == request
+    for reader, suffix in [(get_head, ""), (get_history, "/history")]:
+        read = reader("billing", "case/report", "production")
+        assert read["method"] == "get" and read["url"] == root + suffix and "json" not in read
+    receipt = {
+        "promotion_id": str(promotion_id),
+        "app_id": deployment_id,
+        "name": "case/report",
+        "baseline_name": "production",
+        "revision": 1,
+        "actor_account_id": deployment_id,
+        "promoted_at": "2026-10-16T10:00:00+00:00",
+        "suite": {
+            "id": suite_id, "name": "case/report", "version": 7, "published_version": 4,
+            "deployment_id": deployment_id, "created_at": "2026-10-16T09:59:00+00:00",
+            "updated_at": "2026-10-16T09:59:00+00:00", "case_count": 1, "linked_runs": 1,
+        },
+        "policy": policy,
+        "policy_hash": "a" * 64,
+        "cases_passed": 1,
+        "oldest_run_created_at": "2026-10-16T09:59:00+00:00",
+        "evidence_age_seconds": 60.0,
+    }
+    assert AutomationLiveBaseline.from_dict(receipt).to_dict() == receipt
+    history = {"promotions": [receipt]}
+    assert AutomationLiveBaselineHistory.from_dict(history).to_dict() == history

@@ -9,16 +9,18 @@ import (
 )
 
 type automationLiveGateReport struct {
-	SchemaVersion  int                            `json:"schema_version"`
-	CoveragePolicy *automationgate.CoveragePolicy `json:"coverage_policy,omitempty"`
-	PolicyHash     string                         `json:"policy_hash,omitempty"`
-	Policy         string                         `json:"policy"`
-	App            string                         `json:"app"`
-	Name           string                         `json:"name"`
-	BaselineID     string                         `json:"baseline_id"`
-	CandidateID    string                         `json:"candidate_id"`
-	Expected       automationgate.Target          `json:"expected_target"`
-	Message        string                         `json:"message"`
+	BaselineName     string                         `json:"baseline_name,omitempty"`
+	ResolvedBaseline *api.AutomationLiveBaseline    `json:"resolved_baseline,omitempty"`
+	SchemaVersion    int                            `json:"schema_version"`
+	CoveragePolicy   *automationgate.CoveragePolicy `json:"coverage_policy,omitempty"`
+	PolicyHash       string                         `json:"policy_hash,omitempty"`
+	Policy           string                         `json:"policy"`
+	App              string                         `json:"app"`
+	Name             string                         `json:"name"`
+	BaselineID       string                         `json:"baseline_id"`
+	CandidateID      string                         `json:"candidate_id"`
+	Expected         automationgate.Target          `json:"expected_target"`
+	Message          string                         `json:"message"`
 	automationgate.Result
 	Comparison *api.AutomationLiveSuiteComparison `json:"comparison,omitempty"`
 }
@@ -35,7 +37,7 @@ func automationLiveGateMessage(outcome string) string {
 }
 
 func renderAutomationLiveGate(o automationLiveGateOptions, view *api.AutomationLiveSuiteComparison, result automationgate.Result, message string) int {
-	report := automationLiveGateReport{SchemaVersion: 1, Policy: automationgate.Policy, App: o.app, Name: o.Name, BaselineID: o.BaselineID, CandidateID: o.CandidateID, Expected: o.Expected, Message: message, Result: result, Comparison: view}
+	report := automationLiveGateReport{BaselineName: o.baselineName, ResolvedBaseline: o.resolvedBaseline, SchemaVersion: 1, Policy: automationgate.Policy, App: o.app, Name: o.Name, BaselineID: o.BaselineID, CandidateID: o.CandidateID, Expected: o.Expected, Message: message, Result: result, Comparison: view}
 	if o.Coverage != nil {
 		report.CoveragePolicy = o.Coverage
 		report.PolicyHash = o.Coverage.Hash()
@@ -55,6 +57,11 @@ func renderAutomationLiveGate(o automationLiveGateOptions, view *api.AutomationL
 func writeAutomationLiveGateText(report automationLiveGateReport) error {
 	if _, err := fmt.Fprintf(osStdout, "%s\nBaseline: %s\nCandidate: %s\nExpected target: saved version %d, published revision %d, deployment %s\n", report.Message, report.BaselineID, report.CandidateID, report.Expected.Version, report.Expected.PublishedVersion, report.Expected.DeploymentID); err != nil {
 		return err
+	}
+	if report.ResolvedBaseline != nil {
+		if _, err := fmt.Fprintf(osStdout, "Named baseline: %s revision %d (promotion %s)\n", report.BaselineName, report.ResolvedBaseline.Revision, report.ResolvedBaseline.PromotionID); err != nil {
+			return err
+		}
 	}
 	if report.CoveragePolicy != nil {
 		if _, err := fmt.Fprintf(osStdout, "Coverage policy SHA-256: %s\nMissing required cases: %s\n", report.PolicyHash, strings.Join(report.MissingRequiredCases, ", ")); err != nil {
@@ -99,6 +106,9 @@ func failAutomationLiveGate(o automationLiveGateOptions, reason, message string,
 		renderAPIError(osStderr, &api.APIError{Problem: problem})
 	}
 	outcome := "error"
+	if code == automationgate.ExitInconclusive {
+		outcome = "inconclusive"
+	}
 	if reason == "interrupted" {
 		outcome = "interrupted"
 	}

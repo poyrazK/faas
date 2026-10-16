@@ -15,7 +15,9 @@ import (
 )
 
 type automationLiveGateOptions struct {
-	app string
+	app              string
+	baselineName     string
+	resolvedBaseline *api.AutomationLiveBaseline
 	automationgate.Selection
 }
 
@@ -41,6 +43,7 @@ func parseAutomationLiveGate(args []string) (automationLiveGateOptions, error) {
 	fs.StringVar(&policyPath, "policy", "", "versioned required-case policy JSON file")
 	fs.StringVar(&o.app, "app", "", "app slug")
 	fs.StringVar(&o.Name, "name", "", "automation name")
+	fs.StringVar(&o.baselineName, "baseline-name", "", "named baseline; exclusive with --baseline")
 	fs.StringVar(&o.BaselineID, "baseline", "", "retained baseline suite UUID")
 	fs.StringVar(&o.CandidateID, "candidate", "", "retained candidate suite UUID")
 	fs.Int64Var(&o.Expected.Version, "expected-version", 0, "expected candidate saved version")
@@ -52,7 +55,14 @@ func parseAutomationLiveGate(args []string) (automationLiveGateOptions, error) {
 	if fs.NArg() != 0 || !validCLISlug(o.app) {
 		return o, errors.New("provide --app with a valid slug and no positional arguments")
 	}
-	if err := o.Validate(); err != nil {
+	if (o.BaselineID == "") == (o.baselineName == "") || o.baselineName != "" && !api.ValidAutomationLiveBaselineName(o.baselineName) {
+		return o, errors.New("choose exactly one of --baseline UUID or --baseline-name NAME")
+	}
+	validate := o.Validate
+	if o.baselineName != "" {
+		validate = o.ValidateCandidate
+	}
+	if err := validate(); err != nil {
 		return o, err
 	}
 	if policyPath != "" {
@@ -62,7 +72,9 @@ func parseAutomationLiveGate(args []string) (automationLiveGateOptions, error) {
 		}
 		o.Coverage = &policy
 	}
-	o.BaselineID = uuid.MustParse(o.BaselineID).String()
+	if o.BaselineID != "" {
+		o.BaselineID = uuid.MustParse(o.BaselineID).String()
+	}
 	o.CandidateID = uuid.MustParse(o.CandidateID).String()
 	o.Expected.DeploymentID = uuid.MustParse(o.Expected.DeploymentID).String()
 	return o, nil
@@ -74,6 +86,20 @@ func runAutomationLiveGate(ctx context.Context, client *api.Client, o automation
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, api.AutomationLiveProgressRequestTimeout)
 	defer cancel()
+	if o.baselineName != "" {
+		if err := resolveAutomationGateBaseline(requestCtx, client, &o); err != nil {
+			if errors.Is(err, errAutomationGateBaselinePolicyMismatch) {
+				return failAutomationLiveGate(o, "baseline_policy_mismatch", "The local policy differs from the named baseline's reviewed promotion policy. Use that policy or explicitly promote the new policy before gating by name.", 7, 409)
+			}
+			if errors.Is(err, errAutomationGateBaselineInvalid) {
+				return failAutomationLiveGate(o, "invalid_response", "The named baseline receipt is incomplete or inconsistent. No passing result is available.", 3, 502)
+			}
+			return automationLiveGateRequestError(ctx, o, err)
+		}
+		if o.BaselineID == o.CandidateID {
+			return failAutomationLiveGate(o, "baseline_matches_candidate", "Choose a candidate suite distinct from the resolved named baseline.", 1, 400)
+		}
+	}
 	view, err := client.CompareAutomationLiveSuites(requestCtx, o.app, o.Name, o.CandidateID, o.BaselineID)
 	if err != nil {
 		return automationLiveGateRequestError(ctx, o, err)

@@ -43,12 +43,21 @@ type Result struct {
 	EvidenceAge          *EvidenceAge `json:"evidence_age,omitempty"`
 }
 
-func (s Selection) Validate() error {
-	if !validName(s.Name, api.AutomationNameMaxBytes) || !validID(s.BaselineID) || !validID(s.CandidateID) || sameID(s.BaselineID, s.CandidateID) || !validID(s.Expected.DeploymentID) || s.Expected.Version <= 0 || s.Expected.PublishedVersion <= 0 || s.Expected.PublishedVersion > s.Expected.Version {
-		return errors.New("provide an automation name, distinct baseline/candidate suite UUIDs, and positive expected saved/published versions and deployment UUID")
+func (s Selection) ValidateCandidate() error {
+	if !validName(s.Name, api.AutomationNameMaxBytes) || !validID(s.CandidateID) || !validID(s.Expected.DeploymentID) || s.Expected.Version <= 0 || s.Expected.PublishedVersion <= 0 || s.Expected.PublishedVersion > s.Expected.Version {
+		return errors.New("provide an automation name, candidate suite UUID and positive expected saved/published versions and deployment UUID")
 	}
 	if s.Coverage != nil {
 		return s.Coverage.Validate()
+	}
+	return nil
+}
+func (s Selection) Validate() error {
+	if err := s.ValidateCandidate(); err != nil {
+		return err
+	}
+	if !validID(s.BaselineID) || sameID(s.BaselineID, s.CandidateID) {
+		return errors.New("provide distinct baseline and candidate suite UUIDs")
 	}
 	return nil
 }
@@ -64,7 +73,24 @@ func Evaluate(s Selection, view api.AutomationLiveSuiteComparison) (Result, erro
 // EvaluateAt uses the supplied evaluation clock, never the response observation
 // time, to prevent replaying an old comparison from refreshing evidence.
 func EvaluateAt(s Selection, view api.AutomationLiveSuiteComparison, now time.Time) (Result, error) {
-	if err := s.Validate(); err != nil {
+	return evaluate(s, view, now, false)
+}
+
+// EvaluatePromotionAt validates a suite against itself for deliberate baseline
+// promotion. It does not certify a regression comparison or relax gate identity.
+func EvaluatePromotionAt(s Selection, view api.AutomationLiveSuiteComparison, now time.Time) (Result, error) {
+	if !sameID(s.BaselineID, s.CandidateID) {
+		return Result{}, errors.New("promotion must evaluate the selected suite against itself")
+	}
+	return evaluate(s, view, now, true)
+}
+
+func evaluate(s Selection, view api.AutomationLiveSuiteComparison, now time.Time, promotion bool) (Result, error) {
+	validation := s.Validate
+	if promotion {
+		validation = s.ValidateCandidate
+	}
+	if err := validation(); err != nil {
 		return Result{}, err
 	}
 	if err := validateComparison(s, view); err != nil {

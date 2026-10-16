@@ -382,6 +382,10 @@ from .automation_health_response_status_counts import AutomationHealthResponseSt
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_live_baseline import AutomationLiveBaseline
+from .automation_live_baseline_history import AutomationLiveBaselineHistory
+from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
+from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
 from .automation_live_expectation import AutomationLiveExpectation
 from .automation_live_expectation_state import AutomationLiveExpectationState
 from .automation_live_report import AutomationLiveReport
@@ -3414,6 +3418,7 @@ from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
+from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
@@ -4987,6 +4992,10 @@ __all__ = (
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationLiveBaseline",
+    "AutomationLiveBaselineHistory",
+    "AutomationLiveBaselinePolicy",
+    "AutomationLiveBaselinePolicyVersion",
     "AutomationLiveExpectation",
     "AutomationLiveExpectationState",
     "AutomationLiveReport",
@@ -7771,6 +7780,7 @@ __all__ = (
     "ProjectSourceRefScanRequest",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
+    "PromoteAutomationLiveBaselineRequest",
     "PromoteProjectEnvironmentRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",

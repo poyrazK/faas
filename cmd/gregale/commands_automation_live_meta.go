@@ -14,9 +14,11 @@ func automationLiveCLISubs() []cliSub {
 		cliFlag{Name: "confirm-real-actions", Bool: true, Req: true, Short: "confirm this case can perform real actions"},
 		cliFlag{Name: "wait", Bool: true, Short: "wait and require a current passing assertion verdict"})
 	return []cliSub{
+		{Name: "baseline", Short: "Explicitly promote and inspect named baseline audit history", Subcommands: automationLiveBaselineCLISubs()},
 		{Name: "gate", Short: "Require passing retained suite evidence for an explicit candidate target; read-only", Flags: flags(
 			cliFlag{Name: "policy", Value: "FILE", Short: "versioned required-case coverage policy JSON"},
-			cliFlag{Name: "baseline", Value: "UUID", Req: true, Short: "retained baseline suite UUID"},
+			cliFlag{Name: "baseline", Value: "UUID", Short: "retained baseline suite UUID; exclusive with baseline-name"},
+			cliFlag{Name: "baseline-name", Value: "NAME", Short: "resolve a named baseline; exclusive with baseline"},
 			cliFlag{Name: "candidate", Value: "UUID", Req: true, Short: "distinct retained candidate suite UUID"},
 			cliFlag{Name: "expected-version", Value: "N", Req: true, Short: "expected candidate saved automation version"},
 			cliFlag{Name: "expected-published-version", Value: "N", Req: true, Short: "expected candidate published revision"},
@@ -46,4 +48,10 @@ func automationLiveSuiteCLIFlags() []cliFlag {
 		{Name: "timeout", Value: "DURATION", Short: "total invocation deadline (default 5m, up to 1h)"},
 		{Name: "poll-interval", Value: "DURATION", Short: "poll interval (default 3s, 1s to 1m)"},
 	}
+}
+
+func automationLiveBaselineCLISubs() []cliSub {
+	common := []cliFlag{{Name: "app", Value: "SLUG", Req: true, Short: "app slug"}, {Name: "name", Value: "NAME", Req: true, Short: "automation name"}, {Name: "baseline-name", Value: "NAME", Req: true, Short: "named release track, such as production"}}
+	promote := append(append([]cliFlag{}, common...), cliFlag{Name: "suite", Value: "UUID", Req: true, Short: "passing retained suite UUID"}, cliFlag{Name: "promotion-id", Value: "UUID", Req: true, Short: "stable promotion UUID; preserve for retries"}, cliFlag{Name: "expected-revision", Value: "N", Req: true, Short: "current baseline revision; explicit 0 creates"}, cliFlag{Name: "expected-version", Value: "N", Req: true, Short: "expected candidate saved version"}, cliFlag{Name: "expected-published-version", Value: "N", Req: true, Short: "expected published revision"}, cliFlag{Name: "expected-deployment-id", Value: "UUID", Req: true, Short: "expected candidate deployment UUID"}, cliFlag{Name: "policy", Value: "FILE", Req: true, Short: "version 2 coverage and age policy JSON"})
+	return []cliSub{{Name: "show", Short: "Read the current immutable promotion receipt", Flags: common}, {Name: "history", Short: "Read up to 100 recent promotions", Flags: common}, {Name: "promote", Short: "Promote passing evidence with revision protection; never execute workflows", Flags: promote}}
 }

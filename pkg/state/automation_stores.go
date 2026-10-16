@@ -141,6 +141,7 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 		m.automations = make(map[string]Automation)
 	}
 	if mutation.Action == "delete" {
+		m.clearAutomationLiveBaselinesLocked(appID, name)
 		delete(m.automations, key)
 	} else {
 		m.automations[key] = copyAutomation(next)

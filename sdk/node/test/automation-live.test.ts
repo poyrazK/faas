@@ -108,3 +108,33 @@ test('shared live suites save only frozen metadata and read retained history', a
   assert.equal((await WorkflowsService.listAutomationLiveSuites({ slug: 'billing', name: 'report' })).suites.length, 1);
   assert.deepEqual(received, ['PUT ' + root + '/' + suiteId, 'GET ' + root + '/' + suiteId, 'GET ' + root]);
 });
+
+test('named baseline promotion preserves explicit revision and policy; head and history are reads', async t => {
+  const calls: string[] = [];
+  const policy = { version: 2 as const, required_cases: ['happy'], max_candidate_age_seconds: 3600 };
+  const body = { suite_id: '00000000-0000-4000-8000-000000000010', expected_revision: 0, expected_version: 7, expected_published_version: 4, expected_deployment_id: '00000000-0000-4000-8000-000000000002', policy };
+  const promotionId = '00000000-0000-4000-8000-000000000020';
+  const receipt = { promotion_id: promotionId, baseline_name: 'production', revision: 1, policy, policy_hash: 'reviewed-policy' };
+  const server = createServer((req, res) => {
+    void (async () => {
+      calls.push(req.method + ' ' + req.url);
+      assert.equal(req.headers.authorization, 'Bearer token');
+      if (req.method === 'PUT') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), body);
+      } else assert.equal(req.headers['content-length'], undefined);
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(req.url?.endsWith('/history') ? { promotions: [receipt] } : receipt));
+    })().catch(error => { res.destroy(error); });
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'token', retry: { maxAttempts: 1, backoffMs: 0 } });
+  assert.deepEqual(await WorkflowsService.promoteAutomationLiveBaseline({ slug: 'billing', name: 'case/report', baseline: 'production', promotionId, requestBody: body }), receipt);
+  assert.deepEqual(await WorkflowsService.getAutomationLiveBaseline({ slug: 'billing', name: 'case/report', baseline: 'production' }), receipt);
+  assert.deepEqual(await WorkflowsService.getAutomationLiveBaselineHistory({ slug: 'billing', name: 'case/report', baseline: 'production' }), { promotions: [receipt] });
+  const root = '/v1/apps/billing/automations/case%2Freport/live-baselines/production';
+  assert.deepEqual(calls, [`PUT ${root}/promotions/${promotionId}`, `GET ${root}`, `GET ${root}/history`]);
+});

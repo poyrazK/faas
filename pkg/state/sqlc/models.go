@@ -9132,6 +9132,17 @@ type WorkflowAutomationFailurePolicy struct {
 	WindowSeconds    int32
 }
 
+type WorkflowAutomationLiveBaselinePromotion struct {
+	PromotionID  pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Revision     int64
+	SuiteID      pgtype.UUID
+	Receipt      []byte
+	PromotedAt   pgtype.Timestamptz
+}
+
 type WorkflowAutomationLiveSuite struct {
 	ID                pgtype.UUID
 	AppID             pgtype.UUID
