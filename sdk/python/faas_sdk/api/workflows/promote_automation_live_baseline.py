@@ -135,7 +135,8 @@ def sync_detailed(
         name (str):
         baseline (str):
         promotion_id (UUID):
-        body (PromoteAutomationLiveBaselineRequest):
+        body (PromoteAutomationLiveBaselineRequest): Explicit target suite, reviewed policy and
+            expected baseline revision for an audited promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,7 +185,8 @@ def sync(
         name (str):
         baseline (str):
         promotion_id (UUID):
-        body (PromoteAutomationLiveBaselineRequest):
+        body (PromoteAutomationLiveBaselineRequest): Explicit target suite, reviewed policy and
+            expected baseline revision for an audited promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -228,7 +230,8 @@ async def asyncio_detailed(
         name (str):
         baseline (str):
         promotion_id (UUID):
-        body (PromoteAutomationLiveBaselineRequest):
+        body (PromoteAutomationLiveBaselineRequest): Explicit target suite, reviewed policy and
+            expected baseline revision for an audited promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -275,7 +278,8 @@ async def asyncio(
         name (str):
         baseline (str):
         promotion_id (UUID):
-        body (PromoteAutomationLiveBaselineRequest):
+        body (PromoteAutomationLiveBaselineRequest): Explicit target suite, reviewed policy and
+            expected baseline revision for an audited promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

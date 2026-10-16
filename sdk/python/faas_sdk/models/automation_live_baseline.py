@@ -19,6 +19,8 @@ T = TypeVar("T", bound="AutomationLiveBaseline")
 
 @_attrs_define
 class AutomationLiveBaseline:
+    """Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy."""
+
     promotion_id: UUID
     app_id: UUID
     name: str
@@ -29,6 +31,7 @@ class AutomationLiveBaseline:
     suite: AutomationLiveSuiteSummary
     """Retained suite identity and linked-run counts. Listing is not an assertion verdict."""
     policy: AutomationLiveBaselinePolicy
+    """Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion."""
     policy_hash: str
     cases_passed: int
     oldest_run_created_at: datetime.datetime

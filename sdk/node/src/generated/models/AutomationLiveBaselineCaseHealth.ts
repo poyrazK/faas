@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Current retained verification availability and renewal readiness for one promoted suite case.
+ */
 export type AutomationLiveBaselineCaseHealth = {
   name: string;
   run_id?: string;

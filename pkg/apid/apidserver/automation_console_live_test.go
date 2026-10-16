@@ -2,6 +2,7 @@
 package apidserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -121,20 +122,25 @@ func TestAutomationConsoleLiveAPIFencesAndSafeReports(t *testing.T) {
 // executed by portable HTTP/browser qualification.
 func consoleFinishLiveFixture(t *testing.T, e apidserver.TestEnv, runID string) {
 	t.Helper()
+	consoleFinishLiveFixtureContext(t.Context(), t, e, runID)
+}
+
+func consoleFinishLiveFixtureContext(ctx context.Context, t *testing.T, e apidserver.TestEnv, runID string) {
+	t.Helper()
 	store := *e.Store()
-	if err := store.CreateWorkflowSteps(t.Context(), runID, []*state.WorkflowStep{{StepName: "collect"}, {StepName: "deliver"}}); err != nil {
+	if err := store.CreateWorkflowSteps(ctx, runID, []*state.WorkflowStep{{StepName: "collect"}, {StepName: "deliver"}}); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := store.MarkWorkflowStepStatus(t.Context(), runID, "collect", state.WorkflowStepStatusSucceeded, 2, json.RawMessage(`null`), nil); err != nil {
+	if err := store.MarkWorkflowStepStatus(ctx, runID, "collect", state.WorkflowStepStatusSucceeded, 2, json.RawMessage(`null`), nil); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := store.MarkWorkflowStepStatus(t.Context(), runID, "deliver", state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`"PRIVATE-DELIVERY-OUTPUT"`), nil); err != nil {
+	if err := store.MarkWorkflowStepStatus(ctx, runID, "deliver", state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`"PRIVATE-DELIVERY-OUTPUT"`), nil); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := store.MarkWorkflowRunStatus(t.Context(), runID, state.WorkflowRunStatusSucceeded, json.RawMessage(`"PRIVATE-RUN-OUTPUT"`), nil); err != nil {
+	if err := store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusSucceeded, json.RawMessage(`"PRIVATE-RUN-OUTPUT"`), nil); err != nil {
 		t.Error(err)
 	}
 }

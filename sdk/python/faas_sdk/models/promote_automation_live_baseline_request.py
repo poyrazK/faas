@@ -15,12 +15,15 @@ T = TypeVar("T", bound="PromoteAutomationLiveBaselineRequest")
 
 @_attrs_define
 class PromoteAutomationLiveBaselineRequest:
+    """Explicit target suite, reviewed policy and expected baseline revision for an audited promotion."""
+
     suite_id: UUID
     expected_revision: int
     expected_version: int
     expected_published_version: int
     expected_deployment_id: UUID
     policy: AutomationLiveBaselinePolicy
+    """Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion."""
 
     def to_dict(self) -> dict[str, Any]:
         suite_id = str(self.suite_id)

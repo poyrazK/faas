@@ -14,6 +14,8 @@ T = TypeVar("T", bound="AutomationLiveBaselineRetirement")
 
 @_attrs_define
 class AutomationLiveBaselineRetirement:
+    """Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin."""
+
     retirement_id: UUID
     app_id: UUID
     name: str

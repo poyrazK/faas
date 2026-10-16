@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { AutomationLiveBaselinePolicy } from './AutomationLiveBaselinePolicy.js';
 import type { AutomationLiveSuiteSummary } from './AutomationLiveSuiteSummary.js';
+/**
+ * Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy.
+ */
 export type AutomationLiveBaseline = {
   promotion_id: string;
   app_id: string;

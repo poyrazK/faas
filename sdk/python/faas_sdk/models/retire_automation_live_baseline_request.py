@@ -10,6 +10,8 @@ T = TypeVar("T", bound="RetireAutomationLiveBaselineRequest")
 
 @_attrs_define
 class RetireAutomationLiveBaselineRequest:
+    """Expected positive baseline revision required to permanently retire an active name."""
+
     expected_revision: int
 
     def to_dict(self) -> dict[str, Any]:

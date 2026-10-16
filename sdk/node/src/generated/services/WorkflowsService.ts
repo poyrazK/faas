@@ -2633,6 +2633,9 @@ export class WorkflowsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Automation whose baseline catalog is being listed.
+     */
     name: string,
   }): CancelablePromise<ListAutomationLiveBaselinesResponse> {
     return __request(OpenAPI, {
@@ -2661,7 +2664,7 @@ export class WorkflowsService {
   /**
    * Read the current named automation baseline promotion receipt.
    * Read-only; requires app read scope. Records the exact suite, revision, actor, promotion time and reviewed coverage/age policy.
-   * @returns AutomationLiveBaseline Immutable promotion receipt(s); reads do not certify current evidence validity.
+   * @returns AutomationLiveBaseline Current immutable promotion receipt; inspect retained evidence separately for current validity.
    * @throws ApiError
    */
   public static getAutomationLiveBaseline({
@@ -2673,9 +2676,12 @@ export class WorkflowsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Automation whose current baseline receipt is being read.
+     */
     name: string,
     /**
-     * Named release track within this app and automation; does not change execution routing.
+     * Baseline name whose current promotion receipt is requested.
      */
     baseline: string,
   }): CancelablePromise<AutomationLiveBaseline> {
@@ -2693,7 +2699,7 @@ export class WorkflowsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
-        410: `This name is permanently retired. Choose an active baseline explicitly; read history for the retirement audit.`,
+        410: `This baseline name is permanently retired; its retirement audit remains available from history.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2707,7 +2713,7 @@ export class WorkflowsService {
   /**
    * Read the last 100 promotions for a named automation baseline.
    * Newest revision first. History is immutable until bounded retention or automation deletion. Requires app read scope.
-   * @returns AutomationLiveBaselineHistory Immutable promotion receipt(s); reads do not certify current evidence validity.
+   * @returns AutomationLiveBaselineHistory Bounded immutable promotion history, including the permanent retirement receipt when present.
    * @throws ApiError
    */
   public static getAutomationLiveBaselineHistory({
@@ -2719,9 +2725,12 @@ export class WorkflowsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Automation whose baseline audit history is being read.
+     */
     name: string,
     /**
-     * Named release track within this app and automation; does not change execution routing.
+     * Baseline name whose immutable promotion and retirement history is requested.
      */
     baseline: string,
   }): CancelablePromise<AutomationLiveBaselineHistory> {
@@ -2752,7 +2761,7 @@ export class WorkflowsService {
   /**
    * Deliberately promote passing retained evidence to a named baseline.
    * Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes or checks assertions. At most 20 active and 100 lifetime names per automation, with 100 receipts per name; active current suite groups are pinned within the existing suite limit, while linked run retention still applies. Retired names cannot be reused; original promotion retries return historical receipts without reactivation.
-   * @returns AutomationLiveBaseline Immutable promotion receipt(s); reads do not certify current evidence validity.
+   * @returns AutomationLiveBaseline Attributed promotion receipt for this request, replayed unchanged on an identical retained retry.
    * @throws ApiError
    */
   public static promoteAutomationLiveBaseline({
@@ -2766,9 +2775,12 @@ export class WorkflowsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Automation whose passing suite is being promoted.
+     */
     name: string,
     /**
-     * Named release track within this app and automation; does not change execution routing.
+     * Release track to promote within this automation; execution routing is unchanged.
      */
     baseline: string,
     /**
@@ -2794,7 +2806,7 @@ export class WorkflowsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
-        410: `This name is permanently retired. Choose an active baseline explicitly; read history for the retirement audit.`,
+        410: `Promotion cannot reuse a retired baseline name. Choose a different active name explicitly.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2822,9 +2834,12 @@ export class WorkflowsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Automation whose named baseline is being retired.
+     */
     name: string,
     /**
-     * Named release track within this app and automation; does not change execution routing.
+     * Baseline name to retire permanently within this automation.
      */
     baseline: string,
     /**
@@ -2850,7 +2865,7 @@ export class WorkflowsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: automation_version_conflict | automation_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
-        410: `This name is permanently retired. Choose an active baseline explicitly; read history for the retirement audit.`,
+        410: `The requested baseline was previously retired by another retirement request. Read its audit history.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

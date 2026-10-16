@@ -64,9 +64,10 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	authenticated := h.server.auth(h.server.requireScope(scopes...)(next))
 	response := h.server.forwardDashboardJSON(request, acct, method, path, "", "", operation.Body,
 		func(w http.ResponseWriter, forwarded *http.Request, account state.Account) {
-			if operation.Kind == "runs" {
+			switch operation.Kind {
+			case "runs":
 				forwarded.URL.RawQuery = url.Values{"workflow_name": {operation.Name}, "limit": {"20"}}.Encode()
-			} else if operation.Kind == "unbind-webhook" {
+			case "unbind-webhook":
 				forwarded.URL.RawQuery = url.Values{"expected_version": {strconv.FormatInt(operation.Version, 10)}}.Encode()
 			}
 			authenticated(w, forwarded)

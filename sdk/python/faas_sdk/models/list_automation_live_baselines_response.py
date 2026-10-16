@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ListAutomationLiveBaselinesResponse")
 
 @_attrs_define
 class ListAutomationLiveBaselinesResponse:
+    """Bounded sorted catalog of active named baseline heads and their current evidence observations."""
+
     baselines: list[AutomationLiveBaselineHealth]
     observed_at: datetime.datetime
 

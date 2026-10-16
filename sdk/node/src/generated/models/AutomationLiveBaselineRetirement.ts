@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin.
+ */
 export type AutomationLiveBaselineRetirement = {
   retirement_id: string;
   app_id: string;

@@ -50901,6 +50901,7 @@ paths:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
+      description: Automation whose baseline catalog is being listed.
       in: path
       required: true
       schema:
@@ -50945,6 +50946,7 @@ paths:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
+      description: Automation whose current baseline receipt is being read.
       in: path
       required: true
       schema:
@@ -50959,7 +50961,7 @@ paths:
         minLength: 1
         maxLength: 63
         pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-      description: Named release track within this app and automation; does not change execution routing.
+      description: Baseline name whose current promotion receipt is requested.
     get:
       tags:
       - workflows
@@ -50969,7 +50971,7 @@ paths:
         coverage/age policy.
       responses:
         '200':
-          description: Immutable promotion receipt(s); reads do not certify current evidence validity.
+          description: Current immutable promotion receipt; inspect retained evidence separately for current validity.
           content:
             application/json:
               schema:
@@ -50991,8 +50993,7 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: This name is permanently retired. Choose an active baseline explicitly; read history for the retirement
-            audit.
+          description: This baseline name is permanently retired; its retirement audit remains available from history.
           content:
             application/problem+json:
               schema:
@@ -51001,6 +51002,7 @@ paths:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
+      description: Automation whose baseline audit history is being read.
       in: path
       required: true
       schema:
@@ -51015,7 +51017,7 @@ paths:
         minLength: 1
         maxLength: 63
         pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-      description: Named release track within this app and automation; does not change execution routing.
+      description: Baseline name whose immutable promotion and retirement history is requested.
     get:
       tags:
       - workflows
@@ -51025,7 +51027,7 @@ paths:
         read scope.
       responses:
         '200':
-          description: Immutable promotion receipt(s); reads do not certify current evidence validity.
+          description: Bounded immutable promotion history, including the permanent retirement receipt when present.
           content:
             application/json:
               schema:
@@ -51050,6 +51052,7 @@ paths:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
+      description: Automation whose passing suite is being promoted.
       in: path
       required: true
       schema:
@@ -51064,7 +51067,7 @@ paths:
         minLength: 1
         maxLength: 63
         pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-      description: Named release track within this app and automation; does not change execution routing.
+      description: Release track to promote within this automation; execution routing is unchanged.
     - name: promotion_id
       in: path
       required: true
@@ -51091,7 +51094,7 @@ paths:
               $ref: '#/components/schemas/PromoteAutomationLiveBaselineRequest'
       responses:
         '200':
-          description: Immutable promotion receipt(s); reads do not certify current evidence validity.
+          description: Attributed promotion receipt for this request, replayed unchanged on an identical retained retry.
           content:
             application/json:
               schema:
@@ -51113,8 +51116,7 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: This name is permanently retired. Choose an active baseline explicitly; read history for the retirement
-            audit.
+          description: Promotion cannot reuse a retired baseline name. Choose a different active name explicitly.
           content:
             application/problem+json:
               schema:
@@ -51123,6 +51125,7 @@ paths:
     parameters:
     - $ref: '#/components/parameters/Slug'
     - name: name
+      description: Automation whose named baseline is being retired.
       in: path
       required: true
       schema:
@@ -51137,7 +51140,7 @@ paths:
         minLength: 1
         maxLength: 63
         pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-      description: Named release track within this app and automation; does not change execution routing.
+      description: Baseline name to retire permanently within this automation.
     - name: retirement_id
       in: path
       required: true
@@ -51185,8 +51188,7 @@ paths:
         '503':
           $ref: '#/components/responses/ServerError'
         '410':
-          description: This name is permanently retired. Choose an active baseline explicitly; read history for the retirement
-            audit.
+          description: The requested baseline was previously retired by another retirement request. Read its audit history.
           content:
             application/problem+json:
               schema:
@@ -73125,6 +73127,7 @@ components:
           format: uuid
       description: One saved live case and its optional existing verification run identity.
     AutomationLiveBaselinePolicy:
+      description: Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion.
       type: object
       additionalProperties: false
       required:
@@ -73151,6 +73154,7 @@ components:
           minimum: 1
           maximum: 9223372036
     PromoteAutomationLiveBaselineRequest:
+      description: Explicit target suite, reviewed policy and expected baseline revision for an audited promotion.
       type: object
       additionalProperties: false
       required:
@@ -73183,6 +73187,7 @@ components:
         policy:
           $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
     AutomationLiveBaseline:
+      description: Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy.
       type: object
       additionalProperties: false
       required:
@@ -73245,6 +73250,7 @@ components:
           format: double
           minimum: 0
     AutomationLiveBaselineCaseHealth:
+      description: Current retained verification availability and renewal readiness for one promoted suite case.
       type: object
       additionalProperties: false
       required:
@@ -73266,6 +73272,7 @@ components:
           - unavailable
           - not_started
     AutomationLiveBaselineHealth:
+      description: Coherent read-only evidence health observations for a named baseline head.
       type: object
       additionalProperties: false
       required:
@@ -73315,6 +73322,7 @@ components:
           minimum: 1
           maximum: 9223372036
     ListAutomationLiveBaselinesResponse:
+      description: Bounded sorted catalog of active named baseline heads and their current evidence observations.
       type: object
       additionalProperties: false
       required:
@@ -73330,6 +73338,7 @@ components:
           type: string
           format: date-time
     RetireAutomationLiveBaselineRequest:
+      description: Expected positive baseline revision required to permanently retire an active name.
       type: object
       additionalProperties: false
       required:
@@ -73341,6 +73350,7 @@ components:
           minimum: 1
           maximum: 9223372036854775806
     AutomationLiveBaselineRetirement:
+      description: Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin.
       type: object
       additionalProperties: false
       required:
@@ -73384,6 +73394,7 @@ components:
           type: string
           format: date-time
     AutomationLiveBaselineHistory:
+      description: Bounded promotion audit history and optional permanent retirement receipt for one baseline name.
       type: object
       additionalProperties: false
       required:

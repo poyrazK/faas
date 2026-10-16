@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { AutomationLiveBaseline } from './AutomationLiveBaseline.js';
 import type { AutomationLiveBaselineCaseHealth } from './AutomationLiveBaselineCaseHealth.js';
+/**
+ * Coherent read-only evidence health observations for a named baseline head.
+ */
 export type AutomationLiveBaselineHealth = {
   baseline: AutomationLiveBaseline;
   /**

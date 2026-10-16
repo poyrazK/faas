@@ -120,7 +120,7 @@ func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cook
 			if err := r.ParseForm(); err != nil {
 				t.Error(err)
 			} else {
-				consoleFinishLiveFixture(t, e, r.PostFormValue("verification_id"))
+				consoleFinishLiveFixtureContext(r.Context(), t, e, r.PostFormValue("verification_id"))
 			}
 		}
 		(*e.H()).ServeHTTP(w, r)
@@ -129,22 +129,22 @@ func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cook
 			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 			switch progressReads.Add(1) {
 			case 1:
-				if err := (*e.Store()).MarkWorkflowRunStatus(t.Context(), id, state.WorkflowRunStatusRunning, nil, nil); err != nil {
+				if err := (*e.Store()).MarkWorkflowRunStatus(r.Context(), id, state.WorkflowRunStatusRunning, nil, nil); err != nil {
 					t.Error(err)
 				}
 			case 2:
-				if err := (*e.Store()).MarkWorkflowRunStatus(t.Context(), id, state.WorkflowRunStatusAwaitingEvent, nil, nil); err != nil {
+				if err := (*e.Store()).MarkWorkflowRunStatus(r.Context(), id, state.WorkflowRunStatusAwaitingEvent, nil, nil); err != nil {
 					t.Error(err)
 				}
 			case 3:
-				consoleFinishLiveFixture(t, e, id)
+				consoleFinishLiveFixtureContext(r.Context(), t, e, id)
 			}
 		}
 		if mode == "webhook" && r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/hooks/") {
 			// Advance fixture fanout after verified ingress, without executing guests.
-			work, err := (*e.Store()).ClaimDuePublishedEvent(t.Context(), time.Now().UTC())
+			work, err := (*e.Store()).ClaimDuePublishedEvent(r.Context(), time.Now().UTC())
 			if err == nil && len(work.RecipientSnapshot) == 1 {
-				if _, err := (*e.Store()).AdmitEventWorkflow(t.Context(), work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID); err != nil {
+				if _, err := (*e.Store()).AdmitEventWorkflow(r.Context(), work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID); err != nil {
 					t.Errorf("admit browser webhook fixture: %v", err)
 				}
 			}

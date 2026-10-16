@@ -15,6 +15,8 @@ T = TypeVar("T", bound="AutomationLiveBaselinePolicy")
 
 @_attrs_define
 class AutomationLiveBaselinePolicy:
+    """Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion."""
+
     version: AutomationLiveBaselinePolicyVersion
     required_cases: list[str]
     max_candidate_age_seconds: int

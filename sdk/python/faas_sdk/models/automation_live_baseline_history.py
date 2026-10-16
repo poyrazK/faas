@@ -17,8 +17,11 @@ T = TypeVar("T", bound="AutomationLiveBaselineHistory")
 
 @_attrs_define
 class AutomationLiveBaselineHistory:
+    """Bounded promotion audit history and optional permanent retirement receipt for one baseline name."""
+
     promotions: list[AutomationLiveBaseline]
     retirement: AutomationLiveBaselineRetirement | Unset = UNSET
+    """Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin."""
 
     def to_dict(self) -> dict[str, Any]:
         promotions = []

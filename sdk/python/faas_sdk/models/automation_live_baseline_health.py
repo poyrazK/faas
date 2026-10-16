@@ -26,7 +26,10 @@ T = TypeVar("T", bound="AutomationLiveBaselineHealth")
 
 @_attrs_define
 class AutomationLiveBaselineHealth:
+    """Coherent read-only evidence health observations for a named baseline head."""
+
     baseline: AutomationLiveBaseline
+    """Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy."""
     evidence_status: AutomationLiveBaselineHealthEvidenceStatus
     """Availability of current recorded reports; not a gate verdict."""
     renewal_status: AutomationLiveBaselineHealthRenewalStatus

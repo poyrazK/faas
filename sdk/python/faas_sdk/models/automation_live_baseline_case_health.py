@@ -17,6 +17,8 @@ T = TypeVar("T", bound="AutomationLiveBaselineCaseHealth")
 
 @_attrs_define
 class AutomationLiveBaselineCaseHealth:
+    """Current retained verification availability and renewal readiness for one promoted suite case."""
+
     name: str
     status: AutomationLiveBaselineCaseHealthStatus
     run_id: UUID | Unset = UNSET

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AutomationLiveBaselinePolicy } from './AutomationLiveBaselinePolicy.js';
+/**
+ * Explicit target suite, reviewed policy and expected baseline revision for an audited promotion.
+ */
 export type PromoteAutomationLiveBaselineRequest = {
   suite_id: string;
   expected_revision: number;
