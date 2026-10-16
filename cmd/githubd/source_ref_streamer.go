@@ -29,7 +29,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -242,7 +241,9 @@ func (s *sourceRefStreamer) resolveCommitSHA(ctx context.Context, repoFullName, 
 		return "", fmt.Errorf("githubd: source-ref streamer: new commit request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
+	// Only the immutable SHA is needed. The JSON representation also contains
+	// nested metadata and potentially large file patches.
+	req.Header.Set("Accept", "application/vnd.github.sha")
 	req.Header.Set("User-Agent", "onebox-faas-githubd/1.0")
 
 	resp, err := s.http.Do(req)
@@ -263,12 +264,12 @@ func (s *sourceRefStreamer) resolveCommitSHA(ctx context.Context, repoFullName, 
 		return "", fmt.Errorf("githubd: source-ref streamer: commit lookup %d: %w", resp.StatusCode, gitfetch.ErrBadArchive)
 	}
 
-	var result map[string]string
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(&result); err != nil {
-		return "", fmt.Errorf("githubd: source-ref streamer: invalid commit response: %w", err)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 129))
+	if err != nil {
+		return "", fmt.Errorf("githubd: source-ref streamer: read commit SHA: %w", err)
 	}
-	commitSHA := result["sha"]
-	if !isCanonicalSourceRefSHA(commitSHA) {
+	commitSHA := strings.TrimSpace(string(body))
+	if len(body) > 128 || !isCanonicalSourceRefSHA(commitSHA) {
 		return "", fmt.Errorf("githubd: source-ref streamer: invalid commit SHA: %w", gitfetch.ErrBadArchive)
 	}
 	return commitSHA, nil
