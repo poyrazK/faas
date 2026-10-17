@@ -456,12 +456,17 @@ func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 	scaleLimits := api.MustLimitsFor(api.PlanScale)
 	l := NewNodeLedger()
 
-	// Fill node-0 to its per-app concurrency cap (20 for scale);
-	// each admit is 1,032 MB billable, so the per-node resident
-	// reaches ~20,640 MB < 23,800 MB. That exercises the per-node
-	// ceiling's path without overflowing it; the assertion below
-	// verifies the ceiling wasn't crossed.
-	for i := 0; i < scaleLimits.MaxConcurrency; i++ {
+	// Fill node-0 as far as its ceiling allows, capped at the per-app
+	// concurrency limit. The count derives from the plan's RAM so a
+	// plan change (ADR-1350 doubled Scale to 2,048 MB: 11 admits of
+	// 2,056 MB = 22,616 MB) keeps exercising the per-node ceiling's
+	// path without overflowing it; the assertion below verifies the
+	// ceiling wasn't crossed.
+	fill := min(scaleLimits.MaxConcurrency, halfCeiling/(scaleLimits.RAMMB+api.PerVMOverheadMB))
+	if fill < 2 {
+		t.Fatalf("fixture admits %d Scale instances under %d MB; widen the ceiling", fill, halfCeiling)
+	}
+	for i := 0; i < fill; i++ {
 		err := l.Admit(Request{
 			Instance:       fmt.Sprintf("node0-%d", i),
 			AppID:          "node0-app", // distinct appID so per-app cap is freshly applied
@@ -485,10 +490,10 @@ func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 	// that's untouched. The per-node ceiling check inside Admit
 	// must admit normally — a future refactor that mistakenly
 	// folds the global 47,600 MB cap into the per-node Admit
-	// would refuse this on the cluster-sum ground (we'd already
-	// be at 20,640 MB cluster-wide, which is well under 47,600 MB
-	// anyway, but a tighter fold against the cluster sum would
-	// surface here).
+	// would refuse this on the cluster-sum ground (node-0 is
+	// already near its ceiling, well under 47,600 MB cluster-wide,
+	// but a tighter fold against the cluster sum would surface
+	// here).
 	err := l.Admit(Request{
 		Instance:       "node1-0",
 		AppID:          "node1-app", // distinct appID so per-app cap is freshly applied
