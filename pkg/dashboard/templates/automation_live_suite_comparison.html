@@ -1,0 +1,26 @@
+{{define "automation-live-suite-comparison"}}
+{{if .Data.LiveSuite}}
+<section id="automation-live-suite-comparison"><h2>Compare live suites</h2>
+<p>Use the selected suite as the candidate and choose a baseline. Comparison reads recorded results; it does not start runs or check assertions.</p>
+<form method="get" action="{{.Data.BaseURL}}">
+<input type="hidden" name="name" value="{{.Data.Name}}"><input type="hidden" name="suite" value="{{.Data.LiveSuite.ID}}">
+<label for="live-suite-baseline">Baseline suite</label><select id="live-suite-baseline" name="baseline" required>
+<option value="">Choose a retained suite</option>
+{{with .Data.LiveSuites}}{{range .Suites}}<option value="{{.ID}}" {{if eq .ID $.Data.LiveSuiteBaselineID}}selected{{end}}>{{.CreatedAt.UTC.Format "2006-01-02 15:04:05 UTC"}} · revision {{.PublishedVersion}} · {{.ID}}</option>{{end}}{{end}}
+</select><button type="submit">Compare recorded results</button></form>
+{{if .Data.LiveSuiteComparisonError}}<p class="notice" role="status">{{.Data.LiveSuiteComparisonError}}</p>{{end}}
+{{with .Data.LiveSuiteComparison}}
+<p>Baseline <a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.Baseline.ID}}"><code>{{.Baseline.ID}}</code></a>: revision {{.Baseline.PublishedVersion}}, deployment <code>{{.Baseline.DeploymentID}}</code>{{if .BaselineOutdated}} (historical target){{end}}.</p>
+<p>Candidate <a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.Candidate.ID}}"><code>{{.Candidate.ID}}</code></a>: revision {{.Candidate.PublishedVersion}}, deployment <code>{{.Candidate.DeploymentID}}</code>{{if .CandidateOutdated}} (historical target){{end}}.</p>
+<p>Observed {{.ObservedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}. Historical targets can still have valid recorded results. Reports from resumed or changed runs are unknown until explicitly checked again.</p>
+<p>{{.Summary.Regressions}} regressions · {{.Summary.Recoveries}} recoveries · {{.Summary.Unchanged}} unchanged · {{.Summary.Added}} added · {{.Summary.Removed}} removed · {{.Summary.Incompatible}} incompatible · {{.Summary.Unknown}} unknown</p>
+<p>Regressions and recoveries require matching frozen definitions, inputs and assertions. Incompatible cases changed those checks. Added and removed cases describe the selected suite coverage. Unknown results cannot establish a pass or failure.</p>
+<div class="table-scroll"><table><thead><tr><th>Case</th><th>Change</th><th>Baseline result</th><th>Candidate result</th></tr></thead><tbody>
+{{range .Cases}}<tr><td>{{.Name}}</td><td>{{.Change}}</td>
+<td>{{with .Baseline}}{{.Result}}{{if .RunID}} · <a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;verification={{.RunID}}">Inspect run</a>{{end}}{{else}}Not selected{{end}}</td>
+<td>{{with .Candidate}}{{.Result}}{{if .RunID}} · <a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;verification={{.RunID}}">Inspect run</a>{{end}}{{else}}Not selected{{end}}</td></tr>{{end}}
+</tbody></table></div>
+<p><a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.Candidate.ID}}&amp;baseline={{.Baseline.ID}}">Refresh comparison</a> · <a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.Baseline.ID}}&amp;baseline={{.Candidate.ID}}">Swap baseline and candidate</a></p>
+{{end}}
+</section>{{end}}
+{{end}}

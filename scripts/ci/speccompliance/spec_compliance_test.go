@@ -251,6 +251,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
+	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
+	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -312,6 +314,11 @@ var routeExclude = map[string]bool{
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
 	"POST /v1/otel/v1/traces": true,
+
+	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
+	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
+	"POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
+	"POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
 }
 
 func init() {
@@ -636,6 +643,9 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
+	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
+	"AutomationLiveBaselinePolicy":          true,
 	"ApplicationStandardSettings":           true, // appstandards field map checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardAdoption":           true, // appstandards wire types checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardSource":             true,
@@ -1213,6 +1223,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
 		filepath.Join(root, "pkg", "api", "automation_check_evidence.go"),
 		filepath.Join(root, "pkg", "api", "automation_publish_checks.go"),
+		filepath.Join(root, "pkg", "api", "automation_tests.go"),
+		filepath.Join(root, "pkg", "api", "automation_live.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_baselines.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_baseline_listing.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_baseline_retirement.go"),
+
+		filepath.Join(root, "pkg", "api", "automation_live_suites.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_suite_execution.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_suite_comparison.go"),
 		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),

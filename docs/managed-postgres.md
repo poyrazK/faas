@@ -26,7 +26,7 @@ database reservation boundary:
 Storage is pooled across the account's databases: one database may use the
 whole pool. Storage and compute are limits, not billed overage, until managed
 PostgreSQL is invoiced
-([ADR-1350](adr/1350-plan-entitlements-from-october-2026-cogs-report.md)).
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable

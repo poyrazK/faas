@@ -145,6 +145,9 @@ type Querier interface {
 	AutomationFailureRetainedEvents(ctx context.Context, db DBTX, arg AutomationFailureRetainedEventsParams) (int64, error)
 	AutomationFailureSignals(ctx context.Context, db DBTX, arg AutomationFailureSignalsParams) (AutomationFailureSignalsRow, error)
 	AutomationFailureTargetExists(ctx context.Context, db DBTX, arg AutomationFailureTargetExistsParams) (bool, error)
+	AutomationLiveDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
+	AutomationLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (AutomationLiveRunStateRow, error)
+	AutomationLiveStep(ctx context.Context, db DBTX, arg AutomationLiveStepParams) ([]AutomationLiveStepRow, error)
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
 	BeginClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg BeginClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	BeginEnvironmentWorkloadRecovery(ctx context.Context, db DBTX, arg BeginEnvironmentWorkloadRecoveryParams) (EnvironmentWorkloadRetirement, error)
@@ -408,6 +411,8 @@ type Querier interface {
 	// Bindings, references and plaintext variables share the app's environment-key quota.
 	CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error)
 	CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error)
+	CountAutomationLiveBaselineNames(ctx context.Context, db DBTX, arg CountAutomationLiveBaselineNamesParams) (int64, error)
+	CountAutomationLiveBaselines(ctx context.Context, db DBTX, arg CountAutomationLiveBaselinesParams) (int64, error)
 	CountCloneCheckpointPostgresCredentials(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error)
 	CountCustomerOperationDeliveryRetries(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
@@ -437,6 +442,7 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error)
 	CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
+	CountProtectedAutomationLiveSuites(ctx context.Context, db DBTX, arg CountProtectedAutomationLiveSuitesParams) (int64, error)
 	CountReadinessSubscriptions(ctx context.Context, db DBTX, arg CountReadinessSubscriptionsParams) (int64, error)
 	CountTriggersByAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -585,6 +591,8 @@ type Querier interface {
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
 	DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error)
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
+	DeleteAutomationLiveSuites(ctx context.Context, db DBTX, arg DeleteAutomationLiveSuitesParams) error
+	DeleteAutomationLiveVerifications(ctx context.Context, db DBTX, arg DeleteAutomationLiveVerificationsParams) error
 	DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, arg DeleteAutomationScheduleCursorParams) error
 	DeleteCloneCheckpointObjectPublicationGrant(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationGrantParams) (int64, error)
 	DeleteCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationSecretParams) (int64, error)
@@ -1137,6 +1145,9 @@ type Querier interface {
 	// Keep a sentinel row so the API can report when a busy flag has more than
 	// the bounded response can display. Most flags have at most 16 live variants.
 	FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg FeatureFlagRequestOutcomesParams) ([]FeatureFlagRequestOutcomesRow, error)
+	// Create a row version so repeatable-read writers waiting on admission locks
+	// cannot commit promotion/retirement decisions from an older snapshot.
+	FenceAutomationLiveBaselineMutation(ctx context.Context, db DBTX, arg FenceAutomationLiveBaselineMutationParams) error
 	FenceManagedPostgresCutoverAdmission(ctx context.Context, db DBTX, arg FenceManagedPostgresCutoverAdmissionParams) (pgtype.Timestamptz, error)
 	FinalizeRetainedServiceRolloutAbortTarget(ctx context.Context, db DBTX, arg FinalizeRetainedServiceRolloutAbortTargetParams) (string, error)
 	FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg FinancialAdjustmentInsertParams) error
@@ -1245,6 +1256,15 @@ type Querier interface {
 	GetApplicationStandardVersion(ctx context.Context, db DBTX, arg GetApplicationStandardVersionParams) (GetApplicationStandardVersionRow, error)
 	GetArtifactRuntimeRelease(ctx context.Context, db DBTX, arg GetArtifactRuntimeReleaseParams) (RuntimeRelease, error)
 	GetAutomationFailurePolicy(ctx context.Context, db DBTX, arg GetAutomationFailurePolicyParams) ([]byte, error)
+	GetAutomationForLiveVerification(ctx context.Context, db DBTX, arg GetAutomationForLiveVerificationParams) (WorkflowAutomationDefinition, error)
+	GetAutomationLiveBaselineHead(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHeadParams) (WorkflowAutomationLiveBaselinePromotion, error)
+	GetAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineHistoryParams) ([]WorkflowAutomationLiveBaselinePromotion, error)
+	GetAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, promotionID pgtype.UUID) (WorkflowAutomationLiveBaselinePromotion, error)
+	GetAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg GetAutomationLiveBaselineRetirementParams) (WorkflowAutomationLiveBaselineRetirement, error)
+	GetAutomationLiveBaselineRetirementByID(ctx context.Context, db DBTX, retirementID pgtype.UUID) (WorkflowAutomationLiveBaselineRetirement, error)
+	GetAutomationLiveSuite(ctx context.Context, db DBTX, arg GetAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error)
+	GetAutomationLiveVerification(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationParams) (WorkflowAutomationLiveVerification, error)
+	GetAutomationLiveVerificationByKey(ctx context.Context, db DBTX, arg GetAutomationLiveVerificationByKeyParams) (WorkflowAutomationLiveVerification, error)
 	GetAutomationPublishDraftVersion(ctx context.Context, db DBTX, arg GetAutomationPublishDraftVersionParams) (int64, error)
 	GetAutomationPublishPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (GetAutomationPublishPolicyRow, error)
 	GetAutomationPublishReceipt(ctx context.Context, db DBTX, arg GetAutomationPublishReceiptParams) (WorkflowAutomationPublishReceipt, error)
@@ -1516,6 +1536,10 @@ type Querier interface {
 	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
 	InsertApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg InsertApplicationStandardSnapshotCaptureParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
+	InsertAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselinePromotionParams) error
+	InsertAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselineRetirementParams) error
+	InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error)
+	InsertAutomationLiveVerification(ctx context.Context, db DBTX, arg InsertAutomationLiveVerificationParams) (WorkflowAutomationLiveVerification, error)
 	InsertBaseImageProducer(ctx context.Context, db DBTX, arg InsertBaseImageProducerParams) (BaseImageProducer, error)
 	InsertBaseImageScan(ctx context.Context, db DBTX, arg InsertBaseImageScanParams) (BaseImageScan, error)
 	InsertBindingVerificationRun(ctx context.Context, db DBTX, arg InsertBindingVerificationRunParams) error
@@ -2107,6 +2131,9 @@ type Querier interface {
 	ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]pgtype.UUID, error)
 	ListAutomationFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ListAutomationFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListAutomationFailurePolicyCandidatesParams) ([]ListAutomationFailurePolicyCandidatesRow, error)
+	ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, arg ListAutomationLiveBaselineHeadsParams) ([]WorkflowAutomationLiveBaselinePromotion, error)
+	ListAutomationLiveSuites(ctx context.Context, db DBTX, arg ListAutomationLiveSuitesParams) ([]WorkflowAutomationLiveSuite, error)
+	ListAutomationLiveVerifications(ctx context.Context, db DBTX, arg ListAutomationLiveVerificationsParams) ([]WorkflowAutomationLiveVerification, error)
 	ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowAutomationDefinition, error)
 	ListBindingVerificationRunSummaries(ctx context.Context, db DBTX, arg ListBindingVerificationRunSummariesParams) ([]ListBindingVerificationRunSummariesRow, error)
 	ListBindingVerificationTasks(ctx context.Context, db DBTX, arg ListBindingVerificationTasksParams) ([]ListBindingVerificationTasksRow, error)
@@ -2502,6 +2529,8 @@ type Querier interface {
 	// cache locks fence deletion/staleness until issuance or publication commits.
 	LockApplicationStandardSnapshotRestore(ctx context.Context, db DBTX, arg LockApplicationStandardSnapshotRestoreParams) (LockApplicationStandardSnapshotRestoreRow, error)
 	LockApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg LockApplicationStandardWorkerOperationParams) (pgtype.UUID, error)
+	LockAutomationForLiveSuite(ctx context.Context, db DBTX, arg LockAutomationForLiveSuiteParams) (WorkflowAutomationDefinition, error)
+	LockAutomationLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (LockAutomationLiveRunStateRow, error)
 	LockBindingPromotionRevision(ctx context.Context, db DBTX, arg LockBindingPromotionRevisionParams) (string, error)
 	LockBindingVerificationRun(ctx context.Context, db DBTX, arg LockBindingVerificationRunParams) (BindingVerificationRun, error)
 	LockBoundOrProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg LockBoundOrProductionQueueTriggerInvocationParams) (pgtype.UUID, error)
@@ -3216,6 +3245,8 @@ type Querier interface {
 	PruneAccountCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneAccountCustomerOperationStreamsParams) error
 	PruneAppHealthHistory(ctx context.Context, db DBTX, arg PruneAppHealthHistoryParams) error
 	PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	PruneAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg PruneAutomationLiveBaselineHistoryParams) error
+	PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg PruneAutomationLiveSuitesParams) error
 	PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg PruneCustomerOperationEventsParams) (int64, error)
 	PruneCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PruneCustomerOperationIdempotencyParams) (int64, error)
 	PruneCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneCustomerOperationStreamsParams) (int64, error)
@@ -4108,6 +4139,9 @@ type Querier interface {
 	SaveApplicationStandardControlBackup(ctx context.Context, db DBTX, arg SaveApplicationStandardControlBackupParams) error
 	SaveApplicationStandardLocalIntent(ctx context.Context, db DBTX, arg SaveApplicationStandardLocalIntentParams) (int64, error)
 	SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error
+	SaveAutomationLiveReport(ctx context.Context, db DBTX, arg SaveAutomationLiveReportParams) (int64, error)
+	// Observation only: suite/definition changes advance version through SaveAutomation.
+	SaveAutomationTestReport(ctx context.Context, db DBTX, arg SaveAutomationTestReportParams) (int64, error)
 	SaveCheckedRollback(ctx context.Context, db DBTX, arg SaveCheckedRollbackParams) error
 	SaveEnvironmentGitOpsProgress(ctx context.Context, db DBTX, arg SaveEnvironmentGitOpsProgressParams) (int64, error)
 	SaveEventExecutionLineageBackfill(ctx context.Context, db DBTX, arg SaveEventExecutionLineageBackfillParams) error
@@ -4347,6 +4381,7 @@ type Querier interface {
 	UpdateAccountStatus(ctx context.Context, db DBTX, arg UpdateAccountStatusParams) error
 	UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (UpdateAppRow, error)
 	UpdateApplicationStandardApprovedAssignment(ctx context.Context, db DBTX, arg UpdateApplicationStandardApprovedAssignmentParams) (int64, error)
+	UpdateAutomationLiveSuite(ctx context.Context, db DBTX, arg UpdateAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error)
 	UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error)
 	UpdateBuildStatus(ctx context.Context, db DBTX, arg UpdateBuildStatusParams) error
 	UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams) (UpdateCronRow, error)

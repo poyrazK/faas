@@ -751,7 +751,7 @@ exceeds the account limit. A plan never loosens the operator policy.
 `GET /v1/account/object-storage-usage` reports the effective policy. Free
 stops at 1 GiB of account bytes; paid plans set no ceilings, so the operator
 policy applies unchanged
-([ADR-1350](adr/1350-plan-entitlements-from-october-2026-cogs-report.md)).
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 In `gateway_safety_v1`, customer native calls reserve the shared request budget
 before dispatch. Each multipart part-list page (including CLI resume), bucket
@@ -971,7 +971,7 @@ bytes) is removed from each meter before pricing. The month uses the largest
 allowance among the plans active in it, and the finalized record copies the
 allowance it used. Plans include 1 / 10 / 50 / 200 GiB of stored bytes
 (Free / Hobby / Pro / Scale); request and egress allowances are zero until
-exporters report reads and writes separately (ADR-1350). A finalized
+exporters report reads and writes separately (ADR-1430). A finalized
 month is billed only up to what the account's overage cap still allows after
 the month's billable compute and live egress, and capped usage is never billed
 later ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).

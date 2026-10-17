@@ -38184,7 +38184,7 @@ func (q *Queries) ListAutomationFailurePolicyCandidates(ctx context.Context, db 
 }
 
 const listAutomations = `-- name: ListAutomations :many
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM workflow_automation_definitions WHERE app_id=$1 ORDER BY name
 `
 
 func (q *Queries) ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowAutomationDefinition, error) {
@@ -38205,6 +38205,8 @@ func (q *Queries) ListAutomations(ctx context.Context, db DBTX, appID pgtype.UUI
 			&i.PublishedVersion,
 			&i.Enabled,
 			&i.UpdatedAt,
+			&i.TestSuite,
+			&i.TestReport,
 		); err != nil {
 			return nil, err
 		}
@@ -67196,6 +67198,8 @@ SELECT jsonb_build_object(
  'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=$1::uuid::text),
+ 'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
+ 'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=$1::uuid),
@@ -81705,10 +81709,11 @@ func (q *Queries) SaveApplicationStandardLocalIntent(ctx context.Context, db DBT
 }
 
 const saveAutomation = `-- name: SaveAutomation :exec
-INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
- published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at
+ published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
+ test_suite=excluded.test_suite,test_report=excluded.test_report
 `
 
 type SaveAutomationParams struct {
@@ -81720,6 +81725,8 @@ type SaveAutomationParams struct {
 	PublishedVersion int64
 	Enabled          bool
 	UpdatedAt        pgtype.Timestamptz
+	TestSuite        []byte
+	TestReport       []byte
 }
 
 func (q *Queries) SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error {
@@ -81732,8 +81739,36 @@ func (q *Queries) SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomatio
 		arg.PublishedVersion,
 		arg.Enabled,
 		arg.UpdatedAt,
+		arg.TestSuite,
+		arg.TestReport,
 	)
 	return err
+}
+
+const saveAutomationTestReport = `-- name: SaveAutomationTestReport :execrows
+UPDATE workflow_automation_definitions SET test_report=$4
+WHERE app_id=$1 AND name=$2 AND version=$3
+`
+
+type SaveAutomationTestReportParams struct {
+	AppID      pgtype.UUID
+	Name       string
+	Version    int64
+	TestReport []byte
+}
+
+// Observation only: suite/definition changes advance version through SaveAutomation.
+func (q *Queries) SaveAutomationTestReport(ctx context.Context, db DBTX, arg SaveAutomationTestReportParams) (int64, error) {
+	result, err := db.Exec(ctx, saveAutomationTestReport,
+		arg.AppID,
+		arg.Name,
+		arg.Version,
+		arg.TestReport,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const saveCheckedRollback = `-- name: SaveCheckedRollback :exec

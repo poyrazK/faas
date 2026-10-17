@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -2684,6 +2685,23 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-queued", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelUnstartedWorkflowRuns))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations:publish-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationPublishPolicy))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/automations:publish-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setAutomationPublishPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-verifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAutomationLiveVerifications))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-suites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAutomationLiveSuites))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationLiveSuite))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-baselines", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAutomationLiveBaselines))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationLiveBaseline))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationLiveBaselineHistory))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.promoteAutomationLiveBaseline)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/retirements/{retirement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.retireAutomationLiveBaseline)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/compare/{baseline_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAutomationLiveSuites))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.saveAutomationLiveSuite)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.startAutomationLiveSuite)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.advanceAutomationLiveSuite)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/live-verifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.startAutomationLiveVerification)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomationLiveVerification))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.checkAutomationLiveVerification)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/automations/{name}/tests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.saveAutomationTestSuite))))
+	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/tests/run", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.runAutomationTests))))
 	mux.HandleFunc("POST /v1/apps/{slug}/automations/{name}/publish-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkAutomationPublication))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAutomations))))
 	mux.HandleFunc("GET /v1/apps/{slug}/automations/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAutomation))))
@@ -4066,6 +4084,12 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	console := &automationconsole.Service{Host: automationConsoleHost{server: s}, Log: s.log}
+	mux.Handle("GET /dashboard/apps/{slug}/automations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Show))))
+	mux.Handle("GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.LiveProgress))))
+	mux.Handle("POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.CheckLiveProgress))))
+	mux.Handle("POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.AdvanceLiveSuite))))
+	mux.Handle("POST /dashboard/apps/{slug}/automations/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Act))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
 	mux.Handle("GET /dashboard/apps/{slug}/auth", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAuth))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/settings", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthSettings))))

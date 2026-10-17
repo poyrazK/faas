@@ -196,7 +196,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 
 // managedPostgresUsageCeilings converts customer-facing entitlements into the
 // canonical meters: the account's pooled storage held for a whole billing
-// month, and its monthly compute units (ADR-1350). Restore history, egress and
+// month, and its monthly compute units (ADR-1430). Restore history, egress and
 // spend remain operator-configured COGS ceilings; the intersection is applied
 // in managedpostgres so adapters never learn about Gregale plan names.
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
