@@ -36945,6 +36945,162 @@ func (q *Queries) ListAppSecretsWithBindingAccessInScope(ctx context.Context, db
 	return items, nil
 }
 
+const listAppWakeHistoryPage = `-- name: ListAppWakeHistoryPage :many
+WITH page AS MATERIALIZED (
+ SELECT id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = $1::uuid
+   AND started_at >= $2::timestamptz
+   AND started_at <= $3::timestamptz
+   AND ($4::text = '' OR (started_at,id) < ($5::timestamptz, NULLIF($4::text,'')::uuid))
+ ORDER BY started_at DESC, id DESC LIMIT $6::int
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at DESC, p.id DESC
+`
+
+type ListAppWakeHistoryPageParams struct {
+	AppID     pgtype.UUID
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	AfterID   string
+	AfterAt   pgtype.Timestamptz
+	PageLimit int32
+}
+
+type ListAppWakeHistoryPageRow struct {
+	InstanceID  string
+	AppID       string
+	WakeID      string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	BootData    []byte
+	BootAt      pgtype.Timestamptz
+	HasMeta     bool
+	CompletedAt pgtype.Timestamptz
+}
+
+// ADR-1638: retained history is scoped and windowed before limiting. Metadata
+// is scoped to the same app for both the canonical boot and completion reads.
+func (q *Queries) ListAppWakeHistoryPage(ctx context.Context, db DBTX, arg ListAppWakeHistoryPageParams) ([]ListAppWakeHistoryPageRow, error) {
+	rows, err := db.Query(ctx, listAppWakeHistoryPage,
+		arg.AppID,
+		arg.Since,
+		arg.Until,
+		arg.AfterID,
+		arg.AfterAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppWakeHistoryPageRow{}
+	for rows.Next() {
+		var i ListAppWakeHistoryPageRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.WakeID,
+			&i.State,
+			&i.StartedAt,
+			&i.BootData,
+			&i.BootAt,
+			&i.HasMeta,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppWakeTimelinePage = `-- name: ListAppWakeTimelinePage :many
+WITH wake_events AS (
+  SELECT id, at, actor, kind, subject, data,
+         row_number() OVER (PARTITION BY kind ORDER BY (actor = 'schedd') DESC, at ASC, id ASC) AS boot_rank
+  FROM events
+  WHERE data->>'wake_id' = $5::text
+    AND data->>'app_id' = $6::text
+)
+SELECT id, at, actor, kind, subject, data
+FROM wake_events
+WHERE (kind <> 'wake.boot_started' OR boot_rank = 1)
+  AND at > $1::timestamptz
+  AND ($2::bigint = 0 OR (at, id) > ($3::timestamptz, $2::bigint))
+ORDER BY at ASC, id ASC
+LIMIT $4::int
+`
+
+type ListAppWakeTimelinePageParams struct {
+	Since     pgtype.Timestamptz
+	AfterID   int64
+	AfterAt   pgtype.Timestamptz
+	PageLimit int32
+	WakeID    string
+	AppID     string
+}
+
+type ListAppWakeTimelinePageRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// ADR-1637: app scope/canonical selection before a total-order seek and limit.
+func (q *Queries) ListAppWakeTimelinePage(ctx context.Context, db DBTX, arg ListAppWakeTimelinePageParams) ([]ListAppWakeTimelinePageRow, error) {
+	rows, err := db.Query(ctx, listAppWakeTimelinePage,
+		arg.Since,
+		arg.AfterID,
+		arg.AfterAt,
+		arg.PageLimit,
+		arg.WakeID,
+		arg.AppID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppWakeTimelinePageRow{}
+	for rows.Next() {
+		var i ListAppWakeTimelinePageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationStandardAssignmentInventory = `-- name: ListApplicationStandardAssignmentInventory :many
 SELECT id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at FROM application_standard_assignments WHERE org_id = $1::uuid
 AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)

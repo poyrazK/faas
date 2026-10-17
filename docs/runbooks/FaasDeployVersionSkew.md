@@ -30,6 +30,12 @@ systemctl status 'faas-*.service' --no-pager
 readlink -f /usr/local/bin/faas-<daemon>
 ```
 
+Per-unit control-plane releases report `unit-<commit>` versions and are
+excluded from this alert: they deliberately run beside their base full
+release until the next one (docs/adr/1650-per-unit-control-plane-releases.md).
+`readlink -f /opt/faas/current` on the control plane and its
+`unit-versions.json` show which daemons a unit release replaced.
+
 Use `daemon_build_info{daemon,instance,version,git_sha,build_time}` to map the
 skew to a host and exact commit. A deployment that is actively rolling out
 may legitimately trigger this alert; it should clear once every scrape

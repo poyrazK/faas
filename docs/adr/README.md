@@ -1,5 +1,63 @@
 # Architecture Decision Records
 
+- [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
+
+- [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
+
+- [Bounded Node acknowledgment intent recovery passes](20261017171806-bounded-node-intent-recovery.md)
+
+- [Bounded Python acknowledgment intent recovery passes](20261017170311-bounded-python-intent-recovery.md)
+
+- [Shared Node and Python preparation monitoring](20261017165449-shared-preparation-monitoring.md)
+
+- [Prometheus exposition for Python preparation metrics](20261017164707-python-preparation-prometheus.md)
+
+- [Bounded Python preparation metrics](20261017164105-python-preparation-metrics.md)
+
+- [Python preparation lifecycle telemetry](20261017161548-python-preparation-lifecycle-telemetry.md)
+
+- [Python processing recovery inspection](20261017155904-python-processing-recovery-inspection.md)
+
+- [Coordinated Python event preparation](20261017154707-coordinated-python-event-preparation.md)
+
+- [Python consumer processing leases](20261017152929-python-consumer-processing-leases.md)
+
+- [Python recovery alert checkpoints](20261017145402-python-recovery-alert-checkpoints.md)
+
+- [Python sustained acknowledgment recovery alerts](20261017144446-python-sustained-acknowledgment-recovery-alerts.md)
+
+- [Python acknowledgment recovery health](20261017143147-python-acknowledgment-recovery-health.md)
+
+- [Python durable retry and dead-letter intents](20261017142209-python-durable-negative-acknowledgments.md)
+
+- [Python durable acknowledgment intents](20261017140016-python-durable-acknowledgment-intents.md)
+
+- [Python async event acknowledgment worker](20261017131506-python-async-event-acknowledgment-worker.md)
+
+- [Opt-in Node preparation monitoring](20261017125950-node-preparation-monitoring.md)
+
+- [Node preparation Prometheus exposition](20261017124511-node-preparation-prometheus.md)
+
+- [Bounded Node preparation metrics](20261017122416-node-preparation-metrics.md)
+
+- [Node preparation lifecycle telemetry](20261017121310-node-preparation-lifecycle-telemetry.md)
+
+- [Node processing recovery inspection](20261017115623-node-processing-recovery-inspection.md)
+
+- [Coordinated Node event preparation](20261017114800-coordinated-node-event-preparation.md)
+
+- [Node consumer processing leases](20261017114009-node-consumer-processing-leases.md)
+
+- [Restart-safe Node recovery alert checkpoints](20261017112428-node-recovery-alert-checkpoints.md)
+
+- [Node sustained acknowledgment recovery alerts](20261017111119-node-acknowledgment-recovery-watch.md)
+
+- [Node acknowledgment intent recovery health](20261017110351-node-acknowledgment-intent-health.md)
+
+- [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
+
+- [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
+
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
 separate files here. This directory holds ADRs made *after* the spec.
@@ -1143,6 +1201,28 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1258: Graceful management MCP drain and journal cleanup](1258-management-mcp-graceful-drain.md)
 
 - [ADR-1259: Owner-protected management MCP connection controls](1259-management-mcp-local-connection-controls.md)
+- [ADR-1618: Exact retained request diagnostics through management MCP](1618-management-mcp-request-diagnostics.md)
+- [ADR-1619: Filtered retained request discovery through management MCP](1619-management-mcp-request-discovery.md)
+- [ADR-1620: Retained performance evidence through management MCP](1620-management-mcp-performance-evidence.md)
+- [ADR-1621: Observed residency diagnostics through management MCP](1621-management-mcp-residency-diagnostics.md)
+- [ADR-1622: Critical-path history through management MCP](1622-management-mcp-critical-path-history.md)
+- [ADR-1623: Retained deployment comparison through management MCP](1623-management-mcp-deployment-comparison.md)
+- [ADR-1624: Read-only regression inbox through management MCP](1624-management-mcp-regression-inbox.md)
+- [ADR-1625: Structured request explanations through management MCP](1625-management-mcp-request-explanations.md)
+- [ADR-1626: Per-request critical path through management MCP](1626-management-mcp-request-critical-path.md)
+- [ADR-1627: Guest execution evidence through management MCP](1627-management-mcp-guest-execution.md)
+- [ADR-1628: Request-linked regression evidence through management MCP](1628-management-mcp-request-regression.md)
+- [ADR-1629: Request-linked dependency deployment comparisons through management MCP](1629-management-mcp-request-dependency-comparison.md)
+- [ADR-1630: Dependency impact edges through management MCP](1630-management-mcp-dependency-impact.md)
+- [ADR-1631: Route request analytics through management MCP](1631-management-mcp-request-analytics.md)
+- [ADR-1632: Historical hourly request trends through management MCP](1632-management-mcp-request-timeseries.md)
+- [ADR-1633: Grouped error triage through management MCP](1633-management-mcp-error-triage.md)
+- [ADR-1634: Retained wake observations through management MCP](1634-management-mcp-wake-history.md)
+- [ADR-1635: Exact wake-stage inspection through management MCP](1635-management-mcp-wake-timeline.md)
+- [ADR-1636: Request-to-wake drill-down through management MCP](1636-management-mcp-request-wake-association.md)
+- [ADR-1637: Lossless retained wake-timeline continuation](1637-management-mcp-wake-timeline-pagination.md)
+- [ADR-1638: Window-first wake-history pagination](1638-management-mcp-wake-history-pagination.md)
+- [ADR-1639: Read-only sampled CPU profiles through management MCP](1639-management-mcp-cpu-profiles.md)
 
 - [ADR-1260: Authorization-bounded management MCP request leases](1260-management-mcp-authorization-request-leases.md)
 
@@ -1364,3 +1444,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
+
+- [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)

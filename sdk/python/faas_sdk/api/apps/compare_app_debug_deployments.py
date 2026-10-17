@@ -96,7 +96,11 @@ def sync_detailed(
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
-    per-deployment p50/p95/p99 + row counts. Plan-gated by
+    per-deployment p50/p95/p99 + represented request counts. Includes
+    the effective window and retention-clamping metadata (ADR-1623).
+    Invalid lookbacks, invalid/future until values, and windows wholly
+    outside current plan retention are rejected. Reads retained telemetry
+    without replaying requests or writing platform state. Plan-gated by
     DebugTelemetryEnabled.
 
     Args:
@@ -135,7 +139,11 @@ def sync(
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
-    per-deployment p50/p95/p99 + row counts. Plan-gated by
+    per-deployment p50/p95/p99 + represented request counts. Includes
+    the effective window and retention-clamping metadata (ADR-1623).
+    Invalid lookbacks, invalid/future until values, and windows wholly
+    outside current plan retention are rejected. Reads retained telemetry
+    without replaying requests or writing platform state. Plan-gated by
     DebugTelemetryEnabled.
 
     Args:
@@ -169,7 +177,11 @@ async def asyncio_detailed(
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
-    per-deployment p50/p95/p99 + row counts. Plan-gated by
+    per-deployment p50/p95/p99 + represented request counts. Includes
+    the effective window and retention-clamping metadata (ADR-1623).
+    Invalid lookbacks, invalid/future until values, and windows wholly
+    outside current plan retention are rejected. Reads retained telemetry
+    without replaying requests or writing platform state. Plan-gated by
     DebugTelemetryEnabled.
 
     Args:
@@ -206,7 +218,11 @@ async def asyncio(
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
-    per-deployment p50/p95/p99 + row counts. Plan-gated by
+    per-deployment p50/p95/p99 + represented request counts. Includes
+    the effective window and retention-clamping metadata (ADR-1623).
+    Invalid lookbacks, invalid/future until values, and windows wholly
+    outside current plan retention are rejected. Reads retained telemetry
+    without replaying requests or writing platform state. Plan-gated by
     DebugTelemetryEnabled.
 
     Args:

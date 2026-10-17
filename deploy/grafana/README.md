@@ -318,6 +318,13 @@ Prometheus federation or a shared remote-write backend.
 | Compute metrics scrape health by node | `up{job=~"gatewayd-internal\|promtail-compute"}` | HTTP-SD downstream target reachability |
 | Compute metrics scrape duration by node | `scrape_duration_seconds{job=~"gatewayd-internal\|promtail-compute"}` | HTTP-SD downstream scrape latency |
 
+## Application worker monitoring
+
+The opt-in [prepared Node/Python worker dashboard and alert pack](../../examples/event-acknowledgment-monitoring/README.md)
+covers application worker observations, lease failures and uncertain local
+commits. Import it into the application's monitoring environment; fleet
+provisioning does not install it.
+
 ## Deferred rows
 
 - **Per-app SLO row** — the per-app p95 wake + 5xx rate are too

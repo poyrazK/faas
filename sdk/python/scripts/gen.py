@@ -168,7 +168,6 @@ WRAPPER_MODULES = (
     "_binding_creation.py",
     "_binding_runner.py",
     "_binding_runner_diagnostics.py",
-
     "realtime_workers.py",
     "realtime_activity.py",
     "realtime_presence.py",
@@ -224,7 +223,31 @@ WRAPPER_MODULES = (
     "queue_consumer.py",
     "operations.py",
     "event_consumer_transactions.py",
+    "event_consumer_processing.py",
+    "event_consumer_processing_inspection.py",
+    "_event_consumer_processing_store.py",
     "event_consumer_delivery_context.py",
+    "event_acknowledgment_worker.py",
+    "event_acknowledgment_preparation.py",
+    "event_acknowledgment_preparation_events.py",
+    "event_acknowledgment_preparation_metrics.py",
+    "_event_acknowledgment_preparation_metric_events.py",
+    "event_acknowledgment_preparation_prometheus.py",
+    "_event_acknowledgment_preparation_prometheus_validation.py",
+    "_event_acknowledgment_preparation_runtime.py",
+    "event_acknowledgment_intents.py",
+    "event_acknowledgment_intent_recovery.py",
+    "event_acknowledgment_intent_recovery_pass.py",
+    "_event_acknowledgment_intent_recovery_pass_runtime.py",
+    "event_acknowledgment_intent_health.py",
+    "event_acknowledgment_intent_watch.py",
+    "_event_acknowledgment_intent_watch_policy.py",
+    "event_acknowledgment_intent_checkpoint.py",
+    "_event_acknowledgment_intent_checkpoint_state.py",
+    "event_acknowledgment_intent_checkpoint_watch.py",
+    "event_acknowledgment_intent_schema.sql",
+    "_event_acknowledgment_protocol.py",
+    "_event_acknowledgment_callbacks.py",
     "_event_deadline_policy.py",
     "event_deadline_checkpoint.py",
     "event_deadline_watch.py",
@@ -236,6 +259,7 @@ WRAPPER_MODULES = (
     "commit_recovery_status.py",
     "_event_consumer_contract.py",
     "event_consumer_schema.sql",
+    "event_consumer_processing_schema.sql",
     "_operation_contract.py",
     "customer_operation_schema.sql",
     "operation_schema.sql",
@@ -265,6 +289,9 @@ def _preserve_handwritten_sdk(output: Path):
         for relative in [
             *(Path("faas_sdk") / name for name in WRAPPER_MODULES),
             *(Path(name) for name in PROJECT_FILES),
+            # Tests are authored inputs too. Formatter/import rewrites must
+            # not replace their current bytes, including uncommitted edits.
+            *(path.relative_to(output) for path in (output / "tests").rglob("*.py")),
         ]:
             source = output / relative
             if source.exists():
@@ -1363,6 +1390,155 @@ from .event_deadline_investigation import (
 
 __all__ += (
     "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)
+
+from ._event_acknowledgment_protocol import (
+    EventAcknowledgmentWorkerCancellation,
+    EventAcknowledgmentWorkerCancelled,
+    EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerOptions,
+    EventAcknowledgmentWorkerResult,
+    EventAcknowledgmentWorkerStatus,
+)
+from .event_acknowledgment_worker import AsyncEventAcknowledgmentWorker
+
+__all__ += (
+    "AsyncEventAcknowledgmentWorker", "EventAcknowledgmentWorkerOptions", "EventAcknowledgmentWorkerResult",
+    "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
+    "EventAcknowledgmentWorkerCancellation",
+)
+
+from .event_acknowledgment_intent_recovery import (
+    EventAcknowledgmentIntentClaim,
+    aclaim_event_acknowledgment_intent,
+    arecover_next_event_acknowledgment_intent,
+)
+from .event_acknowledgment_intents import (
+    EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentResult,
+    EventAcknowledgmentIntentStatus,
+    alist_event_acknowledgment_intents,
+    event_acknowledgment_intent_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentError", "EventAcknowledgmentIntentResult", "EventAcknowledgmentIntentStatus",
+    "EventAcknowledgmentIntentClaim", "aclaim_event_acknowledgment_intent",
+    "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
+    "event_acknowledgment_intent_schema",
+)
+
+from .event_acknowledgment_intent_health import (
+    EventAcknowledgmentIntentHealth,
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
+    "aget_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_watch import (
+    EventAcknowledgmentIntentAlert,
+    EventAcknowledgmentIntentWatchCallbackError,
+    EventAcknowledgmentIntentWatchOptions,
+    awatch_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
+    "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_checkpoint import (
+    EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX,
+    acknowledge_event_acknowledgment_intent_alerts,
+    validate_event_acknowledgment_intent_checkpoint,
+)
+from .event_acknowledgment_intent_checkpoint_watch import (
+    EventAcknowledgmentIntentCheckpointWatchCallbackError,
+    EventAcknowledgmentIntentCheckpointWatchCancelled,
+    EventAcknowledgmentIntentCheckpointWatchOptions,
+    awatch_event_acknowledgment_intent_health_with_checkpoint,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX", "acknowledge_event_acknowledgment_intent_alerts",
+    "validate_event_acknowledgment_intent_checkpoint", "EventAcknowledgmentIntentCheckpointWatchCallbackError",
+    "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
+    "awatch_event_acknowledgment_intent_health_with_checkpoint",
+)
+
+from .event_consumer_processing import (
+    EventConsumerProcessingError,
+    EventConsumerProcessingLease,
+    aclaim_event_consumer_processing,
+    event_consumer_processing_schema,
+)
+
+__all__ += (
+    "EventConsumerProcessingError", "EventConsumerProcessingLease",
+    "aclaim_event_consumer_processing", "event_consumer_processing_schema",
+)
+
+from .event_acknowledgment_preparation import EventAcknowledgmentPreparedOptions
+
+__all__ += ("EventAcknowledgmentPreparedOptions",)
+
+from .event_consumer_processing_inspection import (
+    EventConsumerProcessingInspection,
+    ainspect_event_consumer_processing,
+)
+
+__all__ += ("EventConsumerProcessingInspection", "ainspect_event_consumer_processing")
+
+from .event_acknowledgment_preparation_events import (
+    EventAcknowledgmentPreparationEvent,
+    EventAcknowledgmentPreparationOutcome,
+    EventAcknowledgmentPreparationReason,
+    EventAcknowledgmentPreparationStage,
+)
+
+__all__ += (
+    "EventAcknowledgmentPreparationEvent", "EventAcknowledgmentPreparationOutcome",
+    "EventAcknowledgmentPreparationReason", "EventAcknowledgmentPreparationStage",
+)
+
+from .event_acknowledgment_preparation_metrics import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
+    EventAcknowledgmentPreparationHistogram,
+    EventAcknowledgmentPreparationMetrics,
+    EventAcknowledgmentPreparationMetricsSnapshot,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS", "EventAcknowledgmentPreparationHistogram",
+    "EventAcknowledgmentPreparationMetrics", "EventAcknowledgmentPreparationMetricsSnapshot",
+)
+
+from .event_acknowledgment_preparation_prometheus import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
+    format_event_acknowledgment_preparation_metrics,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE", "format_event_acknowledgment_preparation_metrics",
+)
+
+from .event_acknowledgment_intent_recovery_pass import (
+    EventAcknowledgmentIntentRecoveryPassCancelled,
+    EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+    EventAcknowledgmentIntentRecoveryPassError,
+    EventAcknowledgmentIntentRecoveryPassOptions,
+    EventAcknowledgmentIntentRecoveryPassResult,
+    arecover_event_acknowledgment_intents,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentRecoveryPassCancelled", "EventAcknowledgmentIntentRecoveryPassCommitUnknownError",
+    "EventAcknowledgmentIntentRecoveryPassError", "EventAcknowledgmentIntentRecoveryPassOptions",
+    "EventAcknowledgmentIntentRecoveryPassResult", "arecover_event_acknowledgment_intents",
 )
 '''
 
