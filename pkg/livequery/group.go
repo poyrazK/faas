@@ -28,6 +28,45 @@ type planGroup struct {
 
 	// Last round's changed and expanded keys, for divergence reports.
 	lastKeys, lastExpanded []map[string]struct{}
+
+	// session, when set, is who the group reads as (RLS mode); deps is what
+	// its tables' policies read, re-read after a schema change (depsStale).
+	session   *Session
+	deps      policyDeps
+	depsStale bool
+}
+
+func (g *planGroup) key() string { return g.plan.SQL + g.session.key() }
+
+// stepAs steps the group as its session.
+func (g *planGroup) stepAs(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*member]Delta, error) {
+	if err := g.session.enter(ctx, tx); err != nil {
+		return nil, err
+	}
+	out, err := g.step(ctx, tx, cs)
+	if err != nil {
+		return nil, err
+	}
+	return out, leave(ctx, tx)
+}
+
+// verify compares every member with PostgreSQL, as the group's session.
+func (g *planGroup) verify(ctx context.Context, tx pgx.Tx) error {
+	if g.session != nil {
+		if err := g.session.enter(ctx, tx); err != nil {
+			return err
+		}
+	}
+	for _, m := range g.members {
+		if err := m.verify(ctx, tx); err != nil {
+			return fmt.Errorf("subscription %v: %w", m.ids, err)
+		}
+		g.stats.Verified++
+	}
+	if g.session != nil {
+		return leave(ctx, tx)
+	}
+	return nil
 }
 
 // member is one distinct argument list of a plan group. Subscriptions with
@@ -292,6 +331,18 @@ func (g *planGroup) step(ctx context.Context, tx pgx.Tx, cs changeSet) (map[*mem
 // touched reports whether the change set affects any table the plan reads,
 // and whether only a full re-evaluation is safe.
 func (g *planGroup) touched(cs changeSet) (any, full bool) {
+	// A session group's rows also depend on what its policies read: a change
+	// there re-reads it, as does any change when a policy is opaque.
+	if g.session != nil {
+		for table := range g.deps.tables {
+			if _, ok := cs.keys[table]; ok || cs.truncated[table] {
+				return true, true
+			}
+		}
+		if g.deps.opaque && (len(cs.keys) > 0 || len(cs.truncated) > 0) {
+			return true, true
+		}
+	}
 	for table := range g.plan.Tables {
 		if cs.truncated[table] || cs.missing[table] {
 			return true, true

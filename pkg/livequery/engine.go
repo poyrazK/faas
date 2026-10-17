@@ -94,7 +94,8 @@ type Engine struct {
 	capture *Capture
 
 	groups  []*planGroup
-	bySQL   map[string]*planGroup
+	byKey   map[string]*planGroup // by SQL and session
+	bySQL   map[string]int        // groups per SQL
 	byID    map[string]*member
 	pending []*Txn
 	round   uint64
@@ -139,29 +140,36 @@ func NewEngine(pool *pgxpool.Pool, capture *Capture) *Engine {
 	epoch := make([]byte, 8)
 	_, _ = rand.Read(epoch) // crypto/rand.Read never fails
 	return &Engine{pool: pool, capture: capture, epoch: hex.EncodeToString(epoch),
-		bySQL: map[string]*planGroup{}, byID: map[string]*member{}}
+		byKey: map[string]*planGroup{}, bySQL: map[string]int{}, byID: map[string]*member{}}
 }
 
 // Register subscribes id to a query. Its initial result arrives in the next
 // round.
 func (e *Engine) Register(ctx context.Context, id, sql string, args ...any) (*Plan, error) {
+	return e.RegisterAs(ctx, id, sql, nil, args...)
+}
+
+// RegisterAs subscribes id to a query read as session (RLS mode); a nil
+// session reads as the engine's own login.
+func (e *Engine) RegisterAs(ctx context.Context, id, sql string, session *Session, args ...any) (*Plan, error) {
 	if _, dup := e.byID[id]; dup {
 		return nil, fmt.Errorf("livequery: subscription %s already exists", id)
+	}
+	if session != nil {
+		if err := session.validate(); err != nil {
+			return nil, err
+		}
 	}
 	conn, err := e.pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("livequery: acquire for compile: %w", err)
 	}
 	defer conn.Release()
-	g := e.bySQL[sql]
+	g := e.byKey[sql+session.key()]
 	if g == nil {
-		plan, err := e.compile(ctx, conn.Conn(), sql)
-		if err != nil {
+		if g, err = e.newGroup(ctx, conn.Conn(), sql, session); err != nil {
 			return nil, err
 		}
-		g = &planGroup{plan: plan, byArgs: map[string]*member{}, stats: &e.Stats, engine: e}
-		e.bySQL[sql] = g
-		e.groups = append(e.groups, g)
 	}
 	if g.plan.NParams != len(args) {
 		return nil, fmt.Errorf("livequery: query takes %d parameters, got %d", g.plan.NParams, len(args))
@@ -193,6 +201,115 @@ func (e *Engine) Register(ctx context.Context, id, sql string, args ...any) (*Pl
 	}
 	e.byID[id] = m
 	return g.plan, nil
+}
+
+// newGroup compiles a plan group, reusing the plan of a group with the same
+// SQL. A session group checks its role and reads its policies' dependencies.
+func (e *Engine) newGroup(ctx context.Context, conn *pgx.Conn, sql string, session *Session) (*planGroup, error) {
+	var plan *Plan
+	for _, other := range e.groups {
+		if other.plan.SQL == sql && other.pendingPlan == nil && !other.skip {
+			plan = other.plan
+			break
+		}
+	}
+	if plan == nil {
+		var err error
+		if plan, err = e.compile(ctx, conn, sql); err != nil {
+			return nil, err
+		}
+	}
+	g := &planGroup{plan: plan, byArgs: map[string]*member{}, stats: &e.Stats, engine: e, session: session}
+	if session != nil {
+		if err := checkRole(ctx, conn, session.Role); err != nil {
+			return nil, err
+		}
+		deps, err := readPolicyDeps(ctx, conn, tableSet(plan))
+		if err != nil {
+			return nil, err
+		}
+		g.deps = deps
+	}
+	e.addGroup(g)
+	return g, nil
+}
+
+func (e *Engine) addGroup(g *planGroup) {
+	e.byKey[g.key()] = g
+	e.bySQL[g.plan.SQL]++
+	e.groups = append(e.groups, g)
+}
+
+func (e *Engine) removeGroup(g *planGroup) {
+	e.groups = slices.DeleteFunc(e.groups, func(x *planGroup) bool { return x == g })
+	delete(e.byKey, g.key())
+	if e.bySQL[g.plan.SQL]--; e.bySQL[g.plan.SQL] <= 0 {
+		delete(e.bySQL, g.plan.SQL)
+	}
+}
+
+func tableSet(p *Plan) map[uint32]bool {
+	out := make(map[uint32]bool, len(p.TableNames))
+	for oid := range p.TableNames {
+		out[oid] = true
+	}
+	return out
+}
+
+// refreshDeps re-reads the policy dependencies of session groups after a
+// schema change, outside the round (reading them creates and rolls back a
+// probe, which a read-only round cannot).
+func (e *Engine) refreshDeps(ctx context.Context) error {
+	var stale []*planGroup
+	for _, g := range e.groups {
+		if g.session != nil && g.depsStale {
+			stale = append(stale, g)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	conn, err := e.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("livequery: acquire for policies: %w", err)
+	}
+	defer conn.Release()
+	for _, g := range stale {
+		deps, err := readPolicyDeps(ctx, conn.Conn(), tableSet(g.plan))
+		if err != nil {
+			return err
+		}
+		g.deps, g.depsStale = deps, false
+	}
+	return nil
+}
+
+// stepGroup steps a group, as its session when it has one. A session group
+// runs in a savepoint: PostgreSQL refusing its statements (the role lost a
+// grant, a policy fails) closes that group's subscriptions, not the round.
+func (e *Engine) stepGroup(ctx context.Context, tx pgx.Tx, g *planGroup, cs changeSet) (map[*member]Delta, []Delta, error) {
+	if g.session == nil {
+		out, err := g.step(ctx, tx, cs)
+		return out, nil, err
+	}
+	if _, err := tx.Exec(ctx, "SAVEPOINT lq_session"); err != nil {
+		return nil, nil, fmt.Errorf("livequery: session savepoint: %w", err)
+	}
+	out, err := g.stepAs(ctx, tx, cs)
+	if err == nil {
+		if _, err = tx.Exec(ctx, "RELEASE SAVEPOINT lq_session"); err == nil {
+			return out, nil, nil
+		}
+	}
+	var pgErr *pgconn.PgError
+	if ctx.Err() != nil || !errors.As(err, &pgErr) {
+		return nil, nil, err
+	}
+	// The rollback also undoes the session's role and claims.
+	if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT lq_session"); rbErr != nil {
+		return nil, nil, fmt.Errorf("livequery: session rollback: %w", rbErr)
+	}
+	return nil, e.closeGroup(g, &QueryError{Code: InvalidQuery, Message: pgErr.Message}), nil
 }
 
 // argText renders arguments as PostgreSQL text, the form batched statements
@@ -258,7 +375,7 @@ func (e *Engine) LastSnapshot() string {
 }
 
 // Compiled reports whether a query's SQL is already compiled.
-func (e *Engine) Compiled(sql string) bool { return e.bySQL[sql] != nil }
+func (e *Engine) Compiled(sql string) bool { return e.bySQL[sql] > 0 }
 
 // SubscriptionIDs lists the registered subscriptions.
 func (e *Engine) SubscriptionIDs() []string {
@@ -273,7 +390,19 @@ func (e *Engine) SubscriptionIDs() []string {
 // Subscriptions is the number of registered subscriptions; Queries the
 // number of distinct compiled queries.
 func (e *Engine) Subscriptions() int { return len(e.byID) }
-func (e *Engine) Queries() int       { return len(e.groups) }
+func (e *Engine) Queries() int       { return len(e.bySQL) }
+
+// Sessions is the number of plan groups read as a session (RLS mode): each
+// is maintained on its own.
+func (e *Engine) Sessions() int {
+	n := 0
+	for _, g := range e.groups {
+		if g.session != nil {
+			n++
+		}
+	}
+	return n
+}
 
 // Result returns the engine's current rows for a subscription.
 func (e *Engine) Result(id string) []Row {
@@ -292,6 +421,9 @@ type changeSet struct {
 
 // Round runs one snapshot-aligned maintenance round and returns the deltas.
 func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
+	if err := e.refreshDeps(ctx); err != nil {
+		return nil, err
+	}
 	e.round++
 	marker := e.epoch + "." + strconv.FormatUint(e.round, 10)
 	tx, snapText, err := e.beginRound(ctx)
@@ -369,14 +501,21 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	for i := range deltas {
 		deltas[i].Snapshot, deltas[i].Xids = snapText, xids
 	}
-	for _, g := range e.groups {
+	for _, g := range slices.Clone(e.groups) {
 		if g.skip {
 			g.skip = false
 			continue
 		}
-		perMember, err := g.step(ctx, tx, changes)
+		perMember, closed, err := e.stepGroup(ctx, tx, g, changes)
 		if err != nil {
 			return nil, fmt.Errorf("livequery: query %q: %w", g.plan.SQL, err)
+		}
+		if closed != nil {
+			for i := range closed {
+				closed[i].Snapshot, closed[i].Xids = snapText, xids
+			}
+			deltas = append(deltas, closed...)
+			continue
 		}
 		for _, m := range slices.Clone(g.members) {
 			d, ok := perMember[m]
@@ -409,11 +548,8 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	e.trace(snapText, ref, markerLSN, visible, held)
 	if e.VerifyEachRound {
 		for _, g := range e.groups {
-			for _, m := range g.members {
-				if err := m.verify(ctx, tx); err != nil {
-					return nil, fmt.Errorf("livequery: round %d snapshot %s: subscription %v: %w", e.round, snapText, m.ids, err)
-				}
-				e.Stats.Verified++
+			if err := g.verify(ctx, tx); err != nil {
+				return nil, fmt.Errorf("livequery: round %d snapshot %s: %w", e.round, snapText, err)
 			}
 		}
 	}
@@ -556,6 +692,9 @@ func (e *Engine) lockList() []uint32 {
 	set := map[uint32]bool{}
 	for _, g := range e.groups {
 		for oid := range g.plan.TableNames {
+			set[oid] = true
+		}
+		for oid := range g.deps.tables {
 			set[oid] = true
 		}
 	}

@@ -32,6 +32,9 @@ const (
 	SchemaChanged = "schema_changed"
 	// LimitExceeded closes a query whose result outgrew its limit.
 	LimitExceeded = "live_query_limit"
+	// InvalidQuery closes a query PostgreSQL refused, such as a session
+	// query its role may no longer read.
+	InvalidQuery = "invalid_query"
 )
 
 const installSQL = `
@@ -167,9 +170,15 @@ func (e *Engine) applySchemaChange(ctx context.Context, tx pgx.Tx, sc *schemaCha
 		for oid := range g.plan.TableNames {
 			touched = touched || sc.tables[oid]
 		}
+		for oid := range g.deps.tables {
+			touched = touched || sc.tables[oid]
+		}
 		if !touched {
 			continue
 		}
+		// Policies may have changed with the schema: read them again before
+		// the next round.
+		g.depsStale = g.session != nil
 		e.Stats.Recompiles++
 		var plan *Plan
 		var err error
@@ -358,8 +367,7 @@ func (e *Engine) unregister(id string) {
 	if len(g.members) > 0 {
 		return
 	}
-	e.groups = slices.DeleteFunc(e.groups, func(x *planGroup) bool { return x == g })
-	delete(e.bySQL, g.plan.SQL)
+	e.removeGroup(g)
 }
 
 // errSchemaLog is returned when the schema-change log cannot be resolved.

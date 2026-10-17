@@ -853,6 +853,40 @@ Phase 0 did not cover:
     frames in `queueResume`, which live frames bypass. `queueLive` must also
     call `c.state.usage.delivered`. The connection allowance and the node
     budget need no change.
+- **RLS mode, the engine** (2026-10-17).
+  - **Sessions.** `Engine.RegisterAs` takes a `Session` (role and JWT
+    claims). Subscriptions share a plan group only with an identical query
+    and session; plans are compiled once per SQL.
+  - **Running as the session.** A session group's statements run in a
+    savepoint, under `set_config('role')` and `request.jwt.claims`, so
+    row-level security filters every snapshot and maintenance read.
+    PostgreSQL refusing them (a revoked grant, a failing policy) closes that
+    group's subscriptions with `invalid_query`, not the round.
+    `VerifyEachRound` checks session groups as their session.
+  - **Policy dependencies.** Policies often read other tables (membership),
+    and those changes alter what a role sees without changing any row the
+    query reads. On a session group's creation the engine walks the
+    policies on its tables:
+    - `pg_depend` gives the tables and functions a policy references, and
+      the walk follows those tables' own policies and views.
+    - A SQL function with a string body records nothing, so the engine
+      creates a `BEGIN ATOMIC` copy in a rolled-back transaction and reads
+      what PostgreSQL records for it. This keeps `auth.uid()`-style
+      functions free.
+    - A function in another language is opaque.
+    - A change in a dependency table re-reads the group. An opaque policy
+      re-reads it on every round with changes.
+    - Dependency tables are locked with the round's tables. Policy DDL is
+      already a broad schema change, and dependencies are read again after
+      it.
+  - **Checkpoints** keep each group's session.
+  - **Oracle.** RLS seeds add a `grants` table that every policy reads
+    (directly, or through a plpgsql function on a third of seeds). Writers
+    change it, and every query also runs as two subjects. Soak: 20 seeds,
+    14,386 transactions, 20,554 checks, 0 divergences.
+  - **Cost.** Each distinct claim set is maintained separately, and a
+    dependency change re-reads the groups it affects. The ADR's per-database
+    RLS subscription limit bounds both.
 
 ## Consequences
 

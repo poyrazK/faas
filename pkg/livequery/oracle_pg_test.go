@@ -33,7 +33,15 @@ func envInt(name string, def int) int {
 type oracleSchema struct {
 	tables    []string
 	composite map[string]bool
+	// rls puts every table under a row-level security policy for role:
+	// subjects see the rows whose a they hold a grant for. opaque reads the
+	// grants through a plpgsql function the engine cannot see into.
+	rls, opaque bool
+	role        string
 }
+
+// subjects are the RLS-mode readers.
+var subjects = []string{"u0", "u1"}
 
 func (s oracleSchema) ddl() string {
 	var b strings.Builder
@@ -43,6 +51,22 @@ func (s oracleSchema) ddl() string {
 		} else {
 			fmt.Fprintf(&b, "CREATE TABLE %s (id bigint PRIMARY KEY, a int NOT NULL, b int, s text, ref bigint, n numeric);\n", t)
 		}
+	}
+	if !s.rls {
+		return b.String()
+	}
+	fmt.Fprintf(&b, `CREATE TABLE grants (subject text, a int, PRIMARY KEY (subject, a));
+CREATE ROLE %[1]s NOLOGIN;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO %[1]s;
+CREATE FUNCTION granted(x int) RETURNS boolean LANGUAGE plpgsql STABLE AS
+$$ BEGIN RETURN EXISTS (SELECT 1 FROM grants g WHERE g.a = x AND g.subject = current_setting('request.jwt.claims', true)::json->>'sub'); END $$;
+`, s.role)
+	for _, t := range s.tables {
+		using := "a IN (SELECT g.a FROM grants g WHERE g.subject = current_setting('request.jwt.claims', true)::json->>'sub')"
+		if s.opaque {
+			using = "granted(a)"
+		}
+		fmt.Fprintf(&b, "ALTER TABLE %s ENABLE ROW LEVEL SECURITY;\nCREATE POLICY readable ON %s FOR SELECT TO %s USING (%s);\n", t, t, s.role, using)
 	}
 	return b.String()
 }
@@ -305,6 +329,13 @@ func (s oracleSchema) writer(ctx context.Context, pool *pgxpool.Pool, r *rand.Ra
 		for range 1 + r.IntN(4) {
 			t := pickOne(r, s.tables)
 			stmt, args := s.statement(r, t, strs)
+			if s.rls && r.IntN(6) == 0 {
+				// Change what the policies read, not any table the queries do.
+				stmt, args = `INSERT INTO grants VALUES ($1, $2) ON CONFLICT DO NOTHING`, []any{pickOne(r, subjects), int32(r.IntN(8))}
+				if r.IntN(2) == 0 {
+					stmt = `DELETE FROM grants WHERE subject = $1 AND a = $2`
+				}
+			}
 			if _, err := tx.Exec(ctx, stmt, args...); err != nil {
 				ok = false
 				break
@@ -440,7 +471,13 @@ func TestOracleRandomWorkloads(t *testing.T) {
 func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 	r := rand.New(rand.NewPCG(seed, seed^0x5eed))
 	schema := randomSchema(r)
+	if rr := rand.New(rand.NewPCG(seed, 7)); rr.IntN(100) < envInt("LIVEQUERY_ORACLE_RLS_PERCENT", 30) {
+		schema.rls, schema.opaque, schema.role = true, rr.IntN(3) == 0, fmt.Sprintf("lq_oracle_%d", seed%1_000_000_007)
+	}
 	h := newHarness(t, schema.ddl())
+	if schema.rls {
+		t.Cleanup(func() { mustExec(t, h.pool, fmt.Sprintf(`DROP OWNED BY %[1]s; DROP ROLE %[1]s`, schema.role)) })
+	}
 	h.engine.Checkpointed = true
 	ctx := context.Background()
 	// Seed data so the first queries have something to join.
@@ -482,7 +519,24 @@ func runOracle(t *testing.T, seed uint64, nqueries, nwriters, ntxns int) Stats {
 			h.clients[id] = &client{}
 		}
 	}
+	// RLS seeds: every query again as each subject, through the policies.
+	if schema.rls {
+		for _, g := range slices.Clone(h.engine.groups) {
+			m := g.members[0]
+			for _, subject := range subjects {
+				id := fmt.Sprintf("%s-%s", m.ids[0], subject)
+				session := &Session{Role: schema.role, Claims: fmt.Sprintf(`{"sub":%q}`, subject)}
+				if _, err := h.engine.RegisterAs(ctx, id, g.plan.SQL, session, m.args...); err != nil {
+					t.Fatal(err)
+				}
+				h.clients[id] = &client{}
+			}
+		}
+	}
 	modes := map[string]int{}
+	if schema.rls {
+		modes["rls-session"] = h.engine.Sessions()
+	}
 	for _, g := range h.engine.groups {
 		modes[g.plan.Mode.String()] += len(g.members)
 		if len(g.plan.Subqueries) > 0 {

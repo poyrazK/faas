@@ -41,6 +41,8 @@ type checkpointGroup struct {
 	SQL         string
 	Fingerprint string
 	Members     []checkpointMember
+	// Role and Claims are the group's session (RLS mode); empty for none.
+	Role, Claims string
 }
 
 type checkpointMember struct {
@@ -130,6 +132,9 @@ func (e *Engine) encodeCheckpoint(w io.Writer) error {
 	}
 	for _, g := range e.groups {
 		cg := checkpointGroup{SQL: g.plan.SQL, Fingerprint: g.plan.Fingerprint()}
+		if g.session != nil {
+			cg.Role, cg.Claims = g.session.Role, g.session.Claims
+		}
 		for _, m := range g.members {
 			cg.Members = append(cg.Members, m.checkpoint())
 		}
@@ -260,7 +265,11 @@ func RestoreEngineWith(ctx context.Context, pool *pgxpool.Pool, capture *Capture
 	}
 	defer conn.Release()
 	for _, cg := range f.Groups {
-		plan, err := e.compile(ctx, conn.Conn(), cg.SQL)
+		var session *Session
+		if cg.Role != "" {
+			session = &Session{Role: cg.Role, Claims: cg.Claims}
+		}
+		g, err := e.newGroup(ctx, conn.Conn(), cg.SQL, session)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -276,10 +285,7 @@ func RestoreEngineWith(ctx context.Context, pool *pgxpool.Pool, capture *Capture
 			}
 			continue
 		}
-		g := &planGroup{plan: plan, byArgs: map[string]*member{}, stats: &e.Stats, engine: e}
-		e.bySQL[cg.SQL] = g
-		e.groups = append(e.groups, g)
-		keep := !capture.Created && plan.Fingerprint() == cg.Fingerprint
+		keep := !capture.Created && g.plan.Fingerprint() == cg.Fingerprint
 		for _, cm := range cg.Members {
 			if err := e.restoreMember(g, cm, keep); err != nil {
 				return nil, err
