@@ -98,6 +98,11 @@ delivery, which must replay the saved consumer receipt.
 
 ## Durable workers and rollout
 
+Python applications can use the [async acknowledgment worker](event-acknowledgment-python-worker.md)
+for confirmed lease renewal, transactional receipts and immediate callback recovery.
+Its [protected-job example](../examples/event-acknowledgment-python/README.md)
+retains ingestion jobs until terminal callback confirmation.
+
 A 202 does not keep the application VM awake: Gregale may park it after the HTTP
 request ends. An in-process goroutine is not a durable worker. Durably enqueue
 work before returning 202 and use a recoverable worker that can reach apid.
