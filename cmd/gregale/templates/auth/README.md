@@ -1,7 +1,7 @@
 # Application Auth
 
 This template runs a pinned GoTrue (Supabase Auth) v2.197.0 server for your
-application's own users ([ADR-1190](https://gregale.dev/docs/application-auth)).
+application's own users (ADR-1190).
 It is not your Gregale account login. Create and configure it with
 `gregale auth create NAME --database DATABASE --site-url URL`.
 
