@@ -95,6 +95,7 @@ func cmdTestCampaignStatus(args []string) int {
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "manifest used by the plan")
 	directory := fs.String("directory", "", "optional campaign checkpoint directory")
 	verifyLive := fs.Bool("verify-live", false, "opt in to bounded read-only API verification of journaled resources; requires --directory")
+	requireClean := fs.Bool("require-clean", false, "fail unless live verification proves every expected resource clean; requires --verify-live")
 	side := fs.String("side", "", "optional baseline/current scope; defaults to checkpoint side or all planned sides")
 	bundle := fs.String("recovery-bundle", "", "optional reconciliation bundle bound to this campaign")
 	from := fs.String("from", "", "original current report used to plan")
@@ -108,8 +109,8 @@ func cmdTestCampaignStatus(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *policyPath == "" ||
-		(*side != "" && *side != "baseline" && *side != "current") || ((*bundle != "" || *verifyLive) && *directory == "") {
-		return printErr("Invalid status options", errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle or --verify-live needs --directory"))
+		(*side != "" && *side != "baseline" && *side != "current") || ((*bundle != "" || *verifyLive) && *directory == "") || (*requireClean && !*verifyLive) {
+		return printErr("Invalid status options", errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle or --verify-live needs --directory; --require-clean needs --verify-live"))
 	}
 	resolver, handoffErr := loadTestCampaignBundleResolver(*handoff)
 	if handoffErr != nil {
@@ -267,6 +268,11 @@ func cmdTestCampaignStatus(args []string) int {
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(report); err != nil {
 		return printErr("Could not write status", err)
+	}
+	if *requireClean {
+		code, summary := testCampaignStatusCleanGate(report)
+		fmt.Fprintln(os.Stderr, summary)
+		return code
 	}
 	return 0
 }

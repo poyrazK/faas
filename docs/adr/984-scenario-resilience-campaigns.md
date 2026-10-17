@@ -324,3 +324,11 @@ cleanup persistence or mutations, and never adopts cached absence as current
 proof. Changed local evidence invalidates the result. Aggregate clean state is
 point-in-time resource evidence only and cannot alter execution counts or policy
 semantics. Offline status remains the default.
+
+An opt-in status `--require-clean` gate requires `--verify-live` and a campaign
+directory. It evaluates the final stable live snapshot after emitting reports:
+exit 0 requires a nonempty fully verified clean inventory, exit 4 indicates
+verified resources remain non-clean, and exit 5 indicates incomplete or changed
+verification. Invalid inputs and report errors retain ordinary CLI codes.
+Default status remains informational. Cleanup gating does not change execution,
+coverage, or policy verdicts and performs no cleanup mutations.

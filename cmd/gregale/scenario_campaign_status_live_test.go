@@ -281,6 +281,20 @@ func TestCampaignStatusLiveCLI(t *testing.T) {
 			if code := cmdTestCampaignStatus(args); code != 0 {
 				t.Fatal(code)
 			}
+			if mode == "live" || mode == "profile" {
+				want := testCampaignStatusVerificationIncomplete
+				if mode == "live" {
+					want = testCampaignStatusResourcesPresent
+				}
+				if code := cmdTestCampaignStatus(append(args, "--require-clean")); code != want {
+					t.Fatalf("cleanup gate exit = %d, want %d", code, want)
+				}
+				// The gated invocation must still produce both report exports.
+				requests.Store(0)
+				if code := cmdTestCampaignStatus(args); code != 0 {
+					t.Fatal(code)
+				}
+			}
 			var report testCampaignStatusReport
 			if err := readTestCampaignJSON(output, &report); err != nil {
 				t.Fatal(err)

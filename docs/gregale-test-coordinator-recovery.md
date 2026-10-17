@@ -536,3 +536,19 @@ live result rather than treating the exit code as cleanup proof.
 Acceptance checks default status makes zero API requests, opted-in status makes
 GETs without mutations, API/database outages retain uncertainty, completed
 cleanup verifies live timestamps, and campaign/receipt bytes remain unchanged.
+
+### CI cleanup gate
+
+Use `test policy status --verify-live --require-clean` with the original
+`--plan`, `--policy`, `--manifest`, and `--directory` (and `--handoff` when needed).
+JSON stdout and optional `--json` / `--html` exports are written before the gate
+returns, with a concise summary on stderr. Gate exit codes are:
+
+- 0: every expected resource was verified clean.
+- 4: verification completed, but resources remain present or consumers pending.
+- 5: verification is incomplete, blocked, empty, or local evidence changed.
+
+Invalid inputs and export failures retain ordinary CLI error codes. The flag
+requires `--verify-live`; default informational status behavior is unchanged.
+A clean resource result does not establish execution completeness or policy
+success: CI must check those separately. Verification remains point-in-time.
