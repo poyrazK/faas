@@ -1251,6 +1251,24 @@ from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_acknowledgment_failure_request import EventAcknowledgmentFailureRequest
+from .event_acknowledgment_history import EventAcknowledgmentHistory
+from .event_acknowledgment_history_coverage import EventAcknowledgmentHistoryCoverage
+from .event_acknowledgment_history_page import EventAcknowledgmentHistoryPage
+from .event_acknowledgment_history_page_coverage import EventAcknowledgmentHistoryPageCoverage
+from .event_acknowledgment_history_query import EventAcknowledgmentHistoryQuery
+from .event_acknowledgment_history_query_kind import EventAcknowledgmentHistoryQueryKind
+from .event_acknowledgment_outcome import EventAcknowledgmentOutcome
+from .event_acknowledgment_outcome_kind import EventAcknowledgmentOutcomeKind
+from .event_acknowledgment_policy import EventAcknowledgmentPolicy
+from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyRequest
+from .event_acknowledgment_recording_coverage import EventAcknowledgmentRecordingCoverage
+from .event_acknowledgment_request import EventAcknowledgmentRequest
+from .event_acknowledgment_status import EventAcknowledgmentStatus
+from .event_acknowledgment_status_disposition import EventAcknowledgmentStatusDisposition
+from .event_acknowledgment_status_processing_state import EventAcknowledgmentStatusProcessingState
+from .event_acknowledgment_window_health import EventAcknowledgmentWindowHealth
+from .event_acknowledgment_window_health_coverage import EventAcknowledgmentWindowHealthCoverage
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
 from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
@@ -1283,6 +1301,11 @@ from .event_consumer_health_coverage import EventConsumerHealthCoverage
 from .event_consumer_pending_sample import EventConsumerPendingSample
 from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
 from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_processing_health import EventConsumerProcessingHealth
+from .event_consumer_processing_health_coverage import EventConsumerProcessingHealthCoverage
+from .event_consumer_processing_health_renewal_failure_coverage import (
+    EventConsumerProcessingHealthRenewalFailureCoverage,
+)
 from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
 from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
 from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
@@ -1532,8 +1555,42 @@ from .event_subscription_capacity_commands import EventSubscriptionCapacityComma
 from .event_subscription_capacity_commands_outcome import EventSubscriptionCapacityCommandsOutcome
 from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
+from .event_subscription_deadline_page import EventSubscriptionDeadlinePage
+from .event_subscription_deadline_page_coverage import EventSubscriptionDeadlinePageCoverage
+from .event_subscription_deadline_recipient import EventSubscriptionDeadlineRecipient
+from .event_subscription_deadline_recipient_waiting_reason import EventSubscriptionDeadlineRecipientWaitingReason
+from .event_subscription_deadline_window import EventSubscriptionDeadlineWindow
+from .event_subscription_deadline_window_coverage import EventSubscriptionDeadlineWindowCoverage
+from .event_subscription_deadline_window_expired_waiting_reasons import (
+    EventSubscriptionDeadlineWindowExpiredWaitingReasons,
+)
+from .event_subscription_deadline_window_upcoming_waiting_reasons import (
+    EventSubscriptionDeadlineWindowUpcomingWaitingReasons,
+)
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
+from .event_subscription_pending_summary import EventSubscriptionPendingSummary
+from .event_subscription_pending_summary_capacity_blocking_scopes_item import (
+    EventSubscriptionPendingSummaryCapacityBlockingScopesItem,
+)
+from .event_subscription_pending_summary_circuit_state import EventSubscriptionPendingSummaryCircuitState
+from .event_subscription_pending_summary_constraints_item import EventSubscriptionPendingSummaryConstraintsItem
+from .event_subscription_pending_summary_coverage import EventSubscriptionPendingSummaryCoverage
+from .event_subscription_rate_command_receipt import EventSubscriptionRateCommandReceipt
+from .event_subscription_rate_command_receipt_outcome import EventSubscriptionRateCommandReceiptOutcome
+from .event_subscription_rate_commands import EventSubscriptionRateCommands
+from .event_subscription_rate_deadline_risk import EventSubscriptionRateDeadlineRisk
+from .event_subscription_rate_deadline_risk_reason import EventSubscriptionRateDeadlineRiskReason
+from .event_subscription_rate_limit import EventSubscriptionRateLimit
+from .event_subscription_rate_preview import EventSubscriptionRatePreview
+from .event_subscription_rate_preview_capacity_blocking_scopes_item import (
+    EventSubscriptionRatePreviewCapacityBlockingScopesItem,
+)
+from .event_subscription_rate_preview_coverage import EventSubscriptionRatePreviewCoverage
+from .event_subscription_rate_preview_deadline_coverage import EventSubscriptionRatePreviewDeadlineCoverage
+from .event_subscription_rate_preview_request import EventSubscriptionRatePreviewRequest
+from .event_subscription_rate_preview_sample_limit import EventSubscriptionRatePreviewSampleLimit
+from .event_subscription_rate_request import EventSubscriptionRateRequest
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
@@ -1970,6 +2027,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
 from .list_event_execution_lineage_retry_job_controls_credential_type import (
@@ -1981,6 +2039,8 @@ from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
 from .list_event_subscription_capacity_commands_outcome import ListEventSubscriptionCapacityCommandsOutcome
+from .list_event_subscription_deadlines_status import ListEventSubscriptionDeadlinesStatus
+from .list_event_subscription_deadlines_waiting_reason import ListEventSubscriptionDeadlinesWaitingReason
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -6149,6 +6209,24 @@ __all__ = (
     "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventAcknowledgmentFailureRequest",
+    "EventAcknowledgmentHistory",
+    "EventAcknowledgmentHistoryCoverage",
+    "EventAcknowledgmentHistoryPage",
+    "EventAcknowledgmentHistoryPageCoverage",
+    "EventAcknowledgmentHistoryQuery",
+    "EventAcknowledgmentHistoryQueryKind",
+    "EventAcknowledgmentOutcome",
+    "EventAcknowledgmentOutcomeKind",
+    "EventAcknowledgmentPolicy",
+    "EventAcknowledgmentPolicyRequest",
+    "EventAcknowledgmentRecordingCoverage",
+    "EventAcknowledgmentRequest",
+    "EventAcknowledgmentStatus",
+    "EventAcknowledgmentStatusDisposition",
+    "EventAcknowledgmentStatusProcessingState",
+    "EventAcknowledgmentWindowHealth",
+    "EventAcknowledgmentWindowHealthCoverage",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
     "EventBacklogConsumerPendingWaitingReasons",
@@ -6181,6 +6259,9 @@ __all__ = (
     "EventConsumerPendingSample",
     "EventConsumerPendingSampleCoverage",
     "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerProcessingHealth",
+    "EventConsumerProcessingHealthCoverage",
+    "EventConsumerProcessingHealthRenewalFailureCoverage",
     "EventConsumerWaitingReasons",
     "EventConsumerWaitingReasonsCounts",
     "EventConsumerWaitingReasonsCoverage",
@@ -6408,8 +6489,34 @@ __all__ = (
     "EventSubscriptionCapacityCommandsOutcome",
     "EventSubscriptionCapacityGuard",
     "EventSubscriptionCapacityRequest",
+    "EventSubscriptionDeadlinePage",
+    "EventSubscriptionDeadlinePageCoverage",
+    "EventSubscriptionDeadlineRecipient",
+    "EventSubscriptionDeadlineRecipientWaitingReason",
+    "EventSubscriptionDeadlineWindow",
+    "EventSubscriptionDeadlineWindowCoverage",
+    "EventSubscriptionDeadlineWindowExpiredWaitingReasons",
+    "EventSubscriptionDeadlineWindowUpcomingWaitingReasons",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
+    "EventSubscriptionPendingSummary",
+    "EventSubscriptionPendingSummaryCapacityBlockingScopesItem",
+    "EventSubscriptionPendingSummaryCircuitState",
+    "EventSubscriptionPendingSummaryConstraintsItem",
+    "EventSubscriptionPendingSummaryCoverage",
+    "EventSubscriptionRateCommandReceipt",
+    "EventSubscriptionRateCommandReceiptOutcome",
+    "EventSubscriptionRateCommands",
+    "EventSubscriptionRateDeadlineRisk",
+    "EventSubscriptionRateDeadlineRiskReason",
+    "EventSubscriptionRateLimit",
+    "EventSubscriptionRatePreview",
+    "EventSubscriptionRatePreviewCapacityBlockingScopesItem",
+    "EventSubscriptionRatePreviewCoverage",
+    "EventSubscriptionRatePreviewDeadlineCoverage",
+    "EventSubscriptionRatePreviewRequest",
+    "EventSubscriptionRatePreviewSampleLimit",
+    "EventSubscriptionRateRequest",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
@@ -6834,6 +6941,7 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
     "ListEventExecutionLineageRetryJobControlsCredentialType",
@@ -6843,6 +6951,8 @@ __all__ = (
     "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",
     "ListEventSubscriptionCapacityCommandsOutcome",
+    "ListEventSubscriptionDeadlinesStatus",
+    "ListEventSubscriptionDeadlinesWaitingReason",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
