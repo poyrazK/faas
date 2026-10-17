@@ -1,7 +1,7 @@
 from typing import Literal
 
 EnvironmentGitOpsChangedWebhookPayloadPreviousStatus = Literal[
-    "blocked", "drifted", "in_sync", "unavailable", "unknown", "verified"
+    "blocked", "drifted", "failed", "in_sync", "progressing", "serving", "unavailable", "unknown", "verified"
 ]
 
 ENVIRONMENT_GIT_OPS_CHANGED_WEBHOOK_PAYLOAD_PREVIOUS_STATUS_VALUES: set[
@@ -9,7 +9,10 @@ ENVIRONMENT_GIT_OPS_CHANGED_WEBHOOK_PAYLOAD_PREVIOUS_STATUS_VALUES: set[
 ] = {
     "blocked",
     "drifted",
+    "failed",
     "in_sync",
+    "progressing",
+    "serving",
     "unavailable",
     "unknown",
     "verified",

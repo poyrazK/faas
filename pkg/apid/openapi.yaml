@@ -58268,7 +58268,7 @@ components:
       additionalProperties: false
     EnvironmentGitOpsChangedWebhookPayload:
       type: object
-      description: Value-free account webhook emitted atomically with a current GitOps report or completed source poll. Unchanged status is silent; first failures and later recoveries are delivered to explicit environment.gitops.changed subscribers. The drift and source axes remain independent.
+      description: Value-free account webhook for independent drift, source and rollout axes. Rollout serving and failure outcomes are assessed from current exact-commit graph evidence when a current report completes; approval and control transactions supersede pending rollouts. Each terminal outcome is delivered once per approval generation. Pending observations stay silent. Existing drift/source transition rules and explicit environment.gitops.changed subscriptions apply. Delivery is signed and at least once; deduplicate retries by transition_id.
       required: [version, transition_id, source_id, project, environment, axis, previous_status, status, generation, observed_version, observed_at, dashboard_path, changes, blocking_reasons, details_truncated]
       properties:
         version: { type: integer, enum: [1] }
@@ -58276,13 +58276,21 @@ components:
         source_id: { type: string, format: uuid }
         project: { type: string }
         environment: { type: string }
-        axis: { type: string, enum: [drift, source] }
-        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified] }
-        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified] }
+        axis: { type: string, enum: [drift, source, rollout] }
+        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified, progressing, serving, failed] }
+        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified, serving, failed, superseded] }
         generation: { type: integer, format: int64, minimum: 0 }
         observed_version: { type: integer, format: int64, minimum: 0 }
         approved_revision_id: { type: string, format: uuid }
         commit_sha: { type: string, pattern: '^[a-f0-9]{40}$' }
+        definition_digest: { type: string, pattern: '^[a-f0-9]{64}$' }
+        graph_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        diagnostics:
+          type: array
+          maxItems: 100
+          description: Safe mapped blocker codes and guidance, optionally scoped to a workload. Never includes upstream error text, logs, values or secret-reference targets.
+          items: { $ref: '#/components/schemas/EnvironmentGitOpsDiagnostic' }
         run_id: { type: string, format: uuid }
         error_code: { type: string }
         observed_at: { type: string, format: date-time }

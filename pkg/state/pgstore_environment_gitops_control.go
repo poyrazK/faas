@@ -99,6 +99,9 @@ func (s *PgStore) UpdateEnvironmentGitSource(ctx context.Context, accountID, sou
 				return err
 			}
 		}
+		if err := pgEnvironmentGitRolloutNotification(ctx, tx, sourceID, "", nil, time.Now().UTC()); err != nil {
+			return err
+		}
 		return recordGitOpsEvent(ctx, tx, sourceID, accountID, "control", update)
 	})
 	return result, err

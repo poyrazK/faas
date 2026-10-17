@@ -87,5 +87,8 @@ func (s *PgStore) FinishEnvironmentGitSourcePoll(ctx context.Context, lease Envi
 	if err := pgEnvironmentGitNotification(ctx, tx, lease.Source.ID, "source", environmentGitSourceNotificationStatus(result.ErrorCode), "", result.ErrorCode, api.EnvironmentGitOpsPlan{CommitSHA: result.CommitSHA}, now); err != nil {
 		return err
 	}
+	if err := pgEnvironmentGitRolloutNotification(ctx, tx, lease.Source.ID, "", nil, now); err != nil {
+		return err
+	}
 	return mapErr(tx.Commit(ctx))
 }

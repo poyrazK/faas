@@ -1,11 +1,16 @@
 from typing import Literal
 
-EnvironmentGitOpsChangedWebhookPayloadStatus = Literal["blocked", "drifted", "in_sync", "unavailable", "verified"]
+EnvironmentGitOpsChangedWebhookPayloadStatus = Literal[
+    "blocked", "drifted", "failed", "in_sync", "serving", "superseded", "unavailable", "verified"
+]
 
 ENVIRONMENT_GIT_OPS_CHANGED_WEBHOOK_PAYLOAD_STATUS_VALUES: set[EnvironmentGitOpsChangedWebhookPayloadStatus] = {
     "blocked",
     "drifted",
+    "failed",
     "in_sync",
+    "serving",
+    "superseded",
     "unavailable",
     "verified",
 }

@@ -635,7 +635,7 @@ post-activation occurrence for future runs. Production execution gates and
 exclusive native acceptance requirements remain unchanged. See
 [ADR-1353](adr/1353-gitops-rollback-review-requests.md).
 
-## Receive drift and source notifications
+## Receive drift, source and rollout notifications
 
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
 
@@ -662,6 +662,41 @@ Field and blocker details are limited to 100 each; `details_truncated` identifie
 shortened payloads. Baselines and all receiver deliveries commit together and
 survive restart and report pruning. Existing retries, receiver controls and
 account quotas apply. Native qualification and enforcement keep their gates.
+
+The independent `rollout` axis reports whole-environment outcomes:
+
+| Status | Meaning |
+| --- | --- |
+| `serving` | The exact approved commit has current complete preparation, qualification, activation and serving evidence for every workload, plus fresh successful source verification. |
+| `failed` | A current graph or workload has recorded failure for that exact approved revision. |
+| `superseded` | A pending rollout was replaced by another approval or stopped by a source control change. The payload identifies the previous rollout. |
+
+The controller assesses rollout outcomes when a current reconciliation report
+finishes. It uses the same evidence rules as `gitops wait`; a completed build or
+historical applied revision is insufficient, and scheduled Jobs need the current
+post-activation occurrence. Stale reports cannot notify. Report mode does not
+start rollouts. Pending progress stays quiet. Each failure and serving outcome
+is emitted at most once per approval generation, surviving controller restart
+and missing or flapping evidence. A failed rollout can later notify serving
+recovery. A completed outcome is not subsequently reported as superseded.
+This is rollout completion feedback, not continuous availability monitoring or
+a guarantee that every transient failure was observed. The shared assessor
+currently supports full 40-character Git SHAs; other Git identities stay
+unassessed.
+
+Rollout payloads add `definition_digest`, `graph_id` and `plan_hash` when known.
+Failures include up to 100 mapped `diagnostics` with stable codes, an affected
+workload where known, and operator guidance. Unknown errors use
+`unrecognized_blocker`; upstream messages and build logs never enter these
+details. Pending supersession preserves the previous revision's last observed
+generation and intent, rather than borrowing the new revision's identity.
+Approval/control changes, the notification baseline and all receiver deliveries
+commit atomically. No migration or separate notification worker is required.
+
+Deliveries are signed and **at least once**. Deduplicate retries using the
+payload's `transition_id`; all receivers for one outcome share that ID. New
+receivers receive future outcomes without replaying already recorded ones.
+See [ADR-1355](adr/1355-gitops-rollout-outcome-notifications.md).
 
 ## Isolated enforcement acceptance
 

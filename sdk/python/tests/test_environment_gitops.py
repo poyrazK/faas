@@ -361,3 +361,51 @@ def test_unchanged_build_context_and_cache_progress_round_trip() -> None:
         "blocking_reasons": [],
     }
     assert EnvironmentWorkloadProgress.from_dict(progress).to_dict() == progress
+
+
+def test_rollout_notification_preserves_exact_approval_and_diagnostics() -> None:
+    from faas_sdk.models import EnvironmentGitOpsChangedWebhookPayload
+
+    for status in ("serving", "failed", "superseded"):
+        body = {
+            "version": 1,
+            "transition_id": "5fd00a70-e0ce-41ea-94f5-613b34c65923",
+            "source_id": "dcda57d8-569c-4d2b-b901-cb4f09f00b31",
+            "project": "shop",
+            "environment": "production",
+            "axis": "rollout",
+            "previous_status": "progressing",
+            "status": status,
+            "generation": 3,
+            "observed_version": 7,
+            "approved_revision_id": "93d593fb-37b4-45bc-a81a-7f86f183b7b2",
+            "commit_sha": "a" * 40,
+            "definition_digest": "b" * 64,
+            "graph_id": "3bb2f69c-8479-4d3e-b5f0-68e77bf25240",
+            "plan_hash": "c" * 64,
+            "observed_at": "2026-10-17T12:00:00Z",
+            "dashboard_path": "/dashboard/projects/shop/environments/production/gitops",
+            "changes": [],
+            "blocking_reasons": ["environment_workload_build_failed"],
+            "details_truncated": False,
+            "diagnostics": [
+                {
+                    "resource": "workload/api",
+                    "stage": "preparation",
+                    "code": "environment_workload_build_failed",
+                    "actor": "customer",
+                    "message": "The candidate build failed.",
+                    "action": "Inspect build diagnostics.",
+                }
+            ],
+        }
+        parsed = EnvironmentGitOpsChangedWebhookPayload.from_dict(body)
+        assert parsed.axis == "rollout"
+        assert parsed.status == status
+        assert parsed.definition_digest == "b" * 64
+        assert parsed.diagnostics[0].resource == "workload/api"
+        assert parsed.diagnostics[0].code == "environment_workload_build_failed"
+        encoded = parsed.to_dict()
+        # Datetime serialization normalizes Z to an explicit UTC offset.
+        encoded["observed_at"] = body["observed_at"]
+        assert encoded == body

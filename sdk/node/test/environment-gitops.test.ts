@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { FaaSClient, ProjectsService } from '../src/index.js';
 import type { EnvironmentGitOpsExplanation } from '../src/index.js';
 import type { PreviewEnvironmentGitPromotionResponse, PreviewEnvironmentGitRollbackResponse } from '../src/index.js';
+import type { EnvironmentGitOpsChangedWebhookPayload } from '../src/index.js';
+
+test('GitOps rollout webhook preserves exact approval identity and safe diagnostics', () => {
+  for (const status of ['serving', 'failed', 'superseded'] as const) {
+    const outcome: EnvironmentGitOpsChangedWebhookPayload = {
+      version: 1, transition_id: 'transition', source_id: 'source', project: 'shop', environment: 'production',
+      axis: 'rollout', previous_status: 'progressing', status, generation: 3, observed_version: 7,
+      approved_revision_id: 'revision', commit_sha: 'a'.repeat(40), definition_digest: 'b'.repeat(64),
+      graph_id: 'graph', plan_hash: 'c'.repeat(64), observed_at: '2026-10-17T12:00:00Z',
+      dashboard_path: '/dashboard/projects/shop/environments/production/gitops', changes: [],
+      blocking_reasons: ['environment_workload_build_failed'], details_truncated: false,
+      diagnostics: [{ resource: 'workload/api', stage: 'preparation', code: 'environment_workload_build_failed',
+        actor: 'customer', message: 'The candidate build failed.', action: 'Inspect build diagnostics.' }],
+    };
+    assert.deepEqual(JSON.parse(JSON.stringify(outcome)), outcome);
+  }
+});
 
 test('GitOps promotion carries the reviewed hash and requires fresh target qualification', async () => {
   const sha = 'a'.repeat(40), digest = 'b'.repeat(64), hash = 'c'.repeat(64);

@@ -175,6 +175,9 @@ func (s *PgStore) ApproveEnvironmentDesiredRevision(ctx context.Context, input A
 			return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
 		}
 	}
+	if err := pgEnvironmentGitRolloutNotification(ctx, tx, input.SourceID, "", nil, time.Now().UTC()); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, mapErr(err)
 	}
@@ -312,7 +315,9 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 	if err := validateGitOpsRunFinish(lease, status, plan, steps, now, next); err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	// Outcome assessment combines graph, runtime and serving receipts. Keep
+	// those facts and the atomic outbox on the same database snapshot.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return err
 	}
@@ -362,6 +367,9 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 	}
 	var notificationPlan api.EnvironmentGitOpsPlan
 	_ = json.Unmarshal(plan, &notificationPlan)
+	if err := pgEnvironmentGitRolloutNotification(ctx, tx, lease.Source.ID, lease.RunID, &notificationPlan, now); err != nil {
+		return err
+	}
 	if err := pgEnvironmentGitNotification(ctx, tx, lease.Source.ID, "drift", environmentGitReportNotificationStatus(status, notificationPlan), lease.RunID, errorCode, notificationPlan, now); err != nil {
 		return err
 	}

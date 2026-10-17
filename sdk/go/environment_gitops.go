@@ -9,6 +9,7 @@ type (
 	EnvironmentWorkloadProgress            = api.EnvironmentWorkloadProgress
 	PreviewEnvironmentGitPlanResponse      = api.PreviewEnvironmentGitPlanResponse
 	EnvironmentGitOpsChangedWebhookPayload = api.EnvironmentGitOpsChangedWebhookPayload
+	EnvironmentGitOpsDiagnostic            = api.EnvironmentGitOpsDiagnostic
 	RebindEnvironmentGitSourceRequest      = api.RebindEnvironmentGitSourceRequest
 	DetachEnvironmentGitSourceRequest      = api.DetachEnvironmentGitSourceRequest
 	EnvironmentFieldOwnershipRequest       = api.EnvironmentFieldOwnershipRequest

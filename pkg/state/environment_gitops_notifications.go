@@ -11,8 +11,16 @@ import (
 )
 
 type environmentGitNotificationBaseline struct {
-	Status     string `json:"status"`
-	Generation int64  `json:"generation"`
+	Status          string `json:"status"`
+	Generation      int64  `json:"generation"`
+	RevisionID      string `json:"revision_id,omitempty"`
+	CommitSHA       string `json:"commit_sha,omitempty"`
+	Digest          string `json:"digest,omitempty"`
+	IntentVersion   int64  `json:"intent_version,omitempty"`
+	GraphID         string `json:"graph_id,omitempty"`
+	PlanHash        string `json:"plan_hash,omitempty"`
+	ServingNotified bool   `json:"serving_notified,omitempty"`
+	FailedNotified  bool   `json:"failed_notified,omitempty"`
 }
 
 type environmentGitNotificationState map[string]environmentGitNotificationBaseline

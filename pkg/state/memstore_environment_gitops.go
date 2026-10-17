@@ -164,6 +164,9 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 		memory.source = source
 		memory.next = source.UpdatedAt
 	}
+	if err := m.environmentGitRolloutNotificationLocked(memory, nil, "", time.Now().UTC()); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
 	return source, cloneEnvironmentRevision(revision), nil
 }
 
@@ -301,6 +304,17 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	completed := now.UTC()
 	var notificationPlan api.EnvironmentGitOpsPlan
 	_ = json.Unmarshal(plan, &notificationPlan)
+	if memory.source.Spec.Mode == "enforce" && environmentGitRolloutReportCurrent(memory.source, memory.revisions[memory.source.ApprovedRevisionID], notificationPlan) {
+		evidence, err := m.currentEnvironmentGitOpsWorkloadEvidenceLocked(memory.source.AccountID, memory.source.ID)
+		if err != nil {
+			return err
+		}
+		if evidence == nil || evidence.PlanHash == notificationPlan.Hash {
+			if err := m.environmentGitRolloutNotificationLocked(memory, evidence, run.ID, now); err != nil {
+				return err
+			}
+		}
+	}
 	if err := m.environmentGitNotificationLocked(memory, "drift", environmentGitReportNotificationStatus(status, notificationPlan), run.ID, errorCode, notificationPlan, now); err != nil {
 		return err
 	}

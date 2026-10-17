@@ -110,5 +110,8 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		memory.source.SourceCommitSHA, memory.source.SourceDefinitionDigest, memory.source.SourceVerifiedAt = result.CommitSHA, result.Digest, &verified
 	}
 	memory.poll = environmentGitSourcePoll{NextPollAt: next.UTC()}
+	if err := m.environmentGitRolloutNotificationLocked(memory, nil, "", now); err != nil {
+		return err
+	}
 	return m.environmentGitNotificationLocked(memory, "source", environmentGitSourceNotificationStatus(result.ErrorCode), "", result.ErrorCode, api.EnvironmentGitOpsPlan{CommitSHA: result.CommitSHA}, now)
 }
