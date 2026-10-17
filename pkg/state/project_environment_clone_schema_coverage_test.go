@@ -20,31 +20,43 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	}
 	wanted := map[string]string{
 		// CI configuration stays scoped; execution authority remains at its source.
-		"ci_automation_event_retries":                   CloneSchemaOperational,
-		"ci_automation_branches":                        CloneSchemaOperational,
-		"ci_automation_pull_requests":                   CloneSchemaOperational,
-		"ci_automation_events":                          CloneSchemaOperational,
-		"ci_automation_path_checks":                     CloneSchemaOperational,
-		"ci_source_check_retries":                       CloneSchemaOperational,
-		"ci_automation_policies":                        CloneSchemaConfiguration,
-		"ci_dispatch_budget":                            CloneSchemaOperational,
-		"ci_execution_archives":                         CloneSchemaOperational,
-		"ci_execution_check_retries":                    CloneSchemaOperational,
-		"ci_execution_checks":                           CloneSchemaOperational,
-		"ci_execution_profiles":                         CloneSchemaConfiguration,
-		"ci_executions":                                 CloneSchemaOperational,
-		"ci_github_bindings":                            CloneSchemaConfiguration,
-		"ci_github_checks":                              CloneSchemaOperational,
-		"ci_github_triggers":                            CloneSchemaOperational,
-		"ci_job_attempts":                               CloneSchemaOperational,
-		"ci_job_runtime":                                CloneSchemaOperational,
-		"ci_job_runtime_objects":                        CloneSchemaOperational,
-		"ci_managed_objects":                            CloneSchemaOperational,
-		"ci_pipeline_revisions":                         CloneSchemaConfiguration,
-		"ci_run_events":                                 CloneSchemaOperational,
-		"ci_runs":                                       CloneSchemaOperational,
-		"ci_storage_budget":                             CloneSchemaOperational,
-		"ci_worker_health":                              CloneSchemaOperational,
+		"ci_automation_event_retries": CloneSchemaOperational,
+		"ci_automation_branches":      CloneSchemaOperational,
+		"ci_automation_pull_requests": CloneSchemaOperational,
+		"ci_automation_events":        CloneSchemaOperational,
+		"ci_automation_path_checks":   CloneSchemaOperational,
+		"ci_source_check_retries":     CloneSchemaOperational,
+		"ci_automation_policies":      CloneSchemaConfiguration,
+		"ci_dispatch_budget":          CloneSchemaOperational,
+		"ci_execution_archives":       CloneSchemaOperational,
+		"ci_execution_check_retries":  CloneSchemaOperational,
+		"ci_execution_checks":         CloneSchemaOperational,
+		"ci_execution_profiles":       CloneSchemaConfiguration,
+		"ci_executions":               CloneSchemaOperational,
+		"ci_github_bindings":          CloneSchemaConfiguration,
+		"ci_github_checks":            CloneSchemaOperational,
+		"ci_github_triggers":          CloneSchemaOperational,
+		"ci_job_attempts":             CloneSchemaOperational,
+		"ci_job_runtime":              CloneSchemaOperational,
+		"ci_job_runtime_objects":      CloneSchemaOperational,
+		"ci_managed_objects":          CloneSchemaOperational,
+		"ci_pipeline_revisions":       CloneSchemaConfiguration,
+		"ci_run_events":               CloneSchemaOperational,
+		"ci_runs":                     CloneSchemaOperational,
+		"ci_storage_budget":           CloneSchemaOperational,
+		"ci_worker_health":            CloneSchemaOperational,
+		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
+		"hosting_sites":                                 CloneSchemaConfiguration,
+		"hosting_domains":                               CloneSchemaConfiguration,
+		"hosting_retention_policies":                    CloneSchemaConfiguration,
+		"hosting_releases":                              CloneSchemaData,
+		"hosting_automation_credentials":                CloneSchemaIdentity,
+		"hosting_oidc_trusts":                           CloneSchemaIdentity,
+		"hosting_domain_claims":                         CloneSchemaIdentity,
+		"hosting_ci_runs":                               CloneSchemaOperational,
+		"hosting_previews":                              CloneSchemaOperational,
+		"hosting_promotion_events":                      CloneSchemaOperational,
+		"hosting_route_publications":                    CloneSchemaOperational,
 		"app_issue_lifecycle_alert_policies":            CloneSchemaConfiguration,
 		"issue_lifecycle_alert_receipts":                CloneSchemaOperational,
 		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,
@@ -285,6 +297,32 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	fresh, err := ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil || fresh[0].Kind == "changed" || fresh[0].Columns[0] == "changed" {
 		t.Fatalf("caller changed capture registry: %v", err)
+	}
+}
+
+func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
+	// adr: 202610171453 — known schema does not qualify hosting configuration or artifact cloning.
+	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := cloneSchemaCoverage(policies)
+	if err != nil || !report.Known {
+		t.Fatal("registered schema must be known", report, err)
+	}
+	wanted := map[string]string{
+		"hosting_sites":              "isolated_strategy_unavailable",
+		"hosting_domains":            "isolated_strategy_unavailable",
+		"hosting_retention_policies": "isolated_strategy_unavailable",
+		"hosting_releases":           "isolated_data_strategy_unavailable",
+	}
+	for _, blocker := range report.Blockers {
+		if wanted[blocker.Table] == blocker.Code {
+			delete(wanted, blocker.Table)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatal("hosting copy strategies became implicitly available", wanted)
 	}
 }
 

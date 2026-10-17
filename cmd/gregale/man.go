@@ -63,7 +63,7 @@ func cmdMan(args []string) int {
 		return 0
 	case 1:
 		cmd, ok := lookupCliCommand(args[0])
-		if !ok {
+		if !ok || !cliCommandAvailable(cmd.Name) {
 			printCommandValidation(os.Stderr, "gregale man: unknown command %q\n", args[0])
 			if sug, has := suggestCommand(args[0]); has && !jsonOutput {
 				_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)
@@ -416,6 +416,9 @@ func suggestCommand(query string) (string, bool) {
 	bestDist := maxDist + 1
 	tied := false
 	for _, c := range cliCommands {
+		if !cliCommandAvailable(c.Name) {
+			continue
+		}
 		d := levenshtein(query, c.Name)
 		switch {
 		case d < bestDist:

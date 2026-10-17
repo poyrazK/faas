@@ -1,0 +1,21 @@
+account_id         = "00000000000000000000000000000000"
+zone_id            = "00000000000000000000000000000000"
+hosting_domain     = "gregale-hosting.example"
+platform_domains   = ["gregale.dev"]
+name               = "gregale-internal-hosting"
+access_team_domain = "your-team.cloudflareaccess.com"
+internal_emails    = ["operator@example.com"]
+
+# Keep these false for the initial infrastructure apply.
+attach_route   = false
+worker_enabled = false
+durable_routing_enabled = false
+custom_domains_enabled = false
+configure_custom_domains = false
+
+# Browser uploads stay disabled until exact operations-console origins are set.
+dashboard_upload_origins = []
+# dashboard_upload_origins = ["https://operations.gregale.dev"]
+
+configure_analytics = false
+analytics_enabled = false

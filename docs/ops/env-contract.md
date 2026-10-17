@@ -233,6 +233,38 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_FREE_PAGE_REPORTING` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+ |
+| `FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_ANALYTICS_CF_TOKEN` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET` | apid, shared | `default` |  |  | `` | optional internal hosting Analytics Engine dataset; collection has an independent default-off runtime gate |
+| `FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_CANCELLATION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID` | apid, shared | `default` |  |  | `` | Cloudflare account for the isolated internal hosting pilot |
+| `FAAS_FRONTEND_HOSTING_CF_TOKEN` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_CONFIG_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_DOMAIN` | apid, shared | `default` |  |  | `` | isolated internal hosting domain; empty leaves hosting providers unconfigured |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_ACCESS_POLICY_ID` | apid, shared | `default` |  |  | `` | reviewed internal Cloudflare Access policy for custom hostnames |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_CF_TOKEN` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_CNAME_TARGET` | apid, shared | `default` |  |  | `` | Cloudflare for SaaS target within the isolated hosting zone |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_ZONE_ID` | apid, shared | `default` |  |  | `` | isolated internal Cloudflare for SaaS zone; domain admission remains independently gated |
+| `FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED` | apid | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_HISTORY_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_KV_NAMESPACE_ID` | apid, shared | `default` |  |  | `` | isolated internal hosting route namespace |
+| `FAAS_FRONTEND_HOSTING_OIDC_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_PILOT_ENABLED` | apid, shared | `dev-only` |  | 0 | `` | disposable internal qualification only; never configure on a customer production apid |
+| `FAAS_FRONTEND_HOSTING_PILOT_RELAY_SOCKET` | apid, shared | `dev-only` |  |  | `` | disposable internal qualification only; never configure on a customer production apid |
+| `FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_R2_ACCESS_KEY` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_R2_BUCKET` | apid, shared | `default` |  |  | `` | private internal hosting artifact bucket; public access must remain disabled |
+| `FAAS_FRONTEND_HOSTING_R2_ENDPOINT` | apid, shared | `default` |  |  | `` | private R2 HTTPS endpoint for the isolated internal hosting pilot |
+| `FAAS_FRONTEND_HOSTING_R2_SECRET_KEY` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_RESERVED_DOMAINS` | apid, shared | `default` |  |  | `` | additional platform domains excluded from internal custom-hostname claims |
+| `FAAS_FRONTEND_HOSTING_RETENTION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
 | `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
