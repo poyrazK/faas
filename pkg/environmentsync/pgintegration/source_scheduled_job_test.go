@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func sourceScheduledJobFixture(t *testing.T, basic gitOpsTestStore, provider, kind string) (state.EnvironmentGitOpsLease, environmentsync.DesiredState, state.EnvironmentWorkloadIntent, environmentsync.Plan) {
+func sourceScheduledJobFixture(t *testing.T, basic gitOpsTestStore, provider, kind string, mapped ...bool) (state.EnvironmentGitOpsLease, environmentsync.DesiredState, state.EnvironmentWorkloadIntent, environmentsync.Plan) {
 	t.Helper()
 	ctx := t.Context()
 	account, err := basic.CreateAccount(ctx, "source-schedule@example.test", api.PlanPro)
@@ -36,8 +36,17 @@ func sourceScheduledJobFixture(t *testing.T, basic gitOpsTestStore, provider, ki
 	if err != nil {
 		t.Fatal(err)
 	}
+	appSlug := ""
+	if len(mapped) != 0 && mapped[0] {
+		app, err := basic.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "report-job", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassJob,
+			RAMMB: 512, MaxConcurrency: 1, Status: state.AppActive, Manifest: state.AppManifest{ExecutionMode: "job"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		appSlug = app.Slug
+	}
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: project.Slug, Environment: "production", Workloads: map[string]api.EnvironmentWorkload{
-		"report": {Source: &api.EnvironmentWorkloadSource{Kind: kind, Directory: "jobs/report"}, Runtime: json.RawMessage(`{"execution_mode":"job","entrypoint":["/usr/local/bin/node","/app/report.js"]}`), JobSmoke: &api.EnvironmentJobSmoke{Command: []string{"/bin/true"}, TimeoutSeconds: 30}, Schedule: &api.EnvironmentJobSchedule{Cron: "15 * * * *", Timezone: "UTC"}},
+		"report": {App: appSlug, Source: &api.EnvironmentWorkloadSource{Kind: kind, Directory: "jobs/report"}, Runtime: json.RawMessage(`{"execution_mode":"job","entrypoint":["/usr/local/bin/node","/app/report.js"]}`), JobSmoke: &api.EnvironmentJobSmoke{Command: []string{"/bin/true"}, TimeoutSeconds: 30}, Schedule: &api.EnvironmentJobSchedule{Cron: "15 * * * *", Timezone: "UTC"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +54,9 @@ func sourceScheduledJobFixture(t *testing.T, basic gitOpsTestStore, provider, ki
 	source, _, err = basic.ApproveEnvironmentDesiredRevision(ctx, approval(source, desired, strings.Repeat("a", 40)))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if appSlug != "" {
+		adoptWorkloadIntent(t, basic.(intentTestStore), source)
 	}
 	lease, err := basic.ClaimEnvironmentGitOps(ctx, "source-scheduler", time.Now(), 5*time.Minute)
 	if err != nil {
@@ -57,6 +69,11 @@ func sourceScheduledJobFixture(t *testing.T, basic gitOpsTestStore, provider, ki
 	}
 	if _, err := basic.(state.EnvironmentGitOpsWorkloadCreationStore).PrepareEnvironmentGitOpsWorkloads(ctx, lease, plan); err != nil {
 		t.Fatal(err)
+	}
+	if appSlug != "" {
+		if _, err := intentStore.ApplyEnvironmentGitOps(ctx, lease, planForStore(t, intentStore, lease, desired)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	apps, err := basic.ListApps(ctx, account.ID)
 	if err != nil || len(apps) != 1 {
@@ -93,7 +110,7 @@ func qualifyScheduledSourceJob(t *testing.T, basic gitOpsTestStore, request stat
 	if err := executor.MarkEnvironmentQualificationDispatched(ctx, claimed, admitted.Execution); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{}, SecretRefs: map[string]string{}, SecretVersions: map[string]int64{}}
+	inputs := state.RuntimeConfigInputs{Scope: request.FrozenInputs.Scope, Boundary: time.Now().UTC(), Variables: request.FrozenInputs.Variables, SecretRefs: map[string]string{}, SecretVersions: map[string]int64{}}
 	_, err = basic.(state.EnvironmentGitOpsQualificationRuntimeStore).PublishEnvironmentWorkloadQualificationRuntime(ctx, claimed, state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID, Netns: "source-job-qualification", HostIP: "10.0.0.1", GuestUID: 20001, Inputs: inputs})
 	if err != nil {
 		t.Fatalf("publish runtime: %v", err)

@@ -28,10 +28,17 @@ func environmentGitOpsJobSourceRef(intent EnvironmentWorkloadIntent) (string, bo
 		return intent.Source.Image, ok
 	}
 	if (intent.Source.Kind != "source" && intent.Source.Kind != "dockerfile") ||
-		!canonicalStateUUID(intent.EnvironmentID) || !canonicalStateUUID(intent.AppID) || !environmentCommitRE.MatchString(intent.SourceRevision) {
+		!canonicalStateUUID(intent.EnvironmentID) || !canonicalStateUUID(intent.AppID) {
 		return "", false
 	}
-	return environmentGitOpsSourceJobPrefix + intent.EnvironmentID + "/" + intent.AppID + "/" + intent.SourceRevision, true
+	prefix := environmentGitOpsSourceJobPrefix + intent.EnvironmentID + "/" + intent.AppID + "/"
+	if intent.Source.BuildArtifactID != "" || intent.Source.BuildArtifactHash != "" {
+		if intent.SourceRevision != "" || !api.ValidEnvironmentBuildArtifactReference(intent.Source.BuildArtifactID, intent.Source.BuildArtifactHash) {
+			return "", false
+		}
+		return prefix + "artifact/" + intent.Source.BuildArtifactID + "/" + intent.Source.BuildArtifactHash, true
+	}
+	return prefix + intent.SourceRevision, environmentCommitRE.MatchString(intent.SourceRevision)
 }
 
 // EnvironmentGitOpsJobCommand keeps production argv separate from the
@@ -82,9 +89,15 @@ func EnvironmentGitOpsSourceJobArtifactMatches(intent EnvironmentWorkloadIntent,
 		return false
 	}
 	command, commandOK := EnvironmentGitOpsJobCommand(EnvironmentWorkloadIntent{Source: frozen.Source, Runtime: frozen.Runtime})
+	codeMatches := frozen.SourceArchive != nil && dep.CommitSHA == intent.SourceRevision
+	if frozen.BuiltArtifact != nil {
+		// ScopedWorkloadRuntime validates the exact immutable borrowed receipt.
+		// Its code commit differs from the reviewed target manifest commit.
+		codeMatches = intent.SourceRevision == "" && builtArtifactMatchesDeployment(dep, *frozen)
+	}
 	return commandOK && slices.Equal(command, job.Command) && ok && EnvironmentGitOpsJobSourceMatches(intent, job) && id == dep.ID && dep.AppID == intent.AppID &&
-		dep.CommitSHA == intent.SourceRevision && dep.RootfsKey != "" && dep.RootfsBytes > 0 && job.ImageStorageKey == dep.RootfsKey &&
-		err == nil && frozen != nil && frozen.SourceArchive != nil && frozen.EnvironmentID == intent.EnvironmentID &&
+		codeMatches && dep.RootfsKey != "" && dep.RootfsBytes > 0 && job.ImageStorageKey == dep.RootfsKey &&
+		frozen.WorkloadClass == WorkloadClassJob && frozen.Schedule != nil && frozen.EnvironmentID == intent.EnvironmentID &&
 		frozen.AppID == intent.AppID && reflect.DeepEqual(frozen.Source, intent.Source)
 }
 

@@ -148,8 +148,8 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		}
 		w.JobSmoke.Command = slices.Clone(w.JobSmoke.Command)
 	}
-	if w.Schedule != nil && w.Source != nil && w.Source.BuildArtifactID != "" {
-		return nil, fmt.Errorf("build artifact reuse is not supported for scheduled Jobs")
+	if w.Schedule != nil && w.Source != nil && w.Source.BuildArtifactID != "" && w.Source.Kind != "source" && w.Source.Kind != "dockerfile" {
+		return nil, fmt.Errorf("scheduled build artifact reuse requires source or dockerfile code")
 	}
 	if w.Schedule != nil {
 		var runtimeFields map[string]json.RawMessage

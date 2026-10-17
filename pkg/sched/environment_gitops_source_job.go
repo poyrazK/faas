@@ -47,6 +47,17 @@ func (e *Engine) validateEnvironmentGitOpsSourceJob(ctx context.Context, job sta
 		source.Spec.Provider == "gitlab" && frozen.SourceRepository != source.Spec.Repository {
 		return state.ErrConflict
 	}
+	if frozen.BuiltArtifact != nil {
+		// Authenticate the current producer and publisher again at dispatch and
+		// while the guest's start gate is held. Retention is not execution trust.
+		producers, ok := e.store.(state.DeploymentRuntimeProducerInputStore)
+		if !ok {
+			return state.ErrConflict
+		}
+		if _, err := producers.GetFreshDeploymentRuntimeProducerInputs(ctx, job.AccountID, intent.AppID, dep.ID); err != nil {
+			return err
+		}
+	}
 	release, err := releases.ActiveProjectReleaseSet(ctx, job.AccountID, env.ProjectID, env.Slug)
 	if err != nil {
 		return err

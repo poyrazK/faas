@@ -9,10 +9,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/onebox-faas/faas/migrations"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"io"
 	"os"
 	"reflect"
@@ -21,8 +17,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -51,58 +52,10 @@ func TestGitOpsBuildArtifactReuseKeepsTargetConfigAndNeverQueuesBuild(t *testing
 						if err != nil {
 							t.Fatal(err)
 						}
-						build, err := store.ClaimQueuedBuild(ctx, origin.BuildID)
-						if err != nil {
-							t.Fatal(err)
-						}
-						key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-						if err != nil {
-							t.Fatal(err)
-						}
-						der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if _, _, err = store.UpsertAppTrustedSigner(ctx, app.AccountID, app.ID, "company", der, app.AccountID); err != nil {
-							t.Fatal(err)
-						}
-						claims := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: uuid.MustParse(app.AccountID).String(), OrgID: app.OrgID, AppID: uuid.MustParse(app.ID).String(), DeploymentID: uuid.MustParse(origin.ID).String(), BuildID: uuid.MustParse(build.ID).String(), ClaimStartedAt: build.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: origin.SourceSHA256, ExportDigest: imagechain.Digest([]byte("export")), ExportBytes: 6, Runtime: app.Runtime, BuilderNodeID: "builder-one"}
-						proof, err := buildpublisher.Sign(ctx, claims, "company", key)
-						if err != nil {
-							t.Fatal(err)
-						}
-						publication, err := basic.(state.BuildExportPublicationStore).RecordBuildExportPublication(ctx, state.BuildExportPublicationInput{ID: uuid.NewString(), Claims: claims, Proof: proof})
-						if err != nil {
-							t.Fatal("signed export", err)
-						}
-						if err = store.CompleteBuild(ctx, build, "/builder/export.tar", "apps/source/export.ext4", 6, state.BuildProvenance{BuildID: build.ID, SourceSHA256: origin.SourceSHA256, Plan: string(api.PlanPro), BuilderNodeID: "builder-one", StartedAt: build.StartedAt, FinishedAt: time.Now()}); err != nil {
-							t.Fatal(err)
-						}
+						root, publication := publishReuseSourceArtifact(t, basic, origin)
 						origin, err = store.DeploymentByID(ctx, origin.ID)
 						if err != nil {
 							t.Fatal(err)
-						}
-						base, err := basic.(state.BaseImageProducerStore).PublishBaseImageProducer(ctx, reuseBaseProducerFixture(t, state.RuntimeBaseKeyForArch(app.Runtime, "amd64"), "base"))
-						if err != nil {
-							t.Fatal("base", err)
-						}
-						intentHash, err := state.SourceBuildRootfsIntentHash(app, origin)
-						if err != nil {
-							t.Fatal(err)
-						}
-						rootKind, runner := state.SourceBuildRootfsKind(app, origin)
-						rootInput := state.SourceBuildRootfsInput{ID: uuid.NewString(), PublicationID: publication.ID, PublicationHash: publication.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: origin.ID, Scope: origin.Scope, Kind: rootKind, Runtime: runner, IntentHash: intentHash, StorageKey: "apps/source/converted.ext4", RootfsPath: "/srv/apps/source/converted.ext4", ContentBytes: 24, ArtifactDigest: imagechain.Digest([]byte("converted ext4")), ArtifactBytes: 24, BaseProducerID: base.ID, BaseInputHash: base.InputHash, GuestInitDigest: base.Input.GuestInitDigest, LayoutVersion: state.SourceBuildRootfsLayout}
-						if runner != "" {
-							rootInput.RunnerDigest = imagechain.Digest([]byte("runner"))
-						}
-						root, err := basic.(state.SourceBuildRootfsStore).PublishSourceBuildRootfs(ctx, rootInput)
-						if err != nil {
-							t.Fatal("root producer", err)
-						}
-						// imaged publishes the producer before handing a complete layer to
-						// held snapshot/qualification preparation; no VM snapshot is fabricated.
-						if err = store.UpdateDeploymentStatus(ctx, origin.ID, state.DeploySnapshotting, ""); err != nil {
-							t.Fatal("complete origin imaging", err)
 						}
 						if graph, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(ctx, originLease, plan); err != nil || graph.Phase != "prepared" || graph.PreparedAt == nil {
 							t.Fatal("origin preparation", graph.Phase, err)
@@ -386,6 +339,72 @@ func buildArtifactStores(t *testing.T, run func(*testing.T, gitOpsTestStore, *pg
 			t.Fatal("GitOps acceptance requires PostgreSQL")
 		}
 		pool := pgtest.OpenMigrated(t)
+		if err := db.MigrateUp(t.Context(), pool); err != nil {
+			t.Fatal(err)
+		}
 		run(t, state.NewPgStore(pool), pool)
 	})
+}
+
+func publishReuseSourceArtifact(t *testing.T, basic gitOpsTestStore, origin state.Deployment) (state.SourceBuildRootfs, state.BuildExportPublication) {
+	t.Helper()
+	ctx, store := t.Context(), basic
+	app, err := store.AppByID(ctx, origin.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := store.ClaimQueuedBuild(ctx, origin.BuildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.UpsertAppTrustedSigner(ctx, app.AccountID, app.ID, "company", der, app.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	claims := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: uuid.MustParse(app.AccountID).String(), OrgID: app.OrgID, AppID: uuid.MustParse(app.ID).String(), DeploymentID: uuid.MustParse(origin.ID).String(), BuildID: uuid.MustParse(build.ID).String(), ClaimStartedAt: build.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: origin.SourceSHA256, ExportDigest: imagechain.Digest([]byte("export")), ExportBytes: 6, Runtime: app.Runtime, BuilderNodeID: "builder-one"}
+	proof, err := buildpublisher.Sign(ctx, claims, "company", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication, err := basic.(state.BuildExportPublicationStore).RecordBuildExportPublication(ctx, state.BuildExportPublicationInput{ID: uuid.NewString(), Claims: claims, Proof: proof})
+	if err != nil {
+		t.Fatal("signed export", err)
+	}
+	if err = store.CompleteBuild(ctx, build, "/builder/export.tar", "apps/source/export.ext4", 6, state.BuildProvenance{BuildID: build.ID, SourceSHA256: origin.SourceSHA256, Plan: string(api.PlanPro), BuilderNodeID: "builder-one", StartedAt: build.StartedAt, FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	origin, err = store.DeploymentByID(ctx, origin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := basic.(state.BaseImageProducerStore).PublishBaseImageProducer(ctx, reuseBaseProducerFixture(t, state.RuntimeBaseKeyForArch(app.Runtime, "amd64"), "base"))
+	if err != nil {
+		t.Fatal("base", err)
+	}
+	intentHash, err := state.SourceBuildRootfsIntentHash(app, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootKind, runner := state.SourceBuildRootfsKind(app, origin)
+	rootInput := state.SourceBuildRootfsInput{ID: uuid.NewString(), PublicationID: publication.ID, PublicationHash: publication.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: origin.ID, Scope: origin.Scope, Kind: rootKind, Runtime: runner, IntentHash: intentHash, StorageKey: "apps/source/converted.ext4", RootfsPath: "/srv/apps/source/converted.ext4", ContentBytes: 24, ArtifactDigest: imagechain.Digest([]byte("converted ext4")), ArtifactBytes: 24, BaseProducerID: base.ID, BaseInputHash: base.InputHash, GuestInitDigest: base.Input.GuestInitDigest, LayoutVersion: state.SourceBuildRootfsLayout}
+	if runner != "" {
+		rootInput.RunnerDigest = imagechain.Digest([]byte("runner"))
+	}
+	root, err := basic.(state.SourceBuildRootfsStore).PublishSourceBuildRootfs(ctx, rootInput)
+	if err != nil {
+		t.Fatal("root producer", err)
+	}
+	// imaged publishes the producer before handing a complete layer to
+	// held snapshot/qualification preparation; no VM snapshot is fabricated.
+	if err = store.UpdateDeploymentStatus(ctx, origin.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatal("complete origin imaging", err)
+	}
+	return root, publication
 }

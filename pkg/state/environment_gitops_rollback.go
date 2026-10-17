@@ -51,7 +51,7 @@ func rollbackMemberCompatible(input *rollback.Input, member EnvironmentWorkloadG
 		input.BlockingReasons = append(input.BlockingReasons, member.Resource+": rollback_target_identity_changed")
 		return false
 	}
-	if member.ScheduleConfigured || member.ExecutionMode == api.ExecutionModeJob || len(deployment.Sidecars) != 0 && string(deployment.Sidecars) != "[]" && string(deployment.Sidecars) != "null" {
+	if member.ExecutionMode == api.ExecutionModeJob && !member.ScheduleConfigured || len(deployment.Sidecars) != 0 && string(deployment.Sidecars) != "[]" && string(deployment.Sidecars) != "null" {
 		input.BlockingReasons = append(input.BlockingReasons, member.Resource+": rollback_workload_unsupported")
 		return false
 	}

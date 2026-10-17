@@ -229,7 +229,9 @@ func (m *MemStore) environmentWorkloadServingWeightsMatchLocked(source Environme
 		if !ok || target.Status != DeployLive || target.EnvironmentWorkloadHeld() {
 			return false
 		}
-		if member.ExecutionMode == api.ExecutionModeWorker {
+		if member.ExecutionMode == api.ExecutionModeWorker || member.ExecutionMode == api.ExecutionModeJob {
+			// Job serving is proved by its scheduled occurrence, not a traffic
+			// weight. The exact live, unheld release target is still mandatory.
 			continue
 		}
 		if member.CandidateDeploymentID != "" {

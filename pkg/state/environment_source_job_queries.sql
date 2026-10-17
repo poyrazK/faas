@@ -12,6 +12,8 @@ FROM deployments d,environment_workload_graphs g
 WHERE j.id=sqlc.arg(job_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid AND g.id=sqlc.arg(graph_id)::uuid
     AND j.status='paused' AND d.status='snapshotting' AND d.environment_workload_held
     AND g.phase='prepared' AND environment_workload_source_job_deployment_matches(j.id,d.id)
+    -- Binding is a write: retain the provenance locks through activation.
+    AND (NOT (d.environment_workload_runtime ? 'built_artifact') OR environment_build_artifact_valid(d,true))
     AND d.environment_workload_runtime->>'source_id'=g.source_id::text
     AND d.environment_workload_runtime->>'revision_id'=g.revision_id::text
     AND d.environment_workload_runtime->>'generation'=g.generation::text

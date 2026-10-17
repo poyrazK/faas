@@ -316,8 +316,11 @@ Preparation rechecks current publisher trust and base lineage, then creates a
 held target candidate with the same code bytes and no new build. Configuration,
 secret aliases and qualification belong to the target. Revoked publishers,
 missing/deleting artifacts, changed recipes and cross-app reuse are rejected.
-Sidecars and scheduled Jobs do not yet support these artifact references; their existing
-source-build path remains available. See [ADR-1346](adr/1346-gitops-built-artifact-reuse.md).
+Source and Dockerfile scheduled Jobs support these references with explicit matching
+app mappings and schedules on both origin and target. Target cron/timezone,
+production argv, smoke command and configuration remain unchanged. Sidecars and
+function schedules remain unsupported. See [ADR-1346](adr/1346-gitops-built-artifact-reuse.md)
+and [ADR-1350](adr/1350-gitops-scheduled-job-artifact-promotion-and-rollback.md).
 
 For example, a reviewed production source can pin the producer returned by the
 promotion plan (use the actual ID/hash, not these placeholders):
@@ -446,9 +449,15 @@ build artifacts under the existing GC fence before preparation.
 
 Historical serving receipts are selection evidence, not current readiness.
 Rollback requires normal Git review and fresh qualification/activation/serving;
-it does not restore data or undo database migrations. Job workloads and sidecars
-are excluded initially. Native VM/leak acceptance and production gates remain
-unchanged. See [ADR-1347](adr/1347-gitops-reviewed-rollback-proposals.md).
+it does not restore data or undo database migrations. Scheduled Jobs can select
+retained signed source/Dockerfile artifacts for future runs, preserving the target
+schedule, command and configuration. Every promoted or recovered release needs
+fresh Job qualification and a successful post-activation occurrence; completed
+executions are never replayed or reused as proof. Schedd rechecks current publisher
+trust before boot and before releasing the held command. Unscheduled Jobs and
+sidecars remain excluded. Native VM/leak acceptance and production gates remain
+unchanged. See [ADR-1347](adr/1347-gitops-reviewed-rollback-proposals.md) and
+[ADR-1350](adr/1350-gitops-scheduled-job-artifact-promotion-and-rollback.md).
 
 ## Receive drift and source notifications
 

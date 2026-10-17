@@ -3,6 +3,7 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +15,11 @@ import (
 )
 
 type sourceJobReleaseFixture struct {
-	MemStore   *state.MemStore
-	deployment state.Deployment
-	release    state.ProjectReleaseSet
+	MemStore       *state.MemStore
+	deployment     state.Deployment
+	release        state.ProjectReleaseSet
+	producerErr    error
+	producerChecks int
 }
 
 func (f *sourceJobReleaseFixture) DeploymentByID(context.Context, string) (state.Deployment, error) {
@@ -24,6 +27,11 @@ func (f *sourceJobReleaseFixture) DeploymentByID(context.Context, string) (state
 }
 func (f *sourceJobReleaseFixture) ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error) {
 	return f.release, nil
+}
+
+func (f *sourceJobReleaseFixture) GetFreshDeploymentRuntimeProducerInputs(context.Context, string, string, string) (state.DeploymentRuntimeProducerInputs, error) {
+	f.producerChecks++
+	return state.DeploymentRuntimeProducerInputs{}, f.producerErr
 }
 
 func TestSourceScheduledJobDispatchRequiresFrozenArtifactAndCurrentRelease(t *testing.T) {
@@ -96,6 +104,51 @@ func TestSourceScheduledJobDispatchRequiresFrozenArtifactAndCurrentRelease(t *te
 			}
 		})
 	}
+	t.Run("borrowed signed artifact", func(t *testing.T) {
+		pinned := *source
+		pinned.BuildArtifactID, pinned.BuildArtifactHash = uuid.NewString(), strings.Repeat("f", 64)
+		borrowed := frozen
+		borrowed.Source, borrowed.SourceArchive = &pinned, nil
+		borrowed.BuiltArtifact = &state.EnvironmentWorkloadBuiltArtifact{ID: pinned.BuildArtifactID, InputHash: pinned.BuildArtifactHash,
+			DeploymentID: uuid.NewString(), BuildID: buildID.String(), CommitSHA: commit, Digest: "sha256:" + strings.Repeat("b", 64),
+			RootfsPath: dep.RootfsPath, StorageKey: dep.RootfsKey, Bytes: dep.RootfsBytes}
+		raw, _ := json.Marshal(borrowed)
+		d := dep
+		d.BuildID, d.SourcePath, d.SourceSHA256, d.LogPath, d.SourceBytes = "", "", "", "", 0
+		d.CommitSHA, d.EnvironmentWorkloadRuntime = strings.Repeat("d", 40), string(raw)
+		i, j, r := intent, job, run
+		i.Source, i.SourceRevision = &pinned, ""
+		j.ImageRef = "gregale-source://" + env.ID + "/" + appID + "/artifact/" + pinned.BuildArtifactID + "/" + pinned.BuildArtifactHash
+		r.ImageRefSnapshot = j.ImageRef
+		f.deployment = d
+		defer func() { f.deployment = dep; f.producerErr = nil }()
+		if _, err := d.ScopedWorkloadRuntime(); err != nil {
+			t.Fatal("invalid borrowed fixture", err)
+		}
+		if err := e.validateEnvironmentGitOpsSourceJob(ctx, j, r, i); err != nil || f.producerChecks != 1 {
+			t.Fatal("signed artifact was not reauthenticated", err)
+		}
+		f.producerErr = state.ErrApplicationStandardRuntimeStale
+		if err := e.validateEnvironmentGitOpsSourceJob(ctx, j, r, i); !errors.Is(err, f.producerErr) || f.producerChecks != 2 {
+			t.Fatal("cached publisher approval survived revocation", err)
+		}
+		f.producerErr = nil
+		for _, mutate := range []func(*state.EnvironmentWorkloadIntent, *state.Job){
+			func(i *state.EnvironmentWorkloadIntent, _ *state.Job) { i.SourceRevision = commit },
+			func(i *state.EnvironmentWorkloadIntent, _ *state.Job) {
+				s := *i.Source
+				s.BuildArtifactHash = strings.Repeat("e", 64)
+				i.Source = &s
+			},
+			func(_ *state.EnvironmentWorkloadIntent, j *state.Job) { j.ImageRef = job.ImageRef },
+		} {
+			changedIntent, changedJob := i, j
+			mutate(&changedIntent, &changedJob)
+			if err := e.validateEnvironmentGitOpsSourceJob(ctx, changedJob, r, changedIntent); err == nil {
+				t.Fatal("mixed build commit/artifact identity admitted")
+			}
+		}
+	})
 	f.release.Members[0].DeploymentID = uuid.NewString()
 	if err := e.validateEnvironmentGitOpsSourceJob(ctx, job, run, intent); err == nil {
 		t.Fatal("superseded active release admitted")

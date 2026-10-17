@@ -107,13 +107,17 @@ func ProposeSources(origin api.EnvironmentDefinition, target environmentsync.Des
 	for _, name := range slices.Sorted(maps.Keys(origin.Workloads)) {
 		resource := "workload/" + name
 		origin, target := origin.Workloads[name], proposed.Definition.Workloads[name]
+		if (origin.Schedule == nil) != (target.Schedule == nil) {
+			out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_schedule_target_incompatible")
+			continue
+		}
 		if origin.Source != nil && origin.Source.Kind != "image" {
 			artifact, exists := artifacts[resource]
 			if !exists || !validBuildArtifact(artifact) {
 				out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_build_artifact_unproven")
 				continue
 			}
-			if target.Source == nil || sourceRecipe(*origin.Source) != sourceRecipe(*target.Source) || origin.App == "" || origin.App != target.App || origin.Schedule != nil || target.Schedule != nil {
+			if target.Source == nil || sourceRecipe(*origin.Source) != sourceRecipe(*target.Source) || origin.App == "" || origin.App != target.App {
 				out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_build_artifact_target_incompatible")
 				continue
 			}

@@ -36,8 +36,18 @@ func TestBuildArtifactReferenceIsImmutableCodeIdentity(t *testing.T) {
 		}
 	}
 	definition.Workloads["app"] = api.EnvironmentWorkload{Source: &source, Runtime: json.RawMessage(`{"execution_mode":"job","entrypoint":["/bin/true"]}`), Schedule: &api.EnvironmentJobSchedule{Cron: "0 * * * *", Timezone: "UTC"}}
-	if _, err := Compile(definition); err == nil {
-		t.Fatal("unsupported scheduled reuse accepted")
+	scheduled, err := Compile(definition)
+	if err != nil {
+		t.Fatal("scheduled artifact reference rejected", err)
+	}
+	jobPlan, err := BuildPlan(scheduled, ObservedState{}, nil, PlanOptions{Generation: 1, Manager: "manager", Revision: "revision", CommitSHA: strings.Repeat("b", 40)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range jobPlan.Changes {
+		if change.Path == "source_revision" && string(change.After) != "null" {
+			t.Fatal("scheduled artifact acquired the target manifest's build commit")
+		}
 	}
 }
 
