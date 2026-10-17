@@ -1134,6 +1134,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1635: Exact wake-stage inspection through management MCP](1635-management-mcp-wake-timeline.md)
 - [ADR-1636: Request-to-wake drill-down through management MCP](1636-management-mcp-request-wake-association.md)
 - [ADR-1637: Lossless retained wake-timeline continuation](1637-management-mcp-wake-timeline-pagination.md)
+- [ADR-1638: Window-first wake-history pagination](1638-management-mcp-wake-history-pagination.md)
+- [ADR-1639: Read-only sampled CPU profiles through management MCP](1639-management-mcp-cpu-profiles.md)
 
 - [ADR-1260: Authorization-bounded management MCP request leases](1260-management-mcp-authorization-request-leases.md)
 
@@ -1353,7 +1355,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
-
-- [ADR-1638: Window-first wake-history pagination](1638-management-mcp-wake-history-pagination.md)
-
-- [ADR-1639: Read-only sampled CPU profiles through management MCP](1639-management-mcp-cpu-profiles.md)
+- [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
