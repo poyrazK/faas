@@ -7,6 +7,22 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Post-release watch — 2026-10-17
+
+[ADR-1445](adr/1445-post-release-watch.md): for 30 minutes after a release
+reaches 100%, apid compares it with its predecessor's traffic from before the
+rollout. A clear 5xx or p95-latency regression (the canary's own rules) rolls
+back through the readiness-gated rollback with trigger `post_release`. The
+release is marked `post_release_regression` and records an explained decision.
+Releases that opted out of automatic rollback are not watched, and a rollback
+that would cross a release command is skipped. On the n2 node the
+safe-release drill's new case deployed a release without a canary that
+answers in 700 ms. The watch rolled it back 91 s after the deploy
+(`abort_post_release_p95_latency`, p95 720 ms against 10 ms), and the app
+served again at 92 s. All eight drill cases passed, leakcheck clean, with no
+local vmmd patch and no base-ref pins (the single-box startup fix included).
+The Postgres and MemStore conformance cases and the apidserver watch tests pass.
+
 ## Guarded, reversible config changes — 2026-10-17
 
 [ADR-1391](adr/1391-guarded-reversible-config-changes.md): every customer env
