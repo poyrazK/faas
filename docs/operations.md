@@ -730,7 +730,9 @@ closure on every serving node and inspect accepted work separately.
 No production cohort is enabled and no replacement PR is open. Native lifecycle
 and fleet rollout qualification remain required before a customer preview. The
 [preview runbook](ops/operations-http-preview.md) describes preparation,
-admission verification and rollback.
+admission verification and rollback. The proposed
+[ADR-1287](adr/1287-operations-preview-exit.md) sets the evidence for the first
+cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
 `gregale customer-operations doctor --app SLUG --deployment DEPLOYMENT_UUID
