@@ -238,6 +238,15 @@ func (c *Client) Connections(ctx context.Context) ([]ConnectionInfo, error) {
 	return response, err
 }
 
+// ChannelOccupancy returns the node's subscriber count for each channel of an
+// endpoint (ADR-1324).
+func (c *Client) ChannelOccupancy(ctx context.Context, endpointID string, channels []string) ([]ChannelOccupancy, error) {
+	query := url.Values{"channel": channels}
+	var response []ChannelOccupancy
+	err := c.do(ctx, http.MethodGet, "/internal/endpoints/"+pathPart(endpointID)+"/occupancy?"+query.Encode(), nil, &response)
+	return response, err
+}
+
 // ChannelRoutes returns the unique endpoint/channel pairs with local
 // subscribers, without transferring full connection records.
 func (c *Client) ChannelRoutes(ctx context.Context) ([]ChannelRoute, error) {

@@ -312,6 +312,26 @@ type ManagedRealtimeConnectionListResponse struct {
 	NodesUnavailable int                                 `json:"nodes_unavailable"`
 }
 
+// ManagedRealtimeChannelOccupancy is how many subscriptions a channel has
+// across the fleet (ADR-1324). Subscribers counts every open subscription:
+// WebSocket, read-only ticket and SSE. PresenceMembers counts distinct
+// presence members, which may group several connections of one principal.
+type ManagedRealtimeChannelOccupancy struct {
+	Channel         string `json:"channel"`
+	Subscribers     int    `json:"subscribers"`
+	PresenceMembers int    `json:"presence_members"`
+}
+
+// ManagedRealtimeOccupancyResponse answers an occupancy read. Partial is true
+// when a realtime node could not be asked; counts then cover the nodes that
+// answered.
+type ManagedRealtimeOccupancyResponse struct {
+	Channels         []ManagedRealtimeChannelOccupancy `json:"channels"`
+	Partial          bool                              `json:"partial"`
+	NodesQueried     int                               `json:"nodes_queried"`
+	NodesUnavailable int                               `json:"nodes_unavailable"`
+}
+
 // ManagedRealtimeDrainRequest selects a bounded set of live connections to
 // close, or every match up to the server safety cap when All is true. A
 // non-dry-run request must acknowledge a partial fleet snapshot with

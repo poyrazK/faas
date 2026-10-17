@@ -14039,6 +14039,12 @@ List live connections for an endpoint
 | `--limit <N>` | maximum connections to return (1-1000) |  |
 | `--cursor <TOKEN>` | continue from a previous response&#39;s next_cursor |  |
 
+### realtime occupancy
+
+Count subscribers and presence members on channels
+
+`gregale realtime occupancy <app> <endpoint-id> <channel>...`
+
 ### realtime drain
 
 Close a bounded, filtered set of live connections

@@ -4623,6 +4623,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum connections to return (1-1000)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous response's next_cursor", Value: "TOKEN"},
 			}},
+			{Name: "occupancy", Short: "Count subscribers and presence members on channels", Positionals: []string{"<app>", "<endpoint-id>", "<channel>..."}},
 			{Name: "drain", Short: "Close a bounded, filtered set of live connections", Positionals: []string{"<app>", "<endpoint-id>"}, Flags: []cliFlag{
 				{Name: "reason", Short: "required audit reason", Req: true, Value: "TEXT"},
 				{Name: "channel", Short: "only connections subscribed to this channel", Value: "CHANNEL"},

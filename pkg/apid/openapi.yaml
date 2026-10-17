@@ -33388,6 +33388,46 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/occupancy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: query
+        required: true
+        style: form
+        explode: true
+        schema:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
+        description: Channel to count; repeat the parameter for up to 20 channels.
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeOccupancy
+      summary: Count a managed realtime channel's subscribers and presence members.
+      description: |
+        Returns fleet-wide counts for each requested channel (ADR-1324).
+        `subscribers` counts every open subscription: WebSocket, read-only
+        ticket and SSE. `presence_members` counts distinct presence members;
+        a principal-scoped member with several connections counts once.
+        Counts are a point-in-time snapshot. `partial` is true when one or
+        more active realtime nodes could not be asked; the counts then cover
+        the nodes that answered.
+      responses:
+        '200':
+          description: Channel occupancy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeOccupancyResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -92619,6 +92659,27 @@ components:
         limit: { type: integer, minimum: 1, maximum: 1000 }
         truncated: { type: boolean }
         next_cursor: { type: string, maxLength: 2048, description: Opaque cursor for the next page when truncated is true. }
+        partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
+        nodes_queried: { type: integer, minimum: 0 }
+        nodes_unavailable: { type: integer, minimum: 0 }
+
+    ManagedRealtimeChannelOccupancy:
+      type: object
+      description: Fleet-wide subscription and presence counts for one channel.
+      required: [channel, subscribers, presence_members]
+      properties:
+        channel: { type: string, minLength: 1, maxLength: 256 }
+        subscribers: { type: integer, minimum: 0, description: Open subscriptions on every transport (WebSocket, read-only ticket, SSE). }
+        presence_members: { type: integer, minimum: 0, description: Distinct presence members; a principal-scoped member counts once. }
+
+    ManagedRealtimeOccupancyResponse:
+      type: object
+      description: Point-in-time channel occupancy across the realtime fleet.
+      required: [channels, partial, nodes_queried, nodes_unavailable]
+      properties:
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeChannelOccupancy' }
         partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
         nodes_queried: { type: integer, minimum: 0 }
         nodes_unavailable: { type: integer, minimum: 0 }

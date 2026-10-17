@@ -715,6 +715,21 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "occupancy" && r.Method == http.MethodGet {
+		channels := r.URL.Query()["channel"]
+		if len(channels) == 0 || len(channels) > api.RealtimeOccupancyChannelsMax {
+			http.Error(w, "invalid occupancy channels", http.StatusBadRequest)
+			return
+		}
+		for _, channel := range channels {
+			if !validChannel(channel) {
+				http.Error(w, "invalid occupancy channels", http.StatusBadRequest)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, m.ChannelOccupancy(parts[0], channels))
+		return
+	}
 	if len(parts) == 2 && parts[1] == "principals:send" && r.Method == http.MethodPost {
 		var request api.ManagedRealtimePrincipalMessageRequest
 		if err := decodeJSONSized(r, &request, 16<<10); err != nil || api.ValidateRealtimePrincipal(request.Principal) != nil {

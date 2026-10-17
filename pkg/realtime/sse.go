@@ -166,6 +166,9 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	occupancyKey := channelKey{endpointID: id, channel: channel}
+	m.occupancy.add(occupancyKey, 1)
+	defer m.occupancy.add(occupancyKey, -1)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)

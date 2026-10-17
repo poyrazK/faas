@@ -463,6 +463,7 @@ type connection struct {
 	sequence                atomic.Uint64
 	mu                      sync.RWMutex
 	channels                map[string]struct{}
+	channelsReleased        bool // occupancy stops counting once the connection is removed
 	closeCode               int
 	closeReason             string
 	v2                      bool
@@ -570,6 +571,7 @@ type Manager struct {
 	outboundNodeBudgetDrops       atomic.Uint64
 	outboundShedDisconnects       atomic.Uint64
 	outboundShed                  chan struct{}
+	occupancy                     occupancyIndex
 	callbackErrors                atomic.Uint64
 	callbackOutboxFull            atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
@@ -1404,6 +1406,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 				}
 			}
 		}
+		c.releaseChannelsLocked()
 		c.mu.Unlock()
 		delete(m.conns, c.info.ID)
 	}
@@ -1832,7 +1835,7 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	}
 	c.mu.Lock()
 	if _, subscribed := c.channels[channel]; !subscribed {
-		c.channels[channel] = struct{}{}
+		c.addChannelLocked(channel)
 		key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 		members := m.subscribers[key]
 		if members == nil {
@@ -1875,7 +1878,7 @@ func (m *Manager) UnsubscribeWithRouteState(connectionID, channel string) (bool,
 	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 	if _, subscribed := c.channels[channel]; subscribed {
 		hadSubscribers := m.hasChannelSubscribersLocked(key)
-		delete(c.channels, channel)
+		c.removeChannelLocked(channel)
 		members := m.subscribers[key]
 		delete(members, connectionID)
 		if len(members) == 0 {

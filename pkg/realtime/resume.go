@@ -425,7 +425,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		return
 	}
 	c.resumeSubs[frame.Channel] = subscription
-	c.channels[frame.Channel] = struct{}{}
+	c.addChannelLocked(frame.Channel)
 	if frame.ReadReceipts {
 		c.readReceipts = true
 	}
@@ -977,7 +977,7 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	c.mu.Lock()
 	if c.resumeSubs[channel] == subscription {
 		delete(c.resumeSubs, channel)
-		delete(c.channels, channel)
+		c.removeChannelLocked(channel)
 		if member := m.presenceMembers[key][c.info.ID]; member != nil {
 			leaseDeleted = true
 			if m.cfg.FleetClient == nil {

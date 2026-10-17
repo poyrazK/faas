@@ -46,6 +46,8 @@ func cmdRealtime(args []string) int {
 		return cmdRealtimeDelete(args[1:])
 	case "connections":
 		return cmdRealtimeConnections(args[1:])
+	case "occupancy":
+		return cmdRealtimeOccupancy(args[1:])
 	case "drain":
 		return cmdRealtimeDrain(args[1:])
 	case "drain-status", "drain_status":

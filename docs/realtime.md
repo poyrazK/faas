@@ -63,6 +63,34 @@ tickets at logout with `DELETE …/tickets?principal=…`. Connections using a
 revoked ticket close within about a second. See the
 [ticket operations guide](ops/realtime.md#short-lived-subscription-tickets-operator-preview).
 
+## Channel occupancy
+
+Occupancy tells you how many clients are on a channel right now, for "23
+watching" badges, room sizes or dashboards (ADR-1324). Ask for up to 20
+channels at once:
+
+```bash
+gregale realtime occupancy my-app EP_ID lobby game-42
+# CHANNEL  SUBSCRIBERS  PRESENCE MEMBERS
+# lobby             23                19
+# game-42            4                 4
+
+curl -H "Authorization: Bearer $GREGALE_TOKEN" \
+  "https://api.gregale.dev/v1/apps/my-app/realtime/endpoints/$EP_ID/occupancy?channel=lobby&channel=game-42"
+```
+
+- `subscribers` counts every open subscription to the channel across all
+  realtime nodes: WebSocket (both protocols), read-only ticket and SSE. A
+  connection subscribed once counts once.
+- `presence_members` counts distinct presence members. A member grouped by
+  principal (`presence_scope: "principal"`) counts once however many tabs it
+  has open.
+- Counts are a snapshot. If a realtime node cannot be asked, the response says
+  `"partial": true` with `nodes_unavailable`, and the counts cover the nodes
+  that answered.
+
+Occupancy reads are free and need read access to the app.
+
 ## Principal access controls preview
 
 When the operator enables the access-control preview, an endpoint can deny a

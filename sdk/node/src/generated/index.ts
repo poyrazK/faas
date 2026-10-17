@@ -969,6 +969,7 @@ export type { ManagedRealtimeAfterVersionQuery } from './models/ManagedRealtimeA
 export type { ManagedRealtimeBatchMessageRequest } from './models/ManagedRealtimeBatchMessageRequest.js';
 export type { ManagedRealtimeChannelBatchRequest } from './models/ManagedRealtimeChannelBatchRequest.js';
 export type { ManagedRealtimeChannelBatchResponse } from './models/ManagedRealtimeChannelBatchResponse.js';
+export type { ManagedRealtimeChannelOccupancy } from './models/ManagedRealtimeChannelOccupancy.js';
 export type { ManagedRealtimeChannelPath } from './models/ManagedRealtimeChannelPath.js';
 export type { ManagedRealtimeChannelSnapshotRequest } from './models/ManagedRealtimeChannelSnapshotRequest.js';
 export type { ManagedRealtimeChannelSnapshotResponse } from './models/ManagedRealtimeChannelSnapshotResponse.js';
@@ -999,6 +1000,7 @@ export type { ManagedRealtimeMessageRequest } from './models/ManagedRealtimeMess
 export type { ManagedRealtimeNotificationControlResponse } from './models/ManagedRealtimeNotificationControlResponse.js';
 export type { ManagedRealtimeNotificationRescheduleRequest } from './models/ManagedRealtimeNotificationRescheduleRequest.js';
 export type { ManagedRealtimeNotificationTimelineEvent } from './models/ManagedRealtimeNotificationTimelineEvent.js';
+export type { ManagedRealtimeOccupancyResponse } from './models/ManagedRealtimeOccupancyResponse.js';
 export type { ManagedRealtimePrincipalMessageRequest } from './models/ManagedRealtimePrincipalMessageRequest.js';
 export type { ManagedRealtimePrincipalQuery } from './models/ManagedRealtimePrincipalQuery.js';
 export type { ManagedRealtimePrincipalQueryBounded } from './models/ManagedRealtimePrincipalQueryBounded.js';

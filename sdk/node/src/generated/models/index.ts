@@ -1015,6 +1015,7 @@ export type { ManagedRealtimeAfterVersionQuery } from './ManagedRealtimeAfterVer
 export type { ManagedRealtimeBatchMessageRequest } from './ManagedRealtimeBatchMessageRequest.js';
 export type { ManagedRealtimeChannelBatchRequest } from './ManagedRealtimeChannelBatchRequest.js';
 export type { ManagedRealtimeChannelBatchResponse } from './ManagedRealtimeChannelBatchResponse.js';
+export type { ManagedRealtimeChannelOccupancy } from './ManagedRealtimeChannelOccupancy.js';
 export type { ManagedRealtimeChannelPath } from './ManagedRealtimeChannelPath.js';
 export type { ManagedRealtimeChannelSnapshotRequest } from './ManagedRealtimeChannelSnapshotRequest.js';
 export type { ManagedRealtimeChannelSnapshotResponse } from './ManagedRealtimeChannelSnapshotResponse.js';
@@ -1045,6 +1046,7 @@ export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequ
 export type { ManagedRealtimeNotificationControlResponse } from './ManagedRealtimeNotificationControlResponse.js';
 export type { ManagedRealtimeNotificationRescheduleRequest } from './ManagedRealtimeNotificationRescheduleRequest.js';
 export type { ManagedRealtimeNotificationTimelineEvent } from './ManagedRealtimeNotificationTimelineEvent.js';
+export type { ManagedRealtimeOccupancyResponse } from './ManagedRealtimeOccupancyResponse.js';
 export type { ManagedRealtimePrincipalMessageRequest } from './ManagedRealtimePrincipalMessageRequest.js';
 export type { ManagedRealtimePrincipalQuery } from './ManagedRealtimePrincipalQuery.js';
 export type { ManagedRealtimePrincipalQueryBounded } from './ManagedRealtimePrincipalQueryBounded.js';

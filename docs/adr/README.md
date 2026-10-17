@@ -886,6 +886,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
 - [ADR-1322: Realtime channels as function triggers](1322-realtime-channel-function-triggers.md)
 - [ADR-1323: Realtime is free, with fair-use limits](1323-realtime-usage-metering-and-plan-limits.md)
+- [ADR-1324: Realtime channel occupancy](1324-realtime-channel-occupancy.md)
 - [ADR-1321: Batched trigger delivery](1321-batched-trigger-delivery.md)
 - [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
 - [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)

@@ -2044,6 +2044,7 @@ from .managed_realtime_batch_message_request import ManagedRealtimeBatchMessageR
 from .managed_realtime_batch_message_request_metadata import ManagedRealtimeBatchMessageRequestMetadata
 from .managed_realtime_channel_batch_request import ManagedRealtimeChannelBatchRequest
 from .managed_realtime_channel_batch_response import ManagedRealtimeChannelBatchResponse
+from .managed_realtime_channel_occupancy import ManagedRealtimeChannelOccupancy
 from .managed_realtime_channel_snapshot_request import ManagedRealtimeChannelSnapshotRequest
 from .managed_realtime_channel_snapshot_response import ManagedRealtimeChannelSnapshotResponse
 from .managed_realtime_channel_snapshot_response_entity_expirations import (
@@ -2082,6 +2083,7 @@ from .managed_realtime_message_request_metadata import ManagedRealtimeMessageReq
 from .managed_realtime_notification_control_response import ManagedRealtimeNotificationControlResponse
 from .managed_realtime_notification_reschedule_request import ManagedRealtimeNotificationRescheduleRequest
 from .managed_realtime_notification_timeline_event import ManagedRealtimeNotificationTimelineEvent
+from .managed_realtime_occupancy_response import ManagedRealtimeOccupancyResponse
 from .managed_realtime_principal_message_request import ManagedRealtimePrincipalMessageRequest
 from .managed_realtime_principal_message_request_delivery import ManagedRealtimePrincipalMessageRequestDelivery
 from .managed_realtime_principal_message_request_notification_priority import (
@@ -6737,6 +6739,7 @@ __all__ = (
     "ManagedRealtimeBatchMessageRequestMetadata",
     "ManagedRealtimeChannelBatchRequest",
     "ManagedRealtimeChannelBatchResponse",
+    "ManagedRealtimeChannelOccupancy",
     "ManagedRealtimeChannelSnapshotRequest",
     "ManagedRealtimeChannelSnapshotResponse",
     "ManagedRealtimeChannelSnapshotResponseEntityExpirations",
@@ -6769,6 +6772,7 @@ __all__ = (
     "ManagedRealtimeNotificationControlResponse",
     "ManagedRealtimeNotificationRescheduleRequest",
     "ManagedRealtimeNotificationTimelineEvent",
+    "ManagedRealtimeOccupancyResponse",
     "ManagedRealtimePrincipalMessageRequest",
     "ManagedRealtimePrincipalMessageRequestDelivery",
     "ManagedRealtimePrincipalMessageRequestNotificationPriority",

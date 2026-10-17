@@ -1623,6 +1623,10 @@ const (
 	RealtimeConnectionSyncMaxAccounts = 10_000
 )
 
+// RealtimeOccupancyChannelsMax bounds one channel occupancy read (ADR-1324);
+// each read asks every realtime node.
+const RealtimeOccupancyChannelsMax = 20
+
 func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 	l, ok := realtimeLimits[p]
 	return l, ok

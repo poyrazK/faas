@@ -707,6 +707,16 @@ func (c *Client) GetRealtimeUsage(ctx context.Context, hours int) (RealtimeUsage
 	return out, err
 }
 
+// GetManagedRealtimeOccupancy calls GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy
+// for up to RealtimeOccupancyChannelsMax channels (ADR-1324).
+func (c *Client) GetManagedRealtimeOccupancy(ctx context.Context, slug string, id string, channels []string) (ManagedRealtimeOccupancyResponse, error) {
+	path := realtimeReleasePath("/v1/apps/{slug}/realtime/endpoints/{id}/occupancy", map[string]string{"slug": slug, "id": id}) +
+		"?" + url.Values{"channel": channels}.Encode()
+	var out ManagedRealtimeOccupancyResponse
+	err := c.doRealtimeRelease(ctx, "GET", path, nil, &out, http.Header{})
+	return out, err
+}
+
 // RevokeRealtimeSubscriptionTickets calls DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets?principal=.
 func (c *Client) RevokeRealtimeSubscriptionTickets(ctx context.Context, slug string, id string, principal string) (RealtimeTicketsRevokeResponse, error) {
 	path := realtimeReleasePath("/v1/apps/{slug}/realtime/endpoints/{id}/tickets", map[string]string{"slug": slug, "id": id}) +

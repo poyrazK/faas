@@ -384,6 +384,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/usage/realtime":                                                     "GetRealtimeUsage",
 	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets":                     "RevokeRealtimeSubscriptionTickets",
 	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}":            "RevokeRealtimeSubscriptionTicket",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy":                      "GetManagedRealtimeOccupancy",
 	"GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access":  "GetManagedRealtimeAccess",
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access": "ChangeManagedRealtimeAccess",
 	// END managed realtime SDK routes
