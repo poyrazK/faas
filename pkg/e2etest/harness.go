@@ -304,7 +304,9 @@ failure_report_dir = %q
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
-		waitUnix(t, sockPath, 10*time.Second)
+		// vmmd reconciles netns, jails and its journal before it listens;
+		// on a loaded shared acceptance host that took longer than 10s.
+		waitUnix(t, sockPath, time.Minute)
 	}
 
 	// Start the gateway before imaged when the reference-node acceptance opts
