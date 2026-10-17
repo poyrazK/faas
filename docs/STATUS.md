@@ -258,6 +258,19 @@ lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20
 record the qualification boundary. Supported native execution remains pending; this change
 does not enable production provisioning or alter Neon resources or billing.
 
+## PostgreSQL starter checkpoint drain — 2026-10-17
+
+The Node and Python PostgreSQL starters' first capture happened right after
+readiness, so every wake restored the startup check's open SQL session and
+orphaned its server backend. Both adapters now drain every session in a
+`before_checkpoint` hook (idempotent, retried after a failed drain, rotation
+refused until restore) next to the existing `after_restore` replacement.
+`secret-reload-node` bundled the restore code but never called it; it now
+serves both hooks. Declaring the checkpoint hook turns off warm captures for
+those apps (ADR-351). Unit tests and the TLS/SCRAM suites (Node and Python
+starters, concurrent functions) check that no server session survives the
+drain. Native VM capture evidence is pending.
+
 ## Concurrent backend cancellation — 2026-10-16
 
 The follow-up to PR #4768 holds shared-worker slots through cancellation
