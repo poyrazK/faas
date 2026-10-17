@@ -185,22 +185,41 @@ snapshot must not fall back to separate files. The initial revision is empty
 until the first successful host fetch and cannot be acknowledged.
 
 `FAAS_SECRETS_FILE` and `FAAS_SECRETS_REVISION_FILE` retain their existing paths
-and formats through platform-owned symlinks. When the snapshot environment
-variable is absent on an older guest, the helper retains the separate-file
-reader, including its before/after revision check. That older contract cannot
-guarantee a consistent pair during publication; replace the guest to obtain
-the atomic envelope. An acknowledgement is an application self-attestation,
-not independent proof of its internal state.
+and formats through platform-owned symlinks for older clients. Current canonical
+SDK runtimes and built-in PostgreSQL starters require the atomic snapshot plus
+readiness, ACK endpoint and process generation. They never fall back to separate
+files or stale process environment when a guest contract is incomplete or a
+snapshot cannot be read. Upgrade older guests and redeploy updated starters.
+An acknowledgement is an application self-attestation, not independent proof
+of its internal state or ongoing database health.
 
-The built-in `secret-reload-node` template is an executable Node.js + Postgres
-reference for this contract. It uses the `SIGHUP` OCI label, reads a consistent
-secret snapshot, tests a candidate database pool before swapping it in, retries
-transient ACK failures, and sends only the opaque revision plus `applied` or
-`failed` status. Start it with `gregale init --template secret-reload-node
---path secret-reload-node`; its README includes the first deploy and rotation
-steps.
+The built-in `secret-reload-node` and `rest-api-postgres` templates use the same
+canonical `SecretReloadCoordinator` and `PostgresPoolBinding`. Their Dockerfiles
+opt into SIGHUP and required startup readiness. They validate a fresh database
+pool before publication and an applied ACK; failed adoption or revocation blocks
+new work while leased transactions can finish. Old pools close after their last
+lease releases. TLS verification, SQL deadlines and migration isolation remain
+in place. The REST starter also refreshes the latest atomic snapshot within its
+existing restore budget, fencing timed-out reloads. See the
+[pool runtime guide](postgres-pool-runtime.md) for ownership and draining rules.
+Start with `gregale init --template secret-reload-node --path secret-reload-node`
+or `gregale init --template rest-api-postgres --path rest-api-postgres`.
 
-On initial startup the starter waits up to 30 seconds for a valid, nonempty
+Async Python apps can use `AsyncSecretReloadCoordinator` with
+`AsyncPostgresPoolBinding` on one main-thread event loop. Consumer adoption is
+async; invalidation immediately fences work without awaiting cleanup. Await
+startup before serving and drain both the coordinator and retired pools before
+closing the loop. Manual reload budgets include queueing, adoption and ACK;
+native task cancellation preserves `CancelledError`. See the
+[async Python lifecycle](postgres-pool-runtime.md#async-python) and
+[FastAPI example](../examples/postgres-pool-rotation-python/README.md).
+
+For CLI scaffolding with pinned dependencies, migration isolation and bounded
+restore recovery, use `gregale init --template rest-api-postgres-python`. Its
+[starter guide](../cmd/gregale/templates/rest-api-postgres-python/README.md)
+describes schema-backed readiness and failure recovery before traffic resumes.
+
+On initial startup the Node starters wait up to 30 seconds for a valid, nonempty
 revision, polling with a 100-ms-to-two-second backoff. Only a valid secret map
 with the platform's empty initial revision is pending; malformed or unreadable
 projections still fail closed. It does not apply or ACK unversioned values.

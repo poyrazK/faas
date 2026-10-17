@@ -10,6 +10,23 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_billing_connections",
+    "columns": [
+      "account_id",
+      "api_url",
+      "automatic_tax",
+      "collection",
+      "created_at",
+      "days_until_due",
+      "key_last4",
+      "livemode",
+      "provider",
+      "sealed_secret",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_credits",
     "columns": [
       "account_id",
@@ -197,6 +214,70 @@
     "kind": "configuration"
   },
   {
+    "table": "api_consumer_billing_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "block_overdue_after_days",
+      "created_at",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_credit_applications",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "created_at",
+      "grant_id",
+      "statement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_credit_grants",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "expires_at",
+      "id",
+      "note",
+      "remaining_millicents",
+      "voided_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_meter_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_key",
+      "meter",
+      "units",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_overdue_holds",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "due_at",
+      "export_id",
+      "since"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_plan_admissions",
     "columns": [
       "account_id",
@@ -241,14 +322,17 @@
     "columns": [
       "account_id",
       "app_id",
+      "base_fee_millicents_per_month",
       "created_at",
       "currency",
       "effective_from",
       "id",
       "included_units_per_month",
+      "minimum_millicents_per_month",
       "plan_id",
       "price_millicents_per_unit",
       "route_weights",
+      "tier_mode",
       "tiers",
       "unit"
     ],
@@ -264,6 +348,37 @@
       "route",
       "updated_at",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_spend_caps",
+    "columns": [
+      "account_id",
+      "amount_due_millicents",
+      "app_id",
+      "capped",
+      "checked_at",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "month_start",
+      "monthly_cap_millicents",
+      "next_check_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_trials",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "ends_at",
+      "starts_at",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -308,9 +423,11 @@
       "account_id",
       "app_id",
       "billable_units",
+      "compute_ms",
       "consumer_key",
       "error_count",
       "request_count",
+      "response_bytes",
       "updated_at",
       "window_start"
     ],
@@ -342,7 +459,9 @@
       "buckets",
       "consumer_id",
       "created_at",
+      "credit_applied_millicents",
       "currency",
+      "fees",
       "finalized_at",
       "id",
       "period_end",
@@ -451,6 +570,7 @@
       "max_age_seconds",
       "mode",
       "object_storage_requirements",
+      "queue_requirements",
       "reason",
       "require_application_ack",
       "revision",
@@ -687,9 +807,25 @@
       "exception_type",
       "route_prefix",
       "rule_order",
-      "source_kind"
+      "source_kind",
+      "source_path_prefix",
+      "tag_filter",
+      "assignee_team_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "app_issue_saved_views",
+    "columns": [
+      "app_id",
+      "created_at",
+      "filters",
+      "name",
+      "updated_at",
+      "updated_by_account_id",
+      "view_key"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_issues",
@@ -711,7 +847,8 @@
       "resolved_at",
       "split_source_issue_id",
       "state",
-      "title"
+      "title",
+      "assignee_team_id"
     ],
     "kind": "operational"
   },
@@ -1753,6 +1890,69 @@
     "kind": "operational"
   },
   {
+    "table": "billing_run_items",
+    "columns": [
+      "amount_millicents",
+      "app_id",
+      "attempts",
+      "completeness",
+      "currency",
+      "exported_count",
+      "external_ref",
+      "invoice_id",
+      "next_attempt_at",
+      "outcome",
+      "reason",
+      "revision",
+      "run_id",
+      "source_id",
+      "source_kind",
+      "statement_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_run_schedules",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delay_hours",
+      "export_provider",
+      "finalize",
+      "hold_on_gaps",
+      "last_period_start",
+      "next_period_start",
+      "next_run_at",
+      "sources",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "billing_runs",
+    "columns": [
+      "account_id",
+      "completed_at",
+      "created_at",
+      "discovered_at",
+      "export_provider",
+      "finalize",
+      "hold_on_gaps",
+      "id",
+      "lease_owner",
+      "lease_until",
+      "notified_at",
+      "period_end",
+      "period_start",
+      "sources",
+      "started_at",
+      "status",
+      "trigger"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "billing_usage_deliveries",
     "columns": [
       "account_id",
@@ -1760,6 +1960,32 @@
       "mb_seconds",
       "provider",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_run_steps",
+    "columns": [
+      "resource_id",
+      "resource_kind",
+      "run_id",
+      "step_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_runs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "graph_run_id",
+      "id",
+      "scope",
+      "snapshot",
+      "status"
     ],
     "kind": "operational"
   },
@@ -2199,6 +2425,17 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_attempt_instances",
+    "columns": [
+      "attempt",
+      "generation",
+      "instance_id",
+      "operation_id",
+      "placed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_code_pins",
     "columns": [
       "app_id",
@@ -2359,6 +2596,36 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_webhook_bindings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "endpoint_id",
+      "event_types",
+      "operation_name",
+      "platform_tenant_id",
+      "scope",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "customer_operation_webhook_receipts",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "binding_version",
+      "body_sha256",
+      "endpoint_id",
+      "expires_at",
+      "operation_id",
+      "provider_event_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_workflow_claims",
     "columns": [
       "attempt",
@@ -2458,6 +2725,7 @@
       "created_at",
       "current_execution_id",
       "current_invocation_id",
+      "deadline_at",
       "definition_id",
       "execution_generation",
       "execution_kind",
@@ -3047,6 +3315,7 @@
       "rootfs_bytes",
       "rootfs_key",
       "rootfs_path",
+      "runtime_base",
       "runtime_upgrade_routing_token",
       "scan_result",
       "scan_status",
@@ -3703,6 +3972,35 @@
     "kind": "configuration"
   },
   {
+    "table": "environment_workload_retirements",
+    "columns": [
+      "account_id",
+      "acknowledged_gateways",
+      "app_id",
+      "deployment_ids",
+      "environment_id",
+      "expected_gateways",
+      "generation",
+      "id",
+      "job_id",
+      "phase",
+      "plan_hash",
+      "project_id",
+      "queue_binding_ids",
+      "recovered_at",
+      "recovery_generation",
+      "recovery_revision_id",
+      "requested_at",
+      "resource",
+      "retired_at",
+      "revision_id",
+      "route_deployment_id",
+      "route_generation",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_workload_serving_queue_acks",
     "columns": [
       "acknowledged_at",
@@ -3752,6 +4050,78 @@
       "deployment_id",
       "graph_id",
       "route_generation"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_metric_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "kind",
+      "occurrences",
+      "retain_until",
+      "saturated",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_outcomes",
+    "columns": [
+      "attempt",
+      "first_at",
+      "invocation_id",
+      "kind",
+      "last_at",
+      "occurrences",
+      "replay_generation",
+      "retain_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_recording_coverage",
+    "columns": [
+      "continuous_since",
+      "inventory_revision",
+      "singleton",
+      "updated_at",
+      "verified_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_writers",
+    "columns": [
+      "capability_version",
+      "continuous_since",
+      "expires_at",
+      "inventory",
+      "inventory_revision",
+      "role",
+      "seen_at",
+      "session_id",
+      "slot",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_delivery_acknowledgments",
+    "columns": [
+      "attempt",
+      "completion_digest",
+      "deadline_at",
+      "invocation_id",
+      "lease_seconds",
+      "max_attempts",
+      "phase",
+      "rejection_status",
+      "replay_generation",
+      "retry_delay_ms",
+      "token_digest"
     ],
     "kind": "operational"
   },
@@ -4226,11 +4596,33 @@
       "max_pending_deliveries",
       "paused",
       "paused_at",
+      "rate_burst",
+      "rate_credit_ms",
+      "rate_enabled",
+      "rate_interval_ms",
       "rate_per_second",
+      "rate_refilled_at",
+      "rate_revision",
+      "rate_sequence",
       "subscription_id",
       "updated_at",
       "window_count",
       "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_rate_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "sequence",
+      "subscription_id"
     ],
     "kind": "operational"
   },
@@ -4251,6 +4643,7 @@
     "table": "event_subscriptions",
     "columns": [
       "account_id",
+      "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
       "enabled",
@@ -5251,6 +5644,21 @@
     "kind": "operational"
   },
   {
+    "table": "issue_source_map_artifacts",
+    "columns": [
+      "app_id",
+      "canonical_manifest",
+      "created_at",
+      "created_by_account_id",
+      "deployment_id",
+      "manifest_sha256",
+      "map_count",
+      "retired_at",
+      "retired_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "issue_split_rules",
     "columns": [
       "app_id",
@@ -5556,6 +5964,7 @@
       "id",
       "owner_oid",
       "ready_at",
+      "reserved_by_cutover_id",
       "reserved_by_operation_id",
       "role_requested_at",
       "source_data_resource_id",
@@ -5656,6 +6065,66 @@
       "retired_at",
       "state",
       "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_preflights",
+    "columns": [
+      "binding_ids",
+      "bindings_match",
+      "blockers",
+      "checked_at",
+      "created_at",
+      "cutover_id",
+      "cutover_updated_at",
+      "expires_at",
+      "revision",
+      "runtime_drain",
+      "runtime_drain_fingerprint",
+      "source_matches",
+      "source_sessions",
+      "source_sessions_fingerprint",
+      "state",
+      "target_matches",
+      "updated_at",
+      "verification_fresh"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_source_fences",
+    "columns": [
+      "admission_fenced_at",
+      "attempt_count",
+      "backend_fingerprint",
+      "backend_id",
+      "catalog_fingerprint",
+      "catalog_invalidated_at",
+      "close_requested_at",
+      "closure",
+      "created_at",
+      "cutover_id",
+      "database_names",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "maintenance_id",
+      "observed_at",
+      "owner_node_id",
+      "owner_revision",
+      "owner_token",
+      "remote_released_at",
+      "remote_terminal_state",
+      "retry_at",
+      "runtime_fingerprint",
+      "source_data_resource_id",
+      "source_database_id",
+      "source_generation",
+      "source_provider_resource_id",
+      "source_spec",
+      "state",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -8143,6 +8612,39 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_plan_assignments",
+    "columns": [
+      "account_id",
+      "created_at",
+      "effective_from",
+      "id",
+      "plan_id",
+      "rate_card_id",
+      "tenant_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "platform_tenant_plans",
+    "columns": [
+      "account_id",
+      "created_at",
+      "currency",
+      "id",
+      "included_units_per_month",
+      "max_requests_per_day",
+      "max_requests_per_minute",
+      "name",
+      "price_millicents_per_unit",
+      "route_weights",
+      "tier_mode",
+      "tiers",
+      "unit",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "platform_tenant_rate_cards",
     "columns": [
       "account_id",
@@ -8153,6 +8655,8 @@
       "included_units_per_month",
       "platform_tenant_id",
       "price_millicents_per_unit",
+      "route_weights",
+      "tier_mode",
       "tiers",
       "unit"
     ],
@@ -8184,6 +8688,21 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "platform_tenant_source_route_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "billable_units",
+      "platform_tenant_id",
+      "route",
+      "source_id",
+      "source_kind",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
   },
   {
     "table": "platform_tenant_statement_consumers",
@@ -8254,10 +8773,12 @@
       "account_id",
       "app_id",
       "billable_units",
+      "compute_ms",
       "consumer_key",
       "error_count",
       "platform_tenant_id",
       "request_count",
+      "response_bytes",
       "source_kind",
       "updated_at",
       "window_start"
@@ -8481,6 +9002,20 @@
       "deployment_id",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_binding_verification_runs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "project_id",
+      "snapshot",
+      "status"
     ],
     "kind": "operational"
   },
@@ -9804,13 +10339,31 @@
       "account_id",
       "active",
       "created_at",
+      "deactivation",
       "environment_slug",
       "expires_at",
       "id",
       "project_id",
+      "rollback_previous_release_id",
+      "rollback_source_release_id",
       "ttl_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "project_release_stages",
+    "columns": [
+      "account_id",
+      "cancelled",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "manifest",
+      "project_id",
+      "targets"
+    ],
+    "kind": "operational"
   },
   {
     "table": "projects",
@@ -9836,6 +10389,25 @@
       "customer_ip"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "queue_binding_canaries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "cancelled",
+      "completed_attempt",
+      "completed_deployment_id",
+      "completed_generation",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "published_at",
+      "snapshot",
+      "trigger_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "queue_bindings",
@@ -11133,6 +11705,37 @@
     "kind": "operational"
   },
   {
+    "table": "usage_statement_invoice_exports",
+    "columns": [
+      "account_id",
+      "amount_minor",
+      "amount_paid_minor",
+      "amount_remaining_minor",
+      "automatic_tax",
+      "collection",
+      "completed_at",
+      "created_at",
+      "currency",
+      "customer",
+      "days_until_due",
+      "due_at",
+      "hosted_invoice_url",
+      "id",
+      "livemode",
+      "next_status_sync_at",
+      "overdue_notified_at",
+      "paid_at",
+      "payment_status",
+      "provider",
+      "provider_invoice_id",
+      "source_kind",
+      "statement_id",
+      "status",
+      "status_synced_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "warm_hint",
     "columns": [
       "app_id",
@@ -11160,6 +11763,8 @@
       "name",
       "published",
       "published_version",
+      "test_report",
+      "test_suite",
       "updated_at",
       "version"
     ],
@@ -11205,6 +11810,66 @@
       "window_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "workflow_automation_live_baseline_promotions",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "promoted_at",
+      "promotion_id",
+      "receipt",
+      "revision",
+      "suite_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_baseline_retirements",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "receipt",
+      "retirement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_suites",
+    "columns": [
+      "app_id",
+      "automation_version",
+      "cases",
+      "created_at",
+      "deployment_id",
+      "id",
+      "managed",
+      "name",
+      "published_version",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_verifications",
+    "columns": [
+      "app_id",
+      "automation_version",
+      "case_name",
+      "created_at",
+      "deployment_id",
+      "idempotency_key",
+      "inputs_hash",
+      "live_test",
+      "name",
+      "published_version",
+      "report",
+      "request_fingerprint",
+      "run_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_automation_publish_policies",
@@ -11645,6 +12310,590 @@
       "recipient_id",
       "status",
       "workflow_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_teams",
+    "columns": [
+      "id",
+      "app_id",
+      "team_key",
+      "name",
+      "created_at",
+      "updated_at",
+      "updated_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_team_members",
+    "columns": [
+      "team_id",
+      "account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_links",
+    "columns": [
+      "id",
+      "issue_id",
+      "provider",
+      "external_key",
+      "url",
+      "title",
+      "created_at",
+      "updated_at",
+      "created_by_account_id",
+      "updated_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_frequency_alert_policies",
+    "columns": [
+      "app_id",
+      "revision",
+      "rules"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_escalation_policies",
+    "columns": [
+      "app_id",
+      "delay_minutes",
+      "enabled",
+      "revision",
+      "team_id",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_reminder_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "interval_minutes",
+      "repeat_limit",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_reminders",
+    "columns": [
+      "created_at",
+      "escalation_policy_revision",
+      "id",
+      "issue_id",
+      "kind",
+      "outcome",
+      "policy_revision",
+      "response_id",
+      "responsibility_team_id",
+      "sequence",
+      "target_team_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_application_slack_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "events",
+      "fallback_team_id",
+      "revision",
+      "skipped_deliveries",
+      "unrouted_alerts"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_triage",
+    "columns": [
+      "acknowledged_at",
+      "acknowledged_by",
+      "escalated_at",
+      "escalation_attempted_at",
+      "escalation_team_id",
+      "first_reminded_at",
+      "incident_id",
+      "issue_id",
+      "last_reminded_at",
+      "reminder_count",
+      "reminder_started_at",
+      "revision",
+      "snooze_reason",
+      "snoozed_by",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_application_triage_activity",
+    "columns": [
+      "action",
+      "actor_id",
+      "created_at",
+      "id",
+      "incident_id",
+      "issue_id",
+      "reason",
+      "revision",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_frequency_alert_receipts",
+    "columns": [
+      "app_id",
+      "issue_id",
+      "last_alert_at",
+      "rule_hash",
+      "rule_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_action_messages",
+    "columns": [
+      "consumed_at",
+      "delivery_id",
+      "message_ts",
+      "policy_revision",
+      "response_id",
+      "response_revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_identities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expires_at",
+      "mfa_enrolled_at",
+      "mfa_required",
+      "policy_revision",
+      "slack_user_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "issue_slack_installations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bot_user_id",
+      "installed_at",
+      "revision",
+      "slack_app_id",
+      "status",
+      "token_sealed",
+      "workspace_id",
+      "workspace_name"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_slack_interaction_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "revision",
+      "secret_sealed",
+      "slack_app_id",
+      "workspace_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_slack_link_challenges",
+    "columns": [
+      "app_id",
+      "consumed_at",
+      "delivery_id",
+      "expires_at",
+      "policy_revision",
+      "request_key",
+      "slack_user_id",
+      "token"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_oauth_flows",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expected_revision",
+      "expires_at",
+      "phase",
+      "sealed",
+      "state_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_routing_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "installation_revision",
+      "revision",
+      "rules"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_team_slack_deliveries",
+    "columns": [
+      "activity_id",
+      "application_policy_revision",
+      "assigned_account_id",
+      "assigned_team_id",
+      "attempt",
+      "channel_id",
+      "claim_id",
+      "claim_until",
+      "created_at",
+      "delivery_seq",
+      "destination_id",
+      "destination_revision",
+      "expires_at",
+      "id",
+      "incident_id",
+      "last_error",
+      "next_attempt_at",
+      "notification_id",
+      "recipient_account_ids",
+      "reminder_id",
+      "response_code",
+      "routing_revision",
+      "routing_rule_key",
+      "status",
+      "total_attempts",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_team_slack_destinations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "channel_id",
+      "claim_id",
+      "claim_until",
+      "enabled",
+      "id",
+      "next_send_at",
+      "oauth_revision",
+      "revision",
+      "team_id",
+      "token_sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_team_slack_threads",
+    "columns": [
+      "channel_id",
+      "destination_id",
+      "destination_revision",
+      "incident_id",
+      "root_ts"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_auto_sync",
+    "columns": [
+      "account_id",
+      "app_id",
+      "baseline",
+      "binding_fingerprint",
+      "claim_id",
+      "claim_until",
+      "direction",
+      "enabled",
+      "last_checked_at",
+      "last_successful_at",
+      "linear_open_state_id",
+      "linear_resolved_state_id",
+      "link_id",
+      "next_check_at",
+      "observed_state",
+      "outcome",
+      "pending_source_revision",
+      "pending_state",
+      "reason",
+      "revision",
+      "source_issue_id",
+      "source_revision",
+      "source_state",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_callback_diagnostics",
+    "columns": [
+      "account_id",
+      "app_id",
+      "connection_revision",
+      "delivery_conflict",
+      "invalid_payload",
+      "invalid_signature",
+      "last_rejected_at",
+      "last_verified_at",
+      "stale_delivery",
+      "wrong_scope"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_callbacks",
+    "columns": [
+      "app_id",
+      "connection_revision",
+      "delivery_id",
+      "installation_id",
+      "payload_hash",
+      "processed_at",
+      "provider",
+      "received_at",
+      "repository_id",
+      "scope_key",
+      "team_id",
+      "ticket_id",
+      "ticket_url",
+      "workspace_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_inbound_guards",
+    "columns": [
+      "app_id",
+      "revision",
+      "source_revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_linear_connections",
+    "columns": [
+      "access_token_expires_at",
+      "account_id",
+      "app_id",
+      "auth_method",
+      "connected",
+      "credential_generation",
+      "oauth_status",
+      "refresh_claim_id",
+      "refresh_claim_until",
+      "refresh_started_at",
+      "revision",
+      "sealed_credential",
+      "team_id",
+      "updated_at",
+      "viewer_id",
+      "webhook_enabled",
+      "workspace_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_linear_oauth_flows",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expected_revision",
+      "expires_at",
+      "issue_id",
+      "phase",
+      "sealed_state",
+      "state_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_source_guards",
+    "columns": [
+      "issue_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_escalation_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "delay_minutes",
+      "enabled",
+      "revision",
+      "team_id",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_sync_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "claim_id",
+      "created_at",
+      "direction",
+      "event_type",
+      "id",
+      "link_id",
+      "observed_state",
+      "outcome",
+      "pending_state",
+      "policy_revision",
+      "reason",
+      "source_issue_id",
+      "source_state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_incidents",
+    "columns": [
+      "announced_kind",
+      "escalated_at",
+      "escalation_team_id",
+      "failures",
+      "first_reminded_at",
+      "incident_id",
+      "issue_id",
+      "last_reminded_at",
+      "link_id",
+      "opened_at",
+      "recipient_account_ids",
+      "reminder_count",
+      "settings_revision",
+      "team_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_notification_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "failure_threshold",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_sync_notifications",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "incident_id",
+      "issue_id",
+      "kind",
+      "link_id",
+      "outcome",
+      "payload",
+      "reason",
+      "recipient_account_ids",
+      "reminder_sequence",
+      "team_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_reminder_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "interval_minutes",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_sync_triage",
+    "columns": [
+      "acknowledged_by",
+      "claimed_by",
+      "incident_id",
+      "link_id",
+      "revision",
+      "snooze_reason",
+      "snoozed_by",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_triage_activity",
+    "columns": [
+      "action",
+      "actor_id",
+      "created_at",
+      "id",
+      "incident_id",
+      "reason",
+      "revision",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_issue_ticket_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "claim_id",
+      "created_at",
+      "issue_id",
+      "link_id",
+      "provider_id",
+      "recover_after",
+      "request_hash",
+      "request_id",
+      "state",
+      "ticket_url",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_lifecycle_alert_policies",
+    "columns": [
+      "app_id",
+      "revision",
+      "environments",
+      "cooldown_seconds"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_lifecycle_alert_receipts",
+    "columns": [
+      "app_id",
+      "issue_id",
+      "last_alert_at"
     ],
     "kind": "operational"
   }

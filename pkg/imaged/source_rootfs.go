@@ -26,7 +26,7 @@ func (h *Handler) prepareSourceBuildRootfsBinding(ctx context.Context, app state
 		return binding, err
 	}
 	binding.IntentHash = hash
-	_, runtime := state.SourceBuildRootfsKind(app, dep)
+	_, runtime := state.SourceBuildRootfsKindForClaim(app, dep, approval.Input.Claims.Runtime)
 	binding.Base, err = h.runtimeDefaultBaseProducer(ctx, runtime)
 	if errors.Is(err, state.ErrNotFound) {
 		selected := app
@@ -48,7 +48,7 @@ func (h *Handler) publishSourceRootfs(ctx context.Context, app state.App, dep st
 	if !ok {
 		return fmt.Errorf("imaged: durable source rootfs store unavailable")
 	}
-	kind, runtime := state.SourceBuildRootfsKind(app, dep)
+	kind, runtime := state.SourceBuildRootfsKindForClaim(app, dep, binding.Approval.Input.Claims.Runtime)
 	if result.ImageKey != key || result.ArtifactDigest == "" || result.ArtifactBytes <= 0 || result.GuestInitDigest != binding.Base.Input.GuestInitDigest {
 		return fmt.Errorf("imaged: source conversion output binding missing or mismatched")
 	}

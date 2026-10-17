@@ -1,7 +1,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -15,9 +17,36 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 	return api.APIConsumerRateCardResponse{
 		ID: card.ID, AppID: card.AppID, Currency: card.Currency, Unit: card.Unit,
 		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-		Tiers: apiRateCardTiers(card.Tiers), RouteWeights: card.RouteWeights, PlanID: card.PlanID,
-		EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode), RouteWeights: card.RouteWeights,
+		PlanID: card.PlanID, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
+		BaseFeeMillicentsPerMonth: card.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: card.MinimumMillicentsPerMonth,
 	}
+}
+
+// rateCardTierMode reports a stored ladder mode; cards created before
+// ADR-1309 are graduated.
+func rateCardTierMode(mode string) string {
+	if mode == "" {
+		return state.RateCardTierModeGraduated
+	}
+	return mode
+}
+
+// tierModeProblem checks a requested ladder mode (ADR-1309).
+func tierModeProblem(mode string, tiers int) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
+	}
+	switch mode {
+	case "", state.RateCardTierModeGraduated:
+		return nil
+	case state.RateCardTierModeVolume:
+		if tiers == 0 {
+			return invalid("tier_mode volume needs tiers")
+		}
+		return nil
+	}
+	return invalid("tier_mode must be graduated or volume")
 }
 
 func apiRateCardTiers(tiers []state.APIConsumerRateCardTier) []api.APIConsumerRateCardTier {
@@ -51,8 +80,8 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
 	}
-	if req.IncludedUnitsPerMonth < 0 {
-		return invalid("included_units_per_month must be non-negative")
+	if req.IncludedUnitsPerMonth < 0 || req.BaseFeeMillicentsPerMonth < 0 || req.MinimumMillicentsPerMonth < 0 {
+		return invalid("included_units_per_month, base_fee_millicents_per_month and minimum_millicents_per_month must be non-negative")
 	}
 	if err := state.ValidateAPIConsumerRouteWeights(req.RouteWeights); err != nil {
 		return invalid(strings.TrimPrefix(err.Error(), "rate card route weights: ") + " (route_weights)")
@@ -65,15 +94,45 @@ func rateCardAllowanceProblem(req api.CreateAPIConsumerRateCardRequest, effectiv
 			return invalid("tiers replace included_units_per_month; make the first step free instead")
 		}
 	}
+	if problem := tierModeProblem(req.TierMode, len(req.Tiers)); problem != nil {
+		return problem
+	}
+	if problem := rateCardUnitProblem(req); problem != nil {
+		return problem
+	}
 	// Plan prices (ADR-953) are never backdated either: assignments price
 	// minutes by the plan's history, so a backdated plan card would re-price
-	// minutes that statements may already have billed.
-	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0 || req.PlanID != ""
+	// minutes that statements may already have billed. Compute and
+	// response-size cards (ADR-1308) re-price minutes the same way.
+	positional := req.IncludedUnitsPerMonth > 0 || len(req.Tiers) > 0 || len(req.RouteWeights) > 0 || req.PlanID != "" ||
+		(req.Unit != "" && req.Unit != state.APIConsumerRateCardUnitRequest) || req.BaseFeeMillicentsPerMonth > 0 || req.MinimumMillicentsPerMonth > 0
 	for _, card := range existing {
-		positional = positional || card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != ""
+		positional = positional || card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" ||
+			card.Unit != state.APIConsumerRateCardUnitRequest || card.MonthlyFees()
 	}
 	if positional && effectiveFrom.Before(time.Now().UTC().Truncate(time.Minute)) {
-		return invalid("effective_from cannot be in the past once a rate card includes units, tiers, route weights, or plans")
+		return invalid("effective_from cannot be in the past once a rate card includes units, tiers, route weights, plans, monthly fees, or compute or response-size units")
+	}
+	return nil
+}
+
+// rateCardUnitProblem checks a card's unit (ADR-1308, ADR-1318): known, and
+// without route weights unless it prices requests. Cards of different units
+// are parallel price histories (ADR-1317), so a new unit can start at any
+// minute.
+func rateCardUnitProblem(req api.CreateAPIConsumerRateCardRequest) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", detail)
+	}
+	unit := req.Unit
+	if unit == "" {
+		unit = state.APIConsumerRateCardUnitRequest
+	}
+	if !state.ValidAPIConsumerRateCardUnit(unit) {
+		return invalid("unit must be request, compute_second, response_megabyte, or app:<meter> with a lowercase meter name")
+	}
+	if unit != state.APIConsumerRateCardUnitRequest && len(req.RouteWeights) > 0 {
+		return invalid("route_weights apply to request cards only")
 	}
 	return nil
 }
@@ -165,7 +224,8 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 	card, err := store.CreateAPIConsumerRateCardVersion(r.Context(), state.APIConsumerRateCardInput{
 		AccountID: acct.ID, AppID: app.ID, Currency: req.Currency, PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
-		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom,
+		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit, TierMode: req.TierMode,
+		BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -206,7 +266,7 @@ func (s *server) getAPIConsumerRateCard(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, cardsStore, ok := s.apiConsumerRateCardStore(w, r, acct)
+	app, _, ok := s.apiConsumerRateCardStore(w, r, acct)
 	if !ok {
 		return
 	}
@@ -220,37 +280,9 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, windowErr)
 		return
 	}
-	usageStore, ok := s.store.(state.ConsumerUsageStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrInternal("consumer usage ledger is unavailable"))
-		return
-	}
-	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), acct.ID, app.ID)
-	if err == nil {
-		cards, err = s.consumerPriceHistory(r, cards, acct.ID, app.ID, consumer.ID)
-	}
+	quote, err := s.quoteConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, since, until)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
-		return
-	}
-	// Earlier usage in since's month consumes the monthly allowance (ADR-950).
-	// A same-day window on the 1st snaps to an empty one, which the ledger
-	// rejects; it has no usage to price (hunt #9 H9-57).
-	var usage []state.APIConsumerUsageBucket
-	if until.After(billing.MonthStart(since)) {
-		usage, err = usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until)
-		if err != nil {
-			s.log.ErrorContext(r.Context(), "list api consumer usage for quote", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
-			api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
-			return
-		}
-	}
-	if usage, err = s.weightConsumerUsage(r, cards, usage, acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until); err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer route usage"))
-		return
-	}
-	quote, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, since)
-	if err != nil {
+		s.log.ErrorContext(r.Context(), "quote api consumer usage", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
 		api.WriteProblem(w, api.ErrInternal("could not calculate API consumer usage quote"))
 		return
 	}
@@ -269,9 +301,47 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 			ChargedUnits:           bucket.ChargedUnits,
 			TierUnits:              bucket.TierUnits,
 			AmountMillicents:       bucket.AmountMillicents,
+			Trial:                  bucket.Trial,
+			Unit:                   bucket.Unit,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// quoteConsumerUsage prices a consumer's usage in [since, until) exactly as
+// statements do (ADR-950–953): earlier usage in since's month consumes the
+// monthly allowance first. The quote endpoint and consumer billing
+// self-service (ADR-1506) share it.
+func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error) {
+	usageStore, okUsage := s.store.(state.ConsumerUsageStore)
+	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)
+	if !okUsage || !okCards {
+		return billing.APIConsumerUsageQuote{}, errors.New("consumer pricing is unavailable")
+	}
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, accountID, appID)
+	if err == nil {
+		cards, err = s.consumerPriceHistory(ctx, cards, accountID, appID, consumerID)
+	}
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load rate cards: %w", err)
+	}
+	// A same-day window on the 1st snaps to an empty one, which the ledger
+	// rejects; it has no usage to price (hunt #9 H9-57).
+	var usage []state.APIConsumerUsageBucket
+	if until.After(billing.MonthStart(since)) {
+		if usage, err = usageStore.ListAPIConsumerUsage(ctx, accountID, appID, consumerID, billing.MonthStart(since), until); err != nil {
+			return billing.APIConsumerUsageQuote{}, fmt.Errorf("list usage: %w", err)
+		}
+	}
+	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(since), until)
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load route and meter usage: %w", err)
+	}
+	opts, err := s.consumerQuoteOptions(ctx, accountID, appID, consumerID)
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, err
+	}
+	return billing.QuoteConsumerUsage(cards, usage, inputs, since, opts)
 }
 
 func isUpperASCIICurrency(currency string) bool {
@@ -283,21 +353,40 @@ func isUpperASCIICurrency(currency string) bool {
 	return true
 }
 
-// weightConsumerUsage applies the effective cards' route weights (ADR-952).
-// Route rows are read only when some card weights routes.
-func (s *server) weightConsumerUsage(r *http.Request, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket,
-	accountID, appID, consumerID string, since, until time.Time) ([]state.APIConsumerUsageBucket, error) {
-	weighted := false
+// consumerUsageInputs loads what a consumer's cards price beyond usage
+// minutes: route counts when a card weights routes (ADR-952), and the app's
+// reported units for each app meter a card prices (ADR-1318).
+func (s *server) consumerUsageInputs(ctx context.Context, cards []state.APIConsumerRateCard,
+	accountID, appID, consumerID string, since, until time.Time) (billing.ConsumerUsageInputs, error) {
+	var in billing.ConsumerUsageInputs
+	if !until.After(since) {
+		return in, nil
+	}
+	weighted, meters := false, map[string]bool{}
 	for _, card := range cards {
 		weighted = weighted || len(card.RouteWeights) > 0
+		if meter, ok := state.AppMeterOfUnit(card.Unit); ok {
+			meters[meter] = true
+		}
 	}
-	routeStore, ok := s.store.(state.ConsumerRouteUsageStore)
-	if !weighted || !ok || !until.After(since) {
-		return usage, nil
+	if routeStore, ok := s.store.(state.ConsumerRouteUsageStore); weighted && ok {
+		routes, err := routeStore.ListAPIConsumerRouteUsage(ctx, accountID, appID, consumerID, since, until)
+		if err != nil {
+			return in, err
+		}
+		in.Routes = routes
 	}
-	routes, err := routeStore.ListAPIConsumerRouteUsage(r.Context(), accountID, appID, consumerID, since, until)
-	if err != nil {
-		return nil, err
+	meterStore, ok := s.store.(state.ConsumerMeterUsageStore)
+	if !ok || len(meters) == 0 {
+		return in, nil
 	}
-	return billing.WeightAPIConsumerUsage(cards, usage, routes)
+	in.Meters = map[string][]state.APIConsumerMeterUsageBucket{}
+	for meter := range meters {
+		rows, err := meterStore.ListAPIConsumerMeterUsage(ctx, accountID, appID, consumerID, meter, since, until)
+		if err != nil {
+			return in, err
+		}
+		in.Meters[meter] = rows
+	}
+	return in, nil
 }

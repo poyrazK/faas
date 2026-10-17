@@ -857,7 +857,7 @@ jobs:
           # atomic, cluster-version-independent update and pg_reload_conf
           # applies it without restarting the database.
           read -r -d '' archive_command <<'ARCHIVE_COMMAND' || true
-          if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx '[offhostbox]' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f "offhostbox:faas-pg-wal/%f" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo "off-host WAL push failed for %f" >&2; fi; exit 0
+          if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx '[offhostbox]' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f "offhostbox:faas-pg-wal/%f" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet && touch /var/lib/pgsql/archive/.offhost-last-success || echo "off-host WAL push failed for %f" >&2; fi; exit 0
           ARCHIVE_COMMAND
           runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 \
             --set=archive_command="$archive_command" <<'SQL'

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -332,7 +333,7 @@ func nativeMetalCaptureSequence(t *testing.T, ctx context.Context, peer, outcome
 			t.Fatal("uncertain control reached object publication", err, entries)
 		}
 	}
-	if current, err := q.readCapture(incoming); err != nil || current != capture || v.checkEnvironmentQualificationSnapshotSupport() == nil {
+	if current, err := q.readCapture(incoming); err != nil || !reflect.DeepEqual(current, capture) || v.checkEnvironmentQualificationSnapshotSupport() == nil {
 		t.Fatal("kernel protocol fixture promoted or enabled capture", err)
 	}
 	entries, err := os.ReadDir(intentRoot)

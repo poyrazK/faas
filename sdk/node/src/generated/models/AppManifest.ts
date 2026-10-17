@@ -64,6 +64,10 @@ export type AppManifest = {
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
   /**
+   * The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
+  /**
    * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
    */
   startup_deadline_s?: number | null;

@@ -61,6 +61,9 @@ type WakeAheadLearner struct {
 	sink        WakeAheadSink
 	callers     map[string]*wakeAheadCaller
 	speculative map[string]*wakeAheadSpeculation
+	// changed is set whenever the learned statistics move, so the snapshot
+	// writer (ADR-1132) skips unchanged intervals.
+	changed bool
 }
 
 type wakeAheadCaller struct {
@@ -112,6 +115,7 @@ func (l *WakeAheadLearner) ObserveWake(app string) bool {
 	}
 	if c.finishLocked() {
 		l.publishLocked(app, c)
+		l.changed = true
 	}
 	c.open, c.windowStart = true, now
 	return true
@@ -154,6 +158,7 @@ func (l *WakeAheadLearner) Predict(app string) []string {
 	}
 	if c.open && l.now().Sub(c.windowStart) > api.ServiceWakeAheadFollowWindow && c.finishLocked() {
 		l.publishLocked(app, c)
+		l.changed = true
 	}
 	if c.wakes < api.ServiceWakeAheadMinWakes {
 		return nil

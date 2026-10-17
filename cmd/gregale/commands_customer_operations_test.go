@@ -226,17 +226,23 @@ func TestCustomerOperationCLIRecoveryAndRoutes(t *testing.T) {
 }
 
 func TestCustomerOperationCLIRejectsUnfencedOrAmbiguousCommands(t *testing.T) {
-	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--subject-type", "order"}, {"list", "--app", "exports", "--scope", "production", "--subject-id", "42"}, nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"}} {
+	for _, args := range [][]string{{"list", "--app", "exports", "--scope", "production", "--subject-type", "order"}, {"list", "--app", "exports", "--scope", "production", "--subject-id", "42"}, nil, {"list", "--app", "exports"}, {"list", "--app", "exports", "--scope", "production", "--limit", "101"}, {"get", "op"}, {"get", "op", "extra", "--app", "exports"}, {"watch", "op", "--app", "exports", "--interval", "0s"}, {"download", "op", "--app", "exports"}, {"recover", "op", "--app", "exports"}, {"cancel", "op", "--app", "exports"}, {"retry-delivery", "op", "--app", "exports", "--resolution", "safe_to_retry"},
+		{"approve", "op", "--app", "exports", "--step", "review", "--decision", "approved"}, {"approve", "op", "--app", "exports", "--expected-generation", "1", "--decision", "approved"},
+		{"approve", "op", "--app", "exports", "--expected-generation", "1", "--step", "review", "--decision", "maybe"}} {
 		if _, err := parseCustomerOperationCommand(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
 	command, ok := lookupCliCommand("customer-operations")
-	if !ok || len(command.Subcommands) != 22 {
+	if !ok || len(command.Subcommands) != 25 {
 		t.Fatal("command help/completion manifest missing")
 	}
 	if _, ok := lookupCliCommand("operations"); !ok {
 		t.Fatal("exclusive operations compatibility lost")
+	}
+	approve, err := parseCustomerOperationCommand([]string{"approve", "op", "--self", "--expected-generation", "2", "--step", "review", "--decision", "rejected", "--comment", "refund too large"})
+	if err != nil || !approve.self || approve.step != "review" || approve.approval.ExpectedGeneration != 2 || approve.approval.Decision != "rejected" || approve.approval.Comment != "refund too large" {
+		t.Fatalf("customer approval command=%+v %v", approve, err)
 	}
 }
 

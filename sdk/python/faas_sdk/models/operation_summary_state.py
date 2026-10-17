@@ -1,6 +1,8 @@
 from typing import Literal
 
-OperationSummaryState = Literal["accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded"]
+OperationSummaryState = Literal[
+    "accepted", "cancelled", "failed", "requires_reconciliation", "running", "succeeded", "waiting"
+]
 
 OPERATION_SUMMARY_STATE_VALUES: set[OperationSummaryState] = {
     "accepted",
@@ -9,6 +11,7 @@ OPERATION_SUMMARY_STATE_VALUES: set[OperationSummaryState] = {
     "requires_reconciliation",
     "running",
     "succeeded",
+    "waiting",
 }
 
 

@@ -3074,7 +3074,7 @@ type UsageData struct {
 // sourced from the most recent row in state.Invoices (LIMIT 1). The
 // fields are pre-formatted at the handler edge so the template is a
 // pure renderer. Currency is the provider's three-letter code (USD /
-// EUR / etc.); empty when no invoice exists.
+// USD / etc.); empty when no invoice exists.
 type BillingData struct {
 	Plan     string
 	RAMMB    int
@@ -3144,7 +3144,7 @@ type BillingData struct {
 }
 
 // UpgradeOption is one paid plan the account can upgrade to. Money is
-// formatted at the handler boundary (formatPriceEuros) so the template
+// formatted at the handler boundary (formatPlanPrice) so the template
 // never touches integer millicents.
 type UpgradeOption struct {
 	Plan            string
@@ -3189,7 +3189,7 @@ type UpgradeData struct {
 // Plans is the four-plan table authoritative from pkg/api/limits.go;
 // Highlighted marks the row that matches the current account's plan
 // so the dashboard can render a "Your plan" badge. PriceFormatted is
-// the on-the-wire "€X.YY" / "Free" string — money stays integer
+// the on-the-wire "$X.YY" / "Free" string — money stays integer
 // millicents upstream and is divided into euros at template time only.
 type PricingData struct {
 	Plans []PricingPlanView
@@ -3233,7 +3233,7 @@ type InvoicesData struct {
 }
 
 // InvoiceRow is one dashboard row. TotalFormatted is pre-formatted at
-// the handler edge (integer cents → "€X.YY" / "€0.00"; never float).
+// the handler edge (integer cents → "$X.YY" / "$0.00"; never float).
 // PDFAvailable shows the marker (Y / -) but never exposes the provider
 // PDF URL. HostedURL is intentionally absent: the column lives in
 // invoices.hosted_url for PR-B audit only; PR A never puts it on the
@@ -3244,7 +3244,7 @@ type InvoiceRow struct {
 	Provider       string
 	Status         string
 	Period         string // "2026-07"
-	TotalFormatted string // "€X.YY" — pre-formatted at the handler edge
+	TotalFormatted string // "$X.YY" — pre-formatted at the handler edge
 	Currency       string
 	PDFAvailable   bool
 }

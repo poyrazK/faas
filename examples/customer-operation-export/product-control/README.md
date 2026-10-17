@@ -461,7 +461,7 @@ remain pending; portable fixture results are retained separately.
 
 Preserve the original baseline and completed plan-change evidence first. Upgrade
 the existing Auth app using the new template and its normal release task; this
-appends migration `0003_reviewed_team_actions.sql`. Explicitly enable its
+appends migration `0006_reviewed_team_actions.sql`. Explicitly enable its
 default-off `AUTH_PRODUCT_CONTROL_TEAM_ENABLED=1` flag as well as the existing
 apid Product Control flag. Configure a trusted `team-manager` Auth role with
 `org:read` and `members:manage`, preserving existing Auth roles/policies.

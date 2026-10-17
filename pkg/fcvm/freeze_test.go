@@ -140,7 +140,8 @@ func TestFreezeIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, since := m.FrozenState("f")
-	rep, err := m.Freeze(t.Context(), "f", FreezeOptions{Reclaim: true})
+	// With Reclaim a second freeze compresses instead (TestCompressFrozenInstance).
+	rep, err := m.Freeze(t.Context(), "f", FreezeOptions{})
 	if err != nil || rep != (FreezeReport{}) {
 		t.Fatalf("second Freeze = %+v, %v; want a zero report and no error", rep, err)
 	}

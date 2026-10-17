@@ -14,13 +14,17 @@ test('reviewed team actions against PostgreSQL', { skip: !database }, async t =>
   t.after(() => pool.end())
   await pool.query(`DROP SCHEMA IF EXISTS gregale_auth CASCADE; DROP SCHEMA IF EXISTS auth CASCADE;
     CREATE SCHEMA auth; CREATE SCHEMA gregale_auth;
-    CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,deleted_at timestamptz,banned_until timestamptz,is_anonymous boolean NOT NULL DEFAULT false);
-    CREATE TABLE auth.sessions(id uuid PRIMARY KEY,user_id uuid REFERENCES auth.users(id),not_after timestamptz);`)
+    CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,email_confirmed_at timestamptz,deleted_at timestamptz,banned_until timestamptz,is_anonymous boolean NOT NULL DEFAULT false,is_sso_user boolean NOT NULL DEFAULT false);
+    CREATE TABLE auth.sessions(id uuid PRIMARY KEY,user_id uuid REFERENCES auth.users(id),not_after timestamptz);
+    CREATE TABLE auth.audit_log_entries(id uuid PRIMARY KEY,created_at timestamptz,payload jsonb);
+    CREATE TABLE auth.sso_providers(id uuid PRIMARY KEY);
+    CREATE TABLE auth.identities(id uuid PRIMARY KEY,user_id uuid REFERENCES auth.users(id),provider text);
+    CREATE TABLE auth.sso_domains(id uuid PRIMARY KEY,sso_provider_id uuid REFERENCES auth.sso_providers(id),domain text);`)
   const client = await pool.connect()
   try {
     for (let i = 0; i < 2; i++) await applyGregaleMigrations(client, undefined, JSON.stringify({ roles: { operator: ['org:read'], viewer: ['org:read'], manager: ['org:read', 'members:manage'] } }))
   } finally { client.release() }
-  assert.equal((await pool.query('SELECT count(*)::int AS count FROM gregale_auth.schema_versions')).rows[0].count, 4)
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM gregale_auth.schema_versions')).rows[0].count, 7)
 
   async function user(email = `${randomUUID()}@example.test`, confirmed = true) {
     const value = { id: randomUUID(), session: randomUUID(), email }

@@ -288,6 +288,12 @@ type ServiceProxyConfig struct {
 	// version-affinity calls. It prevents a warm sibling from suppressing the
 	// selected cohort's restore.
 	WakeDeployment ServiceProxyDeploymentWaker
+	// EvictEndpoint drops one instance from the gateway routing cache once the
+	// bridge has proved it gone, the same eviction the public edge performs.
+	// Without it a stopped instance stays listed until the next control-plane
+	// replay, so a retry or the next call is routed to it again instead of
+	// waking the app. nil keeps only the proxy-local quarantine.
+	EvictEndpoint func(appID, instanceID string)
 	// ValidateDeployment is required only for exact deployment overrides. Nil
 	// fails closed when the override header is present.
 	ValidateDeployment    ServiceProxyDeploymentValidator
@@ -346,6 +352,7 @@ type ServiceProxy struct {
 	rawForward                func(Target) http.Handler
 	wake                      ServiceProxyWaker
 	wakeDeployment            ServiceProxyDeploymentWaker
+	evictEndpoint             func(appID, instanceID string)
 	validateDeployment        ServiceProxyDeploymentValidator
 	resolveChaos              ServiceProxyChaosResolver
 	observeChaosMatch         ServiceProxyChaosObserver
@@ -451,6 +458,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		rawForward:                cfg.RawForward,
 		wake:                      cfg.Wake,
 		wakeDeployment:            cfg.WakeDeployment,
+		evictEndpoint:             cfg.EvictEndpoint,
 		validateDeployment:        cfg.ValidateDeployment,
 		resolveChaos:              cfg.ResolveChaos,
 		observeChaosMatch:         cfg.ObserveChaosMatch,
@@ -502,6 +510,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upgrade := isUpgradeRequest(r)
 	traceWriter := &serviceProxyTraceResponseWriter{ResponseWriter: w}
 	var dependencyHealthCaller ServiceCaller
+	// dependencyWoke records that the call found its target parked and held
+	// while it was restored (ADR-196), for the per-edge wake counter that the
+	// service map's cold-call share reads (ADR-1131).
+	dependencyWoke := false
 	var dependencyHealthTarget ServiceTarget
 	dependencyCallEligible := false
 	dispatchWriter := http.ResponseWriter(traceWriter)
@@ -549,6 +561,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					p.now().Sub(dependencyStarted),
 					traceIDFromContext(dependencyCtx),
 				)
+				if dependencyWoke {
+					p.metrics.IncServiceDependencyEdgeWake(dependencyHealthCaller.AppID, dependencyHealthTarget.AppID)
+				}
 				if dependencyHealthCaller.DeploymentID != "" {
 					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
 				}
@@ -761,16 +776,44 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 			return
 		}
+		overrideID, present, valid := serviceDeploymentOverrideFromRequest(r)
+		if present {
+			if !valid {
+				serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "invalid service probe target deployment")
+				return
+			}
+			if p.validateDeployment == nil {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+				return
+			}
+			live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
+			if err != nil || !live {
+				serviceProxyProblem(dispatchWriter, http.StatusUnprocessableEntity, "service probe target deployment is unavailable")
+				return
+			}
+		}
 		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 			return
 		}
+		if present {
+			selected := make([]ServiceEndpoint, 0, len(endpoints))
+			for _, endpoint := range endpoints {
+				if endpoint.DeploymentID == overrideID {
+					selected = append(selected, endpoint)
+				}
+			}
+			endpoints = selected
+		}
 		if len(endpoints) == 0 {
 			p.metrics.IncServiceCall(ServiceCallNoReplica)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service has no healthy replicas; probe did not wake the target")
 			return
+		}
+		if present {
+			dispatchWriter.Header().Set(api.TargetDeploymentHeader, overrideID)
 		}
 		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
 		dispatchWriter.WriteHeader(http.StatusNoContent)
@@ -878,19 +921,24 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// unauthorized requests from release health.
 	dependencyCallEligible = true
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
+	dependencyWoke = woken
 	if !served {
 		return
 	}
 	if responseFault != nil {
 		capture := newScenarioHTTPResponseWriter(dispatchWriter)
-		p.dispatch(capture, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
+		if p.dispatch(capture, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) { //nolint:contextcheck // dispatch retains the inbound request and its existing budget.
+			dependencyWoke = true
+		}
 		capture.finish(r.Context(), func() {
 			p.observeScenarioHTTPFault(dependencySpan, responseFault.runID, responseFault.callerAppID, responseFault.generation, responseFault.rule)
 			dispatchWriter.Header().Set("X-Gregale-Chaos-Injected", responseFault.rule.Kind)
 		})
 		return
 	}
-	p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+	if p.dispatch(dispatchWriter, r, targetPath, target, callerInfo, endpoints, woken, versionDeploymentID) { //nolint:contextcheck // the inbound request carries the canonical ctx; forwardOnce wraps it with request-local stale-target state rather than taking a separate ctx parameter.
+		dependencyWoke = true
+	}
 }
 
 // applyScenarioChaos runs only after the normal identity, namespace, tenant,
@@ -1071,7 +1119,10 @@ func (w *serviceProxyTraceResponseWriter) Unwrap() http.ResponseWriter {
 // turns a WebSocket handshake into a confusing upstream error. It also
 // cannot be buffered or retried, because the response is a hijacked
 // connection rather than a body.
-func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) {
+//
+// rerouteWoke reports that forwardOnce's re-route had to wake the target
+// (ADR-1133), so the call still counts as a cold edge call (ADR-1131).
+func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) (rerouteWoke bool) {
 	if isUpgradeRequest(r) {
 		if !target.WebSocketEnabled {
 			p.metrics.IncServiceCall(ServiceCallUpgradeRejected)
@@ -1088,9 +1139,12 @@ func (p *ServiceProxy) dispatch(w http.ResponseWriter, r *http.Request, targetPa
 		p.forwardUpgrade(w, r, targetPath, target, caller, endpoints, woken)
 		return
 	}
+	if !bufferReplayableServiceBody(w, r) {
+		return
+	}
 	p.countForward(woken)
 	p.observeWakeAheadCall(caller, target, woken)
-	p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken, deploymentID)
+	return p.forwardOnce(w, r, targetPath, target, caller, endpoints, woken, deploymentID)
 }
 
 // observeWakeAheadCall feeds the ADR-977 learner. Preview callers are left
@@ -1596,7 +1650,7 @@ func (w *serviceProxyUpgradeProbeWriter) Flush() {
 
 func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) {
+func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) (rerouteWoke bool) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
 	policy := p.retryPolicy
@@ -1631,9 +1685,30 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	if maxAttempts > 1 {
 		p.retryBudget.ObserveOriginal(request.Context(), appID)
 	}
+	// ADR-1133: a request the bridge proved never reached a guest earns one
+	// extra attempt on top of the policy's, for any method and outside the
+	// aggregate retry budget, provided its body can be replayed.
+	bodyReplayable := !hasBody || request.GetBody != nil
+	undeliveredGranted := false
+	limit := maxAttempts
+	rerouted := false
 	frozenRetried := false
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < limit; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
+		if !ok && !rerouted {
+			// Every endpoint in the lease is benched. When an instance
+			// stopped (park, restart, rollout drain) inside the lease, the
+			// registry no longer lists it; re-route once instead of
+			// answering "no healthy replicas" for an app that is parked.
+			rerouted = true
+			fresh, freshWoken, served := p.rerouteAfterStale(w, request.Context(), appID, deploymentID)
+			if !served {
+				return
+			}
+			endpoints, woken = fresh, woken || freshWoken
+			rerouteWoke = freshWoken
+			endpoint, ok = p.pick(appID, endpoints)
+		}
 		if !ok {
 			if attempt > 0 {
 				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
@@ -1688,11 +1763,14 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			frozenRetried = true
 			if next, ok := p.frozenRetryEndpoints(request, appID, deploymentID, endpoint.InstanceID, endpoints); ok {
 				endpoints = next
-				maxAttempts++
+				limit++
 				continue
 			}
 		}
-		if attempt+1 >= maxAttempts {
+		// A frozen refusal is also undelivered; main's frozen retry above
+		// already handled it, so it earns no second re-route.
+		undelivered := signal.undelivered.Load() && !signal.frozen.Load() && !undeliveredGranted && bodyReplayable
+		if !undelivered && attempt+1 >= limit {
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -1709,6 +1787,14 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			buffer.commit()
 			buffer.commitTrailers()
 			return
+		}
+		if undelivered {
+			// No guest saw the request, so replaying it cannot duplicate a
+			// side effect and adds no load to a struggling target: it is a
+			// re-route, not a retry. Skip the aggregate budget and backoff.
+			undeliveredGranted = true
+			limit++
+			continue
 		}
 		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
@@ -1729,6 +1815,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			timer.Stop()
 		}
 	}
+	return rerouteWoke
 }
 
 // applyServiceEndpointIdentity replaces guest-controlled identity claims with
@@ -1900,6 +1987,30 @@ func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start
 // because every call site reads as "bench this endpoint"; the mechanism
 // underneath is now the shared breaker, so repeated failures back off
 // geometrically instead of re-admitting the endpoint every endpointTTL.
+// rerouteAfterStale re-reads the registry, bypassing the lease, once no
+// endpoint the call holds is pickable. A target the registry still lists is
+// live and stays behind its breaker; an evicted one leaves the registry empty
+// and the app is woken exactly like a first call. It writes the failure
+// response itself and reports served=false when the call must end.
+func (p *ServiceProxy) rerouteAfterStale(w http.ResponseWriter, ctx context.Context, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
+	p.invalidateEndpoints(appID)
+	endpoints, err := p.endpoints(ctx, appID)
+	if err != nil {
+		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
+		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
+		return nil, false, false
+	}
+	if endpoints = serviceEndpointsForDeployment(endpoints, deploymentID); len(endpoints) > 0 {
+		return endpoints, false, true
+	}
+	endpoints, err = p.wakeAndRefresh(ctx, appID, deploymentID)
+	if err != nil {
+		p.writeWakeFailure(w, appID, err)
+		return nil, false, false
+	}
+	return endpoints, true, true
+}
+
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
 	p.publishOpenTargets(appID)
@@ -1911,9 +2022,17 @@ func (p *ServiceProxy) quarantine(appID, instanceID string) {
 // the same instance ID: it leaves the cached endpoint list without counting
 // as a breaker failure, and a half-open probe it held is released. Any other
 // stale replica is quarantined.
+//
+// A stale replica that is not frozen is also evicted from the gateway
+// routing cache, the same eviction the public edge applies to this signal;
+// the lease is left alone, and rerouteAfterStale consults the registry once
+// nothing in the lease is pickable (ADR-1133).
 func (p *ServiceProxy) retireEndpoint(appID, instanceID string, frozen bool) {
 	if !frozen {
 		p.quarantine(appID, instanceID)
+		if p.evictEndpoint != nil {
+			p.evictEndpoint(appID, instanceID)
+		}
 		return
 	}
 	p.mu.Lock()

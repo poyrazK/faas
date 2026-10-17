@@ -410,9 +410,11 @@ retries explicitly.
 | `authentication` | `token_required`, `token_invalid`, `PGRST301`–`PGRST303`, HTTP 401 | `authenticate` |
 | `permission_denied` | SQLSTATE `42501`, `origin_not_allowed`, HTTP 403 | `check_permissions` |
 | `contract_mismatch` | `schema_contract_mismatch` | `refresh_contract` |
-| `timeout` | `request_timeout`, `query_timeout`, HTTP 504 | `reconcile` |
+| `timeout` | `request_timeout`, `query_timeout`, `request_deadline_exceeded`, HTTP 504 | `reconcile` |
 | `cancelled` | `request_cancelled`, SQLSTATE `57014` | `reconcile` |
-| `unavailable` | `data_api_unavailable`, `serving_contract_unavailable`, `data_api_refresh_unavailable`, HTTP 503 | `check_service` |
+| `response_too_large` | `response_too_large` | `reconcile` |
+| `rate_limited` | `data_api_rate_limited`, HTTP 429 | `wait` |
+| `unavailable` | `data_api_unavailable`, `data_api_overloaded`, `serving_contract_unavailable`, `data_api_refresh_unavailable`, HTTP 503 | `check_service` |
 | `no_response` | Status 0 with no recognized code | `reconcile` |
 | `unknown` | Other errors | `inspect` |
 
@@ -424,13 +426,29 @@ Native exceptions without a recognized code or supplied status remain unknown;
 use `dataRequest()` for stable deadline/cancellation codes.
 
 Recovery values are suggestions, not instructions to retry. Timeouts,
-cancellation, missing responses, and service failures do not prove a mutation
+cancellation, response-size limits, missing responses, and service failures do not prove a mutation
 rolled back. Reconcile writes or use an application-owned idempotency contract
 before replaying them. `refresh_contract` means review the rollout and regenerate
 appropriate client types; it does not automatically change a pinned fingerprint.
 An empty RLS-filtered result is not a permission error. The preserved original
 error and its code can contain application or database information: use curated
 UI messages and do not blindly log or display the classification object.
+
+The updated runtime limits normal REST/RPC bodies to 16 MiB, independently of
+row count. Known oversized lengths return `502 response_too_large`; overflow
+after headers closes the incomplete body and can instead produce status 0 /
+`no_response`. Generic HTTP 502 errors remain `unknown`. Use `onResponse` to
+retain the header request ID before body consumption and correlate gateway logs.
+Reduce future projections/page sizes or RPC output, and reconcile writes before
+replay: SQL can commit before the result is rejected. The SDK adds no retries.
+
+Optional gateway user-rate limits return `429 data_api_rate_limited` with
+`Retry-After: 1`. Budgets follow verified subjects across token rotation and
+routes, and are local to each runtime. The stable gateway code establishes a
+rejection before SQL dispatch; generic HTTP 429 alone does not. Recovery `wait`
+means defer the next request decision; it adds no timers or automatic retries,
+including for ordinary GET/POST queries and `throwOnError()`. Preserve uncertain
+write reconciliation when the error comes from another service or SQL.
 
 ### Validate RPC arguments at runtime
 

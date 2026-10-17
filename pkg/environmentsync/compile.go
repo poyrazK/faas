@@ -43,6 +43,21 @@ func Compile(input api.EnvironmentDefinition) (DesiredState, error) {
 	if d.QueuePruningPolicy != "" && d.QueuePruningPolicy != "retain" {
 		return DesiredState{}, fmt.Errorf("queue_pruning_policy must be retain or omitted")
 	}
+	if d.WorkloadPruningPolicy != "" && d.WorkloadPruningPolicy != "retain" {
+		return DesiredState{}, fmt.Errorf("workload_pruning_policy must be retain or omitted")
+	}
+	recoveredApps := map[string]bool{}
+	for name, id := range d.WorkloadRecoveries {
+		parsed, err := uuid.Parse(id)
+		if _, exists := d.Workloads[name]; !exists || !api.ValidAppSlug(name) || err != nil || parsed == uuid.Nil {
+			return DesiredState{}, fmt.Errorf("workload recovery %q requires a declared workload and original retained app UUID", name)
+		}
+		if recoveredApps[parsed.String()] {
+			return DesiredState{}, fmt.Errorf("an original retained app cannot recover two logical workloads")
+		}
+		recoveredApps[parsed.String()] = true
+		d.WorkloadRecoveries[name] = parsed.String()
+	}
 	var fields []Field
 	if d.Configuration != nil {
 		raw, _ := json.Marshal(d.Configuration)

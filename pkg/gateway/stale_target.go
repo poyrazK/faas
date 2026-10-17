@@ -19,9 +19,12 @@ type staleTargetSignal struct {
 	stale atomic.Bool
 	// frozen marks a target vmmd refused because its guest is frozen
 	// (ADR-1151): idle, not dead, and thawed by schedd under the same ID.
-	frozen  atomic.Bool
-	claimed sync.Once
-	onStale func()
+	frozen atomic.Bool
+	// undelivered is set with stale when the bridge proved the request never
+	// reached any guest (ADR-1133), so a re-route is safe for any method.
+	undelivered atomic.Bool
+	claimed     sync.Once
+	onStale     func()
 }
 
 type staleTargetSignalKey struct{}
@@ -64,6 +67,23 @@ func markStaleTargetErr(ctx context.Context, err error) {
 		}
 	}
 	markStaleTarget(ctx)
+}
+
+// markUndeliveredTarget is markStaleTarget for failures that prove the request
+// never reached any guest: no client for the target's node, the forward stream
+// could not be opened, or vmmd answered NotFound for the instance before any
+// response (it checks the instance before dialing the guest bridge).
+func markUndeliveredTarget(ctx context.Context) {
+	markUndeliveredTargetErr(ctx, nil)
+}
+
+// markUndeliveredTargetErr is markUndeliveredTarget for a forward error, which
+// can also show that the guest is frozen (ADR-1151).
+func markUndeliveredTargetErr(ctx context.Context, err error) {
+	if signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal); ok && signal != nil {
+		signal.undelivered.Store(true)
+	}
+	markStaleTargetErr(ctx, err)
 }
 
 // instanceFrozenRefusal reports whether err is vmmd refusing a forward

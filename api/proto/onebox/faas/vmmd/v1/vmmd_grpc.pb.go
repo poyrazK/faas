@@ -223,7 +223,10 @@ type VmmdClient interface {
 	// and code instance_not_freezable; an instance serving a request, stream
 	// or session fails with FailedPrecondition and code instance_busy, and
 	// keeps running. Freezing a frozen instance succeeds without pausing it
-	// again. A forward that reaches a frozen instance fails fast with
+	// again; with reclaim it compresses the frozen guest's memory into
+	// memory-only swap (zswap, ADR-906 decision 6), or fails with
+	// FailedPrecondition and code frozen_compress_unavailable on a host
+	// without it. A forward that reaches a frozen instance fails fast with
 	// Unavailable and code instance_frozen.
 	FreezeInstance(ctx context.Context, in *FreezeInstanceRequest, opts ...grpc.CallOption) (*FreezeInstanceResponse, error)
 	// ThawInstance (ADR-1151) resumes a frozen instance in place and restarts
@@ -1406,7 +1409,10 @@ type VmmdServer interface {
 	// and code instance_not_freezable; an instance serving a request, stream
 	// or session fails with FailedPrecondition and code instance_busy, and
 	// keeps running. Freezing a frozen instance succeeds without pausing it
-	// again. A forward that reaches a frozen instance fails fast with
+	// again; with reclaim it compresses the frozen guest's memory into
+	// memory-only swap (zswap, ADR-906 decision 6), or fails with
+	// FailedPrecondition and code frozen_compress_unavailable on a host
+	// without it. A forward that reaches a frozen instance fails fast with
 	// Unavailable and code instance_frozen.
 	FreezeInstance(context.Context, *FreezeInstanceRequest) (*FreezeInstanceResponse, error)
 	// ThawInstance (ADR-1151) resumes a frozen instance in place and restarts

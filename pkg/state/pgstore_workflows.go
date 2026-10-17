@@ -1380,6 +1380,10 @@ func (s *PgStore) ParkWorkflowTimer(ctx context.Context, runID, stepName string,
 	`, runID, stepName, deadline); err != nil {
 		return time.Time{}, fmt.Errorf("pgstore: schedule workflow timer: %w", err)
 	}
+	// ADR-1194: a parked operation is waiting in the same transaction.
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return time.Time{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return time.Time{}, fmt.Errorf("pgstore: commit workflow timer: %w", err)
 	}
@@ -1460,6 +1464,9 @@ func (s *PgStore) ParkWorkflowEvent(ctx context.Context, runID, stepName, eventN
 	`, runID, stepName, wakeAt); err != nil {
 		return nil, time.Time{}, fmt.Errorf("pgstore: schedule workflow event wait: %w", err)
 	}
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return nil, time.Time{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, time.Time{}, fmt.Errorf("pgstore: commit workflow event wait: %w", err)
 	}
@@ -1536,6 +1543,10 @@ func (s *PgStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName,
 		if _, err := tx.Exec(ctx, `UPDATE workflow_runs SET status = 'dead', current_step = $2, last_error = $3, finished_at = $4, updated_at = $4 WHERE id = $1`, runID, stepName, message, now); err != nil {
 			return nil, false, fmt.Errorf("pgstore: close timed-out workflow run: %w", err)
 		}
+	}
+	// An expired approval settles its operation now; a dead run is never claimed again.
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return nil, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("pgstore: commit timed-out workflow wait: %w", err)
@@ -1647,6 +1658,19 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 		return false, fmt.Errorf("pgstore: begin workflow callback: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	duplicate, err := completeWorkflowCallbackTx(ctx, tx, tenantID, runID, stepName, eventName, eventID, timeout, payload)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("pgstore: commit workflow callback: %w", err)
+	}
+	return duplicate, nil
+}
+
+// completeWorkflowCallbackTx records one callback inside the caller's
+// transaction, so an operation approval commits with its decision event.
+func completeWorkflowCallbackTx(ctx context.Context, tx pgx.Tx, tenantID, runID, stepName, eventName, eventID string, timeout time.Duration, payload json.RawMessage) (bool, error) {
 	var runStatus string
 	if tenantID == "" {
 		if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
@@ -1667,9 +1691,6 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 	if err == nil {
 		if existing.RunID != runID || existing.EventName != eventName || !equalWorkflowJSON(existing.Payload, payload) {
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return false, fmt.Errorf("pgstore: commit duplicate workflow callback: %w", err)
 		}
 		return true, nil
 	}
@@ -1708,9 +1729,6 @@ func (s *PgStore) completeWorkflowCallback(ctx context.Context, tenantID, runID,
 	`, runID, now); err != nil {
 		return false, fmt.Errorf("pgstore: wake workflow callback run: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("pgstore: commit workflow callback: %w", err)
-	}
 	return false, nil
 }
 
@@ -1747,6 +1765,18 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 		return fmt.Errorf("pgstore: begin workflow event: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	if err := insertWorkflowEventTx(ctx, tx, tenantID, e); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pgstore: commit workflow event: %w", err)
+	}
+	return nil
+}
+
+// insertWorkflowEventTx records an event and wakes a run parked on events.
+// Callers that also lock the run's Operation share its transaction (ADR-1197).
+func insertWorkflowEventTx(ctx context.Context, tx pgx.Tx, tenantID string, e *WorkflowEvent) error {
 	var runStatus string
 	if tenantID == "" {
 		if err := tx.QueryRow(ctx, `SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, e.RunID).Scan(&runStatus); err != nil {
@@ -1773,7 +1803,7 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 		  AND workflow_events.event_name = excluded.event_name
 		RETURNING received_at
 	`
-	err = tx.QueryRow(ctx, query, e.ID, e.RunID, e.EventName, e.Payload).Scan(&e.ReceivedAt)
+	err := tx.QueryRow(ctx, query, e.ID, e.RunID, e.EventName, e.Payload).Scan(&e.ReceivedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: workflow_events.id", ErrConflict)
@@ -1786,9 +1816,6 @@ func (s *PgStore) insertWorkflowEvent(ctx context.Context, tenantID string, e *W
 		WHERE id = $1 AND status = 'awaiting_event'
 	`, e.RunID); err != nil {
 		return fmt.Errorf("pgstore: wake workflow for event: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("pgstore: commit workflow event: %w", err)
 	}
 	return nil
 }

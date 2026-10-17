@@ -20,6 +20,9 @@ var (
 	ErrOperationExpired                    = errors.New("state: operation result expired within deduplication window")
 	ErrOperationStaleAttempt               = errors.New("state: operation report belongs to a stale execution attempt")
 	ErrOperationQuota                      = errors.New("state: operation plan limit exceeded")
+	// ErrOperationLimitExceeded: the Operation's own deadline has passed or
+	// its execution budget is spent (ADR-1196).
+	ErrOperationLimitExceeded = errors.New("state: operation deadline or execution budget exceeded")
 )
 
 type OperationDefinition struct {
@@ -58,6 +61,9 @@ type Operation struct {
 	WorkflowArtifactReceipts  map[string]OperationWorkflowArtifactReceipt `json:"workflow_artifact_receipts,omitempty"`
 	JobArtifactReceipts       map[string]OperationJobArtifactReceipt      `json:"job_artifact_receipts,omitempty"`
 	MilestoneCount            int                                         `json:"milestone_count,omitempty"`
+	// LimitExceeded is set by the deadline sweeper before it stops a
+	// workflow run, so the projection settles failed rather than cancelled.
+	LimitExceeded string `json:"limit_exceeded,omitempty"`
 }
 
 // operationRecordJSON adds the normalized backend identity consumed by the
@@ -185,6 +191,9 @@ func prepareOperationAdmission(def OperationDefinition, admission OperationAdmis
 		EventExpiresAt: now.Add(time.Duration(limits.Operations.EventRetentionSeconds) * time.Second)}
 	if def.Spec.CompletionWebhookID != "" {
 		op.CompletionDelivery.State = "awaiting_outcome"
+	}
+	if err := applyOperationLimits(&op, &inv, def.Spec.Limits, now); err != nil {
+		return Operation{}, Invocation{}, "", "", err
 	}
 	return op, inv, key, fingerprint, nil
 }

@@ -397,6 +397,9 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 		TokenExpiresAt:   expiresAt,
 		AuditGithubLogin: auditLogin,
 	}); err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			return "", "", api.ErrGitHubAccountConflict()
+		}
 		return "", "", fmt.Errorf("githubd: persist install state: %w", err)
 	}
 

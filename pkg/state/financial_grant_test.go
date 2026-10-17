@@ -49,11 +49,11 @@ func TestMonthOverageCentsNeverUsesLessThanCurrentPlan(t *testing.T) {
 	// The upgrade to Pro is not captured yet: the current plan still counts.
 	hobby := []FinancialPriceSnapshot{{Plan: api.PlanHobby, EffectiveFrom: month,
 		Price: financial.Price{Meter: "compute", IncludedQuantity: api.IncludedMBSeconds(api.PlanHobby)}}}
-	usage := 260 * api.SecondsPerGBHour
+	usage := 1010 * api.SecondsPerGBHour
 	if got := monthOverageCents(api.PlanPro, hobby, month.Add(time.Hour), usage); got != 10 {
-		t.Fatalf("overage = %d cents, want 10 (260 GB-h over Pro's 250)", got)
+		t.Fatalf("overage = %d cents, want 10 (1010 GB-h over Pro's 1000)", got)
 	}
-	if got := monthOverageCents(api.PlanHobby, hobby, month.Add(time.Hour), usage); got != 210 {
-		t.Fatalf("overage = %d cents, want 210 (260 GB-h over Hobby's 50)", got)
+	if got := monthOverageCents(api.PlanHobby, hobby, month.Add(time.Hour), usage); got != 810 {
+		t.Fatalf("overage = %d cents, want 810 (1010 GB-h over Hobby's 200)", got)
 	}
 }

@@ -1129,6 +1129,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
 	defer primeRecoveryT.Stop()
 	l.dispatchPrimeRecovery(ctx)
+	workerStartupT := time.NewTimer(workerStartupReconcileDelay)
+	defer workerStartupT.Stop()
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1230,6 +1232,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-workflowRetentionFirst:
 			l.runWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
+		case <-workerStartupT.C:
+			l.dispatchWorkerStartupReconcile(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
 			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:
@@ -2734,7 +2738,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	l.parkExpiredFrozen(ctx, snapshot, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
-		if err := l.engine.Evict(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
 		}
@@ -5150,7 +5154,7 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 		resident[id] = a.ResidentMB
 	}
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
-		if err := l.engine.Evict(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}

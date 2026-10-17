@@ -136,7 +136,7 @@ earlier delegation after a later publication. Publication emits a scoped audit
 event and changes no memberships, prices or customer assignments.
 
 For the internal pilot, upgrade the Application Auth template with its appended
-`sql/0003_reviewed_team_actions.sql`, run its normal release migration, and
+`sql/0006_reviewed_team_actions.sql`, run its normal release migration, and
 explicitly set **`AUTH_PRODUCT_CONTROL_TEAM_ENABLED=1` on that Auth app**. Keep
 the existing default-off **`FAAS_PRODUCT_CONTROL_ENABLED=1` apid gate** separate.
 Restart/redeploy the affected service after changing its startup flag. An older
@@ -205,7 +205,7 @@ must pass on the qualified Auth/email deployment before wider availability.
 #### Internal Auth review API
 
 The reviewed team routes require the release migration
-`0003_reviewed_team_actions.sql` and the separate
+`0006_reviewed_team_actions.sql` and the separate
 `AUTH_PRODUCT_CONTROL_TEAM_ENABLED=1` flag on the Auth app:
 
 | Internal route | Contract |

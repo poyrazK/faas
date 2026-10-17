@@ -4494,3 +4494,37 @@ evidence hashes the alias map without storing secret values; runtime receipts
 bind the source versions. Queue bindings remain unsupported for Jobs, and
 dedicated Linux acceptance is still required before production polling or
 enforcement is enabled.
+
+
+### Retained whole-workload retirement (ADR-1331)
+
+In the gated enforcement preview, source pruning plus the reviewed root
+`workload_pruning_policy: retain` permits removal of a workload owned by that
+source. The plan lists the app, routes, queue binding and consumer identities,
+linked scheduled Job, and a snapshot of pending and in-flight work counts.
+Counts are informational: work accepted before cutover remains retained even
+if the count increases after review.
+
+Retirement is reserved first. The remaining graph must qualify before the
+release cutover closes new admission in this environment. After the current
+registered gateway roster acknowledges route withdrawal, schedd drains the
+original executions. API status and the dashboard expose the durable phases
+`planned`, `retiring`, `retired`, `recovering`, `recovered`, and `cancelled`.
+An expired lease, source suspension, stale release pin or process restart does
+not reopen admission. App configuration, artifacts, queue identities, pending
+messages, Job tasks, and receipts remain in place. Other environments are not
+retired. An active override, another field manager, an unmanaged live deployment
+or an unmanaged queue binding blocks whole-workload retirement.
+
+To restore, declare the workload under its original logical name and add
+`workload_recoveries: {api: <original-app-UUID>}` to the reviewed root definition.
+Each recovered queue still needs its existing per-workload
+`queue_recoveries: {orders: <original-binding-UUID>}`. Recovery remains closed to
+normal admission until its new generation passes fresh preparation,
+qualification, and activation. Historical serving receipts grant no authority.
+A source with an active retirement cannot be detached or rebound; restore its
+retained workloads first. This feature does not delete customer data.
+
+Production enforcement remains gated. These changes do not replace the
+required end-to-end run and leak checks on an exclusive dedicated native
+x86_64 KVM host.

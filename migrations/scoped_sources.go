@@ -43,11 +43,11 @@ func (s scopedMigrationFS) Open(name string) (fs.File, error) {
 
 func issuedPublicDeclarationMigration(name string) bool {
 	switch name {
-	case "20261003160458628_application_standard_runtime_default_base.sql",
-		"20261003210400000_application_standard_source_build_rootfs.sql",
+	case "20261003210400000_application_standard_source_build_rootfs.sql",
 		"20261004043519306_application_standard_exception_authority.sql",
 		"20261004232943929_application_standard_retained_native_admission.sql",
-		"20261004234710285_application_standard_retained_native_protocol.sql":
+		"20261004234710285_application_standard_retained_native_protocol.sql",
+		"20261012080000001_application_standard_shared_base_read_fences.sql":
 		return true
 	default:
 		return false

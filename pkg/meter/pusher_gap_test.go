@@ -21,8 +21,8 @@ func TestPushPendingComputeIncludesDeliveredGaps(t *testing.T) {
 		wantHour   int
 		wantGBHour int64
 	}{
-		{"allowance", [3]int64{20, 30, 10}, 0, -1, 2, 10},
-		{"spending cap", [3]int64{51, 9, 1}, 9, 10, 0, 1},
+		{"allowance", [3]int64{80, 120, 10}, 0, -1, 2, 10},
+		{"spending cap", [3]int64{201, 9, 1}, 9, 10, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()

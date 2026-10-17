@@ -1527,9 +1527,9 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		// also correctly handles shorter months.
 		lastInvDate = li.PeriodEnd.UTC().Format("2006-01-02")
 		lastInvStatus = li.Status
-		lastInvTotal = formatCentsEuros(li.TotalCents)
-		// Stripe stores currency as lowercase ISO 4217 ("eur");
-		// display it as "EUR" to match the receipt the customer
+		lastInvTotal = formatInvoiceCents(li.TotalCents)
+		// Providers store currency as lowercase ISO 4217 ("usd");
+		// display it as "USD" to match the receipt the customer
 		// sees in their portal.
 		lastInvCcy = strings.ToUpper(li.Currency)
 	}
@@ -1658,7 +1658,7 @@ func (s *server) renderPricing(w http.ResponseWriter, r *http.Request, log *slog
 		l := api.MustLimitsFor(p)
 		plans = append(plans, dashboard.PricingPlanView{
 			Plan:                    string(p),
-			PriceFormatted:          formatPriceEuros(l.PriceMillicents),
+			PriceFormatted:          formatPlanPrice(l.PriceMillicents),
 			Highlighted:             p == acct.Plan,
 			DeployedApps:            l.DeployedApps,
 			MaxConcurrency:          l.MaxConcurrency,
@@ -1714,7 +1714,7 @@ func (s *server) renderInvoices(w http.ResponseWriter, r *http.Request, log *slo
 			Provider:       inv.Provider,
 			Status:         inv.Status,
 			Period:         inv.PeriodEnd.Format("2006-01"),
-			TotalFormatted: formatCentsEuros(inv.TotalCents),
+			TotalFormatted: formatInvoiceCents(inv.TotalCents),
 			Currency:       inv.Currency,
 			PDFAvailable:   inv.PDFAvailable,
 		})
@@ -1763,36 +1763,23 @@ func parseInvoiceBefore(raw string) time.Time {
 	return time.Time{}
 }
 
-// formatPriceEuros converts integer millicents (1 cent = 1000
-// millicents) into the dashboard's "€X.YY" string, or "Free" when
-// the price is zero. This is the only place float math on money
-// happens — at the human display edge (CLAUDE.md Money).
-func formatPriceEuros(millicents int64) string {
+// formatPlanPrice converts integer millicents (1 cent = 1000
+// millicents) into the dashboard's "$X.YY" string in the billing
+// currency, or "Free" when the price is zero.
+func formatPlanPrice(millicents int64) string {
 	if millicents == 0 {
 		return "Free"
 	}
-	cents := millicents / 1000
-	euros := cents / 100
-	rem := cents % 100
-	if rem < 0 {
-		rem = -rem
-	}
-	return fmt.Sprintf("€%d.%02d", euros, rem)
+	return api.FormatBillingCents(millicents / api.MillicentsPerCent)
 }
 
-// formatCentsEuros converts integer cents (the invoice total unit)
-// into the dashboard's "€X.YY" string. Distinct from
-// formatPriceEuros (which takes millicents and collapses €0 to
-// "Free" for the pricing page). formatCentsEuros is for invoice
-// rows where €0 means "a real €0 invoice" (refund / void / draft)
-// and must display as "€0.00", not as "Free".
-func formatCentsEuros(cents int64) string {
-	euros := cents / 100
-	rem := cents % 100
-	if rem < 0 {
-		rem = -rem
-	}
-	return fmt.Sprintf("€%d.%02d", euros, rem)
+// formatInvoiceCents converts integer cents (the invoice total unit)
+// into the dashboard's "$X.YY" string. Distinct from formatPlanPrice
+// (which takes millicents and collapses $0 to "Free" for the pricing
+// page): an invoice row at $0 is a real refund, void or draft and must
+// display as "$0.00", not as "Free".
+func formatInvoiceCents(cents int64) string {
+	return api.FormatBillingCents(cents)
 }
 
 // renderAccount renders /dashboard/account — API keys (list + create

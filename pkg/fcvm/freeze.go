@@ -113,8 +113,10 @@ func (m *Manager) WithFreeze(cfg FreezeConfig) *Manager {
 // opts.Reclaim, returns its reclaimable memory to the host. Probes stop
 // first because a paused guest cannot answer them; Thaw restarts them. The
 // instance stays live and keeps its lease. Freezing a frozen instance
-// succeeds without pausing it again. A failure after the pause resumes the
-// guest and restarts its probes.
+// succeeds without pausing it again; with opts.Reclaim it compresses the
+// frozen guest's memory into memory-only swap, or fails with
+// ErrCompressUnavailable on a host without it. A failure after the pause
+// resumes the guest and restarts its probes.
 func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOptions) (FreezeReport, error) {
 	started := time.Now()
 	f, ok := m.vmm.(vmFreezer)
@@ -131,6 +133,9 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 		return FreezeReport{}, fmt.Errorf("freeze %s: %w", instance, err)
 	}
 	if frozen {
+		if opts.Reclaim {
+			return m.compressFrozen(f, inst)
+		}
 		return FreezeReport{}, nil
 	}
 	defer m.settleFreeze(inst, gate)
@@ -236,6 +241,9 @@ func (m *Manager) pauseForFreeze(ctx context.Context, f vmFreezer, inst *Instanc
 	}
 	pausedAt = time.Now()
 	rep.Pause = pausedAt.Sub(started)
+	// The paused guest's memory may now go to memory-only swap, under
+	// pressure or the reclaim below.
+	m.setFrozenSwap(inst.Lease, true)
 	if !opts.Reclaim {
 		rep.BeforeBytes = m.vmResidentBytes(inst.Lease)
 		rep.AfterBytes = rep.BeforeBytes
@@ -273,6 +281,7 @@ func (m *Manager) vmResidentBytes(l Lease) int64 {
 func (m *Manager) unfreeze(ctx context.Context, inst *Instance) error {
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	m.setFrozenSwap(inst.Lease, false)
 	if err := m.vmm.ResumeVM(resumeCtx, inst.Lease); err != nil {
 		return fmt.Errorf("resume after failed freeze: %w", err)
 	}
@@ -316,6 +325,8 @@ func (m *Manager) ThawWith(ctx context.Context, instance string, opts ThawOption
 	if err := m.checkLiveAdmission(operationCtx, inst); err != nil {
 		return err
 	}
+	// The guest runs again: its memory stays resident from here on.
+	m.setFrozenSwap(inst.Lease, false)
 	if err := m.resumeAndProbe(operationCtx, "thaw", inst, opts.RunResumeHook); err != nil {
 		return err
 	}

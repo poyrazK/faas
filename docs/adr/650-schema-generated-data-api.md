@@ -63,6 +63,157 @@ Native builder/VM deployment and live managed-provider qualification remain
 operator rollout checks. The client follows the repository's existing restricted
 SDK publication/license policy and is not automatically published.
 
+### Bounded HTTP admission
+
+The existing runtime bounds include per-server HTTP admission before asynchronous
+JWT verification: active requests match the engine pool (two, or one with the
+coordinated-refresh reader), with eight FIFO waiters and a one-second deadline.
+Authenticated metadata shares admission; health and CORS preflight bypass it.
+Expired waits are checked again on promotion even if their timer has not run.
+Cancelled waiters are removed, and active verification holds its slot until it
+settles despite disconnect. An admitted slot covers handler work and response
+completion. Full/expired queues return `503 data_api_overloaded` and
+`Retry-After: 1` before upstream dispatch. This avoids making overload a PostgREST
+engine-recovery event. It adds no account rate quota, global connection budget,
+identity policy or automatic write retry. Already-dispatched mutations retain
+their existing uncertain-outcome reconciliation requirements.
+
+Logs expose only fixed admission outcomes, wait duration and bounded active/queued
+counts. CLI diagnostics validates these fields and reports sampled wait
+percentiles, overload counts and observed peaks; older logs have explicit zero
+admission observations. These fields measure HTTP admission, not SQL pool wait
+or execution. Runtime constants remain canonical in `pkg/api/limits.go`.
+
+An optional owner deployment policy applies token buckets after verified subject
+and claim validation, before refresh/readiness SQL or engine dispatch. Setting
+`DATA_API_RATE_LIMIT_PER_SECOND` and/or `DATA_API_RATE_LIMIT_BURST` enables it;
+omitted values default to 10/20 and each is an integer in 1..1,000. Removing both
+disables it. REST/RPC and authenticated metadata share credit across JWT rotation.
+Public health and CORS bypass it. Rejections return `429 data_api_rate_limited`,
+`Retry-After: 1` and a request ID without SQL dispatch. The existing pre-verification
+admission bound remains; this adds no queue-fairness or distributed quota claim.
+
+Each runtime retains at most 4,096 hashed subjects, using monotonic refill and a
+lazy sweep no more than once per second. Only fully refilled buckets may expire;
+full tracking rejects new subjects rather than evicting depleted counters.
+Existing subjects retain access to available credit. No timer, SQL pool or
+external coordinator is added. Cold process starts reset budgets; snapshots
+may retain them. Canonical defaults and bounds live in `pkg/api/limits.go`.
+Logs contain fixed policy/reason/retry metadata without subject keys or hashes.
+Diagnostics distinguish rate limits from global overload, and health treats
+them as recent findings. SDK category `rate_limited` advises `wait` without
+automatic replay; generic HTTP 429 does not establish pre-SQL rejection or rollback.
+
+The canonical 15-second query budget also bounds total admitted elapsed time,
+including verification, refresh, signing and response streaming. Queue wait keeps
+its independent one-second budget. Monotonic checks after async work and before
+dispatch prevent late work from reaching the engine. A timer aborts engine HTTP
+work and returns `504 request_deadline_exceeded` before headers or closes an
+already-started response. Pending verification/control work retains its active
+slot until settlement. Health/CORS retain separate bounds; no SQL connection pool
+or statement-timeout policy changes. Timers are not preemptive CPU limits, and
+HTTP cancellation does not establish SQL rollback. Existing uncertain-write
+reconciliation and no-automatic-mutation-retry semantics remain in force.
+
+Safe request logs attach fixed deadline phases, admitted elapsed time and data
+engine HTTP dispatch state. CLI diagnostics validate and aggregate these fields,
+retain explicit coverage for older logs, and count incomplete timed-out streams
+even when their sent status was 200. SDK classification recognizes the stable
+deadline code as timeout/reconcile without relying on HTTP status or error text.
+
+Normal REST/RPC bodies, including engine errors, are streamed with backpressure
+and a canonical 16 MiB byte cap. Exact-cap results succeed. An oversized declared
+length returns `502 response_too_large` before headers; an unknown/chunked length
+is checked before each chunk is forwarded, and overflow closes a started stream.
+HEAD/bodyless representation lengths are excluded. Request/schema byte and row
+caps remain separate. The gateway does not buffer full normal responses or claim
+to bound the engine's result allocation. Safe logs retain only the fixed source,
+limit and a one-byte-over lower bound; active streaming timings are incomplete.
+CLI diagnostics count aborted 200 streams as failures and retain safe metadata
+in request-ID lookup. Health treats these as recent findings. SDK classification
+uses `response_too_large`/`reconcile`; generic interrupted bodies stay
+`no_response`. HTTP failure cannot establish SQL rollback, including a pre-header
+502: a mutation may already have committed. No automatic mutation retries are
+added. Local real-SQL fixtures verify this committed-write case and RLS recovery.
+
+Public `/livez` checks only gateway responsiveness; deployment `/healthz` keeps
+SQL readiness and adds fixed, safe observations for engine TCP reachability,
+SQL readiness, database reachability evidence, coordinated refresh and admission
+counts. Failed or timed-out SQL readiness leaves database connectivity unknown;
+pool saturation is not a database-outage diagnosis. PostgREST 14.3's admin `/live`
+also checks SQL with listeners disabled, so independent engine reachability uses
+a loopback TCP connection. Two-second callers share in-flight admin work, held
+until completion or the existing query deadline, and the reserved refresh reader.
+No new SQL pool, native health owner or process-restart behavior is introduced.
+CLI `data-api health` combines these per-probe observations with validated recent
+retained logs. Credentials remain confined to the management API, response bodies
+are never echoed, missing runtime support/log coverage stays partial, and current
+health is separate from historical failures. A report is not a fleet-wide or
+atomic health guarantee and does not replace coordinated `data-api status`.
+
+The runtime reads only the pinned engine's four private pool metrics: maximum
+capacity, existing idle connections, pending acquisitions and cumulative
+acquisition timeouts. The pinned admin handler checks SQL twice before metrics
+with its listener disabled. Reads reuse the engine pool and can remain unknown
+under saturation. Two-second callers share pending work until response or the
+existing 15-second hard HTTP cap; SQL work can outlive HTTP cancellation. The
+8 KiB health-response bound is reused and completed results are not cached. Only validated counts and an observation timestamp enter `/healthz`.
+Missing/malformed/unsupported metrics yield explicit unknown coverage without
+changing SQL readiness or deployment HTTP status. CLI validation preserves core
+readiness when this optional observation is absent or invalid. Pending acquisitions
+are a current finding; cumulative timeouts/reset are neither current failures nor
+recent-window counts. Available connections belong to a lazy pool, so subtracting
+them from capacity cannot identify active connections or prove exhaustion. Waiters
+can include readiness probes. Counts do not isolate SQL/pool-wait latency or
+establish database-wide budgets, and the private metrics endpoint is not exposed.
+This coupling is explicit in the pinned engine's
+[admin handler](https://github.com/PostgREST/postgrest/blob/v14.3/src/PostgREST/Admin.hs)
+and [SQL connectivity checks](https://github.com/PostgREST/postgrest/blob/v14.3/src/PostgREST/AppState.hs).
+
+The local load verifier composes signed-user REST/RPC traffic, RLS, admission and
+rate pressure, the real HTTP deadline, disconnects, response bounds, lost replies
+and embedded gateway/engine restart on one disposable PostgreSQL 16 fixture.
+It settles uncertain SQL work and reconciles receipts before explicit same-key
+replay, with no SDK mutation retry. The engine executable is checked against its
+pinned digest before execution. Independent owner/control observations inspect
+accepted/rejected writes and sample serving-role connections without adding a
+serving SQL pool. Canonical workload, record, report and deadline bounds live in
+`pkg/api/limits.go`. Versioned private redacted checkpoints retain source identities,
+client latency/throughput, expected rejection counts, recovery and cleanup.
+Local fixture success does not establish production supervision, fleet capacity,
+SQL/pool timing or native qualification. The staging canary supplies a hosted
+profile and adapter for the shared runner, with
+seven supported public-edge scenarios, including completed fresh managed restart
+and observed park/wake. Disposable migration-owned RPCs provide fixed pressure,
+tenant-scoped reads and invocation-counted write receipts; the normal permission
+release revokes PUBLIC and grants approved serving RPCs. The adapter can mutate
+only the parent's acknowledged app, preserves build/contract/source evidence,
+and bounds traffic, client bodies, duration and redacted checkpoints. Unsupported
+private fault controls and SQL measurements remain explicit. Client cancellation
+does not attest resource cleanup, which remains in the parent canary journal.
+Portable and local SQL tests do not establish hosted qualification; live execution
+remains behind existing staging and native/provider qualification gates.
+
+Read-only connection-budget reports join the account-owned database, every
+sharing binding/scope, deployment/instance lifecycle and node heartbeat in one
+catalog statement per database. The app endpoint lists bounded independent
+database snapshots. Canonical Data API/Auth pool estimates, parked/wake demand,
+observed rotation/deployment overlap and control/migration headroom remain a
+planning model. Duplicate consumers do not multiply the same pool; observed
+replacement instances are not added twice. Auxiliary/unbounded clients, stale
+nodes, truncated inventory and unverified runtime pool configurations retain
+explicit unknown coverage. No provider call, SQL wake, credential delivery,
+reservation or scheduler mutation occurs.
+
+Only complete, fresh tenant-usable capacity evidence for the exact database
+generation and backend placement can support within/over-budget comparison.
+Current catalog adapters have no qualified capacity source and retain unknown
+capacity. Reports expire within 30 seconds, expose aggregate counts without
+credentials or other consumer identities, and use existing read/MFA/ownership
+middleware. CLI health validates the report and treats unknown budgets as partial
+coverage independently of SQL readiness. Enforcement and a qualified cached
+capacity observer remain separate work.
+
 The read-only CI `data-api check` command combines the existing contract diff
 and exact generated-type comparison. A hosted check exports one bounded private
 snapshot and renders from that validated contract with the CLI's embedded pure
@@ -81,6 +232,16 @@ Unknown application content and raw transport/error payloads are never included
 in the report; gaps and incomplete reads remain explicit partial results.
 Diagnostics add no serving endpoint, persistence store or infrastructure owner,
 and retained log samples do not attest complete traffic or fleet coverage.
+
+Admitted request records measure sequential, fixed gateway phases: verification,
+refresh, readiness, signing, upstream HTTP wait and response streaming. The last
+phase is marked incomplete on timeout/cancellation; earlier completed phases
+remain usable. Diagnostics retain per-phase coverage and completed percentiles,
+with interrupted elapsed lower bounds separate and absent measurements never
+converted to zero. Legacy logs remain readable. Query-shape ranking accepts
+request count, total gateway p95 or error count. Engine HTTP wait includes
+transport/upload, pool and SQL work; these observations cannot isolate PostgreSQL
+execution or pool wait. No endpoint, SQL instrumentation or persistence is added.
 
 The SDK's opt-in `classifyDataError` helper maps stable SQLSTATE/gateway codes and
 bounded HTTP status fallbacks to application categories and recovery guidance.

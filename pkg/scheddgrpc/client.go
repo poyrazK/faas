@@ -95,12 +95,11 @@ var _ ScheddClient = (*Client)(nil)
 // widening the scheduler RPC surface. Internal scheduler callers continue to
 // send only the trigger enum and therefore carry no class.
 func withWakeCorrelation(ctx context.Context, trigger string) context.Context {
-	fields, ok := wire.FromContext(ctx)
-	if !ok {
-		return ctx
+	if fields, ok := wire.FromContext(ctx); ok {
+		fields.Trigger = trigger
+		ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	}
-	fields.Trigger = trigger
-	return wire.WithCorrelationOutgoing(ctx, fields)
+	return withPreferredInstanceOutgoing(ctx)
 }
 
 // Dial opens a lazy gRPC connection to schedd's unix socket. As with vmmd

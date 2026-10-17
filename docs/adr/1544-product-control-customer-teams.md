@@ -34,7 +34,7 @@ not introduce per-product memberships or a second identity store.
 
 ## Review, transactions and recovery
 
-The Auth template adds `0003_reviewed_team_actions.sql`. Its append-only journal
+The Auth template adds `0006_reviewed_team_actions.sql`. Its append-only journal
 records the original actor/role, request fingerprint, sanitized result and time.
 New Auth team routes lock the organization and role definitions, verify a
 canonical snapshot, call existing membership/invitation functions and insert

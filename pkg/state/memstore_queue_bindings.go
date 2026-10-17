@@ -200,7 +200,7 @@ func (m *MemStore) queueConsumerCanClaimLocked(triggerID string) bool {
 	}
 	for _, binding := range m.queueBindings {
 		if canonicalMemUUID(binding.ID) == trigger.QueueBindingID.String() {
-			return binding.Enabled && binding.RetiredAt == nil && binding.Mode == "push" && m.queueBindingEnvironmentAvailableLocked(binding)
+			return !m.workloadAdmissionRetiredLocked(binding.AppID, binding.DeploymentScope) && binding.Enabled && binding.RetiredAt == nil && binding.Mode == "push" && m.queueBindingEnvironmentAvailableLocked(binding)
 		}
 	}
 	return false

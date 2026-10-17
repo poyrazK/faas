@@ -199,7 +199,34 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 			rules := cloneProjectEnvironmentEdgeRules(policy.Rules)
 			row.Policies = &rules
 		}
+		for _, inv := range m.invocations {
+			if inv.AppID == app.ID && (inv.EnvironmentID == source.EnvironmentID || workloadRetirementAdmissionScope(inv.DeploymentScope) == workloadRetirementAdmissionScope(source.EnvironmentSlug)) {
+				if inv.State == InvocationPending {
+					row.PendingInvocations++
+				}
+				if inv.State == InvocationDispatching {
+					row.InFlightInvocations++
+				}
+			}
+		}
+		if row.WorkloadIntent != nil && row.WorkloadIntent.JobID != "" {
+			for id, run := range m.jobRuns {
+				if run.JobID == row.WorkloadIntent.JobID {
+					for _, task := range m.jobTasks[id] {
+						if task.Status == "queued" {
+							row.QueuedTasks++
+						}
+						if task.Status == "claimed" {
+							row.InFlightTasks++
+						}
+					}
+				}
+			}
+		}
 		snapshot.Apps = append(snapshot.Apps, row)
+	}
+	for _, retirement := range memory.retirements {
+		snapshot.Retirements = append(snapshot.Retirements, cloneWorkloadRetirement(retirement))
 	}
 	return snapshot
 }

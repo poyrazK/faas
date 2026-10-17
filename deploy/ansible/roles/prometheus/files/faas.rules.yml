@@ -414,6 +414,18 @@ groups:
           description: "The gateway served a request whose usage fact could not be appended to its local durable outbox. Preserve the spool and inspect disk health and capacity before trusting usage totals."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
+      - alert: FaasUsageCommitAborted
+        expr: increase(gateway_usage_commit_aborts_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "Monetized responses withheld: usage could not be made durable"
+          description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
       - alert: FaasConsumerUsageOutboxNearCapacity
         expr: gateway_consumer_usage_outbox_pending_bytes > 53687091
         for: 2m
@@ -3737,8 +3749,8 @@ groups:
           family: alert_preset_signals
           preset: spend_eur_20
         annotations:
-          summary: "Account {{ $labels.account_id }} spend > 20 EUR over 24h"
-          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been > 20 EUR over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
+          summary: "Account {{ $labels.account_id }} spend > $20 over 24h"
+          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been over $20 (billing currency, ADR-1430) over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSpendEur20.md"
 
       - alert: FaasDeployFailedAccount
@@ -4307,6 +4319,116 @@ groups:
           summary: "Init snapshot path is failing during {{ $labels.site }}"
           description: "At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md"
+
+  # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
+  # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and
+  # docs/runbooks/FaasFrozenTier.md covers every alert.
+  - name: faas_frozen_tier
+    interval: 30s
+    rules:
+      - alert: FaasFrozenThawFailing
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_thaw_total{outcome="failed"}[15m])) >= 3
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_thaw_total{outcome="failed"}[15m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_thaw_total[15m])), 1)
+            > 0.1
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Thaws of frozen instances are failing on {{ $labels.instance }}"
+          description: "More than 10% of thaws failed in 15m, at least three. A failed thaw parks the frozen VM and the request restores from the snapshot instead, so wakes are slower but still served. Check vmmd thaw errors and apps whose after_restore hook fails."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenFreezeErrors
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_total{outcome="error"}[15m])) >= 3
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_total{outcome="error"}[15m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_total[15m])), 1)
+            > 0.1
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Idle instances are failing to freeze on {{ $labels.instance }}"
+          description: "More than 10% of idle-timeout freeze attempts errored in 15m, at least three. Those instances park as before, so customers are unaffected, but the frozen tier is not freezing. Check vmmd FreezeInstance errors and vmmd and schedd version skew."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenMemoryPressureParks
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_parks_total{reason="memory_pressure"}[30m])) >= 10
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_parks_total{reason="memory_pressure"}[30m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_parks_total[30m])), 1)
+            > 0.5
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Frozen instances keep being evicted for memory on {{ $labels.instance }}"
+          description: "More than half of the frozen parks in 30m, at least ten, were memory-pressure evictions: frozen VMs are destroyed before a request can thaw them, so they hold memory without saving restores. Check node_frozen_resident_bytes and the node's measured memory; turn frozen_tier_apps off for the node or add capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenThawSlow
+        expr: |
+          (
+            histogram_quantile(0.95, sum by (le, instance) (rate(vmmd_thaw_seconds_bucket[15m]))) > 0.5
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(vmmd_thaw_seconds_count[15m])) >= 5
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "Thaws of frozen instances are slow on {{ $labels.instance }}"
+          description: "The p95 thaw took longer than 500ms over 15m. A thaw should take milliseconds; slow thaws come from memory faulting back in after reclaim or swap, or from a slow image healthcheck or after_restore hook. Check node_frozen_resident_bytes, host swap activity and the vmmd thaw logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenNodeNearCap
+        expr: max by (instance) (node_frozen_instances) >= 900
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "{{ $labels.instance }} is near the frozen instance cap"
+          description: "The node holds at least 900 frozen instances, close to FrozenMaxPerNode (1000). At the cap, idle instances park instead of freezing. Check that TTL parks are running and why the node holds so many idle instances."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasQuietResumeErrors
+        expr: sum by (instance) (increase(vmmd_quiet_resume_errors_total[10m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "Quiet-paused instances fail to resume on {{ $labels.instance }}"
+          description: "vmmd failed to resume at least three quiet-paused instances in 10m. Each failure fails or retries the request that arrived. Check vmmd logs for ResumeVM errors and the node's Firecracker processes; turning vmmd's quiet_pause off stops new pauses."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
 
   - name: faas_service_rollout_handoff
     interval: 30s
@@ -5005,3 +5127,33 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Account dashboard rollups (hunt #10, 2026-10-15)
+  # ─────────────────────────────────────────────────────────────────
+  #
+  # The account analytics panel sums the gateway request counter and
+  # latency histogram per app over windows up to 15d. The raw series
+  # carry one copy per gateway instance and node; over 24h the latency
+  # buckets (about 11.5k series on production-us) took 17 s on the
+  # 2 vCPU control plane against apid's 5 s budget, so every window
+  # past an hour came back degraded. These rules keep only the labels
+  # the panel groups on. pkg/appmetrics.AccountIncreaseQuery sums the
+  # 5m rollup for 6h and 24h windows and the hourly one for 7d and 15d.
+  # Each evaluation records the increase since the previous one, so a
+  # sum_over_time across a window is the increase over that window.
+  - name: faas_gateway_account_rollups_5m
+    interval: 5m
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase5m
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[5m]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase5m
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[5m]))
+
+  - name: faas_gateway_account_rollups_1h
+    interval: 1h
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase1h
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[1h]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))

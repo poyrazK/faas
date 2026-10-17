@@ -1,0 +1,23 @@
+# ADR-1307: Platform tenant route weights and plans
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** Customer-wide (platform tenant) rate cards weight routes, and tenant plans bundle a card's terms with a request budget.
+  - **Route weights.** A tenant rate card takes `route_weights` (`"METHOD /template"` → 1..1000, at most 50 routes), validated like app cards (ADR-952).
+    - **What counts.** Each consumer request on a listed route counts that many units in every app the tenant uses; unlisted routes count 1. Requests through a tenant surface or JWT authorization rule carry no route, so they count 1.
+    - **Source of counts.** Weighted units come from the consumer route ledger the gateway already writes for every consumer-attributed request.
+  - **Monthly pricing.** A card with route weights is month-priced, like allowances and tiers (ADR-975): statements for periods it prices must cover one UTC calendar month, and drafting re-prices the whole month and bills the difference from finalized revisions.
+    - **Units.** Lines and the statement's billable units count weighted units. Coverage stays in raw request units, so usage regression and overlap checks are unchanged. The month builder checks overlap on raw units.
+    - **Validation.** The store accepts a weighted revision whose line units differ from its coverage.
+  - **Tenant plans.** `POST/GET /v1/account/platform-tenant-plans` and `GET/PUT …/{plan_id}` manage named plans: currency, price, included units or tiers, route weights, and an optional request budget (ADR-240). An account keeps at most 100.
+  - **Assignment.** `POST /v1/account/platform-tenants/{id}/plan-assignments` creates the tenant's rate card from the plan's terms, effective the next minute, through the same validation as a hand-made card. It then sets the plan's request budget at once and records the assignment. `GET` lists assignments newest first.
+  - **Plan edits.** Editing a plan does not change tenants already on it until the plan is assigned again. Their cards are immutable price history.
+- **Why:** Platforms that bill one customer across several apps wanted the same route weights apps have, and a way to package a customer price and request budget once for many customers instead of setting both by hand per tenant.
+- **Consequences:**
+  - **Calendar months.** A weighted tenant card makes that tenant's statements calendar-month only, which billing runs already produce.
+  - **Route usage reads.** Drafting a weighted month reads one route ledger range per linked consumer.
+  - **Not atomic.** Assignment creates the card, then the budget, then the record, so a failure part-way can leave the card without the budget. Assigning again finishes it; the extra card version is harmless because the newest one in force prices each minute.
+  - **Explicit propagation.** Plans are templates, not live links. A plan change reaches tenants only through another `set-plan`, so an operator never re-prices many customers by accident.
+- **Rejected alternatives:**
+  - Weighting per-minute coverage deltas would need each finalized minute's route breakdown, which coverage does not store.
+  - Re-pricing every tenant on a plan when the plan changes would rewrite many customers' prices in one call and race with their statements.

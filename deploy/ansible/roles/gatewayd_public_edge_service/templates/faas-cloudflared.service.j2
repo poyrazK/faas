@@ -1,0 +1,46 @@
+# Managed by Ansible (gatewayd_public_edge_service). Local edits are overwritten.
+# ADR-1343: the Cloudflare Tunnel connector of the compute-node app edge. It
+# only dials out; the tunnel's ingress rule (configured in Cloudflare) sends
+# *.<apps domain> to http://127.0.0.1:8090, the edge's socket.
+[Unit]
+Description=Cloudflare Tunnel connector for the compute-node app edge (ADR-1343)
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+After=network-online.target faas-gatewayd-public-edge.socket
+Wants=network-online.target
+ConditionPathExists={{ faas_cloudflared_token_path }}
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=cloudflared
+Group=cloudflared
+ExecStart={{ faas_cloudflared_install_dir }}/cloudflared tunnel --no-autoupdate --metrics {{ faas_cloudflared_metrics_addr }} run --token-file %d/tunnel-token
+LoadCredential=tunnel-token:{{ faas_cloudflared_token_path }}
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60s
+Slice=faas-cp.slice
+MemoryMax=256M
+AmbientCapabilities=
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

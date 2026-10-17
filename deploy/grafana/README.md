@@ -50,6 +50,24 @@ path. UID `faas-dev-loop-adr-740`.
 Enable delivery with `faas_dev_patch_delivery_enabled: true` on both the
 control plane and vmmd hosts.
 
+## `frozen-tier.json` (ADR-1151)
+
+The pause tiers. The **Frozen tier** row shows the fleet's frozen
+instances and their memory, thaw success and p95, frozen instances and
+memory by node, freeze attempts by outcome (`schedd_frozen_total`), thaws by
+outcome (`schedd_frozen_thaw_total`), frozen parks by reason
+(`schedd_frozen_parks_total`), freeze and thaw latency
+(`vmmd_freeze_seconds`, `vmmd_thaw_seconds`), compressions of frozen
+instances under memory pressure (`schedd_frozen_compress_total`) and the
+zswap pool by node (`node_memory_Zswap_bytes`, ADR-906 decision 6). The **Quiet pause** row shows
+quiet-paused instances by node, pauses by outcome, resume latency and resume
+errors (`vmmd_quiet_*`), and CPU pressure (PSI) from node_exporter, the
+signal behind quiet pause's soft CPU guarantee. UID
+`faas-frozen-tier-adr-1151`. Companion alerts are `family: frozen_tier` in
+`deploy/ansible/roles/prometheus/files/faas.rules.yml`, with promtool
+fixtures in `pkg/promqlrules/testdata/frozen_tier.test.yml`. Runbook:
+`docs/runbooks/FaasFrozenTier.md`.
+
 ## `warm-snapshot.json` (issue #470 / PR C / ADR-074)
 
 Four-panel dashboard for the warm-snapshot tier ops surface: warm-capture

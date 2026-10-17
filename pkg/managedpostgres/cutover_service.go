@@ -8,10 +8,11 @@ import (
 )
 
 type CutoverService struct {
-	bindings *BindingService
-	store    CutoverStore
-	sealer   CredentialSealer
-	verifier CredentialVerifier
+	bindings   *BindingService
+	store      CutoverStore
+	sealer     CredentialSealer
+	verifier   CredentialVerifier
+	checkpoint *Service
 }
 
 func NewCutoverService(bindings *BindingService, store CutoverStore, sealer CredentialSealer) (*CutoverService, error) {
@@ -19,7 +20,15 @@ func NewCutoverService(bindings *BindingService, store CutoverStore, sealer Cred
 		return nil, ErrInvalid
 	}
 	verifier, _ := sealer.(CredentialVerifier)
-	return &CutoverService{bindings: bindings, store: store, sealer: sealer, verifier: verifier}, nil
+	out := &CutoverService{bindings: bindings, store: store, sealer: sealer, verifier: verifier}
+	if _, ok := store.(CutoverSourceFenceStore); ok {
+		var err error
+		out.checkpoint, err = NewService(bindings.registry, bindings.databases, ServiceOptions{ProviderTimeout: bindings.providerTimeout})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 func (s *CutoverService) Prepare(ctx context.Context, r PrepareCutoverRequest) (Cutover, error) {
 	if !s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, r.AccountID) {
@@ -78,6 +87,11 @@ func (s *CutoverService) Reconcile(ctx context.Context, account, id string) (Cut
 	}
 	if c.State == CutoverPrepared || c.State == CutoverVerified || c.State == CutoverCancelled {
 		return c, nil
+	}
+	if c.State == CutoverCancelling {
+		if err := s.cleanupSourceFence(ctx, account, id); err != nil {
+			return c, err
+		}
 	}
 	if c.State != CutoverCancelling && (!s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, account)) {
 		return c, ErrUnavailable
@@ -216,5 +230,5 @@ func (s *CutoverService) Sweep(ctx context.Context, limit int) error {
 			errs = append(errs, err)
 		}
 	}
-	return errors.Join(errs...)
+	return errors.Join(append(errs, s.sweepSourceFences(ctx, limit), s.sweepPreflights(ctx, limit))...)
 }

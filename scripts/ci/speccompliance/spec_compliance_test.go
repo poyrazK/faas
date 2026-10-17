@@ -73,6 +73,7 @@ const (
 	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
+	serviceMapFile                   = "service_map.go"                 // ADR-1131 account service map DTOs
 	applicationStandardsFile         = "application_standards.go"       // ADR-435 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
 	applicationStandardMutationsFile = "application_standard_mutations.go"
@@ -95,74 +96,102 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"GET /v1/product-control/email/unsubscribe":                              true,
-	"POST /v1/product-control/email/unsubscribe":                             true,
-	"GET /v1/product-control/email-unsubscribe.js":                           true,
-	"GET /v1/apps/{slug}/product/email-opt-outs":                             true,
-	"GET /v1/product-control/customer/{slug}/email-opt-outs":                 true,
-	"POST /v1/product-control/email/resend-events":                           true,
-	"GET /v1/apps/{slug}/product/email-deliveries":                           true,
-	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":         true,
-	"GET /v1/apps/{slug}/product/billing/documents":                          true,
-	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":       true,
-	"GET /v1/apps/{slug}/product/billing/receipts":                           true,
-	"POST /v1/apps/{slug}/product/onboarding/workspaces":                     true,
-	"POST /v1/apps/{slug}/product/onboarding/preview":                        true,
-	"POST /v1/apps/{slug}/product/onboarding/confirm":                        true,
-	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                    true,
-	"GET /v1/apps/{slug}/product/team-policy":                                true,
-	"POST /v1/apps/{slug}/product/team-policy/preview":                       true,
-	"PUT /v1/apps/{slug}/product/team-policy":                                true,
-	"GET /v1/product-control/portal-guidance.js":                             true,
-	"GET /v1/product-control/portal-email.js":                                true,
-	"GET /v1/product-control/customer/{slug}/email-preferences":              true,
-	"PUT /v1/product-control/customer/{slug}/email-preferences":              true,
-	"GET /v1/apps/{slug}/product/email-recoveries":                           true,
-	"POST /v1/product-control/customer/{slug}/email-recovery":                true,
-	"GET /v1/product-control/customer/{slug}/email-recoveries":               true,
-	"GET /v1/product-control/customer/{slug}/email-deliveries":               true,
-	"GET /v1/product-control/portal-activity.js":                             true,
-	"GET /v1/product-control/portal-history.js":                              true,
-	"GET /v1/product-control/customer/{slug}/work-history":                   true,
-	"GET /v1/product-control/portal-run.js":                                  true,
-	"GET /v1/product-control/customer/{slug}/operations/{operation}/details": true,
-	"GET /v1/product-control/customer/{slug}/activity":                       true,
-	"GET /v1/product-control/portal-notifications.js":                        true,
-	"GET /v1/product-control/customer/{slug}/notifications":                  true,
-	"POST /v1/product-control/customer/{slug}/notifications/read":            true,
-	"GET /v1/product-control/portal-help.js":                                 true,
-	"POST /v1/product-control/customer/{slug}/help":                          true,
-	"GET /v1/product-control/customer/{slug}/help":                           true,
-	"GET /v1/product-control/customer/{slug}/help/{request}":                 true,
-	"GET /v1/apps/{slug}/product/help":                                       true,
-	"GET /v1/apps/{slug}/product/help/{request}":                             true,
-	"PUT /v1/apps/{slug}/product/help/{request}":                             true,
-	"GET /v1/product-control/portal-team.js":                                 true,
-	"GET /v1/product-control/customer/{slug}/team":                           true,
-	"POST /v1/product-control/customer/{slug}/team/preview":                  true,
-	"POST /v1/product-control/customer/{slug}/team/confirm":                  true,
-	"GET /v1/product-control/customer/{slug}/team/actions":                   true,
-	"GET /v1/product-control/customer/{slug}/team/actions/{change}":          true,
-	"GET /v1/product-control/portal-plans.js":                                true,
-	"GET /v1/apps/{slug}/product/plan-policy":                                true,
-	"POST /v1/apps/{slug}/product/plan-policy/preview":                       true,
-	"PUT /v1/apps/{slug}/product/plan-policy":                                true,
-	"GET /v1/product-control/customer/{slug}/plans":                          true,
-	"POST /v1/product-control/customer/{slug}/plans/preview":                 true,
-	"POST /v1/product-control/customer/{slug}/plans/confirm":                 true,
-	"GET /v1/product-control/customer/{slug}/plans/changes":                  true,
-	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":         true,
-	"GET /v1/apps/{slug}/product/access":                                     true,
-	"POST /v1/apps/{slug}/product/access/preview":                            true,
-	"PUT /v1/apps/{slug}/product/access":                                     true,
-	"GET /v1/apps/{slug}/product/doctor":                                     true,
-	"GET /v1/apps/{slug}/product/billing/review":                             true,
-	"GET /v1/platform-tenant-self/product/billing":                           true,
-	"GET /v1/product-control/customer/{slug}/billing":                        true,
-	"POST /v1/apps/{slug}/product/billing/credits":                           true,
-	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
-	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
-	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
+	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
+	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1496 Slack-signed provider callback; no account credentials
+	"GET /dashboard/apps/{slug}/issues/responses":          true, // ADR-1495 authenticated browser-only response inbox
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/triage":  true, // ADR-1492 authenticated browser-only native response surface
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage": true, // ADR-1492 authenticated browser-only native response surface
+
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                   true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                      true, // scoped HTML/CSRF frequency alert policy adapter
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/apps/{slug}/issues/bulk-actions":                          true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/saved-views":                           true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/teams":                                 true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":              true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"GET /v1/product-control/email/unsubscribe":                                true,
+	"POST /v1/product-control/email/unsubscribe":                               true,
+	"GET /v1/product-control/email-unsubscribe.js":                             true,
+	"GET /v1/apps/{slug}/product/email-opt-outs":                               true,
+	"GET /v1/product-control/customer/{slug}/email-opt-outs":                   true,
+	"POST /v1/product-control/email/resend-events":                             true,
+	"GET /v1/apps/{slug}/product/email-deliveries":                             true,
+	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":           true,
+	"GET /v1/apps/{slug}/product/billing/documents":                            true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":         true,
+	"GET /v1/apps/{slug}/product/billing/receipts":                             true,
+	"POST /v1/apps/{slug}/product/onboarding/workspaces":                       true,
+	"POST /v1/apps/{slug}/product/onboarding/preview":                          true,
+	"POST /v1/apps/{slug}/product/onboarding/confirm":                          true,
+	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                      true,
+	"GET /v1/apps/{slug}/product/team-policy":                                  true,
+	"POST /v1/apps/{slug}/product/team-policy/preview":                         true,
+	"PUT /v1/apps/{slug}/product/team-policy":                                  true,
+	"GET /v1/product-control/portal-guidance.js":                               true,
+	"GET /v1/product-control/portal-email.js":                                  true,
+	"GET /v1/product-control/customer/{slug}/email-preferences":                true,
+	"PUT /v1/product-control/customer/{slug}/email-preferences":                true,
+	"GET /v1/apps/{slug}/product/email-recoveries":                             true,
+	"POST /v1/product-control/customer/{slug}/email-recovery":                  true,
+	"GET /v1/product-control/customer/{slug}/email-recoveries":                 true,
+	"GET /v1/product-control/customer/{slug}/email-deliveries":                 true,
+	"GET /v1/product-control/portal-activity.js":                               true,
+	"GET /v1/product-control/portal-history.js":                                true,
+	"GET /v1/product-control/customer/{slug}/work-history":                     true,
+	"GET /v1/product-control/portal-run.js":                                    true,
+	"GET /v1/product-control/customer/{slug}/operations/{operation}/details":   true,
+	"GET /v1/product-control/customer/{slug}/activity":                         true,
+	"GET /v1/product-control/portal-notifications.js":                          true,
+	"GET /v1/product-control/customer/{slug}/notifications":                    true,
+	"POST /v1/product-control/customer/{slug}/notifications/read":              true,
+	"GET /v1/product-control/portal-help.js":                                   true,
+	"POST /v1/product-control/customer/{slug}/help":                            true,
+	"GET /v1/product-control/customer/{slug}/help":                             true,
+	"GET /v1/product-control/customer/{slug}/help/{request}":                   true,
+	"GET /v1/apps/{slug}/product/help":                                         true,
+	"GET /v1/apps/{slug}/product/help/{request}":                               true,
+	"PUT /v1/apps/{slug}/product/help/{request}":                               true,
+	"GET /v1/product-control/portal-team.js":                                   true,
+	"GET /v1/product-control/customer/{slug}/team":                             true,
+	"POST /v1/product-control/customer/{slug}/team/preview":                    true,
+	"POST /v1/product-control/customer/{slug}/team/confirm":                    true,
+	"GET /v1/product-control/customer/{slug}/team/actions":                     true,
+	"GET /v1/product-control/customer/{slug}/team/actions/{change}":            true,
+	"GET /v1/product-control/portal-plans.js":                                  true,
+	"GET /v1/apps/{slug}/product/plan-policy":                                  true,
+	"POST /v1/apps/{slug}/product/plan-policy/preview":                         true,
+	"PUT /v1/apps/{slug}/product/plan-policy":                                  true,
+	"GET /v1/product-control/customer/{slug}/plans":                            true,
+	"POST /v1/product-control/customer/{slug}/plans/preview":                   true,
+	"POST /v1/product-control/customer/{slug}/plans/confirm":                   true,
+	"GET /v1/product-control/customer/{slug}/plans/changes":                    true,
+	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":           true,
+	"GET /v1/apps/{slug}/product/access":                                       true,
+	"POST /v1/apps/{slug}/product/access/preview":                              true,
+	"PUT /v1/apps/{slug}/product/access":                                       true,
+	"GET /v1/apps/{slug}/product/doctor":                                       true,
+	"GET /v1/apps/{slug}/product/billing/review":                               true,
+	"GET /v1/platform-tenant-self/product/billing":                             true,
+	"GET /v1/product-control/customer/{slug}/billing":                          true,
+	"POST /v1/apps/{slug}/product/billing/credits":                             true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":        true,
+	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":          true,
+	"POST /v1/apps/{slug}/product/billing/statements/finalize":                 true,
 	// ADR-1535: internal Product Control pilot; absent from the public SDK contract.
 	"POST /v1/platform-tenant-self/product/start":                                  true,
 	"GET /v1/apps/{slug}/product":                                                  true,
@@ -192,35 +221,34 @@ var routeExclude = map[string]bool{
 	"POST /v1/product-control/customer/{slug}/operations/{id}/cancel":              true,
 	"GET /v1/product-control/customer/{slug}/operations/{id}/artifacts/{artifact}": true,
 	"GET /v1/product-control/portal-core.js":                                       true,
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                    true, // session + CSRF adapter for the public split-rule creation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":          true, // session + CSRF adapter for the public split-rule update API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":     true, // session + CSRF adapter for the public split-rule undo API
-	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                       true, // session + CSRF adapter for automatic profiling policy
-	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":               true, // session + CSRF adapter for the profiling regression API
-	"POST /dashboard/apps/{slug}/profiles/investigations":                          true, // session + CSRF adapter for the profiling investigation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                        true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                       true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":                           true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
-	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
-	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
-	"GET /v1/account/dpa":                        true, // public markdown (no auth)
-	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
-	"POST /v1/webhooks/polar":                    true, // Standard Webhooks-signed webhook
-	"POST /v1/webhooks/resend":                   true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                      true, // operator-only (ADR-029)
-	"GET /v1/compute-nodes/{name}":               true, // operator-only node detail
-	"POST /v1/compute-nodes":                     true, // operator-only
-	"DELETE /v1/compute-nodes/{name}":            true, // operator-only
-	"GET /v1/compute-nodes/{name}/heartbeats":    true, // CP-1: operator-only (heartbeat history; schedd-owned)
-	"GET /v1/compute-nodes/events":               true, // CP-1: operator-only SSE on compute_node_changed
-	"GET /v1/internal/metrics/targets":           true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/vmmd-targets":      true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/imaged-targets":    true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/builderd-targets":  true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/realtimed-targets": true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/promtail-targets":  true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"GET /v1/dev/bridges/{id}/connect":                                true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
+	"GET /v1/dev/bridges/{id}/status":                                 true, // attachment-authenticated CLI readiness protocol
+	"GET /v1/account/dpa":                                             true, // public markdown (no auth)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook
+	"POST /v1/webhooks/paddle":                                        true, // HMAC-signed webhook (PR #3 / ADR-025)
+	"POST /v1/webhooks/polar":                                         true, // Standard Webhooks-signed webhook
+	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115)
+	"GET /v1/compute-nodes":                                           true, // operator-only (ADR-029)
+	"GET /v1/compute-nodes/{name}":                                    true, // operator-only node detail
+	"POST /v1/compute-nodes":                                          true, // operator-only
+	"DELETE /v1/compute-nodes/{name}":                                 true, // operator-only
+	"GET /v1/compute-nodes/{name}/heartbeats":                         true, // CP-1: operator-only (heartbeat history; schedd-owned)
+	"GET /v1/compute-nodes/events":                                    true, // CP-1: operator-only SSE on compute_node_changed
+	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":                           true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":                         true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets":                       true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/realtimed-targets":                      true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -290,6 +318,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/gitlab/disconnect":                                    true, // GitLab.com session + CSRF form
 	"POST /dashboard/install/connect":                               true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                    true, // ADR-379 HTML session inventory
+	"GET /dashboard/service-map":                                    true, // ADR-1131 HTML view of GET /v1/service-map
 	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
 	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
 	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
@@ -301,6 +330,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/auth/settings":                     true, // ADR-1190 session + CSRF typed Auth settings form
 	"POST /dashboard/apps/{slug}/auth/providers":                    true, // ADR-1190 session + CSRF OAuth provider form
 	"POST /dashboard/apps/{slug}/auth/providers/{provider}/disable": true, // ADR-1190 session + CSRF provider removal form
+	"POST /dashboard/apps/{slug}/auth/keys":                         true, // ADR-1190 session + CSRF standby signing key
+	"POST /dashboard/apps/{slug}/auth/keys/{id}/activate":           true, // ADR-1190 session + CSRF signing key activation
+	"POST /dashboard/apps/{slug}/auth/keys/{id}/revoke":             true, // ADR-1190 session + CSRF signing key revocation
 	"GET /dashboard/apps/{slug}/data-api/types/{id}":                true, // ADR-968 session-auth type download
 	"POST /dashboard/apps/{slug}/data-api/refresh":                  true, // ADR-968 session + CSRF contract refresh adapter
 	"POST /dashboard/apps/{slug}/data-api/{operation}":              true, // ADR-968 session + CSRF schema/type task adapter
@@ -339,6 +371,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
+	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
+	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
 	// Issue #1233 / ADR-123 PR-C commit 2 — "Send test alert" form
 	// (session-cookie dashboard twin of the JSON route). Mirror the
 	// cmd/sdk-coverage/main.go::routeExclude entry for the same
@@ -400,6 +434,11 @@ var routeExclude = map[string]bool{
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
 	"POST /v1/otel/v1/traces": true,
+
+	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
+	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment
+	"POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}":    true, // ADR-1293 CSRF-protected assertion check fragment
+	"POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance": true, // ADR-1297: session-only HTML continuation with CSRF.
 }
 
 func init() {
@@ -444,10 +483,14 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
+	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
+
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
 	// Capacity command history uses URL query parameters, not a JSON request body.
 	"EventSubscriptionCapacityCommandsQuery": true,
+	"BindingVerificationRunListOptions":      true, // Client query builder; filters are declared on the list routes.
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
 	// Edge-protection summary parts are inline objects of
@@ -538,12 +581,19 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
-	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
-	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
-	"ListWorkflowScheduleOccurrencesOptions":          true, // client-only history query parameters; the occurrence response DTOs are in the public spec
-	"InboundWebhookEndpointRow":                       true,
-	"AppLogDrainRow":                                  true,
-	"QueueBindingRow":                                 true,
+	// ADR-1194: the decision payload delivered to the workflow, not an apid request or response.
+	"OperationApprovalPayload":  true,
+	"OperationApprovalDecision": true,
+	"OperationApprovalActor":    true,
+	// ADR-1193: the operation input delivered to the app, not an apid request or response.
+	"OperationWebhookInput":                  true,
+	"OperationWebhookEvent":                  true,
+	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                 true, // client-only history query parameters for the documented run list response
+	"ListWorkflowScheduleOccurrencesOptions": true, // client-only history query parameters; the occurrence response DTOs are in the public spec
+	"InboundWebhookEndpointRow":              true,
+	"AppLogDrainRow":                         true,
+	"QueueBindingRow":                        true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
@@ -714,6 +764,9 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// Baseline policy uses the strictly parsed version-2 CoveragePolicy in
+	// pkg/automationgate; the API carries canonical policy JSON in its DTOs.
+	"AutomationLiveBaselinePolicy":          true,
 	"ApplicationStandardSettings":           true, // appstandards field map checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardAdoption":           true, // appstandards wire types checked by TestApplicationStandardSpecContracts.
 	"ApplicationStandardSource":             true,
@@ -734,6 +787,8 @@ var schemaSpecOnly = map[string]bool{
 	"DevBridgeWebhookReplay":                true,
 	"EdgeRuleMatchExpr":                     true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"ObjectStorageReleaseRequirements":      true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
+	"BulkIssueLifecycleAction":              true, // restricted SDK shape of IssueActionRequest for the four supported bulk lifecycle operations
+	"QueueReleaseRequirements":              true, // Bounded binding-name map, validated by pkg/api.ValidateQueueReleaseRequirements.
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
 	// lives in pkg/state/feature_flags.go and handler-local request/evidence
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
@@ -795,6 +850,9 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	"BillingRunExport":           true, // ADR-1503: enum shared by run and schedule DTOs, which carry it as a string field.
+	"BillingRunSources":          true, // ADR-1503: array enum shared by run and schedule DTOs, which carry it as []string.
+	"BillingProvider":            true, // ADR-1507: enum shared by connection and export DTOs, which carry it as a string field.
 	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
 	// in the pkg/api request/response DTOs. This scanner only indexes structs
 	// declared directly in pkg/api; request field parity still checks them.
@@ -1193,8 +1251,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
+		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"), // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
 		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
@@ -1241,13 +1301,34 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),
 		filepath.Join(root, "pkg", "api", "event_retention.go"),
 		filepath.Join(root, "pkg", "api", "event_routing_retry_policy.go"),
+		filepath.Join(root, "pkg", "api", "event_acknowledgment.go"),
 		filepath.Join(root, "pkg", "api", "event_schema_rollout.go"),
 		filepath.Join(root, "pkg", "api", "event_schema_versions.go"),
 		filepath.Join(root, "pkg", "api", "event_subscription_control.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_rate.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_rate_preview.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_pending_summary.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_deadline_window.go"),
+		filepath.Join(root, "pkg", "api", "event_subscription_deadlines.go"),
 		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
+		filepath.Join(root, "pkg", "api", "issue_frequency_alerts.go"),
+		filepath.Join(root, "pkg", "api", "issue_lifecycle_alerts.go"),
+		filepath.Join(root, "pkg", "api", "issue_context.go"),
+		filepath.Join(root, "pkg", "api", "issue_source_maps.go"),
+		filepath.Join(root, "pkg", "api", "issue_triage.go"),
+		filepath.Join(root, "pkg", "api", "issue_saved_views.go"),
+		filepath.Join(root, "pkg", "api", "issue_teams.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_links.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_native.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_create_native.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_auto_sync.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_linear_connection.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_linear_create_native.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_linear_native.go"),
+
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_versions.go"),
@@ -1282,6 +1363,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "automation_simulation.go"),
 		filepath.Join(root, "pkg", "api", "automation_check_evidence.go"),
 		filepath.Join(root, "pkg", "api", "automation_publish_checks.go"),
+		filepath.Join(root, "pkg", "api", "automation_tests.go"),
+		filepath.Join(root, "pkg", "api", "automation_live.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_baselines.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_baseline_listing.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_baseline_retirement.go"),
+
+		filepath.Join(root, "pkg", "api", "automation_live_suites.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_suite_execution.go"),
+		filepath.Join(root, "pkg", "api", "automation_live_suite_comparison.go"),
 		filepath.Join(root, "pkg", "api", "automation_failure_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_outbound.go"),
 		filepath.Join(root, "pkg", "api", "workflow_guard.go"),
@@ -1370,6 +1460,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),
+		filepath.Join(root, "pkg", "api", "project_release_bindings.go"),
+		filepath.Join(root, "pkg", "api", "project_release_staging.go"),
+		filepath.Join(root, "pkg", "api", "queue_binding_canary.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_run.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_run_list.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_qualification.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_review.go"),
+		filepath.Join(root, "pkg", "api", "binding_verification_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "project_binding_verification_run.go"),
 		filepath.Join(root, "pkg", "api", devSyncFile),
 		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", "tracing.go"), // ADR-958 — zero-config guest tracing manifest DTO
@@ -1389,6 +1488,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
+		filepath.Join(root, "pkg", "api", serviceMapFile),
 		filepath.Join(root, "pkg", "api", applicationStandardsFile),
 		filepath.Join(root, "pkg", "api", applicationStandardResourcesFile),
 		filepath.Join(root, "pkg", "api", applicationStandardMutationsFile),
@@ -1397,6 +1497,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
+		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
+		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
+		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
@@ -1432,6 +1537,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
+		filepath.Join(root, "pkg", "api", "operation_timeline.go"), // ADR-1195 timeline DTOs
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),   // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"),  // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),    // ADR-1194 operation wait and approval DTOs
+		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

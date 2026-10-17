@@ -58,6 +58,10 @@ func prepareOperationRecovery(op *Operation, original Invocation, def OperationD
 	kind := req.Resolution
 	switch req.Resolution {
 	case "safe_to_retry":
+		// ADR-1196: generations share one deadline and one budget.
+		if operationLimitExceeded(*op, now) != "" {
+			return Invocation{}, api.OperationEvent{}, ErrOperationLimitExceeded
+		}
 		// Use the retained original input and deployment; recovery cannot amend
 		// work or silently switch releases. A new execution gets a fresh lease.
 		inv.ID = newOperationID()
@@ -67,6 +71,9 @@ func prepareOperationRecovery(op *Operation, original Invocation, def OperationD
 		inv.Result, inv.Outcome = nil, nil
 		inv.DueAt, inv.CreatedAt = now, now
 		deadline := now.Add(time.Duration(limits.MaxAsyncInvocationDeadlineSeconds) * time.Second)
+		if op.DeadlineAt != nil && op.DeadlineAt.Before(deadline) {
+			deadline = *op.DeadlineAt
+		}
 		inv.DeadlineAt = &deadline
 		op.Generation++
 		op.CurrentInvocationID = inv.ID

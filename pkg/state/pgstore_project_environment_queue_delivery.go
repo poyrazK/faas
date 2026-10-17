@@ -38,6 +38,13 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
+	blocked, err := sqlc.New().EnvironmentWorkloadAdmissionRetired(ctx, tx, sqlc.EnvironmentWorkloadAdmissionRetiredParams{AppID: mustPgUUID(set.AppID), Scope: set.EnvironmentSlug})
+	if err != nil {
+		return ProjectEnvironmentQueueDelivery{}, mapErr(err)
+	}
+	if blocked {
+		return ProjectEnvironmentQueueDelivery{}, ErrEnvironmentWorkloadRetired
+	}
 	consumer, err := queueConsumerByName(set, req.BindingName)
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err

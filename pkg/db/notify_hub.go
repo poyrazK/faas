@@ -78,6 +78,9 @@ const (
 	hubMaxBackoff   = 5 * time.Second
 	// hubDropLogEvery bounds the overflow warning per subscriber.
 	hubDropLogEvery = time.Minute
+	// hubResyncRetry is how often a resync notification that found a full
+	// subscriber buffer is offered again.
+	hubResyncRetry = 100 * time.Millisecond
 )
 
 // NotifyHubObserver receives hub health events. wire.OpsMetrics
@@ -132,6 +135,11 @@ type hubSubscriber struct {
 	out      chan Notification
 	dropped  atomic.Int64
 	lastDrop atomic.Int64 // unix nanos of the last overflow warning
+	// resync subscribers (SubscribeWithResync) are told when deliveries may
+	// have been missed. resyncPending is a resync notification not yet
+	// delivered because out was full. Both are guarded by notifyHub.mu.
+	resync        bool
+	resyncPending bool
 }
 
 func (s *hubSubscriber) wants(channel string) bool {
@@ -152,7 +160,11 @@ type notifyHub struct {
 	lastErr error          // most recent connection error while gen > applied
 	running bool
 	cancel  context.CancelFunc
-	wake    chan struct{} // 1-buffered; nudges the loop to re-sync LISTENs
+	// runCtx is the hub's lifetime context while running; the resync retry
+	// loop stops with it.
+	runCtx         context.Context
+	resyncRetrying bool
+	wake           chan struct{} // 1-buffered; nudges the loop to re-sync LISTENs
 
 	reconnects atomic.Int64
 }
@@ -202,8 +214,8 @@ func NotifyHubStatsFor(pool *pgxpool.Pool) NotifyHubStats {
 
 // subscribe registers channels for a new subscriber and returns its
 // delivery channel. The channel closes when ctx is cancelled.
-func (h *notifyHub) subscribe(ctx context.Context, channels []string) (<-chan Notification, error) {
-	sub := &hubSubscriber{channels: map[string]struct{}{}, out: make(chan Notification, hubSubscriberBuffer)}
+func (h *notifyHub) subscribe(ctx context.Context, channels []string, resync bool) (<-chan Notification, error) {
+	sub := &hubSubscriber{channels: map[string]struct{}{}, out: make(chan Notification, hubSubscriberBuffer), resync: resync}
 	for _, c := range channels {
 		sub.channels[c] = struct{}{}
 	}
@@ -269,8 +281,90 @@ func (h *notifyHub) startLocked(ctx context.Context, initial []string) error {
 	hubCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	h.running = true
 	h.cancel = cancel
+	h.runCtx = hubCtx
 	go h.run(hubCtx, conn, listened)
 	return nil
+}
+
+// requestResync tells every resync subscriber that deliveries may have been
+// missed. Called after the LISTEN connection is re-established.
+func (h *notifyHub) requestResync() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for s := range h.subs {
+		if s.resync {
+			s.resyncPending = true
+			h.flushResyncLocked(s)
+		}
+	}
+	h.ensureResyncRetryLocked()
+}
+
+// flushResyncLocked offers s its pending resync notification without
+// blocking. Caller holds h.mu, which keeps s.out open: unsubscribe removes s
+// from h.subs under the same lock before closing it.
+func (h *notifyHub) flushResyncLocked(s *hubSubscriber) {
+	if !s.resyncPending {
+		return
+	}
+	select {
+	case s.out <- Notification{Channel: ResyncChannel}:
+		s.resyncPending = false
+	default:
+	}
+}
+
+// ensureResyncRetryLocked starts the retry loop if a resync notification is
+// still pending, so it reaches a subscriber whose buffer was full even if no
+// further notification arrives for it. Caller holds h.mu.
+func (h *notifyHub) ensureResyncRetryLocked() {
+	if h.resyncRetrying || h.runCtx == nil {
+		return
+	}
+	pending := false
+	for s := range h.subs {
+		if s.resyncPending {
+			pending = true
+			break
+		}
+	}
+	if !pending {
+		return
+	}
+	h.resyncRetrying = true
+	go h.resyncRetryLoop(h.runCtx)
+}
+
+func (h *notifyHub) resyncRetryLoop(ctx context.Context) {
+	ticker := time.NewTicker(hubResyncRetry)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			h.mu.Lock()
+			h.resyncRetrying = false
+			// The hub may have restarted under a new context while this
+			// loop was winding down; hand any pending resync to it.
+			if h.running && h.runCtx != ctx {
+				h.ensureResyncRetryLocked()
+			}
+			h.mu.Unlock()
+			return
+		case <-ticker.C:
+		}
+		h.mu.Lock()
+		pending := false
+		for s := range h.subs {
+			h.flushResyncLocked(s)
+			pending = pending || s.resyncPending
+		}
+		if !pending {
+			h.resyncRetrying = false
+			h.mu.Unlock()
+			return
+		}
+		h.mu.Unlock()
+	}
 }
 
 func (h *notifyHub) nudge() {
@@ -387,6 +481,9 @@ func (h *notifyHub) run(ctx context.Context, conn *pgxpool.Conn, listened map[st
 		if h.log != nil {
 			h.log.Info("db: notify hub LISTEN re-subscribed", "channels", len(listened))
 		}
+		// Notifications sent while the connection was down are lost;
+		// subscribers that depend on them reload now (ADR-1344 §5 rule 3).
+		h.requestResync()
 		conn = c
 	}
 }
@@ -507,6 +604,9 @@ func (h *notifyHub) dispatch(n Notification) {
 		if !s.wants(n.Channel) {
 			continue
 		}
+		// A pending resync goes first: the reload it triggers covers
+		// whatever was dropped before this notification.
+		h.flushResyncLocked(s)
 		select {
 		case s.out <- n:
 			// One delivery, per channel. pg_notify has no routing, so one
@@ -520,6 +620,10 @@ func (h *notifyHub) dispatch(n Notification) {
 		default:
 			s.dropped.Add(1)
 			observeHub(func(o NotifyHubObserver) { o.HubDropped(n.Channel) })
+			if s.resync {
+				s.resyncPending = true
+				h.ensureResyncRetryLocked()
+			}
 			now := time.Now().UnixNano()
 			if last := s.lastDrop.Load(); now-last >= int64(hubDropLogEvery) && s.lastDrop.CompareAndSwap(last, now) && h.log != nil {
 				h.log.Warn("db: notify hub subscriber overflow; dropping notification (durable source + safety tick will recover)",

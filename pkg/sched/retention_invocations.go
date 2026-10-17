@@ -198,5 +198,16 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 	if err != nil {
 		return retentionDeleted, 0, err
 	}
+	// ADR-1196: workflow Operations carry no invocation deadline, so their
+	// own deadline is swept here; HTTP executions settled just above.
+	if operations, ok := r.store.(state.OperationDeadlineStore); ok {
+		settled, err := operations.SettleOperationDeadlines(ctx, r.now(), api.OperationDeadlineSweepBatch)
+		if err != nil {
+			return retentionDeleted, deadlineForced, err
+		}
+		if settled > 0 {
+			r.log.Info("operation deadline sweep", "settled", settled)
+		}
+	}
 	return retentionDeleted, deadlineForced, nil
 }

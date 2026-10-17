@@ -59,7 +59,7 @@ export function goTrueAuthenticator(port = gotrue.port) {
   })
 }
 
-async function inSession(pool, claims, work) {
+export async function inSession(pool, claims, work) {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
