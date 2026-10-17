@@ -66,6 +66,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "password_reset_disabled"
 	}
+	if review.Template == ProducerOutboxMagicLinkTemplate && !s.magicLinkOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "magic_link_disabled"
+	}
 	return review, err
 }
 

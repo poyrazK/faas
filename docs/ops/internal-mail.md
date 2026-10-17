@@ -2561,3 +2561,70 @@ and intent. The migration's Down refuses reset intents, tokens or audit history.
 An expired or stale link needs a fresh user request; no force replay is added.
 Keep live qualification, DNS, operational enrollment and flag activation in the
 separate qualification workflow.
+
+## Durable magic-link sign-in handoff
+
+`FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED=0` independently gates internal
+magic-link issuance/handoff in apid and template admission in maild. It defaults
+off in both units and all private examples. The existing signup/sign-in endpoint
+and uniform response remain unchanged. This adds no customer mail capability or
+public listener. Live qualification remains a separate workflow.
+
+Apply
+[`20261017082032672_platform_mail_magic_link_outbox.sql`](../../migrations/20261017082032672_platform_mail_magic_link_outbox.sql)
+through the migration owner before starting the new binary. Base producer outbox
+readiness requires its credential table. See
+[ADR-20261017082032](../adr/20261017082032-mail-magic-link-outbox.md).
+
+The enabled producer needs the existing master, producer, scheduling and outbox
+gates and scoped `internal-producer` transport. Configure the separate
+`FAAS_INTERNAL_MAIL_MAGIC_LINK_ORIGIN` in apid's `/etc/faas/sealed.env` as the
+trusted canonical HTTPS dashboard origin. No credentials, query or fragment are
+allowed, and no path beyond an optional trailing slash. The frozen link path is
+`/auth/verify`. Request Host and forwarding headers never choose this destination.
+Verification, reset and magic-link origins and child gates are independent.
+
+Magic-link payloads reuse apid's dedicated current/previous credential readers
+selected by the historical `FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH` names. No apid key is
+delivered to maild or mailctl. Enabled startup requires readers for all its live
+pending magic-link payloads. Keep readers across all enabled credential families;
+verification's 24-hour lifetime exceeds reset/sign-in's 15 minutes. Workers skip
+unknown reader keys or origins and never rewrite pending links to a new origin.
+
+The sign-in hash and encrypted intent commit together. Retries keep the original
+token, body, producer, origin, absolute 15-minute expiry and
+`magic-link:<intent UUID>` admission key. No plaintext link or token is stored in
+PostgreSQL. Enabled save failure never falls back inline or leaves an orphan
+hash. Existing pending caps, suppressions, recovery generation quarantine,
+bounded attempts and terminal secret erasure continue to apply.
+
+New magic-link credentials are sign-in-only and cannot reset a password. They
+bind the account, current address, exact email-verification state and password
+revision. Existing sign-in policy permits active and past-due accounts without
+an abuse hold; suspended, deleted or held accounts cannot use durable links. Password set/delete, address or verification change, account
+deactivation, expiry or use stops stale links at handoff and redemption. For an
+unverified account, consuming the link also atomically revokes pre-verification
+passwords, sessions and API keys before marking the bound address verified. A
+failed cleanup leaves the token unused and rolls back the whole claim; expiry
+is checked again after cleanup waits. Verified accounts retain their credentials.
+Sign-in continues through the existing dashboard session/cookie/audit path and
+current MFA requirements. No API key or completed MFA proof is issued by a link.
+
+Saved credential checks remain enforced after rolling issuance/handoff flags
+off, without encryption keys or configured origins. Namespace recovery holds or
+generation mismatches reject old tokens even after global release. Already-issued
+legacy inline links retain their existing shared-family compatibility. Maild
+admission is separate from final delivery: an admitted email may arrive after an
+account change, while its stale link still fails to authenticate.
+
+Use existing private outbox metadata inspection and admission reconciliation.
+Magic-link reconciliation and exact audit replay require the magic-link child
+gate in addition to the existing operator/reconciliation gates. They acknowledge
+an existing receipt, never send mail or extend a deadline. Inspection omits
+addresses, token hashes, ciphertext, origins and encryption identities.
+
+Bounded apid maintenance purges expired token hashes/address bindings even with
+the child flag off. Account erasure cascades credentials/intents. Migration Down
+refuses any magic-link token, intent or audit history. An expired or stale link
+requires a fresh user request; no forced replay or deadline extension is added.

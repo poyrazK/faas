@@ -14,6 +14,7 @@ type Account struct {
 	Status                string
 	DeletionRequestedAt   pgtype.Timestamptz
 	EmailVerifiedAt       pgtype.Timestamptz
+	AbuseHoldAt           pgtype.Timestamptz
 	PasswordResetRevision int64
 }
 
@@ -21,6 +22,11 @@ type AccountPassword struct {
 	AccountID pgtype.UUID
 	Hash      string
 	UpdatedAt pgtype.Timestamptz
+}
+
+type ApiKey struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
 }
 
 type EmailVerificationToken struct {
@@ -53,6 +59,19 @@ type InternalMailRecoveryState struct {
 	Namespace  string
 	RecoveryID pgtype.UUID
 	Held       bool
+}
+
+type MagicLinkToken struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	EmailVerifiedAt  pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
 }
 
 type MailSuppression struct {
@@ -115,4 +134,10 @@ type PlatformMailProducerOutbox struct {
 	SealedVerification    []byte
 	VerificationKeyID     string
 	VerificationOrigin    string
+}
+
+type Session struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	RevokedAt pgtype.Timestamptz
 }

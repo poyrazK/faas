@@ -1073,13 +1073,17 @@ func writeV1AuthJSON(w http.ResponseWriter, acct state.Account, requestEmail, pl
 // via the platform mailer. Mailer errors are logged but never
 // surface — the public endpoint remains a constant 200.
 func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
-	raw := make([]byte, 32)
+	if s.queueMagicLink(ctx, acct, email) {
+		return
+	}
+	raw := make([]byte, api.MagicLinkTokenBytes)
+	defer clear(raw)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("v1auth_signup_magic.rand", "err", err)
 		return
 	}
 	hash := api.HashToken(raw)
-	expiresAt := time.Now().Add(passwordResetTTL)
+	expiresAt := time.Now().Add(api.MagicLinkTTL)
 	if err := s.store.IssueLoginToken(ctx, hash, acct.ID, expiresAt); err != nil {
 		s.log.Error("v1auth_signup_magic.issue_token", "err", err)
 		return
@@ -1094,10 +1098,7 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
-	body := fmt.Sprintf(
-		"Hi,\n\nWelcome to faas. Confirm your email by clicking the link below (valid for 15 minutes):\n\n  %s\n\nIf you did not request this, you can ignore this email.\n",
-		link)
-	subject := "Confirm your Gregale account"
+	subject, body := mailpkg.MagicLinkBodyV1(link)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
 		Subject:  subject,

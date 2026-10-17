@@ -30,6 +30,8 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	keys := []string{}
 	resetOrigin := ""
 	resetKeys := []string{}
+	magicOrigin := ""
+	magicKeys := []string{}
 	if s.verificationEnabled() {
 		origin = s.verification.origin
 		for key := range s.verification.readers {
@@ -42,10 +44,19 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 			resetKeys = append(resetKeys, key)
 		}
 	}
+	if s.magicLinkEnabled() {
+		magicOrigin = s.magicLink.origin
+		for key := range s.magicLink.readers {
+			magicKeys = append(magicKeys, key)
+		}
+	}
+	if err := s.queries.PurgeExpiredMagicLinkTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
+		return q.PlatformMailProducerOutbox{}, err
+	}
 	if err := s.queries.PurgeExpiredPasswordResetTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
-	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
+	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return r, err
 	}
@@ -125,6 +136,8 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 		state, code = "cancelled", "token_unavailable"
 	case r.Template == PasswordResetTemplate && (account.Status != "active" || !account.EmailVerifiedAt.Valid):
 		state, code = "cancelled", "token_unavailable"
+	case r.Template == MagicLinkTemplate && !magicLinkAccountAvailable(account.Status, account.AbuseHoldAt):
+		state, code = "cancelled", "token_unavailable"
 	case !r.ExpiresAt.Time.After(time.Now()):
 		state, code = "expired", "notification_expired"
 	default:
@@ -141,7 +154,7 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 			if r.ProducerID != s.producer || r.FromAddress != s.from || r.TemplateVersion != 1 {
 				return internalmail.ErrInvalid
 			}
-			state, code, refund, err = s.handoff(ctx, tx, r, account.PasswordResetRevision)
+			state, code, refund, err = s.handoff(ctx, tx, r, account)
 			if err != nil {
 				return err
 			}
@@ -154,18 +167,24 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 	return tx.Commit(ctx)
 }
 
-func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProducerOutbox, passwordRevision int64) (string, string, bool, error) {
+func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProducerOutbox, account q.Account) (string, string, bool, error) {
 	sender := s.sender
 	var message mail.Message
 	switch r.Template {
-	case VerificationTemplate, PasswordResetTemplate:
+	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate:
 		var err error
-		if r.Template == PasswordResetTemplate {
-			message, err = s.passwordResetMessage(ctx, tx, r, passwordRevision)
+		switch r.Template {
+		case MagicLinkTemplate:
+			message, err = s.magicLinkMessage(ctx, tx, r, account)
+			if s.magicLink != nil {
+				sender = s.magicLink.sender
+			}
+		case PasswordResetTemplate:
+			message, err = s.passwordResetMessage(ctx, tx, r, account.PasswordResetRevision)
 			if s.passwordReset != nil {
 				sender = s.passwordReset.sender
 			}
-		} else {
+		case VerificationTemplate:
 			message, err = s.verificationMessage(ctx, tx, r)
 			if s.verification != nil {
 				sender = s.verification.sender

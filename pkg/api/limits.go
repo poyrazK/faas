@@ -27,6 +27,8 @@ const (
 	EmailVerificationTokenBytes = 32
 	PasswordResetTTL            = 15 * time.Minute
 	PasswordResetTokenBytes     = 32
+	MagicLinkTTL                = 15 * time.Minute
+	MagicLinkTokenBytes         = 32
 )
 
 // Application standards preview safeguards, independent of billing quotas.

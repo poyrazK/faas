@@ -35,7 +35,7 @@ func (s *fixtureSMTP) Submit(context.Context, internalmail.Envelope) (string, st
 
 func TestPGProducerOutboxRealMaildLostAcknowledgementDoesNotDuplicate(t *testing.T) {
 	pool := pgtest.Open(t)
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,deletion_requested_at timestamptz,email_verified_at timestamptz);
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
@@ -75,6 +75,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var reconciliationGate atomic.Bool
 	var verificationGate atomic.Bool
 	var passwordResetGate atomic.Bool
+	var magicLinkGate atomic.Bool
 	outboxGate.Store(true)
 	daemon := &internalmail.Service{Store: store, Codec: internalmail.AgeCodec{Identity: identity, Namespace: "platform"}, Resolver: resolver, SendingIP: netip.MustParseAddr("192.0.2.10"),
 		Enabled: func() bool { return true }, ProducersEnabled: func() bool { return true }, SchedulingEnabled: func() bool { return true }, DeliveryEnabled: func() bool { return true },
@@ -82,6 +83,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		OutboxReconciliationEnabled: reconciliationGate.Load,
 		VerificationOutboxEnabled:   verificationGate.Load,
 		PasswordResetOutboxEnabled:  passwordResetGate.Load,
+		MagicLinkOutboxEnabled:      magicLinkGate.Load,
 		Producers:                   map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 10, PendingRecipientLimit: 100}},
 		RecipientAllowed:            func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
@@ -374,6 +376,60 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if smtp.accepted.Load() != 4 {
 		t.Fatal("reset replay duplicated SMTP custody")
 	}
+	// Magic-link admission has its own remote gate, independently of verification.
+	// Lose one committed acknowledgement and replay the same magic-link after restart.
+	env[internalmail.MagicLinkOutboxEnableEnv] = "1"
+	env[MagicLinkOriginEnv] = "https://dashboard.example.test"
+	f.service = restarted
+	if err := restarted.ConfigureMagicLink(t.Context(), func(k string) string { return env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	magic := queueMagic(t, f, magicAccount(t, f))
+	magicID := uuidString(magic.ID.Bytes)
+	if err := restarted.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, magicID); got.State != "queued" || len(got.SealedVerification) == 0 {
+		t.Fatal("remote magic-link gate discarded its credential")
+	}
+	magicLinkGate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", magicID); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err = NewFromEnv(pool, func(k string) string { return env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.ConfigureVerification(t.Context(), func(k string) string { return env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.ConfigureMagicLink(t.Context(), func(k string) string { return env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := restarted.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, magicID); attempt == 0 && got.State != "queued" {
+			t.Fatal("magic-link admission acknowledgement was not lost")
+		}
+	}
+	if got := row(t, f, magicID); got.State != "admitted" {
+		t.Fatal("magic-link replay lost original admission")
+	} else {
+		assertVerificationErased(t, got)
+	}
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != 5 {
+		t.Fatal("magic-link replay duplicated SMTP custody")
+	}
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -393,7 +449,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if got := row(t, f, uuid.UUID(late.ID.Bytes).String()); got.State != "queued" {
 		t.Fatal("stale generation was admitted")
 	}
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 4 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 5 {
 		t.Fatal("stale generation created new mail after release", err)
 	}
 	// A remote management rollback keeps a generation-bound intent retryable.

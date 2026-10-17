@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -102,8 +102,10 @@ WITH candidate AS (
       AND (o.template='account_deletion_pending' OR (o.template='email_verification' AND $6::boolean AND o.verification_origin=$7::text
           AND o.verification_key_id=ANY($8::text[]))
         OR (o.template='password_reset' AND $9::boolean AND o.verification_origin=$10::text
-          AND o.verification_key_id=ANY($11::text[])))
-      AND o.attempts<$12 AND o.expires_at>clock_timestamp()
+          AND o.verification_key_id=ANY($11::text[]))
+        OR (o.template='magic_link' AND $12::boolean AND o.verification_origin=$13::text
+          AND o.verification_key_id=ANY($14::text[])))
+      AND o.attempts<$15 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -125,6 +127,9 @@ type ClaimParams struct {
 	PasswordResetEnabled bool
 	PasswordResetOrigin  string
 	PasswordResetKeys    []string
+	MagicLinkEnabled     bool
+	MagicLinkOrigin      string
+	MagicLinkKeys        []string
 	MaxAttempts          int32
 }
 
@@ -141,6 +146,9 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.PasswordResetEnabled,
 		arg.PasswordResetOrigin,
 		arg.PasswordResetKeys,
+		arg.MagicLinkEnabled,
+		arg.MagicLinkOrigin,
+		arg.MagicLinkKeys,
 		arg.MaxAttempts,
 	)
 	var i PlatformMailProducerOutbox
@@ -172,6 +180,33 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.VerificationOrigin,
 	)
 	return i, err
+}
+
+const claimMagicLinkOwnership = `-- name: ClaimMagicLinkOwnership :exec
+UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=password_reset_revision+1 WHERE id=$1
+`
+
+func (q *Queries) ClaimMagicLinkOwnership(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, claimMagicLinkOwnership, id)
+	return err
+}
+
+const consumeMagicLinkToken = `-- name: ConsumeMagicLinkToken :execrows
+UPDATE magic_link_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp()
+`
+
+type ConsumeMagicLinkTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ConsumeMagicLinkToken(ctx context.Context, db DBTX, arg ConsumeMagicLinkTokenParams) (int64, error) {
+	result, err := db.Exec(ctx, consumeMagicLinkToken, arg.TokenHash, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const consumePasswordResetToken = `-- name: ConsumePasswordResetToken :execrows
@@ -225,6 +260,75 @@ func (q *Queries) CreateIntent(ctx context.Context, db DBTX, arg CreateIntentPar
 		arg.RecoveryID,
 		arg.GraceSeconds,
 		arg.TtlSeconds,
+	)
+	return err
+}
+
+const createMagicLinkIntent = `-- name: CreateMagicLinkIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
+VALUES($1,$2,$3,$4,$5,$6,'magic_link',1,$7,$8,$9,$10,$11,$12)
+`
+
+type CreateMagicLinkIntentParams struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	Namespace             string
+	ProducerID            string
+	FromAddress           string
+	RecipientAddress      string
+	ExpiresAt             pgtype.Timestamptz
+	RecoveryID            pgtype.UUID
+	VerificationTokenHash []byte
+	SealedVerification    []byte
+	VerificationKeyID     string
+	VerificationOrigin    string
+}
+
+func (q *Queries) CreateMagicLinkIntent(ctx context.Context, db DBTX, arg CreateMagicLinkIntentParams) error {
+	_, err := db.Exec(ctx, createMagicLinkIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.VerificationTokenHash,
+		arg.SealedVerification,
+		arg.VerificationKeyID,
+		arg.VerificationOrigin,
+	)
+	return err
+}
+
+const createMagicLinkToken = `-- name: CreateMagicLinkToken :exec
+INSERT INTO magic_link_tokens(token_hash,account_id,email_address,password_revision,email_verified_at,expires_at,namespace,recovery_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type CreateMagicLinkTokenParams struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	EmailVerifiedAt  pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+}
+
+func (q *Queries) CreateMagicLinkToken(ctx context.Context, db DBTX, arg CreateMagicLinkTokenParams) error {
+	_, err := db.Exec(ctx, createMagicLinkToken,
+		arg.TokenHash,
+		arg.AccountID,
+		arg.EmailAddress,
+		arg.PasswordRevision,
+		arg.EmailVerifiedAt,
+		arg.ExpiresAt,
+		arg.Namespace,
+		arg.RecoveryID,
 	)
 	return err
 }
@@ -352,6 +456,29 @@ func (q *Queries) CreateVerificationToken(ctx context.Context, db DBTX, arg Crea
 		arg.ExpiresAt,
 		arg.EmailAddress,
 	)
+	return err
+}
+
+const deleteMagicLinkAPIKeys = `-- name: DeleteMagicLinkAPIKeys :execrows
+DELETE FROM api_keys WHERE account_id=$1
+`
+
+func (q *Queries) DeleteMagicLinkAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteMagicLinkAPIKeys, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteMagicLinkPassword = `-- name: DeleteMagicLinkPassword :exec
+DELETE FROM account_passwords WHERE account_id=$1
+`
+
+// These ownership-proof writes share the account lock and commit with token
+// consumption. The final CAS checks expiry after any dependent-row wait.
+func (q *Queries) DeleteMagicLinkPassword(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteMagicLinkPassword, accountID)
 	return err
 }
 
@@ -563,6 +690,90 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 	return i, err
 }
 
+const lockMagicLinkAccount = `-- name: LockMagicLinkAccount :one
+SELECT id,email,status,email_verified_at,abuse_hold_at,password_reset_revision FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockMagicLinkAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	EmailVerifiedAt       pgtype.Timestamptz
+	AbuseHoldAt           pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+func (q *Queries) LockMagicLinkAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockMagicLinkAccountRow, error) {
+	row := db.QueryRow(ctx, lockMagicLinkAccount, id)
+	var i LockMagicLinkAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.AbuseHoldAt,
+		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const lockMagicLinkCredentialAccount = `-- name: LockMagicLinkCredentialAccount :one
+SELECT a.id,a.email,a.status,a.email_verified_at,a.abuse_hold_at,a.password_reset_revision
+FROM accounts a JOIN magic_link_tokens t ON t.account_id=a.id
+WHERE t.token_hash=$1 FOR UPDATE OF a
+`
+
+type LockMagicLinkCredentialAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	EmailVerifiedAt       pgtype.Timestamptz
+	AbuseHoldAt           pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+// Account-first locking matches dispatch, password writes and account erasure.
+func (q *Queries) LockMagicLinkCredentialAccount(ctx context.Context, db DBTX, tokenHash []byte) (LockMagicLinkCredentialAccountRow, error) {
+	row := db.QueryRow(ctx, lockMagicLinkCredentialAccount, tokenHash)
+	var i LockMagicLinkCredentialAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.AbuseHoldAt,
+		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const lockMagicLinkToken = `-- name: LockMagicLinkToken :one
+SELECT token_hash, account_id, email_address, password_revision, email_verified_at, namespace, recovery_id, expires_at, consumed_at, created_at FROM magic_link_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockMagicLinkTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockMagicLinkToken(ctx context.Context, db DBTX, arg LockMagicLinkTokenParams) (MagicLinkToken, error) {
+	row := db.QueryRow(ctx, lockMagicLinkToken, arg.TokenHash, arg.AccountID)
+	var i MagicLinkToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.AccountID,
+		&i.EmailAddress,
+		&i.PasswordRevision,
+		&i.EmailVerifiedAt,
+		&i.Namespace,
+		&i.RecoveryID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const lockPasswordResetAccount = `-- name: LockPasswordResetAccount :one
 SELECT id,email,status,email_verified_at,password_reset_revision FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -679,6 +890,36 @@ func (q *Queries) LockVerificationAccount(ctx context.Context, db DBTX, id pgtyp
 		&i.EmailVerifiedAt,
 	)
 	return i, err
+}
+
+const magicLinkKeyReferences = `-- name: MagicLinkKeyReferences :many
+SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='magic_link' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type MagicLinkKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) MagicLinkKeyReferences(ctx context.Context, db DBTX, arg MagicLinkKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, magicLinkKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var verification_key_id string
+		if err := rows.Scan(&verification_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, verification_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const maintain = `-- name: Maintain :exec
@@ -909,6 +1150,19 @@ func (q *Queries) Pending(ctx context.Context, db DBTX, namespace string) (int64
 	return column_1, err
 }
 
+const purgeExpiredMagicLinkTokens = `-- name: PurgeExpiredMagicLinkTokens :exec
+WITH expired AS (
+    SELECT token_hash FROM magic_link_tokens WHERE expires_at<=clock_timestamp()
+    ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM magic_link_tokens t USING expired e WHERE t.token_hash=e.token_hash
+`
+
+func (q *Queries) PurgeExpiredMagicLinkTokens(ctx context.Context, db DBTX, limit int32) error {
+	_, err := db.Exec(ctx, purgeExpiredMagicLinkTokens, limit)
+	return err
+}
+
 const purgeExpiredPasswordResetTokens = `-- name: PurgeExpiredPasswordResetTokens :exec
 WITH expired AS (
     SELECT token_hash FROM password_reset_tokens WHERE expires_at<=clock_timestamp()
@@ -925,9 +1179,10 @@ func (q *Queries) PurgeExpiredPasswordResetTokens(ctx context.Context, db DBTX, 
 }
 
 const ready = `-- name: Ready :exec
-SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,a.password_reset_revision,t.password_revision
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,a.password_reset_revision,t.password_revision,m.password_revision
 FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
-LEFT JOIN password_reset_tokens t ON t.account_id=a.id LIMIT 0
+LEFT JOIN password_reset_tokens t ON t.account_id=a.id
+LEFT JOIN magic_link_tokens m ON m.account_id=a.id LIMIT 0
 `
 
 func (q *Queries) Ready(ctx context.Context, db DBTX) error {
@@ -1017,6 +1272,18 @@ func (q *Queries) ReplaceResetPassword(ctx context.Context, db DBTX, arg Replace
 	return result.RowsAffected(), nil
 }
 
+const revokeMagicLinkSessions = `-- name: RevokeMagicLinkSessions :execrows
+UPDATE sessions SET revoked_at=clock_timestamp() WHERE account_id=$1 AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeMagicLinkSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, revokeMagicLinkSessions, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const scheduleDeletion = `-- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
 WHERE id=$1 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at
@@ -1074,7 +1341,7 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE
+SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
 func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Account, error) {
@@ -1086,7 +1353,35 @@ func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Ac
 		&i.Status,
 		&i.DeletionRequestedAt,
 		&i.EmailVerifiedAt,
+		&i.AbuseHoldAt,
 		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const shareMagicLinkToken = `-- name: ShareMagicLinkToken :one
+SELECT token_hash, account_id, email_address, password_revision, email_verified_at, namespace, recovery_id, expires_at, consumed_at, created_at FROM magic_link_tokens WHERE token_hash=$1 AND account_id=$2 FOR SHARE
+`
+
+type ShareMagicLinkTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ShareMagicLinkToken(ctx context.Context, db DBTX, arg ShareMagicLinkTokenParams) (MagicLinkToken, error) {
+	row := db.QueryRow(ctx, shareMagicLinkToken, arg.TokenHash, arg.AccountID)
+	var i MagicLinkToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.AccountID,
+		&i.EmailAddress,
+		&i.PasswordRevision,
+		&i.EmailVerifiedAt,
+		&i.Namespace,
+		&i.RecoveryID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }

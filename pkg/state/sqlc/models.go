@@ -5114,6 +5114,19 @@ type LoginToken struct {
 	ConsumedAt pgtype.Timestamptz
 }
 
+type MagicLinkToken struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	EmailVerifiedAt  pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
 type MailSuppression struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID

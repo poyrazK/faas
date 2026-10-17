@@ -62,6 +62,7 @@ type Reconciler struct {
 	enabled              func() bool
 	verificationEnabled  func() bool
 	passwordResetEnabled func() bool
+	magicLinkEnabled     func() bool
 }
 
 func (s *Reconciler) WithVerification(enabled func() bool) *Reconciler {
@@ -81,6 +82,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.verificationEnabled != nil && s.verificationEnabled()
 	case PasswordResetTemplate:
 		return s.passwordResetEnabled != nil && s.passwordResetEnabled()
+	case MagicLinkTemplate:
+		return s.magicLinkEnabled != nil && s.magicLinkEnabled()
 	default:
 		return false
 	}
@@ -89,6 +92,12 @@ func (s *Reconciler) templateEnabled(template string) bool {
 func (s *Reconciler) WithPasswordReset(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.passwordResetEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithMagicLink(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.magicLinkEnabled = enabled
 	return &copy
 }
 

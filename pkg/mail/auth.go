@@ -11,6 +11,12 @@ func PasswordResetBodyV1(link string) (subject, body string) {
 	return "Reset your Gregale password", "Hi,\n\nReset your Gregale password by clicking the link below (valid for 15 minutes):\n\n  " + link + "\n\nIf you did not request this, you can ignore this email.\n"
 }
 
+// MagicLinkBodyV1 preserves the existing signup/sign-in message and original
+// validity window for every retry of a durable intent.
+func MagicLinkBodyV1(link string) (subject, body string) {
+	return "Confirm your Gregale account", "Hi,\n\nWelcome to faas. Confirm your email by clicking the link below (valid for 15 minutes):\n\n  " + link + "\n\nIf you did not request this, you can ignore this email.\n"
+}
+
 // EmailVerificationBody renders the one-shot address-verification email sent
 // after password signup. The deadline is explicit so an old message is not
 // mistaken for a live credential.

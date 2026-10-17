@@ -30,17 +30,30 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 	copy := *s
 	copy.verificationEnabled = enabled
 	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
 	return &copy
 }
 
 func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.passwordResetEnabled = enabled
+	copy.magicLinkEnabled = nil
 	copy.verificationEnabled = nil
 	return &copy
 }
 
+func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.magicLinkEnabled = enabled
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	return &copy
+}
+
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.magicLinkEnabled != nil {
+		return internalmail.ProducerOutboxMagicLinkTemplate, s.magicLinkEnabled
+	}
 	if s.passwordResetEnabled != nil {
 		return internalmail.ProducerOutboxPasswordResetTemplate, s.passwordResetEnabled
 	}

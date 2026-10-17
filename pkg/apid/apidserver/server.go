@@ -142,6 +142,8 @@ type server struct {
 	verificationMailOutboxRequested  func() bool
 	passwordResetMailOutboxRequested func() bool
 	passwordResetCredentials         *mailoutbox.ResetCredentials
+	magicLinkMailOutboxRequested     func() bool
+	magicLinkCredentials             *mailoutbox.MagicLinkCredentials
 	mailer                           Mailer
 	// mailBounce dispatches Resend bounce / complaint events into
 	// the suppression + dunning pipeline (issue #246 acceptance

@@ -27,6 +27,7 @@ type Service struct {
 	transport                 *platformmail.InternalSender
 	verification              *credentialConfig
 	passwordReset             *credentialConfig
+	magicLink                 *credentialConfig
 	requested, enabled        func() bool
 }
 

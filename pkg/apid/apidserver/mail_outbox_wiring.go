@@ -15,6 +15,8 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	// Saved reset bindings remain enforced after an issuance/delivery rollback.
 	// Construction is pure and needs neither a feature flag nor encryption keys.
 	s.passwordResetCredentials = mailoutbox.NewResetCredentials(pool)
+	s.magicLinkCredentials = mailoutbox.NewMagicLinkCredentials(pool)
+	s.magicLinkMailOutboxRequested = func() bool { return getenv(internalmail.MagicLinkOutboxEnableEnv) == "1" }
 	s.passwordResetMailOutboxRequested = func() bool { return getenv(internalmail.PasswordResetOutboxEnableEnv) == "1" }
 	outbox, err := mailoutbox.NewFromEnv(pool, getenv)
 	if err != nil {
@@ -25,6 +27,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 		return err
 	}
 	if err := outbox.ConfigurePasswordReset(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureMagicLink(ctx, getenv); err != nil {
 		return err
 	}
 	if outbox != nil {
