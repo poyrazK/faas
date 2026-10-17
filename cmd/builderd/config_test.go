@@ -262,3 +262,36 @@ func TestConfig_MetricsListener_OverridesRespected(t *testing.T) {
 		t.Errorf("override lost: read=%v write=%v idle=%v mhb=%v", read, write, idle, mhb)
 	}
 }
+
+// TestLoadConfig_CacheMinFreeFraction pins H10-109's free-space floor: on by
+// default, 0 disables it, and an out-of-range value keeps the default.
+func TestLoadConfig_CacheMinFreeFraction(t *testing.T) {
+	cases := map[string]struct {
+		toml string
+		want float64
+	}{
+		"default":      {toml: "", want: builderdpkg.DefaultCacheMinFreeFraction},
+		"explicit":     {toml: "cache_min_free_fraction = 0.3\n", want: 0.3},
+		"disabled":     {toml: "cache_min_free_fraction = 0.0\n", want: 0},
+		"negative":     {toml: "cache_min_free_fraction = -0.1\n", want: builderdpkg.DefaultCacheMinFreeFraction},
+		"whole volume": {toml: "cache_min_free_fraction = 1.0\n", want: builderdpkg.DefaultCacheMinFreeFraction},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "builderd.toml")
+			if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.CacheMinFreeFraction != tc.want {
+				t.Errorf("CacheMinFreeFraction = %v, want %v", cfg.CacheMinFreeFraction, tc.want)
+			}
+			if cfg.CacheGCSweepInterval != time.Hour {
+				t.Errorf("CacheGCSweepInterval = %v, want the hourly default", cfg.CacheGCSweepInterval)
+			}
+		})
+	}
+}

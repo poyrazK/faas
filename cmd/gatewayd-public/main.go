@@ -237,8 +237,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: %w", err)
 	}
-	if err := role.Require("gatewayd-public", role.FromConfig("", "FAAS_GATEWAYD_PUBLIC_ROLE"),
-		edgeMode.allowedRoles()...); err != nil {
+	if err := edgeMode.requireRole(role.FromConfig("", "FAAS_GATEWAYD_PUBLIC_ROLE")); err != nil {
 		return err
 	}
 	if edgeMode == edgeModeCompute {

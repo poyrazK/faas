@@ -1,0 +1,6 @@
+# Managed by Ansible (gatewayd_public_edge_service). Local edits are overwritten.
+# ADR-1343: the app hosts this edge serves, and the control-plane edge that
+# receives its credential-bound routes (public object reads, uploads, OTLP).
+[Service]
+Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}
+Environment=FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET={{ faas_edge_control_plane_target }}
