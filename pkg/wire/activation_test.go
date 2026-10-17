@@ -283,8 +283,8 @@ func TestActivationHelperProcess(t *testing.T) {
 	}
 	// systemd sets LISTEN_PID between fork and exec; the parent cannot.
 	_ = os.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+	defer stop()
 	l, err := wire.ListenOrRecreate(os.Getenv(activationSocketEnv), 0, 0, 0o660)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen:", err)
@@ -303,11 +303,7 @@ func TestActivationHelperProcess(t *testing.T) {
 			_, _ = io.WriteString(w, generation)
 		}),
 	}
-	go func() { _ = srv.Serve(l) }()
-	<-sigs
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := wire.ServeUntilShutdown(ctx, srv, l, 10*time.Second); err != nil {
 		os.Exit(3)
 	}
 	os.Exit(0)

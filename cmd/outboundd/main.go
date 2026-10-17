@@ -8,10 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -273,44 +271,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// flips it back to 0 on shutdown or an early return.
 	ops.MarkReady("outboundd", true, "")
 	log.Info("outbound gateway listening", "addr", cfg.ListenAddr, "integrations", len(configured))
-	stops := []func(context.Context){func(ctx context.Context) { _ = server.Shutdown(ctx) }}
+	var stops []func(context.Context)
 	if metricsServer != nil {
 		stops = append(stops, func(ctx context.Context) { _ = metricsServer.Shutdown(ctx) })
 	}
 	if shutdownRelay != nil {
 		stops = append(stops, shutdownRelay)
 	}
-	return serveUntilShutdown(ctx, server, listener, outbounddDrainGrace, stops...)
+	return wire.ServeUntilShutdown(ctx, server, listener, outbounddDrainGrace, stops...)
 }
 
 // outbounddDrainGrace bounds how long a stopping outboundd lets in-flight
 // third-party and AI calls finish, inside systemd's default 90 s stop budget.
 const outbounddDrainGrace = time.Duration(api.GatewayDrainGraceSeconds) * time.Second
-
-// serveUntilShutdown serves until ctx ends, then stops every server at once
-// and returns only after they drained or grace expired. Returning from
-// ListenAndServe as soon as Shutdown began let wire.Daemon exit the process
-// while calls were still in flight, cutting them on every restart.
-func serveUntilShutdown(ctx context.Context, server *http.Server, listener net.Listener, grace time.Duration, stops ...func(context.Context)) error {
-	served := make(chan error, 1)
-	go func() { served <- server.Serve(listener) }()
-	select {
-	case err := <-served:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
-	defer cancel()
-	var wg sync.WaitGroup
-	for _, stop := range stops {
-		wg.Go(func() { stop(shutdownCtx) })
-	}
-	wg.Wait()
-	return nil
-}
 
 // aiUsagePruner removes AI usage rollups past their retention (ADR-988).
 type aiUsagePruner interface {

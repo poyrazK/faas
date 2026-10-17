@@ -31,8 +31,13 @@ daemons still refused connections, or failed requests, while they restarted:
   also always spent its full 5 s on gateways' warm-hint and log streams and
   vmmd's capacity stream.
 - realtimed's socket had the same restart gap as gatewayd-internal's.
-- outboundd's `run` returned as soon as `Shutdown` began, and the process exited
-  under every in-flight third-party and AI call.
+- outboundd's and bridged's `run` returned as soon as `Shutdown` began, and the
+  process exited under every in-flight call.
+- net/http drops a request it reads after `Shutdown` began: a connection
+  accepted just before the listener closed, whose request was still arriving,
+  is closed unanswered and the client sees EOF. A restart-under-load test lost
+  requests this way in about 40% of runs. `Shutdown` also waits up to 5 s for
+  a connection that never sent anything, such as a proxy's preconnect.
 
 ## Decision
 
@@ -59,6 +64,10 @@ daemons still refused connections, or failed requests, while they restarted:
    `wire.StreamDrain` ends a gRPC server's open streams with Unavailable, the
    status their clients treat as reconnect, so GracefulStop waits only for
    unary RPCs; schedd and gatewayd-internal's egress server use it.
+   `wire.HTTPDrain` stops an HTTP server in two steps: close its listeners,
+   wait until every accepted connection delivered its first request (closing
+   those still silent after 1 s), then `Shutdown`. apid, both gateways'
+   listeners, outboundd and bridged use it.
 4. **Replayable internal hop.** gatewayd-public buffers request bodies up to
    `api.InternalHopReplayableBodyBytes` (64 KiB) and sends empty bodies as nil,
    so the H2C transport resends a request that crossed the GOAWAY. Streams
@@ -68,7 +77,8 @@ daemons still refused connections, or failed requests, while they restarted:
    activity RPCs wait for the connection to be ready within their deadline,
    and schedd connections retry at most a second apart. The gateway's 30 s
    wake hold (`WakeQueueTTLSeconds`) then covers a schedd restart.
-6. **outboundd drains before exiting**, all servers together, within 25 s.
+6. **outboundd and bridged drain before exiting** (`wire.ServeUntilShutdown`),
+   all servers together, within 25 s and 5 s.
 
 ## Consequences
 
@@ -82,6 +92,10 @@ daemons still refused connections, or failed requests, while they restarted:
   hop; schedd's synth target has no fallback and keeps queueing only with it on.
 - A request still running when the 25 s grace ends is cut, because systemd
   cannot start the replacement before the old process exits.
+- HTTP/1.1 has no GOAWAY: a request a client sends on an idle keep-alive
+  connection just as the server closes it can still fail. Go clients resend
+  idempotent requests; others see an error. apid's SSE operation streams still
+  hold its 10 s drain.
 - A request body larger than 64 KiB, or chunked, that crosses the GOAWAY
   window (microseconds) can still fail. Bodies up to 64 KiB are read before
   forwarding.

@@ -3968,9 +3968,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 6)
-	var servers []*http.Server
+	var servers []drainedServer
 	var serviceDiscoveryServers []*dns.Server
-	addSrv := func(s *http.Server) { servers = append(servers, s) }
+	addSrv := func(s *http.Server) *wire.HTTPDrain {
+		drain := wire.NewHTTPDrain(s)
+		servers = append(servers, drainedServer{srv: s, drain: drain})
+		return drain
+	}
 
 	// Issue #675: build the unified mux that the unix-socket server
 	// (`deps.synth`) serves. The mux routes:
@@ -4103,7 +4107,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// still hits this cap.
 			public.MaxHeaderBytes = int(api.DefaultMaxHeaderBytes)
 		}
-		addSrv(public)
+		publicDrain := addSrv(public)
 		l, lerr := deps.listen("tcp", listenAddr)
 		if lerr != nil {
 			log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
@@ -4111,7 +4115,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		go func() {
 			log.Info("gatewayd public listening", "addr", listenAddr)
-			if err := public.Serve(l); err != nil && err != http.ErrServerClosed {
+			if err := publicDrain.ServeErr(public.Serve(publicDrain.Listener(l))); err != nil {
 				errc <- err
 			}
 		}()
@@ -4173,14 +4177,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				httpsSrv.Protocols.SetHTTP2(true)
 				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-				addSrv(httpsSrv)
+				httpsDrain := addSrv(httpsSrv)
 				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
 				if listenErr != nil {
 					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
 				}
 				go func() {
 					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
-					if err := httpsSrv.ServeTLS(httpsListener, "", ""); err != nil && err != http.ErrServerClosed {
+					if err := httpsDrain.ServeErr(httpsSrv.ServeTLS(httpsDrain.Listener(httpsListener), "", "")); err != nil {
 						errc <- err
 					}
 				}()
@@ -4374,18 +4378,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 // requests within ctx. Stopping them one at a time let the first server's
 // slowest request keep every later listener accepting and spend the grace
 // serially, while connections to the stopped ones queued for the restart.
-func shutdownListeners(ctx context.Context, servers []*http.Server, dnsServers []*dns.Server, synth *gateway.SynthServer) {
+func shutdownListeners(ctx context.Context, servers []drainedServer, dnsServers []*dns.Server, synth *gateway.SynthServer) {
 	var wg sync.WaitGroup
 	for _, s := range dnsServers {
 		wg.Go(func() { _ = s.ShutdownContext(ctx) })
 	}
 	for _, s := range servers {
-		wg.Go(func() { _ = s.Shutdown(ctx) })
+		wg.Go(func() { _ = s.drain.Shutdown(ctx, s.srv) })
 	}
 	if synth != nil {
 		wg.Go(func() { _ = synth.Stop(ctx) })
 	}
 	wg.Wait()
+}
+
+// drainedServer is an HTTP listener whose stop first lets accepted
+// connections deliver their requests (wire.HTTPDrain).
+type drainedServer struct {
+	srv   *http.Server
+	drain *wire.HTTPDrain
 }
 
 // unwiredBackend routes nothing; every request 404s until the Postgres routing
@@ -4481,7 +4492,7 @@ func assertLoopbackBind(addr string) error {
 
 // startGuestServiceHTTPListeners serves both canonical and persisted URLs
 // through the same authorization handler and transport policy (ADR-384).
-func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server), errc chan<- error, log *slog.Logger) error {
+func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server) *wire.HTTPDrain, errc chan<- error, log *slog.Logger) error {
 	if err := validateServiceProxyListen(addr); err != nil {
 		return err
 	}
@@ -4497,14 +4508,14 @@ func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Hand
 		srv.Protocols.SetUnencryptedHTTP2(true)
 		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-		addSrv(srv)
+		drain := addSrv(srv)
 		listener, err := deps.listen("tcp", httpAddr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
 		}
 		go func() {
 			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
-			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			if err := drain.ServeErr(srv.Serve(drain.Listener(listener))); err != nil {
 				errc <- err
 			}
 		}()

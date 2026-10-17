@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package wire_test
 
 import (
 	"context"
@@ -15,11 +15,13 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// TestServeUntilShutdownFinishesInFlightCalls: a stopping outboundd returns
-// only after an in-flight call completed. It used to return as soon as
-// Shutdown began, and the process exited under the call.
+// TestServeUntilShutdownFinishesInFlightCalls: a stopping daemon (outboundd,
+// bridged) returns only after an in-flight call completed. Both used to
+// return as soon as Shutdown began, and the process exited under the call.
 func TestServeUntilShutdownFinishesInFlightCalls(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -34,7 +36,7 @@ func TestServeUntilShutdownFinishesInFlightCalls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	returned := make(chan error, 1)
 	go func() {
-		returned <- serveUntilShutdown(ctx, server, listener, 5*time.Second, func(ctx context.Context) { _ = server.Shutdown(ctx) })
+		returned <- wire.ServeUntilShutdown(ctx, server, listener, 5*time.Second)
 	}()
 
 	type result struct {
@@ -68,10 +70,11 @@ func TestServeUntilShutdownFinishesInFlightCalls(t *testing.T) {
 	}
 }
 
-// TestOutbounddRestartUnderLoadDropsNothing restarts outboundd on a socket a
-// systemd unit holds open: calls in flight finish on the old generation and
-// calls made while neither runs wait for the new one.
-func TestOutbounddRestartUnderLoadDropsNothing(t *testing.T) {
+// TestServeUntilShutdownRestartUnderLoadDropsNothing restarts a daemon such
+// as outboundd on a TCP socket a systemd unit holds open: calls in flight
+// finish on the old generation and calls made while neither runs wait for
+// the new one.
+func TestServeUntilShutdownRestartUnderLoadDropsNothing(t *testing.T) {
 	base, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +107,7 @@ func TestOutbounddRestartUnderLoadDropsNothing(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() {
-			done <- serveUntilShutdown(ctx, server, listener, 5*time.Second, func(ctx context.Context) { _ = server.Shutdown(ctx) })
+			done <- wire.ServeUntilShutdown(ctx, server, listener, 5*time.Second)
 		}()
 		return func() {
 			cancel()
@@ -156,16 +159,5 @@ func TestOutbounddRestartUnderLoadDropsNothing(t *testing.T) {
 
 	if n := failures.Load(); n != 0 {
 		t.Fatalf("%d calls failed across the restart; first: %v", n, firstErr.Load())
-	}
-}
-
-func waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not reached")
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }

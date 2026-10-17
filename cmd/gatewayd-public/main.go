@@ -971,7 +971,9 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		}
 	}()
 
-	// Start the listeners.
+	// Start the listeners. The drain lets connections accepted just before
+	// shutdown deliver their requests instead of being closed unanswered.
+	publicDrain := wire.NewHTTPDrain(publicSrv)
 	errc := make(chan error, 3)
 	if privateAddr != "" {
 		privateLn, lerr := net.Listen("tcp", privateAddr)
@@ -980,7 +982,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		}
 		go func() {
 			log.Info("gatewayd-public: private listening for compute edges", "addr", privateAddr)
-			if err := publicSrv.Serve(privateLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(privateLn))); err != nil {
 				errc <- err
 			}
 		}()
@@ -992,7 +994,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 			return
 		}
 		log.Info("gatewayd-public: public listening", "addr", publicSrv.Addr)
-		if err := publicSrv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(l))); err != nil {
 			errc <- err
 		}
 	}()
@@ -1010,7 +1012,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		return err
 	}
 	grace := time.Duration(api.GatewayDrainGraceSeconds) * time.Second
-	if err := shutdownGatewayServers(forceCtx, log, publicSrv, controlSrv, drainTracker, gMetrics, grace, tcpDrain); err != nil {
+	if err := shutdownGatewayServers(forceCtx, log, publicSrv, publicDrain, controlSrv, drainTracker, gMetrics, grace, tcpDrain); err != nil {
 		return err
 	}
 	// Flush any in-flight spans from the BatchSpanProcessor. forceCtx is
@@ -1032,7 +1034,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 // optional raw-TCP drain uses the same context so every phase shares one
 // deadline; an idle gateway exits immediately and a busy gateway cannot
 // accidentally spend the full grace budget twice.
-func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, grace time.Duration, tcpDrain func(context.Context) error) error {
+func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv *http.Server, publicDrain *wire.HTTPDrain, controlSrv *http.Server, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, grace time.Duration, tcpDrain func(context.Context) error) error {
 	if grace <= 0 {
 		grace = drain.DrainGrace
 	}
@@ -1046,7 +1048,11 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, co
 	}
 
 	var shutdownErr error
-	if err := publicSrv.Shutdown(shutdownCtx); err != nil {
+	stopPublic := publicSrv.Shutdown
+	if publicDrain != nil {
+		stopPublic = func(ctx context.Context) error { return publicDrain.Shutdown(ctx, publicSrv) }
+	}
+	if err := stopPublic(shutdownCtx); err != nil {
 		log.Warn("gatewayd-public: public Shutdown", "err", err)
 		shutdownErr = fmt.Errorf("gatewayd-public: public shutdown: %w", err)
 	}

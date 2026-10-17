@@ -145,6 +145,8 @@ type SynthServer struct {
 	dispatcher SynthDispatcher
 	log        *slog.Logger
 	srv        *http.Server
+	// drain lets connections accepted before Stop deliver their requests.
+	drain *wire.HTTPDrain
 	mux        *http.ServeMux
 	calls      atomic.Int64
 	// internalSvcVerifier (ADR-119) is the per-service
@@ -329,8 +331,10 @@ func (s *SynthServer) Start() error {
 
 func (s *SynthServer) serve(lis net.Listener) {
 	s.log.Info("gateway synth: listening", "socket", s.socketPath)
+	s.drain = wire.NewHTTPDrain(s.srv)
+	lis = s.drain.Listener(lis)
 	go func() {
-		if err := s.srv.Serve(lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.drain.ServeErr(s.srv.Serve(lis)); err != nil {
 			s.log.Warn("gateway synth: serve", "err", err)
 		}
 	}()
@@ -344,6 +348,9 @@ var inheritedSynthListener = wire.InheritedListener
 func (s *SynthServer) Stop(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
+	}
+	if s.drain != nil {
+		return s.drain.Shutdown(ctx, s.srv)
 	}
 	return s.srv.Shutdown(ctx)
 }
