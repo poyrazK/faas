@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -311,26 +312,56 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	if desired < plan.desired {
 		atCapacity = true
 	}
-	for kept < desired {
-		dep, err := e.store.DeploymentByID(ctx, plan.target)
-		if err != nil {
-			return err
-		}
-		if dep.AppID != app.ID || dep.Status != state.DeployLive || normalizedDeploymentScope(dep.Scope) != plan.scope {
-			return state.ErrConflict
-		}
-		result, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, plan.scope, trigger)
-		if err != nil {
-			return err
-		}
-		if result.AtCapacity {
-			atCapacity = true
-			break
-		}
-		admitted = true
-		kept++
+	if kept >= desired {
+		return nil
 	}
-	return nil
+	dep, err := e.store.DeploymentByID(ctx, plan.target)
+	if err != nil {
+		return err
+	}
+	if dep.AppID != app.ID || dep.Status != state.DeployLive || normalizedDeploymentScope(dep.Scope) != plan.scope {
+		return state.ErrConflict
+	}
+	// Admit the missing workers together (ADR-1420). An admission returns
+	// only when its worker is ready, a whole characterization window for a
+	// worker, so admitting one at a time made a burst of N workers take N
+	// boots. The account cap is applied above and the ledger caps the app.
+	results := make([]WakeResult, desired-kept)
+	errs := make([]error, desired-kept)
+	var wg sync.WaitGroup
+	for i := range results {
+		admitCtx := ctx
+		if i > 0 {
+			// One booting instance per wake id (instances_wake_attempt_active_idx):
+			// an explicit wake's id stays with the first worker.
+			admitCtx = withoutRequestedWakeID(ctx)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = e.AdmitInstanceForDeployment(admitCtx, app.ID, dep.ID, plan.scope, trigger)
+		}()
+	}
+	wg.Wait()
+	for i, result := range results {
+		switch {
+		case errs[i] != nil:
+		case result.AtCapacity:
+			atCapacity = true
+		default:
+			admitted = true
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// withoutRequestedWakeID hides a caller's wake id, so the admission mints its
+// own. withRequestedWakeID cannot clear one: it ignores an empty id.
+func withoutRequestedWakeID(ctx context.Context) context.Context {
+	if requestedWakeID(ctx) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestedWakeIDKey{}, "")
 }
 
 // targetWorkers counts the live generation's workers that hold a slot.

@@ -19,7 +19,7 @@
 //
 // Workers and jobs never restore from a snapshot (ADR-138), so every scale
 // from zero is a cold boot. A burst of one message per pool slot then shows
-// how the pool admits several workers at once.
+// how the pool admits several workers at once: together, since ADR-1420.
 // FAAS_WORKER_SCALE_FROM_ZERO_CYCLES repeats the single-message cycle; each
 // cycle first waits for the pool to drain back to zero, which takes
 // api.WorkerScaleInStabilizationSeconds.
@@ -171,6 +171,11 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 			t.Errorf("worker %s: token at %s, RUNNING at %s; a booting worker must get its queue token before readiness",
 				w.instanceID, msOrDash(w.token), msOrDash(w.running))
 		}
+	}
+	// ADR-1420: the pool admits the burst's workers together. One at a time,
+	// each waited for the previous one's whole characterization window.
+	if spreadAdmit := burst[len(burst)-1].admit - burst[0].admit; spreadAdmit >= api.CharacterizationDeadline {
+		t.Errorf("burst workers were admitted %s apart; a pool must admit its missing workers together", msOrDash(spreadAdmit))
 	}
 }
 

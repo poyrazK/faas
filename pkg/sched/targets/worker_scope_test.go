@@ -36,6 +36,7 @@ func TestTrigger_ReconcilesScopedWorkerPools(t *testing.T) {
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	tr.waitWorkerPoolRuns()
 	if len(engine.calls) != 1 || engine.calls[0] != "scoped-worker:worker.pool" || len(engine.desired) != 0 || len(engine.admitCalls) != 0 {
 		t.Fatalf("scoped=%v legacy=%v request=%v", engine.calls, engine.desired, engine.admitCalls)
 	}
@@ -45,9 +46,11 @@ func TestTrigger_ReconcilesScopedWorkerPools(t *testing.T) {
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	tr.waitWorkerPoolRuns()
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	tr.waitWorkerPoolRuns()
 	if len(engine.calls) != 2 || len(engine.desired) != 0 || len(engine.admitCalls) != 0 {
 		t.Fatalf("failed scoped reconciliation bypassed backoff: %v", engine.calls)
 	}
@@ -69,6 +72,7 @@ func TestTrigger_ReconcilesWorkerPoolsForCustomMetricTargets(t *testing.T) {
 	if err := tr.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	tr.waitWorkerPoolRuns()
 	if len(engine.calls) != 1 || engine.calls[0] != "mcp-worker:worker.pool" {
 		t.Fatalf("scoped worker reconciliation calls = %v, want [mcp-worker:worker.pool]", engine.calls)
 	}

@@ -4,6 +4,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -180,12 +181,16 @@ func TestWorkerScopedDemandLifecycle(t *testing.T) {
 
 type busyOnceWorkerAdmissionStore struct {
 	state.Store
+	mu             sync.Mutex // a pool admits its missing workers in parallel (ADR-1420)
 	createAttempts int
 }
 
 func (s *busyOnceWorkerAdmissionStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, status string, ramMB int, nodeID, wakeID, mode string) (state.Instance, error) {
+	s.mu.Lock()
 	s.createAttempts++
-	if s.createAttempts == 1 {
+	first := s.createAttempts == 1
+	s.mu.Unlock()
+	if first {
 		return state.Instance{}, state.ErrApplicationStandardRuntimeBusy
 	}
 	return s.Store.CreateInstanceWithMode(ctx, appID, deploymentID, status, ramMB, nodeID, wakeID, mode)
