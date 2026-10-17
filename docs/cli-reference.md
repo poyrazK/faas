@@ -10412,7 +10412,7 @@ gregale env pull --app my-api --scope staging
 
 Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 
-`gregale env push [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>]`
+`gregale env push [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--scope <SCOPE>] [-f <PATH>] [--from-stdin] [--restart] [--secret-scan <MODE>] [--no-guard]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10425,6 +10425,7 @@ Push KEY=VALUE pairs to sealed secrets (use --restart to apply now)
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
 | `--secret-scan <MODE>` | scan pairs before pushing | one of `on` · `off` · `strict` · `source-tree` |
+| `--no-guard` | do not open a config guard for these changes (ADR-1391) |  |
 
 Examples:
 
@@ -10449,6 +10450,45 @@ Examples:
 ```sh
 gregale env diff --app my-api
 gregale env diff --app my-api --json
+```
+
+### env history
+
+List config revisions (each env or secret change) and the config guard&#39;s verdicts (ADR-1391)
+
+`gregale env history [--app <slug>] [--scope <SCOPE>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
+| `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+| `--limit <N>` | revisions to show (1-100, default 20) |  |
+
+Examples:
+
+```sh
+gregale env history --app my-api
+gregale env history --app my-api --scope staging --json
+```
+
+### env rollback
+
+Restore a scope&#39;s variables to a config revision as one guarded change; secrets that differ are listed, not restored
+
+`gregale env rollback [--app <slug>] [--scope <SCOPE>] [--yes] [--no-guard] <revision>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked context) |  |
+| `--scope <SCOPE>` | env scope (defaults to linked project environment) |  |
+| `--yes` | skip the typed confirmation |  |
+| `--no-guard` | do not open a config guard for the rollback |  |
+
+Examples:
+
+```sh
+gregale env rollback 12 --app my-api
+gregale env rollback 12 --app my-api --yes
 ```
 
 
@@ -14857,7 +14897,7 @@ gregale secrets list --app my-api --older-than 90d
 
 Set a sealed secret; ephemeral values disable VM snapshots for the scope
 
-`gregale secrets set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--scope <SCOPE>] [--class <CLASS>] [--restart] [<KEY=VALUE>...]`
+`gregale secrets set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--scope <SCOPE>] [--class <CLASS>] [--restart] [--no-guard] [<KEY=VALUE>...]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14871,6 +14911,7 @@ Set a sealed secret; ephemeral values disable VM snapshots for the scope
 | `--scope <SCOPE>` | env scope to write (defaults to linked project environment) |  |
 | `--class <CLASS>` | retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class | one of `persistent` · `ephemeral` |
 | `--restart` | restart the app and apply updated secrets now |  |
+| `--no-guard` | do not open a config guard for this change (ADR-1391) |  |
 
 Examples:
 
@@ -14887,7 +14928,7 @@ gregale secrets set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemera
 
 Remove named sealed secrets (alias: rm)
 
-`gregale secrets unset [--dry-run] [--interactive] [--app <slug>] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [<KEY>...]`
+`gregale secrets unset [--dry-run] [--interactive] [--app <slug>] [--scope <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [--no-guard] [<KEY>...]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14898,6 +14939,7 @@ Remove named sealed secrets (alias: rm)
 | `--restart` | restart the app so running instances drop the removed secret now |  |
 | `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
 | `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements (requires --wait-for-ack) |  |
+| `--no-guard` | do not open a config guard for this change (ADR-1391) |  |
 
 Examples:
 

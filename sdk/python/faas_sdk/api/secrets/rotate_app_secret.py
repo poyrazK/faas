@@ -17,11 +17,14 @@ def _get_kwargs(
     key: str,
     *,
     body: RotateAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     params: dict[str, Any] = {}
+
+    params["guard"] = guard
 
     params["scope"] = scope
 
@@ -105,6 +108,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RotateAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[Problem | RotateAppSecretResponse]:
     """Re-seal a sealed secret under the current host identity.
@@ -119,6 +123,7 @@ def sync_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
             wire
@@ -139,6 +144,7 @@ def sync_detailed(
         slug=slug,
         key=key,
         body=body,
+        guard=guard,
         scope=scope,
     )
 
@@ -155,6 +161,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: RotateAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Problem | RotateAppSecretResponse | None:
     """Re-seal a sealed secret under the current host identity.
@@ -169,6 +176,7 @@ def sync(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
             wire
@@ -190,6 +198,7 @@ def sync(
         key=key,
         client=client,
         body=body,
+        guard=guard,
         scope=scope,
     ).parsed
 
@@ -200,6 +209,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: RotateAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[Problem | RotateAppSecretResponse]:
     """Re-seal a sealed secret under the current host identity.
@@ -214,6 +224,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
             wire
@@ -234,6 +245,7 @@ async def asyncio_detailed(
         slug=slug,
         key=key,
         body=body,
+        guard=guard,
         scope=scope,
     )
 
@@ -248,6 +260,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: RotateAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Problem | RotateAppSecretResponse | None:
     """Re-seal a sealed secret under the current host identity.
@@ -262,6 +275,7 @@ async def asyncio(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
             wire
@@ -284,6 +298,7 @@ async def asyncio(
             key=key,
             client=client,
             body=body,
+            guard=guard,
             scope=scope,
         )
     ).parsed

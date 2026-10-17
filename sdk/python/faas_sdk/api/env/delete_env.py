@@ -14,10 +14,13 @@ def _get_kwargs(
     slug: str,
     key: str,
     *,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    params["guard"] = guard
 
     params["scope"] = scope
 
@@ -80,6 +83,7 @@ def sync_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Delete an env var.
@@ -95,6 +99,7 @@ def sync_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
 
     Raises:
@@ -108,6 +113,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         key=key,
+        guard=guard,
         scope=scope,
     )
 
@@ -123,6 +129,7 @@ def sync(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Delete an env var.
@@ -138,6 +145,7 @@ def sync(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
 
     Raises:
@@ -152,6 +160,7 @@ def sync(
         slug=slug,
         key=key,
         client=client,
+        guard=guard,
         scope=scope,
     ).parsed
 
@@ -161,6 +170,7 @@ async def asyncio_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Delete an env var.
@@ -176,6 +186,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
 
     Raises:
@@ -189,6 +200,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         key=key,
+        guard=guard,
         scope=scope,
     )
 
@@ -202,6 +214,7 @@ async def asyncio(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Delete an env var.
@@ -217,6 +230,7 @@ async def asyncio(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
 
     Raises:
@@ -232,6 +246,7 @@ async def asyncio(
             slug=slug,
             key=key,
             client=client,
+            guard=guard,
             scope=scope,
         )
     ).parsed

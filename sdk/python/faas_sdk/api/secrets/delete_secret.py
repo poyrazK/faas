@@ -16,6 +16,7 @@ def _get_kwargs(
     slug: str,
     key: str,
     *,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
     prefer: DeleteSecretPrefer | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -24,6 +25,8 @@ def _get_kwargs(
         headers["Prefer"] = str(prefer)
 
     params: dict[str, Any] = {}
+
+    params["guard"] = guard
 
     params["scope"] = scope
 
@@ -96,6 +99,7 @@ def sync_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
     prefer: DeleteSecretPrefer | Unset = UNSET,
 ) -> Response[Any | AppSecretRevocationResponse | Problem]:
@@ -107,6 +111,7 @@ def sync_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         prefer (DeleteSecretPrefer | Unset):
 
@@ -121,6 +126,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         key=key,
+        guard=guard,
         scope=scope,
         prefer=prefer,
     )
@@ -137,6 +143,7 @@ def sync(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
     prefer: DeleteSecretPrefer | Unset = UNSET,
 ) -> Any | AppSecretRevocationResponse | Problem | None:
@@ -148,6 +155,7 @@ def sync(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         prefer (DeleteSecretPrefer | Unset):
 
@@ -163,6 +171,7 @@ def sync(
         slug=slug,
         key=key,
         client=client,
+        guard=guard,
         scope=scope,
         prefer=prefer,
     ).parsed
@@ -173,6 +182,7 @@ async def asyncio_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
     prefer: DeleteSecretPrefer | Unset = UNSET,
 ) -> Response[Any | AppSecretRevocationResponse | Problem]:
@@ -184,6 +194,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         prefer (DeleteSecretPrefer | Unset):
 
@@ -198,6 +209,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         key=key,
+        guard=guard,
         scope=scope,
         prefer=prefer,
     )
@@ -212,6 +224,7 @@ async def asyncio(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
     prefer: DeleteSecretPrefer | Unset = UNSET,
 ) -> Any | AppSecretRevocationResponse | Problem | None:
@@ -223,6 +236,7 @@ async def asyncio(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         prefer (DeleteSecretPrefer | Unset):
 
@@ -239,6 +253,7 @@ async def asyncio(
             slug=slug,
             key=key,
             client=client,
+            guard=guard,
             scope=scope,
             prefer=prefer,
         )

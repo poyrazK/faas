@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -129,15 +128,21 @@ func envRollback(args []string) int {
 	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
 	yes := fs.Bool("yes", false, "skip the typed confirmation")
 	noGuard := fs.Bool("no-guard", false, "do not open a config guard for the rollback")
+	// The revision may come before the flags (`env rollback 12 --yes`).
+	var positional []string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		positional, args = args[:1], args[1:]
+	}
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	positional = append(positional, fs.Args()...)
 	usage := "usage: gregale env rollback <revision> [--app <slug>] [--scope <name>] [--yes] [--no-guard]"
-	if fs.NArg() != 1 {
+	if len(positional) != 1 {
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
 	}
-	revision, err := strconv.ParseInt(fs.Arg(0), 10, 64)
+	revision, err := strconv.ParseInt(positional[0], 10, 64)
 	if err != nil || revision < 1 {
 		return printErr("Invalid revision", errors.New("revision must be a positive integer from `gregale env history`"))
 	}
@@ -191,15 +196,6 @@ func printConfigRollback(out api.ConfigRollbackResponse) {
 		fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `gregale secrets set`.\n",
 			s.Key, out.RestoredRevision, s.TargetVersion, s.CurrentVersion)
 	}
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // printConfigGuardNotice tells the person whether a config guard is

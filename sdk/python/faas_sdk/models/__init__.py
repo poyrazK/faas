@@ -588,6 +588,20 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .config_change_receipt import ConfigChangeReceipt
+from .config_guard import ConfigGuard
+from .config_guard_decision import ConfigGuardDecision
+from .config_guard_status import ConfigGuardStatus
+from .config_guard_summary import ConfigGuardSummary
+from .config_guard_summary_status import ConfigGuardSummaryStatus
+from .config_revision import ConfigRevision
+from .config_revision_detail import ConfigRevisionDetail
+from .config_revision_detail_secret_versions import ConfigRevisionDetailSecretVersions
+from .config_revision_detail_variables import ConfigRevisionDetailVariables
+from .config_revision_source import ConfigRevisionSource
+from .config_rollback_request import ConfigRollbackRequest
+from .config_rollback_response import ConfigRollbackResponse
+from .config_secret_difference import ConfigSecretDifference
 from .configure_managed_realtime_push_provider_provider import ConfigureManagedRealtimePushProviderProvider
 from .configure_managed_realtime_push_provider_response_200 import ConfigureManagedRealtimePushProviderResponse200
 from .configure_managed_realtime_push_provider_response_200_provider import (
@@ -1875,6 +1889,7 @@ from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
+from .list_config_revisions_response import ListConfigRevisionsResponse
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
@@ -5378,6 +5393,20 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ConfigChangeReceipt",
+    "ConfigGuard",
+    "ConfigGuardDecision",
+    "ConfigGuardStatus",
+    "ConfigGuardSummary",
+    "ConfigGuardSummaryStatus",
+    "ConfigRevision",
+    "ConfigRevisionDetail",
+    "ConfigRevisionDetailSecretVersions",
+    "ConfigRevisionDetailVariables",
+    "ConfigRevisionSource",
+    "ConfigRollbackRequest",
+    "ConfigRollbackResponse",
+    "ConfigSecretDifference",
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
@@ -6609,6 +6638,7 @@ __all__ = (
     "ListAutomationsResponse",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
+    "ListConfigRevisionsResponse",
     "ListCronRunsResponse",
     "ListDelayedTasksResponse",
     "ListDeploymentAuditResponse",

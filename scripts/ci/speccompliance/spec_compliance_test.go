@@ -87,6 +87,7 @@ const (
 	imageRunsFile                    = "image_runs.go"       // ADR-1161 — docker-run-shaped image run DTOs
 	rolloutDecisionFile              = "rollout_decision.go" // ADR-1354 explained rollout decisions
 	releaseRollbackFile              = "release_rollback.go" // ADR-1355 releases that change the database
+	configRevisionsFile              = "config_revisions.go" // ADR-1391 guarded, reversible config changes
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -1308,6 +1309,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
+		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
