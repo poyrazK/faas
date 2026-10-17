@@ -485,6 +485,16 @@ work; flags stay off until an internal pilot is explicitly enabled.
 
 ## Validation
 
+The environment-clone schema inventory classifies internal mail domains,
+signing/encryption key state, producer access and delivery controls as platform
+configuration. Delivery queues, leases, observations, billing notice receipts,
+suppression/reputation history and recovery state remain operational; login
+tokens and account lifecycle revisions remain account identity. None become
+customer environment configuration or cloneable delivery authority. Registering
+these passive schema additions keeps existing clone checks working with mail
+disabled, without exposing internal mail resources in customer clone errors.
+A migrated PostgreSQL handler test pins that default-off boundary.
+
 Tests exercise disabled startup and routes, service credentials, DNS proof,
 encrypted resource boundaries, DKIM verification, concurrent durable
 idempotency, namespace isolation, quota admission, lease recovery, suppressions,
