@@ -22,7 +22,15 @@ const httpFixtureCSV = "id,count\nalice,1\n"
 
 type httpFixtureInput struct {
 	Mode string `json:"mode"`
+	// ADR-1193: a webhook-submitted Operation receives the provider event
+	// envelope instead; it completes without a relay directive.
+	Webhook json.RawMessage `json:"webhook,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
+
+// httpFixturePaths are the definitions' routes: the base export, one with
+// ADR-1196 limits and one bound to an inbound webhook (ADR-1287 Stage 1).
+var httpFixturePaths = map[string]bool{"/exports": true, "/exports/bounded": true, "/exports/webhook": true}
 
 type httpFixtureServer struct {
 	client  func(context.Context) (*api.Client, error)
@@ -50,7 +58,7 @@ func (f httpFixtureServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 		return
 	}
-	if r.Method != http.MethodPost || r.URL.Path != "/exports" {
+	if r.Method != http.MethodPost || !httpFixturePaths[r.URL.Path] {
 		http.NotFound(w, r)
 		return
 	}
@@ -65,6 +73,9 @@ func (f httpFixtureServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := decoder.Decode(&input); err != nil {
 		http.Error(w, "invalid fixture input", http.StatusBadRequest)
 		return
+	}
+	if input.Webhook != nil {
+		input.Mode = "complete"
 	}
 	output, err := f.run(r.Context(), id, proof, input)
 	if err != nil {

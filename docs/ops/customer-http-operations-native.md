@@ -23,6 +23,8 @@ PostgreSQL tests, and runs preflight/final native leak checks. The lane has a
 | `TestCustomerHTTPOperationRecoveryMetal` | Real guest process death after private retention and before the reply records `requires_reconciliation` with `execution_outcome_unknown`. Killing and restarting apid and schedd preserves the ledger, invocation and retained copy. A newer default deployment and closed new-work admission do not change the pinned code or block evidenced recovery. Replaying the same recovery ID returns the same decision. Generation 2 runs a fresh invocation on the original deployment and publishes its own file; the uncertain generation-1 copy is never published. Old and generation-2 claims are fenced afterwards. |
 | `TestCustomerHTTPOperationCancellationMetal` | Cancellation while schedd is stopped dispatches no business work. Cancellation while the handler holds a private file is observed through claim control; the uncertain outcome requires reconciliation, publishes no result and fences the old claim. |
 | `TestCustomerHTTPOperationOwnerRevocationMetal` | Suspending the customer while the handler holds a private file immediately denies customer reads, new submissions and downloads. The admitted handler is not interrupted: its settled outcome and bytes remain available to the account. |
+| `TestCustomerHTTPOperationWebhookAdmissionMetal` | A Stripe-signed provider event on an operation-bound endpoint (ADR-1193) admits one Operation for the bound customer. The real guest receives the webhook envelope as input and the Operation succeeds with its typed result. The provider's retry returns the original receipt as a duplicate and never re-enters the handler. |
+| `TestCustomerHTTPOperationDeadlineCutMetal` | A definition with `deadline_seconds: 20` (ADR-1196) cuts the real guest's running attempt at the deadline; the dispatched attempt needs reconciliation. A `safe_to_retry` recovery is refused with 409, and recording an outcome still works. The ADR-1285 telemetry store query and schedd collector read the reconciliation from the real run. |
 
 HTTP and native workflow semantics differ deliberately in two places. A
 generation-2 HTTP recovery is a new invocation, so its file receipt is fresh and
@@ -31,7 +33,8 @@ Customer suspension revokes HTTP customer access but does not interrupt an
 admitted HTTP handler, while it interrupts native workflow attempts.
 
 The full native suite also selects these scenarios in its wake phase. Every
-top-level test in the scenario file is required by the dedicated lane; a skip,
+top-level test in the `customer_http_operations*_metal_test.go` files is
+required by the dedicated lane (ADR-1287 Stage 1); a skip,
 failure or absent PASS receipt fails its runner and final CI verdict. Portable
 script tests verify that the selection grows when a scenario is added.
 
@@ -54,7 +57,11 @@ arbitrary handler is safe to repeat.
 
 - Plan deadline expiry. The admitted HTTP deadline is the plan's async
   invocation deadline (one hour on Hobby, six on Pro); the portable
-  `TestPgOperationExpiredDeadlineFencesRuntime` covers its fence.
+  `TestPgOperationExpiredDeadlineFencesRuntime` covers its fence. A definition
+  deadline is covered by `TestCustomerHTTPOperationDeadlineCutMetal`.
+- The schedd and apid `/metrics` listeners: the harness binds them to a random
+  port, so the deadline scenario reads the same Postgres snapshot and collector
+  that schedd serves rather than scraping it.
 - `transaction_receipt: postgres_v1` replay through a guest database
   connection. Definitions that use receipts still need
   `make test-customer-operation-sdk` and a separate native receipt scenario.

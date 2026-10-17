@@ -9,8 +9,9 @@
 
 ## Context
 
-Customer Operations admission is closed. ADR-666's preview policy can admit
-named cohorts for at most an hour, and each execution kind (`http`, `workflow`,
+Customer Operations admission is closed. ADR-666's preview policy admits
+named cohorts for a bounded window (30 days since the ADR-521 pilot amendment),
+and each execution kind (`http`, `workflow`,
 `job`) needs native KVM qualification receipts before a cohort may include it.
 No production cohort has ever run, and nothing says what evidence ends the
 preview or how admission opens beyond named cohorts: the policy deliberately
@@ -38,8 +39,10 @@ not met keeps the earlier stage; nothing advances by default.
 - An admission rollback drill: close the policy, verify closure on every serving
   node, and confirm accepted work continues.
 
-The cohort is one app, at most ten named customers, renewed hourly by the
-operator as ADR-666 requires.
+The cohort is one app and at most ten named customers, in a policy window of
+at most 30 days that the operator renews. The native scenarios are the
+`customer-http-operations-only` lane, which selects every
+`customer_http_operations*_metal_test.go` scenario.
 
 **Stage 2 — native kinds.** `workflow` and `job` join a cohort only with their
 own Stage 1 receipts. A workflow receipt adds an approval wait, a signal by

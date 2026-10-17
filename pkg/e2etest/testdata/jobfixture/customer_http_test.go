@@ -188,3 +188,40 @@ func TestCustomerHTTPFixtureRejectsUntrustedClaims(t *testing.T) {
 		})
 	}
 }
+
+// ADR-1287 Stage 1: a webhook-submitted Operation carries the provider
+// envelope and completes without a relay directive; the bounded definition
+// shares the handler; any other path is not an operation route.
+func TestCustomerHTTPFixtureRoutesWebhookAndBoundedDefinitions(t *testing.T) {
+	state := &httpFixtureAPI{directive: http.StatusAccepted} // the relay would hold forever
+	server := newHTTPFixtureTest(t, state)
+	envelope := `{"webhook":{"endpoint":"stripe","provider":"stripe","event_id":"evt_1","event_type":"invoice.paid"},"payload":{"id":"evt_1"}}`
+	post := func(path, body string) *http.Response {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set(api.OperationIDHeader, httpTestID)
+		request.Header.Set(api.InvocationIDHeader, httpTestInvocation)
+		request.Header.Set(api.OperationAttemptHeader, "1")
+		request.Header.Set(api.OperationCapabilityHeader, httpTestCapability)
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = response.Body.Close() })
+		return response
+	}
+	response := post("/exports/webhook", envelope)
+	var output map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&output); err != nil || response.StatusCode != http.StatusOK || output["rows"] != float64(1) {
+		t.Fatalf("webhook export HTTP %d %v %v", response.StatusCode, output, err)
+	}
+	if post("/exports/other", `{"mode":"complete"}`).StatusCode != http.StatusNotFound {
+		t.Fatal("an undeclared path reached the export handler")
+	}
+	if post("/exports/bounded", `{"mode":"complete","extra":1}`).StatusCode != http.StatusBadRequest {
+		t.Fatal("the bounded route accepted unknown input fields")
+	}
+}

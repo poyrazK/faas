@@ -166,7 +166,8 @@ native_e2e_lane_tests customer-workflow-operations-only "${customer_workflow_pro
 
 customer_http_tests="$(native_e2e_lane_tests customer-http-operations-only "${repo_root}")"
 for required in TestCustomerHTTPOperationResultMetal TestCustomerHTTPOperationRecoveryMetal \
-  TestCustomerHTTPOperationCancellationMetal TestCustomerHTTPOperationOwnerRevocationMetal; do
+  TestCustomerHTTPOperationCancellationMetal TestCustomerHTTPOperationOwnerRevocationMetal \
+  TestCustomerHTTPOperationWebhookAdmissionMetal TestCustomerHTTPOperationDeadlineCutMetal; do
   printf '%s\n' "${customer_http_tests}" | grep -qx "${required}" || fail "customer HTTP lane lost ${required}"
 done
 native_e2e_is_lane customer-http-operations-only || fail "customer HTTP selector is not a lane"
@@ -177,6 +178,9 @@ mkdir -p "${customer_http_probe}/cmd/e2e"
 cp "${repo_root}/cmd/e2e/customer_http_operations_metal_test.go" "${customer_http_probe}/cmd/e2e/"
 printf '\nfunc TestCustomerHTTPAddedProbe(t *testing.T) {}\n' >> "${customer_http_probe}/cmd/e2e/customer_http_operations_metal_test.go"
 native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPAddedProbe || fail "new customer HTTP scenario was omitted"
+# ADR-1287: a scenario in a sibling customer_http_operations*_metal_test.go file joins the lane.
+printf 'package e2e\n\nfunc TestCustomerHTTPSiblingProbe(t *testing.T) {}\n' > "${customer_http_probe}/cmd/e2e/customer_http_operations_probe_metal_test.go"
+native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPSiblingProbe || fail "a sibling customer HTTP scenario file was omitted"
 
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&

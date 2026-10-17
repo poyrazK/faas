@@ -57,6 +57,7 @@ type customerHTTPFixture struct {
 	app                            state.App
 	tenantID, policyPath, imageRef string
 	definition                     api.OperationDefinitionResponse
+	deployment                     api.DeploymentResponse
 	verifier                       *workloadidentity.Verifier
 	relay                          *customerHTTPRelay
 	webhookReady, webhookInvalid   atomic.Bool
@@ -122,6 +123,7 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	mustCustomerHTTP(t, f.store.MarkRuntimeConfigApplied(t.Context(), runtime.Key, runtime.Scope, "", runtime.Version, json.RawMessage(`true`), ""))
 	mustCustomerHTTP(t, f.h.RestartAPID())
 	dep := f.deploy(t, "original")
+	f.deployment = dep
 	sealed, err := secretbox.SealBytes(ageKey.Recipient(), "APP_WEBHOOK", []byte(customerHTTPWebhookSecret), api.AppWebhookSecretMaxBytes)
 	mustCustomerHTTP(t, err)
 	hook, err := f.store.CreateAppWebhook(t.Context(), state.AppWebhook{Scope: state.AppWebhookScopeApp, AccountID: f.account.ID, AppID: f.app.ID, TargetURL: receiver.URL, SecretSealed: sealed, EventFilter: []string{string(state.AppWebhookEventOperationFinished)}, DeliveryFormat: state.AppWebhookDeliveryFormatCloudEvents, Enabled: true})
