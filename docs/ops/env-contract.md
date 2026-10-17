@@ -255,6 +255,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FRONTEND_HOSTING_RETENTION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
 | `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off |
+| `FAAS_FUNCTION_CONCURRENCY` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342) |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_NODE22` | imaged | `unit` | yes |  | `path-exists` |  |

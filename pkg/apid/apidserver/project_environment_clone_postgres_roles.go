@@ -118,7 +118,7 @@ func (s *server) projectEnvironmentClonePostgresRolePlan(ctx context.Context, l 
 	if l.Operation.Status != state.CloneOperationCapturing || s.managedPostgres == nil || setSecretRecipient == nil {
 		return zero, receipt, target, managedpostgres.ErrUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return zero, receipt, target, managedpostgres.ErrUnavailable
 	}

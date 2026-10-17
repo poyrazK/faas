@@ -1372,6 +1372,9 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		}
 		out = append(out, triggerResponse(created))
 	}
+	if failed := s.applyBatchEventTriggers(r.Context(), acct, app, m.EventTriggers); failed != nil {
+		errs = append(errs, *failed)
+	}
 	writeJSON(w, http.StatusOK, batchCreateResponse{Created: out, Errors: errs})
 }
 
@@ -1555,7 +1558,7 @@ func triggerConfigIdentities() []*age.X25519Identity {
 func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
 	var recipient *age.X25519Recipient
 	if setSecretRecipient != nil {
-		recipient = setSecretRecipient()
+		recipient = hostSecretRecipient()
 	}
 	sealed, err := triggerconfig.Seal(kind, raw, recipient)
 	if err == nil {

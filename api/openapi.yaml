@@ -30426,9 +30426,12 @@ paths:
       operationId: batchCreateTriggers
       summary: Bulk-create triggers from a gregale.yaml fragment.
       description: |
-        Dashboard-only shortcut — fires a `triggers:` fragment at the
-        server, validates via the same path the CLI uses, and returns
-        per-row ids and any per-row RFC 7807 codes.
+        Fires a `triggers:` and `event_triggers:` fragment at the server,
+        validates via the same path the CLI uses, and returns per-row ids
+        and any per-row RFC 7807 codes. Event triggers for the target app
+        are applied the way a source deploy applies them (ADR-1342):
+        existing subscriptions are kept, and a failure is one `errors`
+        row after its changes are rolled back.
       requestBody:
         required: true
         content:
@@ -71020,6 +71023,7 @@ components:
         effective_limits: { $ref: '#/components/schemas/AppEffectiveLimits' }
         idle_timeout_s: { type: [integer, "null"] }
         request_timeout_s: { type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default." }
+        function_concurrency: { type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy." }
         min_instances: { type: integer }
         status:
           type: string
@@ -73372,6 +73376,11 @@ components:
           minimum: 0
           maximum: 30
           description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform ceiling is 30 seconds."
+        function_concurrency:
+          type: integer
+          minimum: 0
+          maximum: 80
+          description: "Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."
         # Service/lifecycle settings are persisted on the app and merged into
         # every deployment manifest. Omitted values use the mode/plan defaults.
         execution_mode:
@@ -74077,6 +74086,11 @@ components:
           minimum: 0
           maximum: 30
           description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
+        function_concurrency:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 80
+          description: "Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0
@@ -74829,6 +74843,11 @@ components:
           minimum: 0
           maximum: 30
           description: "Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."
+        function_concurrency:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 80
+          description: "Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker."
         # M-2 (ADR-137 §Decision 3): per-deployment replica
         # scaffold for execution_mode='service'. Foundation here;
         # full rolling-deploy / rollback / image-digest pinning

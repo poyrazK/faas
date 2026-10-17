@@ -341,7 +341,7 @@ func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 	if setSecretRecipient == nil {
 		return nil, errors.New("host age recipient not loaded")
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return nil, errors.New("host age recipient not loaded")
 	}
