@@ -93,7 +93,14 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   assert.equal(Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE usename=$1', [role])).rows[0].count), limits.pool, 'diagnostics did not open a SQL connection pool')
   await owner.query('COMMIT')
   for (const result of await Promise.all(writes)) { assert.equal(result.status, 201); await result.text() }
-  const recoveredResponse = await fetch(base + '/healthz'), recovered = await recoveredResponse.json()
+  // The engine retires waiters asynchronously after the writes finish. Wait
+  // for the observed queue to drain instead of sampling that transition once.
+  let recoveredResponse, recovered
+  await until(async () => {
+    recoveredResponse = await fetch(base + '/healthz')
+    recovered = await recoveredResponse.json()
+    return recoveredResponse.status === 200 && recovered.pool.state === 'observed' && recovered.pool.waiting === 0
+  })
   assert.equal(recoveredResponse.status, 200)
   assert.equal(recovered.pool.waiting, 0)
   assert.ok(recovered.pool.timeouts_total > 0)
