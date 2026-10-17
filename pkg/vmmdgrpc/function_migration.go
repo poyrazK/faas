@@ -56,6 +56,9 @@ func (s *Server) prepareFunctionSource(ctx context.Context, m *activeMigration, 
 		return false, runtimeadmission.ErrStale
 	}
 	source := state.FunctionMigrationSource{InstanceID: m.instanceID, LeaseToken: m.leaseToken, SourceNodeID: s.nodeID, SourceWakeID: ins.WakeID}
+	if admitted, ok := s.vmm.(admittedFunctionMigrationVMM); ok && admitted.FunctionMigrationSourceAdmissionRequired(m.instanceID) {
+		return s.prepareAdmittedFunctionSource(ctx, m, spec, source, admitted)
+	}
 	registrationAttempted := false
 	_, err = vmm.PrepareFunctionMigrationSource(ctx, functionSourceBinding(source), spec, func(ctx context.Context) error {
 		registrationAttempted = true
@@ -114,9 +117,15 @@ func (s *Server) cancelFunctionSource(ctx context.Context, m *activeMigration, s
 	if err := s.authorizeFunctionSourceRecovery(ctx, source); err != nil {
 		return nil, err
 	}
-	retired, err := vmm.RecoverFunctionMigrationSource(ctx, functionSourceBinding(source), func(ctx context.Context) error {
-		return s.authorizeFunctionSourceRecovery(ctx, source)
-	})
+	var retired bool
+	var err error
+	if source.CaptureToken != "" {
+		retired, err = s.recoverAdmittedFunctionSource(ctx, source)
+	} else {
+		retired, err = vmm.RecoverFunctionMigrationSource(ctx, functionSourceBinding(source), func(ctx context.Context) error {
+			return s.authorizeFunctionSourceRecovery(ctx, source)
+		})
+	}
 	if err != nil {
 		return nil, err
 	}

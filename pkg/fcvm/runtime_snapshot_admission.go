@@ -105,6 +105,9 @@ func (m *Manager) consumeSnapshotGrant(g runtimeadmission.SnapshotGrant, flight 
 }
 
 func (m *Manager) checkAdmittedSnapshotSpecLocked(instance string, spec SnapshotSpec, parent runtimeadmission.Receipt) error {
+	if spec.functionMigrationGrant != nil {
+		return m.checkFunctionMigrationSnapshotLocked(instance, spec, parent)
+	}
 	g := spec.admittedGrant
 	flight := m.runtimeAdmissionFlights[instance]
 	if g == nil || flight == nil {

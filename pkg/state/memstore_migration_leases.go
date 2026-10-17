@@ -84,6 +84,7 @@ func (m *MemStore) DeleteMigrationLease(_ context.Context, leaseToken string) er
 	}
 	lease := m.migrationLeases[leaseToken]
 	delete(m.functionMigrationSources, lease.InstanceID)
+	delete(m.functionMigrationPermissions, leaseToken)
 	delete(m.migrationLeases, leaseToken)
 	return nil
 }

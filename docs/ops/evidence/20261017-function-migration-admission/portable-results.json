@@ -1,0 +1,260 @@
+{
+  "base": "2a8c6551526399db76c5bde443ce75503bb2e5b9",
+  "go_version": "go1.26.9 linux/amd64",
+  "environment": {
+    "GOMAXPROCS": "2",
+    "GOGC": "50",
+    "GOMEMLIMIT": "5GiB",
+    "GOFLAGS": "-mod=readonly -p=1",
+    "umask": "022"
+  },
+  "checks": [
+    {
+      "label": "default",
+      "command": "go test -p 1 -race -json ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Resource|Execution)|PgStoreFunctionMigrationSource|(Mem|Pg)StandardSnapshot|ManagedSnapshot|MeasuredWarmSnapshot|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=4m",
+      "packages": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/state",
+          "Action": "pass",
+          "Elapsed": 85.84
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "Action": "pass",
+          "Elapsed": 1.197
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/sched",
+          "Action": "pass",
+          "Elapsed": 1.192
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/vmmdgrpc",
+          "Action": "pass",
+          "Elapsed": 1.203
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/runtimeadmission",
+          "Action": "pass",
+          "Elapsed": 1.041
+        }
+      ],
+      "tests": {
+        "pass": 308,
+        "skip": 31
+      },
+      "skips": [
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionExecutionPostgres",
+          "reason": "function_execution_postgres_test.go:32: requires the disposable TLS/SCRAM function SQL fixture"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRecoveryACKAndCanceledRPC/node22",
+          "reason": "function_migration_admission_test.go:92: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRecoveryACKAndCanceledRPC/node24",
+          "reason": "function_migration_admission_test.go:92: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/wake",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/lease",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/parent",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/incarnation",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/FC_version",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/different_capture",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/expiry",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/purpose",
+          "reason": "function_migration_admission_test.go:176: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/probe",
+          "reason": "function_migration_admission_test.go:193: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/permission_expiry",
+          "reason": "function_migration_admission_test.go:193: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/post-ACK_drift",
+          "reason": "function_migration_admission_test.go:193: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationAdmittedLostRegistrationACKHasNoEffects",
+          "reason": "function_migration_admission_test.go:224: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceRecoveryAdmission/node22",
+          "reason": "function_migration_test.go:51: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceRecoveryAdmission/node24",
+          "reason": "function_migration_test.go:51: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/lost-ack",
+          "reason": "function_migration_test.go:147: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/probe",
+          "reason": "function_migration_test.go:147: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/deadline",
+          "reason": "function_migration_test.go:147: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/resume",
+          "reason": "function_migration_test.go:147: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/checkpoint",
+          "reason": "function_migration_test.go:147: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/cleanup",
+          "reason": "function_migration_test.go:147: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceDestroyAndStaleBinding",
+          "reason": "function_migration_test.go:199: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceCancelledCheckpointRetires",
+          "reason": "function_migration_test.go:262: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceRegistrationLostAckDoesNotReplay",
+          "reason": "function_migration_test.go:304: qualified Node source only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmRecoveryAdmission",
+          "reason": "function_resources_warm_test.go:34: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmUncertainRecoveryRetires",
+          "reason": "function_resources_warm_test.go:128: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmMeasuredAuthority",
+          "reason": "function_resources_warm_test.go:202: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmRecoveryJoinedByDestroy",
+          "reason": "function_resources_warm_test.go:257: qualified Node build only"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/sched",
+          "test": "TestFunctionExecutionWarmRecoveryResealsParkAdmission",
+          "reason": "function_execution_park_test.go:77: qualified Node build only"
+        }
+      ],
+      "raw_log_sha256": "76a5591ee322c97c694cea19c69ffc92ba89644bcf7e9ee75642fffa6b4033e2"
+    },
+    {
+      "label": "qualification-build",
+      "command": "go test -p 1 -race -tags metal,function_background_native -json ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Resource|Execution)|ManagedSnapshot|MeasuredWarmSnapshot|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=4m",
+      "packages": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "Action": "pass",
+          "Elapsed": 11.378
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/sched",
+          "Action": "pass",
+          "Elapsed": 1.275
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/vmmdgrpc",
+          "Action": "pass",
+          "Elapsed": 1.195
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/runtimeadmission",
+          "Action": "pass",
+          "Elapsed": 1.039
+        }
+      ],
+      "tests": {
+        "skip": 1,
+        "pass": 135
+      },
+      "skips": [
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionExecutionPostgres",
+          "reason": "function_execution_postgres_test.go:32: requires the disposable TLS/SCRAM function SQL fixture"
+        }
+      ],
+      "raw_log_sha256": "d78fa069e5d52109d37234d8b37b1215a766a9b238dcd97c9ccf97acd8e7b621"
+    },
+    {
+      "label": "migration-replay",
+      "command": "FAAS_REPLAY_CHECK_VERSIONS=20261017122213034 go test -p 1 -race -json ./migrations -run '^TestNewMigrationsAreReplaySafe$' -count=1 -timeout=3m",
+      "packages": [
+        {
+          "Package": "github.com/onebox-faas/faas/migrations",
+          "Action": "pass",
+          "Elapsed": 10.723
+        }
+      ],
+      "tests": {
+        "pass": 1
+      },
+      "skips": [],
+      "raw_log_sha256": "b68358ec75413e16a2c135888407a33b713536725f4a0323fd332a4bcc9e0ab9"
+    }
+  ]
+}

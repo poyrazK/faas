@@ -1,0 +1,7 @@
+{
+  "task_label": "faas.task=function-migration-admission",
+  "task_container_remaining": false,
+  "task_volume_remaining": false,
+  "private_credential_directory_remaining": false,
+  "native_test_executable_remaining": false
+}

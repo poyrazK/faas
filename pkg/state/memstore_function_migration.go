@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 var _ FunctionMigrationSourceStore = (*MemStore)(nil)
@@ -20,6 +22,10 @@ func (m *MemStore) RegisterFunctionMigrationSource(_ context.Context, source Fun
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.registerFunctionMigrationSourceLocked(source, memory, vmstate)
+}
+
+func (m *MemStore) registerFunctionMigrationSourceLocked(source FunctionMigrationSource, memory, vmstate string) error {
 	lease, ok := m.migrationLeases[source.LeaseToken]
 	ins, exists := m.instances[source.InstanceID]
 	if !ok || !exists || lease.InstanceID != source.InstanceID || lease.SourceNodeID != source.SourceNodeID ||
@@ -90,7 +96,7 @@ func (m *MemStore) ListFunctionMigrationSourceInstances(_ context.Context, app s
 	return result, nil
 }
 
-func (m *MemStore) markFunctionMigrationSourceLocked(ins Instance, token string) error {
+func (m *MemStore) markFunctionMigrationSourceLocked(ctx context.Context, ins Instance, token string) error {
 	source, ok := m.functionMigrationSources[ins.ID]
 	if !ok && !strings.HasPrefix(token, FunctionMigrationTokenPrefix) {
 		return nil
@@ -99,6 +105,19 @@ func (m *MemStore) markFunctionMigrationSourceLocked(ins Instance, token string)
 	if !ok || !held || source.LeaseToken != token || source.Phase != FunctionMigrationPrepared || source.SourceWakeID != ins.WakeID ||
 		source.SourceNodeID != ins.NodeID || lease.Pending || !lease.LeaseExpiresAt.After(time.Now()) {
 		return ErrConflict
+	}
+	if source.CaptureToken != "" {
+		permission, admitted := m.functionMigrationPermissions[token]
+		if !admitted || permission.capture.Validate(time.Now()) != nil {
+			return ErrConflict
+		}
+		_, parent, deadline, err := m.lockStandardSnapshotCaptureLocked(ctx, ins.ID, string(StateRunning))
+		if err != nil {
+			return err
+		}
+		if err := checkFunctionMigrationPermission(permission.capture, parent, ins.StartedAt.UnixNano(), lease, time.Now(), deadline); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -158,6 +177,15 @@ func (m *MemStore) CompleteFunctionMigrationSource(ctx context.Context, id, toke
 	}
 	if source.Phase != FunctionMigrationRecovering || ins.State != string(StateMigrating) || ins.LeaseToken != FunctionMigrationRollbackToken(token) {
 		return ErrConflict
+	}
+	if !retired && source.CaptureToken != "" {
+		permission := m.functionMigrationPermissions[token].recovery
+		if permission == nil || permission.Purpose != runtimeadmission.FunctionMigrationRecover {
+			return ErrConflict
+		}
+		if err := m.checkFunctionMigrationGrantLocked(ctx, permission.Clone(), true); err != nil {
+			return err
+		}
 	}
 	if !retired {
 		if err := m.checkNodeReservationLocked(source.SourceNodeID, string(StateRunning), ins.RAMMB); err != nil {

@@ -2,6 +2,9 @@
 
 package e2e_test
 
+// adr: 1348
+// adr: 1351
+
 import (
 	"context"
 	"encoding/json"
@@ -31,11 +34,11 @@ import (
 func TestFunctionResourcesPostgresMetal(t *testing.T) {
 	requireFunctionBackgroundNative(t)
 	for _, runtime := range []string{"node22", "node24"} {
-		t.Run(runtime, func(t *testing.T) { runFunctionResourcesPostgresMetal(t, runtime) })
+		t.Run(runtime, func(t *testing.T) { runFunctionResourcesPostgresMetal(t, runtime, "") })
 	}
 }
 
-func runFunctionResourcesPostgresMetal(t *testing.T, runtime string) {
+func runFunctionResourcesPostgresMetal(t *testing.T, runtime, migrationScenario string) {
 	runner := os.Getenv("FAAS_E2E_FUNCTION_RUNNER_" + strings.ToUpper(runtime))
 	if info, err := os.Stat(runner); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
 		t.Fatal("requires the current qualified runner for " + runtime)
@@ -103,6 +106,9 @@ func runFunctionResourcesPostgresMetal(t *testing.T, runtime string) {
 		if _, status := doReq(t, h, key, http.MethodPut, "/v1/apps/"+slug+"/secrets/"+name, api.PutAppSecretRequest{Value: value}); status != http.StatusOK {
 			t.Fatal("seal native SQL fixture inputs")
 		}
+	}
+	if migrationScenario != "" {
+		enrollNativeSQLMigration(t, store, appID, ip.String())
 	}
 	files := functionsql.Files(t)
 	files["sql-ca.pem"] = string(ca)
@@ -177,6 +183,10 @@ func runFunctionResourcesPostgresMetal(t *testing.T, runtime string) {
 	}
 	backgroundNativeWait(t, ctx, func() bool { return len(sql.Rows(ctx, t)) == 3 && nativeSQLIdle(ctx, vmm, ins.ID) })
 	backgroundNativeWait(t, ctx, func() bool { all, _ := sql.Connections(ctx, t); return all == 8 })
+	if migrationScenario != "" {
+		runNativeSQLMigration(t, ctx, store, vmm, sql, proxy, control, ins, baseline, get, migrationScenario)
+		return
+	}
 	// Capture a warm artifact while retaining the original physical VM. The
 	// independent peer holds both ends of the lifecycle; SQL sessions must
 	// vanish before capture and return before the final recovery ACK.

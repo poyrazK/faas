@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -29,8 +30,12 @@ func validateFunctionMigrationSource(source FunctionMigrationSource) error {
 }
 
 func functionMigrationSource(row sqlc.FunctionMigrationSource) FunctionMigrationSource {
-	return FunctionMigrationSource{InstanceID: pgUUIDString(row.InstanceID), LeaseToken: row.LeaseToken,
+	source := FunctionMigrationSource{InstanceID: pgUUIDString(row.InstanceID), LeaseToken: row.LeaseToken,
 		SourceNodeID: row.SourceNodeID, SourceWakeID: pgUUIDString(row.SourceWakeID), Phase: row.Phase}
+	if row.CaptureToken.Valid {
+		source.CaptureToken = pgUUIDString(row.CaptureToken)
+	}
+	return source
 }
 
 func (s *PgStore) RegisterFunctionMigrationSource(ctx context.Context, source FunctionMigrationSource, memory, vmstate string) error {
@@ -122,6 +127,20 @@ func (s *PgStore) markFunctionMigrationSource(ctx context.Context, id, node, tok
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if current.CaptureToken != "" {
+		locked, err := lockFunctionMigrationAdmission(ctx, tx, id, token, string(StateRunning))
+		if err != nil {
+			return true, err
+		}
+		grant, err := decodeFunctionMigrationGrant(locked.row.CaptureGrant, runtimeadmission.FunctionMigrationCapture)
+		if err != nil {
+			return true, err
+		}
+		if err := checkFunctionMigrationPermission(grant, locked.input.Parent, locked.input.SourceStartedAtUnixNano, locked.lease,
+			time.Unix(0, locked.input.ClockUnixNano), locked.input.artifactDeadline()); err != nil {
+			return true, err
+		}
+	}
 	row, err := q.LockInstanceMigrationCommit(ctx, tx, mustPgUUID(id))
 	if err != nil {
 		return true, mapErr(err)
@@ -137,6 +156,12 @@ func (s *PgStore) markFunctionMigrationSource(ctx context.Context, id, node, tok
 	if row.State != string(StateRunning) || row.LeaseToken.String != "" || source.Phase != FunctionMigrationPrepared ||
 		pgUUIDString(row.NodeID) != node || source.SourceNodeID != node || row.WakeID != source.SourceWakeID || lease.Pending || !lease.LeaseExpiresAt.Time.After(time.Now()) {
 		return true, ErrConflict
+	}
+	if source.CaptureToken.Valid {
+		grant, err := decodeFunctionMigrationGrant(source.CaptureGrant, runtimeadmission.FunctionMigrationCapture)
+		if err != nil || grant.Validate(time.Now()) != nil {
+			return true, ErrConflict
+		}
 	}
 	count, err := q.FenceFunctionMigrationSource(ctx, tx, sqlc.FenceFunctionMigrationSourceParams{
 		InstanceID: row.ID, SourceNodeID: node, SourceWakeID: row.WakeID, ExpectedState: row.State, ExpectedToken: "", RollbackToken: token,
@@ -218,6 +243,21 @@ func (s *PgStore) CompleteFunctionMigrationSource(ctx context.Context, id, token
 		if err := q.LockFunctionMigrationSourceNode(ctx, tx, sqlc.LockFunctionMigrationSourceNodeParams{LockClass: nodeReservationLockClass, NodeID: snapshot.SourceNodeID}); err != nil {
 			return err
 		}
+		if snapshot.CaptureToken != "" && snapshot.Phase == FunctionMigrationRecovering {
+			// Lock the current native inputs before the instance, lease and
+			// source. Keep these locks through RUNNING publication.
+			locked, err := lockFunctionMigrationAdmission(ctx, tx, id, token, string(StateMigrating))
+			if err != nil {
+				return err
+			}
+			grant, err := decodeFunctionMigrationGrant(locked.row.RecoveryGrant, runtimeadmission.FunctionMigrationRecover)
+			if err != nil {
+				return err
+			}
+			if err := checkLockedFunctionMigrationGrant(locked, grant, true); err != nil {
+				return err
+			}
+		}
 	}
 	row, err := q.LockInstanceMigrationCommit(ctx, tx, mustPgUUID(id))
 	if err != nil {
@@ -237,6 +277,12 @@ func (s *PgStore) CompleteFunctionMigrationSource(ctx context.Context, id, token
 	}
 	if receipt.Phase != FunctionMigrationRecovering {
 		return ErrConflict
+	}
+	if !retired && source.CaptureToken != "" {
+		grant, err := decodeFunctionMigrationGrant(receipt.RecoveryGrant, runtimeadmission.FunctionMigrationRecover)
+		if err != nil || grant.Validate(time.Now()) != nil {
+			return ErrConflict
+		}
 	}
 	if !retired {
 		if err := reserveNodeForMigration(ctx, tx, id, source.SourceNodeID); err != nil {

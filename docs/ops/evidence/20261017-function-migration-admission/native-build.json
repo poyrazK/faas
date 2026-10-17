@@ -1,0 +1,11 @@
+{
+  "command": "go test -p 1 -race -tags metal,function_background_native -c -o /tmp/function-migration-admission-native.test ./cmd/e2e",
+  "sha256": "a5f447bb11476b54bb756386656ee2fe8f217c5a389c32024786e9ebe3e327cb",
+  "bytes": 240387954,
+  "symbols": [
+    " 6744760 T github.com/onebox-faas/faas/cmd/e2e_test.TestFunctionMigrationAdmissionPostgresMetal",
+    " 6744b60 T github.com/onebox-faas/faas/cmd/e2e_test.TestFunctionMigrationAdmissionPostgresMetal.func1"
+  ],
+  "executed": false,
+  "note": "Compilation only; native KVM qualification remains unavailable."
+}

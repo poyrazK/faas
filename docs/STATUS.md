@@ -7,6 +7,20 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Measured Node function migration source permissions — 2026-10-17
+
+[ADR-1351](adr/1351-function-migration-admission.md) adds separate capture and
+recovery permissions to the qualification-only source path. Each permission
+binds the measured parent, original wake, source lease and capture files, and
+uses the existing current-input and artifact approval fences. Recovery permission
+is issued after schedd fences ownership; lease expiry cannot renew capture
+authority. Duplicate RPCs preserve a valid in-flight permission and reuse the
+single physical recovery result. RUNNING publication checks current recovery
+permission again. The Node 22/24 native SQL matrix now includes cancellation,
+expiry, failed probes and held recovery ACK timeout. Native execution is pending;
+production activation and destination adoption remain gated. See the
+[evidence](ops/evidence/20261017-function-migration-admission/REPORT.md).
+
 ## Node function migration source rollback — 2026-10-17
 
 [ADR-1350](adr/1350-function-migration-source-rollback.md) adds a qualification-only
@@ -14,8 +28,8 @@ source path: mandatory all-interpreter checkpoint drainage, paused publication,
 a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
 Cancellation and expired leases retain source capacity until recovery or physical
 retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
-vmmd never writes the instance ownership row. Destination adoption and measured
-migration capture remain refused. Native KVM/vsock, restart/private-environment
+vmmd never writes the instance ownership row. ADR-1351 above adds measured source
+permission; destination adoption remains refused. Native KVM/vsock, restart/private-environment
 acceptance and production activation remain pending. See the
 [evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
 

@@ -68692,3 +68692,26 @@ CREATE TABLE public.function_migration_sources (
     source_wake_id uuid NOT NULL,
     phase text NOT NULL CHECK (phase IN ('preparing', 'prepared', 'recovering', 'recovered', 'retired'))
 );
+
+ALTER TABLE function_migration_sources
+ ADD COLUMN IF NOT EXISTS capture_token uuid UNIQUE,
+ ADD COLUMN IF NOT EXISTS capture_grant jsonb,
+ ADD COLUMN IF NOT EXISTS recovery_grant jsonb;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='function_migration_sources'::regclass AND conname='function_migration_permission_pair') THEN
+  ALTER TABLE function_migration_sources ADD CONSTRAINT function_migration_permission_pair CHECK ((
+   (capture_token IS NULL AND capture_grant IS NULL AND recovery_grant IS NULL)
+   OR (capture_token IS NOT NULL AND capture_grant IS NOT NULL
+    AND jsonb_typeof(capture_grant)='object' AND capture_grant->>'version'='1'
+    AND capture_grant->>'purpose'='capture' AND capture_grant->>'token'=capture_token::text
+    AND capture_grant->>'capture_token'=capture_token::text
+    AND capture_grant->>'lease_token'=lease_token AND capture_grant->>'source_wake_id'=source_wake_id::text
+    AND capture_grant->'parent'->'binding'->>'instance_id'=instance_id::text
+    AND capture_grant->'parent'->'binding'->>'node_id'=source_node_id
+    AND (recovery_grant IS NULL OR (jsonb_typeof(recovery_grant)='object'
+     AND recovery_grant->>'version'='1' AND recovery_grant->>'purpose'='recover'
+     AND recovery_grant->>'capture_token'=capture_token::text
+     AND recovery_grant->>'lease_token'=lease_token AND recovery_grant->>'source_wake_id'=source_wake_id::text
+     AND recovery_grant->'parent'=capture_grant->'parent')))) IS TRUE);
+ END IF;
+END $$;

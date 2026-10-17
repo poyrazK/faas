@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
@@ -22,6 +23,8 @@ type functionMigrationSource struct {
 	binding                    FunctionMigrationBinding
 	inst                       *Instance
 	recovered, retired, failed bool
+	managed                    bool
+	captureGrant               *runtimeadmission.FunctionMigrationGrant
 }
 
 func functionMigrationActive(inst *Instance) bool {
@@ -104,11 +107,19 @@ func (m *Manager) PrepareFunctionMigrationSource(ctx context.Context, binding Fu
 // resource recovery attempt. The callback must read schedd's current durable
 // rollback fence, without a replica/cache. It never writes instance state.
 func (m *Manager) RecoverFunctionMigrationSource(ctx context.Context, binding FunctionMigrationBinding, authorize func(context.Context) error) (retired bool, retErr error) {
+	return m.recoverFunctionMigrationSource(ctx, binding, nil, authorize)
+}
+
+func (m *Manager) recoverFunctionMigrationSource(ctx context.Context, binding FunctionMigrationBinding, permission *runtimeadmission.FunctionMigrationGrant, authorize func(context.Context) error) (retired bool, retErr error) {
 	m.mu.Lock()
 	source := m.functionMigrationSources[binding.LeaseToken]
 	if source == nil || source.binding != binding {
 		m.mu.Unlock()
 		return false, runtimeadmission.ErrStale
+	}
+	if source.managed != (permission != nil) {
+		m.mu.Unlock()
+		return false, runtimeadmission.ErrUnavailable
 	}
 	if source.retired {
 		m.mu.Unlock()
@@ -121,8 +132,18 @@ func (m *Manager) RecoverFunctionMigrationSource(ctx context.Context, binding Fu
 		if !healthy {
 			return false, runtimeadmission.ErrStale
 		}
+		if permission != nil {
+			if err := authorize(ctx); err != nil {
+				return false, err
+			}
+		}
 		if err := m.checkLiveAdmission(ctx, source.inst); err != nil {
 			return false, err
+		}
+		if permission != nil {
+			if err := authorize(ctx); err != nil {
+				return false, err
+			}
 		}
 		m.mu.Lock()
 		retired = source.retired
@@ -150,6 +171,11 @@ func (m *Manager) RecoverFunctionMigrationSource(ctx context.Context, binding Fu
 		// cleanup even when pendingCleanup prevents ordinary registration.
 		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resumeHookDialDeadline)
 		defer cancel()
+		if permission != nil {
+			var cancelPermission context.CancelFunc
+			recoveryCtx, cancelPermission = context.WithDeadline(recoveryCtx, time.Unix(0, permission.ExpiresAtUnixNano))
+			defer cancelPermission()
+		}
 		if err := authorize(recoveryCtx); err != nil {
 			return false, err
 		}
@@ -184,6 +210,16 @@ func (m *Manager) RecoverFunctionMigrationSource(ctx context.Context, binding Fu
 	}()
 	recoveryCtx, cancel := context.WithTimeout(flight.recoveryCtx, resumeHookDialDeadline)
 	defer cancel()
+	if permission != nil {
+		var cancelPermission context.CancelFunc
+		recoveryCtx, cancelPermission = context.WithDeadline(recoveryCtx, time.Unix(0, permission.ExpiresAtUnixNano))
+		defer cancelPermission()
+		unlock, err := m.lockAppEgressPolicyForWake(recoveryCtx, inst.AppID) //nolint:contextcheck // Destroy owns cancellation of this recovery context.
+		if err != nil {
+			return false, err
+		}
+		defer unlock()
+	}
 	if err := authorize(recoveryCtx); err != nil { //nolint:contextcheck // Recovery survives RPC cancellation and is cancelled/joined by Destroy.
 		return false, err
 	}
@@ -195,6 +231,17 @@ func (m *Manager) RecoverFunctionMigrationSource(ctx context.Context, binding Fu
 		// not turn a retry into a second application callback attempt.
 		retire = true
 		return false, errors.New("function migration checkpoint did not complete")
+	}
+	if permission != nil {
+		m.mu.Lock()
+		err := m.checkOwnedRuntimeEgressLocked(inst.runtimeAdmissionEgress, permission.Parent.Binding.EgressRevision)
+		if err == nil {
+			err = m.consumeFunctionMigrationGrantLocked(*permission)
+		}
+		m.mu.Unlock()
+		if err != nil {
+			return false, err
+		}
 	}
 	m.mu.Lock()
 	source.failed = true // A retry can retire, but can never replay this attempt.

@@ -43,6 +43,18 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 		}
 		return nil, nil, SnapshotSpec{}, nil, err
 	}
+	spec, err = m.configureSnapshotFlight(ctx, instance, inst, spec, mode, flight)
+	if err != nil {
+		m.finishInstanceFlight(instance, flight)
+		return nil, nil, SnapshotSpec{}, nil, err
+	}
+	return ctx, inst, spec, flight, nil
+}
+
+// An owned function source registers its flight before obtaining permission.
+// This shared validation runs only after that permission has been checked.
+func (m *Manager) configureSnapshotFlight(ctx context.Context, instance string, inst *Instance, spec SnapshotSpec, mode snapshotCaptureMode, flight *instanceFlight) (SnapshotSpec, error) {
+	var err error
 	m.mu.Lock()
 	resources := m.functionResourcesEnabled(inst)
 	// The legacy warm RPC has no callback flag. The qualified host requires
@@ -58,14 +70,13 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 	}
 	m.mu.Unlock()
 	if busy || unsupported {
-		m.finishInstanceFlight(instance, flight)
 		if unsupported && !busy {
-			return nil, nil, SnapshotSpec{}, nil, runtimeadmission.ErrUnavailable
+			return SnapshotSpec{}, runtimeadmission.ErrUnavailable
 		}
 		if mode == snapshotWarm {
-			return nil, nil, SnapshotSpec{}, nil, errors.Join(errWarmSnapshotAdmissionBusy, ErrInstanceBusy)
+			return SnapshotSpec{}, errors.Join(errWarmSnapshotAdmissionBusy, ErrInstanceBusy)
 		}
-		return nil, nil, SnapshotSpec{}, nil, ErrInstanceBusy
+		return SnapshotSpec{}, ErrInstanceBusy
 	}
 	// A qualified idle park first freezes the VM to close admission before
 	// schedd changes its state or chooses a reuse/destroy shortcut. Resume
@@ -73,8 +84,7 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 	// enter between the freeze and the final capture pause.
 	if m.functionActivity != nil && (inst.Runtime == "node22" || inst.Runtime == "node24") && m.isFrozen(inst) {
 		if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
-			m.finishInstanceFlight(instance, flight)
-			return nil, nil, SnapshotSpec{}, nil, err
+			return SnapshotSpec{}, err
 		}
 		m.clearFrozen(inst)
 	}
@@ -86,10 +96,9 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 		}
 	}
 	if err != nil {
-		m.finishInstanceFlight(instance, flight)
-		return nil, nil, SnapshotSpec{}, nil, err
+		return SnapshotSpec{}, err
 	}
-	return ctx, inst, spec, flight, nil
+	return spec, nil
 }
 
 func (m *Manager) snapshotInstance(instance string, spec SnapshotSpec) (*Instance, SnapshotSpec, error) {

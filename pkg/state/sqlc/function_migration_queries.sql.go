@@ -73,7 +73,7 @@ func (q *Queries) FenceFunctionMigrationSource(ctx context.Context, db DBTX, arg
 }
 
 const getFunctionMigrationSource = `-- name: GetFunctionMigrationSource :one
-SELECT instance_id, lease_token, source_node_id, source_wake_id, phase FROM function_migration_sources
+SELECT instance_id, lease_token, source_node_id, source_wake_id, phase, capture_token, capture_grant, recovery_grant FROM function_migration_sources
 WHERE instance_id = $1::uuid AND lease_token = $2::text
 `
 
@@ -91,12 +91,15 @@ func (q *Queries) GetFunctionMigrationSource(ctx context.Context, db DBTX, arg G
 		&i.SourceNodeID,
 		&i.SourceWakeID,
 		&i.Phase,
+		&i.CaptureToken,
+		&i.CaptureGrant,
+		&i.RecoveryGrant,
 	)
 	return i, err
 }
 
 const getFunctionMigrationSourceByInstance = `-- name: GetFunctionMigrationSourceByInstance :one
-SELECT instance_id, lease_token, source_node_id, source_wake_id, phase FROM function_migration_sources WHERE instance_id = $1::uuid
+SELECT instance_id, lease_token, source_node_id, source_wake_id, phase, capture_token, capture_grant, recovery_grant FROM function_migration_sources WHERE instance_id = $1::uuid
 `
 
 func (q *Queries) GetFunctionMigrationSourceByInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (FunctionMigrationSource, error) {
@@ -108,12 +111,15 @@ func (q *Queries) GetFunctionMigrationSourceByInstance(ctx context.Context, db D
 		&i.SourceNodeID,
 		&i.SourceWakeID,
 		&i.Phase,
+		&i.CaptureToken,
+		&i.CaptureGrant,
+		&i.RecoveryGrant,
 	)
 	return i, err
 }
 
 const listExpiredFunctionMigrationSources = `-- name: ListExpiredFunctionMigrationSources :many
-SELECT s.instance_id, s.lease_token, s.source_node_id, s.source_wake_id, s.phase FROM function_migration_sources s JOIN migration_leases m
+SELECT s.instance_id, s.lease_token, s.source_node_id, s.source_wake_id, s.phase, s.capture_token, s.capture_grant, s.recovery_grant FROM function_migration_sources s JOIN migration_leases m
     ON m.instance_id = s.instance_id AND m.lease_token = s.lease_token
 WHERE m.lease_expires_at <= $1::timestamptz
 ORDER BY m.lease_expires_at, s.instance_id LIMIT $2::bigint
@@ -139,6 +145,9 @@ func (q *Queries) ListExpiredFunctionMigrationSources(ctx context.Context, db DB
 			&i.SourceNodeID,
 			&i.SourceWakeID,
 			&i.Phase,
+			&i.CaptureToken,
+			&i.CaptureGrant,
+			&i.RecoveryGrant,
 		); err != nil {
 			return nil, err
 		}
@@ -176,7 +185,7 @@ func (q *Queries) ListFunctionMigrationSourceInstances(ctx context.Context, db D
 }
 
 const lockFunctionMigrationSource = `-- name: LockFunctionMigrationSource :one
-SELECT instance_id, lease_token, source_node_id, source_wake_id, phase FROM function_migration_sources
+SELECT instance_id, lease_token, source_node_id, source_wake_id, phase, capture_token, capture_grant, recovery_grant FROM function_migration_sources
 WHERE instance_id = $1::uuid AND lease_token = $2::text
 FOR UPDATE
 `
@@ -195,6 +204,9 @@ func (q *Queries) LockFunctionMigrationSource(ctx context.Context, db DBTX, arg 
 		&i.SourceNodeID,
 		&i.SourceWakeID,
 		&i.Phase,
+		&i.CaptureToken,
+		&i.CaptureGrant,
+		&i.RecoveryGrant,
 	)
 	return i, err
 }

@@ -197,8 +197,8 @@ approval. This workspace has no `/dev/kvm` and cannot certify the native gate.
 ## Function migration source rollback qualification
 
 [ADR-1350](../adr/1350-function-migration-source-rollback.md) adds a source-only
-qualification seam. Ordinary production wiring and measured migration capture
-stay off; destination adoption rejects function-source captures. A native source
+qualification seam. Production activation stays off. ADR-1351 adds measured source permission in the
+native qualification build; destination adoption rejects function-source captures. A native source
 fixture must retain the existing boot/admission contract, never disable a guard
 or discard an admission receipt to make a migration capture run.
 
@@ -219,3 +219,27 @@ execution ledger. Private environment resume authority remains mandatory. Passin
 portable ownership/transaction tests or compiling the tagged suite does not
 qualify these native cases. See the
 [local evidence](evidence/20261017-function-migration-source-rollback/REPORT.md).
+
+`TestFunctionMigrationAdmissionPostgresMetal`, included in
+`make test-function-background-native`, runs Node 22 and 24 independently for
+cancel, expired lease, capture cancellation, failed SQL probe and held recovery
+ACK timeout. The suite materializes an application standard before deployment
+and requires a retained protocol-v2 measured runtime receipt. It cannot silently
+fall back to an unmeasured source. Separate capture/recovery permissions bind
+the original wake, lease, physical receipt and immutable capture keys.
+
+An independent peer holds checkpoint until all eight SQL/proxy sessions close.
+For successful recovery it holds the final ACK until all four interpreters have
+eight fresh, probed sessions. The original wake remains MIGRATING through that
+ACK. Duplicate cancellation must preserve the same pool generation; expiry uses
+the real scheduler watchdog. A failed probe or incomplete capture must retire
+the source, and committed rows remain unchanged. Holding ACK past the host
+deadline checks retirement without callback replay; this is a controlled timeout,
+not evidence of lost real-vsock packets. The expanded target allows 90 minutes
+for its independent deployment fixtures.
+
+Portable permission and transaction tests are selected by `^TestFunctionMigration`
+in the backend CI lane. They cover current-input drift, purpose/parent/keys,
+atomic registration, expired-lease recovery and permission renewal. Actual KVM,
+vsock loss/duplication, restart, private-environment and leak acceptance remain
+required. See [ADR-1351 evidence](evidence/20261017-function-migration-admission/REPORT.md).

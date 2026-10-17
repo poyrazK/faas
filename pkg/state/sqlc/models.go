@@ -3976,11 +3976,14 @@ type FleetSealDomainProbe struct {
 }
 
 type FunctionMigrationSource struct {
-	InstanceID   pgtype.UUID
-	LeaseToken   string
-	SourceNodeID string
-	SourceWakeID pgtype.UUID
-	Phase        string
+	InstanceID    pgtype.UUID
+	LeaseToken    string
+	SourceNodeID  string
+	SourceWakeID  pgtype.UUID
+	Phase         string
+	CaptureToken  pgtype.UUID
+	CaptureGrant  []byte
+	RecoveryGrant []byte
 }
 
 type GatewayConcurrencyQueueLease struct {

@@ -60,3 +60,8 @@ Normal production builds, Python, application SQL, plan entitlements and billing
 are unchanged. SQL and application requests are never replayed. Native KVM,
 real-vsock failure/restart, private-environment, leak and performance acceptance
 remain required before any activation change.
+
+Follow-up: [ADR-1351](1351-function-migration-admission.md) adds dedicated capture
+and recovery permissions for measured sources in the qualification build. It
+supersedes the measured-source refusal above while retaining the destination,
+native acceptance and production activation gates.

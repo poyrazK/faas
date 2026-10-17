@@ -5,15 +5,18 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 // Versioned opaque source tokens cannot be reused through the legacy Phase-2
 // path after their durable source receipt has been removed.
-const FunctionMigrationTokenPrefix = "function-v1:"
+const FunctionMigrationTokenPrefix = runtimeadmission.FunctionMigrationLeasePrefix
 
 type FunctionMigrationSource struct {
 	InstanceID, LeaseToken, SourceNodeID, SourceWakeID string
 	Phase                                              string
+	CaptureToken                                       string // nonempty only for a measured source permission
 }
 
 const (
