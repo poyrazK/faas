@@ -44,6 +44,9 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 }
 func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, error) {
 	m.ensureAppTasksLocked()
+	if err := m.admitRehearsalCommandLocked(resolved); err != nil {
+		return AppTask{}, err
+	}
 
 	app, ok := m.apps[resolved.AppID]
 	if !ok || app.AccountID != resolved.AccountID || app.Status == AppDeleted {
@@ -894,6 +897,9 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err := validateCompleteAppTask(params, task.MaxOutputBytes); err != nil {
+		return AppTask{}, err
+	}
+	if err := m.validateRehearsalTaskCompletionLocked(task, params); err != nil {
 		return AppTask{}, err
 	}
 	if task.CancelRequested != nil && params.Status != AppTaskCancelled {

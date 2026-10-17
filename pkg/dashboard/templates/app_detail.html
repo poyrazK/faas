@@ -307,7 +307,7 @@
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/pre-auth">Inspect pre-auth protection →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/data-api">Open Data API →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/auth">Manage application Auth users →</a></p>
+      {{if .Data.ApplicationAuth}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/auth">Manage application Auth users →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/realtime">Inspect realtime events →</a></p>
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/webhooks">Manage outbound webhooks →</a></p>

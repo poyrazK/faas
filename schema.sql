@@ -20359,6 +20359,852 @@ $$;
 
 
 --
+-- Name: scenario_action_sealed_effect_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_action_sealed_effect_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE source_app uuid;
+BEGIN
+ IF TG_TABLE_NAME = 'exclusive_work_effects' THEN
+  SELECT app_id INTO source_app FROM exclusive_work_operations WHERE id = NEW.operation_id;
+ ELSE
+  source_app := NEW.app_id;
+ END IF;
+ PERFORM id FROM apps WHERE id = source_app FOR KEY SHARE;
+ IF EXISTS (SELECT 1 FROM scenario_test_action_policies WHERE app_id = source_app AND sealed_at IS NOT NULL) THEN
+  RAISE EXCEPTION 'scenario action window is sealed' USING ERRCODE = '23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_cold_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_cold_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p scenario_test_action_policies%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM apps WHERE id=OLD.app_id) AND EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id)
+   THEN RAISE EXCEPTION 'cold-start evidence is retained until app deletion' USING ERRCODE='23514'; END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||p.account_id::text||':'||p.run_id,0));
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ IF p.cold_start_spec IS NULL OR p.sealed_at IS NOT NULL OR p.recorder_closing OR p.account_id<>NEW.account_id OR p.run_id<>NEW.run_id THEN
+  RAISE EXCEPTION 'cold-start enrollment is unavailable or sealed' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.state NOT IN ('armed','retired') OR (NEW.state='armed')<>(NEW.instance_id IS NOT NULL)
+   OR NEW.boot_instance_id IS NOT NULL OR NEW.ready_at IS NOT NULL THEN
+   RAISE EXCEPTION 'cold-start preparation must begin unacknowledged' USING ERRCODE='23514'; END IF;
+ ELSE
+  IF (NEW.id,NEW.account_id,NEW.app_id,NEW.run_id,NEW.deployment_id,NEW.instance_id,NEW.recorder_session_id,NEW.created_at)
+   IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.app_id,OLD.run_id,OLD.deployment_id,OLD.instance_id,OLD.recorder_session_id,OLD.created_at)
+   OR NOT((OLD.state='armed' AND NEW.state='claimed') OR (OLD.state='claimed' AND NEW.state='fenced')
+    OR (OLD.state='fenced' AND NEW.state='retired') OR (OLD.state='retired' AND NEW.state='ready')
+    OR (OLD.state='ready' AND NEW.state='booted') OR (OLD.state NOT IN ('booted','failed') AND NEW.state='failed'))
+   OR (OLD.state<>'ready' AND (NEW.boot_instance_id,NEW.boot_recorder_session_id,NEW.wake_id,NEW.method,NEW.startup_ms)
+     IS DISTINCT FROM (OLD.boot_instance_id,OLD.boot_recorder_session_id,OLD.wake_id,OLD.method,OLD.startup_ms))
+   OR (NEW.state<>'ready' AND NEW.ready_at IS DISTINCT FROM OLD.ready_at) THEN
+   RAISE EXCEPTION 'cold-start identity or lifecycle is immutable' USING ERRCODE='23514'; END IF;
+ END IF;
+ IF NEW.state='ready' AND (EXISTS(SELECT 1 FROM instances WHERE app_id=NEW.app_id AND state NOT IN ('stopped','parked','failed'))
+   OR EXISTS(SELECT 1 FROM snapshots s JOIN deployments d ON d.id=s.deployment_id WHERE d.app_id=NEW.app_id AND NOT s.stale)
+   OR NEW.ready_at IS NULL) THEN
+  RAISE EXCEPTION 'cold-start preparation requires drained instances and invalidated snapshots' USING ERRCODE='23514'; END IF;
+ IF NEW.state='booted' AND NOT EXISTS(SELECT 1 FROM scenario_recorder_sessions r JOIN instances i ON i.id=r.instance_id
+  WHERE r.id=NEW.boot_recorder_session_id AND r.app_id=NEW.app_id AND r.deployment_id=NEW.deployment_id AND r.status='recording'
+  AND i.id=NEW.boot_instance_id AND i.app_id=NEW.app_id AND i.deployment_id=NEW.deployment_id AND i.wake_id::text=NEW.wake_id
+  AND r.created_at>=NEW.ready_at AND i.state IN ('waking','cold_booting','running')) THEN
+  RAISE EXCEPTION 'cold-start boot requires its original live recorder and new instance' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_cold_policy_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_cold_policy_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN IF NEW.cold_start_spec IS DISTINCT FROM OLD.cold_start_spec THEN
+ RAISE EXCEPTION 'cold-start plan is immutable' USING ERRCODE='23514'; END IF; RETURN NEW; END $$;
+
+
+--
+-- Name: scenario_command_network_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_command_network_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NOT NEW.active OR NOT EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_recorder_sessions r ON r.instance_id=t.id AND r.app_id=t.app_id
+   WHERE t.id=NEW.task_id AND t.lease_token=NEW.lease_token AND t.lease_expires_at>clock_timestamp()
+    AND t.status='restoring' AND t.cancel_requested_at IS NULL AND r.status='recording'
+    AND t.command[1]='__gregale_rehearsal_command_v1__') THEN
+   RAISE EXCEPTION 'command network identity requires the restoring owner' USING ERRCODE='23514';
+  END IF;
+ ELSIF (NEW.task_id,NEW.node_id,NEW.host_ip,NEW.lease_token) IS DISTINCT FROM (OLD.task_id,OLD.node_id,OLD.host_ip,OLD.lease_token)
+    OR NOT OLD.active OR NEW.active THEN
+  RAISE EXCEPTION 'command network identity is immutable and retirement irreversible' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_command_retirement_network_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_command_retirement_network_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.command_result IS NOT NULL AND NOT EXISTS(SELECT 1 FROM scenario_command_networks
+    WHERE task_id=NEW.instance_id AND NOT active) THEN
+  RAISE EXCEPTION 'command retirement requires revoked network authority' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_managed_work_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_managed_work_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p scenario_test_action_policies%ROWTYPE; participant jsonb; dep uuid; deployment_count integer;
+ doc jsonb; attempts jsonb; item jsonb; outcome text; invalid boolean:=false;
+BEGIN
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=CASE WHEN TG_OP='INSERT' THEN NEW.app_id ELSE OLD.app_id END;
+ IF TG_OP='UPDATE' AND p.managed_work_plan IS NULL THEN SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id; END IF;
+ IF p.managed_work_plan IS NULL THEN RETURN COALESCE(NEW,OLD); END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||p.account_id::text||':'||p.run_id,0));
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=p.app_id;
+ IF TG_OP='DELETE' THEN
+  IF p.sealed_at IS NULL THEN UPDATE scenario_test_action_policies SET managed_work_failed=true WHERE account_id=p.account_id AND run_id=p.run_id; END IF;
+  RETURN OLD;
+ END IF;
+ IF p.sealed_at IS NOT NULL THEN
+  RAISE EXCEPTION 'managed rehearsal work is sealed' USING ERRCODE='23514';
+ END IF;
+ SELECT value INTO participant FROM jsonb_array_elements(p.managed_work_plan->'participants') WHERE value->>'workload'=p.workload_name;
+ SELECT count(*),min(id::text)::uuid INTO deployment_count,dep FROM deployments WHERE app_id=p.app_id;
+ IF TG_OP='INSERT' THEN
+  invalid:=p.managed_work_closing OR p.recorder_closing OR NOT COALESCE((participant->>'async')::boolean,false)
+   OR NEW.source<>'async_invoke' OR NEW.state<>'pending' OR NEW.attempts<>0 OR NEW.replay_generation<>0
+   OR NEW.account_id<>p.account_id OR deployment_count<>1 OR COALESCE(NEW.work_policy_name,'')<>''
+   OR octet_length(COALESCE(NEW.payload,'null'::jsonb)::text)>8192 OR length(NEW.path)>2048
+   OR NOT EXISTS(SELECT 1 FROM apps a WHERE a.id=p.app_id AND a.status<>'deleted' AND a.preview_pr_state='open' AND a.preview_expires_at>clock_timestamp());
+  IF (SELECT count(*) FROM scenario_managed_work WHERE account_id=p.account_id AND run_id=p.run_id)>=64 THEN
+   invalid:=true;
+  ELSE
+   doc:=jsonb_build_object('id',NEW.id,'workload',p.workload_name,'app_id',p.app_id,'deployment_id',dep,
+     'method',NEW.method,'path',left(NEW.path,2048),'state',CASE WHEN invalid THEN 'cancelled' ELSE NEW.state END,'attempts','[]'::jsonb);
+   INSERT INTO scenario_managed_work(invocation_id,app_id,account_id,run_id,document,payload)
+    VALUES(NEW.id,p.app_id,p.account_id,p.run_id,doc,
+     CASE WHEN octet_length(COALESCE(NEW.payload,'null'::jsonb)::text)<=8192 THEN COALESCE(NEW.payload,'null'::jsonb) ELSE 'null'::jsonb END);
+  END IF;
+  IF invalid THEN
+   UPDATE scenario_test_action_policies SET managed_work_failed=true WHERE account_id=p.account_id AND run_id=p.run_id;
+   NEW.state:='cancelled'; NEW.last_error:='rehearsal: unsupported or closed managed-work admission'; NEW.completed_at:=clock_timestamp();
+  END IF;
+  RETURN NEW;
+ END IF;
+ SELECT document INTO doc FROM scenario_managed_work WHERE invocation_id=OLD.id FOR UPDATE;
+ IF doc IS NULL THEN invalid:=true;
+ ELSE
+  attempts:=doc->'attempts';
+  invalid:=(NEW.id,NEW.app_id,NEW.account_id,NEW.source,NEW.method,NEW.path,NEW.payload,NEW.replay_generation)
+    IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.account_id,OLD.source,OLD.method,OLD.path,OLD.payload,OLD.replay_generation)
+    OR deployment_count<>1 OR dep IS DISTINCT FROM (doc->>'deployment_id')::uuid;
+  IF OLD.state='dispatching' AND (NEW.state<>'dispatching' OR NEW.attempts<>OLD.attempts) THEN
+   outcome:=CASE WHEN NEW.state='completed' THEN 'succeeded'
+     WHEN NEW.state='pending' AND NEW.last_error<>'dispatch lease expired; requeued' THEN 'retry'
+     WHEN NEW.state='pending' THEN 'unknown' ELSE NEW.state END;
+   IF jsonb_array_length(attempts)=OLD.attempts AND OLD.attempts>0 THEN
+    attempts:=jsonb_set(attempts,ARRAY[(OLD.attempts-1)::text,'outcome'],to_jsonb(outcome));
+   ELSE invalid:=true; END IF;
+  END IF;
+  IF NEW.state='dispatching' AND (OLD.state<>'dispatching' OR NEW.attempts<>OLD.attempts) AND EXISTS
+   (SELECT 1 FROM scenario_worker_faults f WHERE f.app_id=NEW.app_id AND (f.state<>'terminated' OR EXISTS
+    (SELECT 1 FROM instances i WHERE i.id=f.instance_id AND i.state IN ('waking','cold_booting','running','draining'))))
+  THEN RAISE EXCEPTION 'worker fault blocks dispatch until confirmed teardown' USING ERRCODE='23514'; END IF;
+  IF NEW.state='dispatching' AND NULLIF(NEW.instance_id,'') IS NOT NULL AND (OLD.state<>'dispatching' OR NEW.attempts<>OLD.attempts OR jsonb_array_length(attempts)=NEW.attempts-1) THEN
+   SELECT jsonb_build_object('number',NEW.attempts,'instance_id',i.id,'deployment_id',i.deployment_id,'outcome','running') INTO item
+    FROM instances i WHERE i.id=NULLIF(NEW.instance_id,'')::uuid AND i.app_id=p.app_id AND i.deployment_id=dep;
+   IF item IS NULL OR jsonb_array_length(attempts)>=32 OR NEW.attempts<>jsonb_array_length(attempts)+1 THEN invalid:=true;
+   ELSE attempts:=attempts||jsonb_build_array(item); END IF;
+  END IF;
+  IF NEW.state='dispatching' AND NEW.attempts>0 AND jsonb_array_length(attempts)=NEW.attempts
+   AND attempts->(NEW.attempts-1)->>'instance_id' IS DISTINCT FROM NEW.instance_id THEN invalid:=true; END IF;
+  doc:=jsonb_set(jsonb_set(doc,'{state}',to_jsonb(NEW.state)),'{attempts}',attempts);
+  UPDATE scenario_managed_work SET document=doc WHERE invocation_id=OLD.id;
+ END IF;
+ IF invalid THEN UPDATE scenario_test_action_policies SET managed_work_failed=true WHERE account_id=p.account_id AND run_id=p.run_id; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_managed_work_journal_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_managed_work_journal_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF pg_trigger_depth()<2 THEN
+  RAISE EXCEPTION 'managed work journal is owned by invocation transitions' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND ((NEW.invocation_id,NEW.app_id,NEW.account_id,NEW.run_id,NEW.payload)
+   IS DISTINCT FROM (OLD.invocation_id,OLD.app_id,OLD.account_id,OLD.run_id,OLD.payload)
+   OR (NEW.document - ARRAY['state','attempts']) IS DISTINCT FROM (OLD.document - ARRAY['state','attempts'])) THEN
+  RAISE EXCEPTION 'managed work journal intent is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN COALESCE(NEW,OLD);
+END $$;
+
+
+--
+-- Name: scenario_managed_work_policy_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_managed_work_policy_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.managed_work_plan IS DISTINCT FROM OLD.managed_work_plan
+  OR (OLD.managed_work_closing AND NOT NEW.managed_work_closing)
+  OR (OLD.managed_work_failed AND NOT NEW.managed_work_failed) THEN
+  RAISE EXCEPTION 'managed rehearsal policy is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_network_policy_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_network_policy_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (NEW.app_id, NEW.account_id, NEW.run_id, NEW.network_mode)
+       IS DISTINCT FROM (OLD.app_id, OLD.account_id, OLD.run_id, OLD.network_mode) THEN
+        RAISE EXCEPTION 'rehearsal network policy is immutable' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_object_attempt_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_object_attempt_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE old_attempt jsonb; new_attempt jsonb; ordinal bigint;
+BEGIN
+ IF jsonb_array_length(NEW.document->'Attempts') < jsonb_array_length(OLD.document->'Attempts')
+ OR jsonb_array_length(NEW.document->'Attempts') > 256
+ OR (OLD.status<>'ready' AND jsonb_array_length(NEW.document->'Attempts')<>jsonb_array_length(OLD.document->'Attempts')) THEN
+  RAISE EXCEPTION 'object admission inventory is immutable' USING ERRCODE='23514';
+ END IF;
+ FOR old_attempt,ordinal IN SELECT value,ordinality FROM jsonb_array_elements(OLD.document->'Attempts') WITH ORDINALITY LOOP
+  new_attempt := NEW.document->'Attempts'->(ordinal::integer-1);
+  IF (old_attempt - ARRAY['Pending','Mutation']) IS DISTINCT FROM (new_attempt - ARRAY['Pending','Mutation'])
+  OR (NOT (old_attempt->>'Pending')::boolean AND old_attempt IS DISTINCT FROM new_attempt)
+  OR ((new_attempt->>'Pending')::boolean AND old_attempt IS DISTINCT FROM new_attempt) THEN
+   RAISE EXCEPTION 'object completion receipt is immutable' USING ERRCODE='23514';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_object_fixture_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_object_fixture_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE old_collector text; new_collector text; old_closed boolean; new_closed boolean;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.status NOT IN ('complete','deleted') THEN
+   RAISE EXCEPTION 'object fixture requires cleanup before purge' USING ERRCODE='23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ old_collector:=COALESCE(OLD.document->>'CollectorID','');new_collector:=COALESCE(NEW.document->>'CollectorID','');
+ old_closed:=COALESCE((OLD.document->>'CollectorClosed')::boolean,false);new_closed:=COALESCE((NEW.document->>'CollectorClosed')::boolean,false);
+ IF (NEW.id,NEW.account_id,NEW.run_id,NEW.app_id,NEW.expires_at)
+   IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.run_id,OLD.app_id,OLD.expires_at)
+ OR (NEW.document - ARRAY['Status','Current','Attempts','Failed','Evidence','CollectorID','CollectorClosed'])
+   IS DISTINCT FROM (OLD.document - ARRAY['Status','Current','Attempts','Failed','Evidence','CollectorID','CollectorClosed'])
+ OR (OLD.status IN ('complete','deleted') AND NEW IS DISTINCT FROM OLD)
+ OR NOT (NEW.status=OLD.status OR (OLD.status='ready' AND NEW.status='sealing')
+   OR (OLD.status='sealing' AND NEW.status='complete') OR NEW.status='deleted')
+ OR ((OLD.document->>'Failed')::boolean AND NOT (NEW.document->>'Failed')::boolean)
+ OR (NEW.status IN ('complete','deleted') AND jsonb_array_length(NEW.document->'Current')<>0)
+ OR (old_collector<>'' AND new_collector<>old_collector)
+ OR (old_collector='' AND new_collector<>'' AND (OLD.status<>'ready' OR NEW.status<>'ready' OR new_collector !~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'))
+ OR (old_closed AND NOT new_closed)
+ OR (NOT old_closed AND new_closed AND (OLD.status<>'sealing' OR NEW.status<>'sealing' OR old_collector=''))
+ OR (NEW.status='complete' AND (NOT new_closed OR new_collector='' OR (NEW.document->>'Failed')::boolean))
+ THEN RAISE EXCEPTION 'object fixture journal is immutable' USING ERRCODE='23514'; END IF;
+ IF NOT old_closed AND new_closed AND EXISTS(SELECT 1 FROM jsonb_array_elements(NEW.document->'Attempts') a WHERE (a->>'Pending')::boolean) THEN
+  RAISE EXCEPTION 'object collector has pending requests' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: scenario_postgres_backend_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_postgres_backend_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+ IF TG_OP='INSERT' AND NEW.backend_sha256!~'^[a-f0-9]{64}$'
+ OR TG_OP='UPDATE' AND NEW.backend_sha256 IS DISTINCT FROM OLD.backend_sha256 THEN
+  RAISE EXCEPTION 'rehearsal PostgreSQL backend identity is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: scenario_postgres_fixture_delete_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_postgres_fixture_delete_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.status NOT IN ('complete','deleted') THEN
+  RAISE EXCEPTION 'rehearsal PostgreSQL cleanup must be confirmed before deleting its journal' USING ERRCODE='23514';
+ END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: scenario_postgres_fixture_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_postgres_fixture_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (NEW.id,NEW.account_id,NEW.run_id,NEW.app_id,NEW.owner_id,NEW.database_name,NEW.role_name,NEW.spec,NEW.expires_at)
+   IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.run_id,OLD.app_id,OLD.owner_id,OLD.database_name,OLD.role_name,OLD.spec,OLD.expires_at)
+ OR NOT ((OLD.status='provisioning' AND NEW.status IN ('ready','failed','deleted'))
+ OR (OLD.status='ready' AND NEW.status IN ('sealing','failed','deleted'))
+ OR (OLD.status='sealing' AND NEW.status IN ('complete','failed','deleted'))
+ OR (OLD.status='failed' AND NEW.status='deleted'))
+ OR (OLD.status<>'provisioning' AND NEW.initial_snapshot IS DISTINCT FROM OLD.initial_snapshot)
+ OR (NEW.status<>'complete' AND NEW.evidence IS DISTINCT FROM OLD.evidence) THEN
+  RAISE EXCEPTION 'rehearsal PostgreSQL journal is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_recorder_closing_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_recorder_closing_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.recorder_closing AND NOT NEW.recorder_closing THEN
+  RAISE EXCEPTION 'recorder closing is irreversible' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_recorder_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_recorder_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_app uuid; policy scenario_test_action_policies%ROWTYPE; parent scenario_recorder_sessions%ROWTYPE;
+BEGIN
+ IF TG_TABLE_NAME='scenario_recorder_sessions' THEN
+  target_app:=NEW.app_id;
+  IF TG_OP='UPDATE' AND ((NEW.id,NEW.app_id,NEW.instance_id,NEW.deployment_id,NEW.created_at)
+       IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.instance_id,OLD.deployment_id,OLD.created_at)
+       OR OLD.status<>'recording' OR NEW.status NOT IN ('closed','failed')) THEN
+   RAISE EXCEPTION 'recorder identity or terminal receipt is immutable' USING ERRCODE='23514';
+  END IF;
+ ELSE
+  SELECT * INTO parent FROM scenario_recorder_sessions WHERE id=NEW.session_id;
+  target_app:=parent.app_id;
+  IF TG_OP='UPDATE' AND ((NEW.id,NEW.session_id) IS DISTINCT FROM (OLD.id,OLD.session_id)
+       OR (OLD.attempt_id IS NOT NULL AND NEW.attempt_id IS DISTINCT FROM OLD.attempt_id)
+       OR NOT ((OLD.status='pending' AND NEW.status IN ('admitted','failed'))
+            OR (OLD.status='admitted' AND NEW.status IN ('completed','failed')))) THEN
+   RAISE EXCEPTION 'recorder request identity or terminal receipt is immutable' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ SELECT * INTO policy FROM scenario_test_action_policies WHERE app_id=target_app;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:' || policy.account_id::text || ':' || policy.run_id,0));
+ PERFORM id FROM apps WHERE id=target_app FOR KEY SHARE;
+ SELECT * INTO policy FROM scenario_test_action_policies WHERE app_id=target_app;
+ IF policy.app_id IS NULL OR policy.simulation_plan IS NULL OR policy.sealed_at IS NOT NULL THEN
+  RAISE EXCEPTION 'recorder window is unavailable or sealed' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='INSERT' AND (policy.recorder_closing OR
+      (TG_TABLE_NAME='scenario_recorder_sessions' AND NEW.status<>'recording') OR
+      (TG_TABLE_NAME='scenario_recorder_requests' AND (NEW.status<>'pending' OR parent.status<>'recording'))) THEN
+  RAISE EXCEPTION 'recorder admission is closed' USING ERRCODE='23514';
+ END IF;
+ IF TG_TABLE_NAME='scenario_recorder_sessions' THEN
+  IF TG_OP='INSERT' AND NEW.command_result IS NOT NULL THEN
+   RAISE EXCEPTION 'command retirement cannot be supplied at recorder start' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='INSERT' AND NOT scenario_rehearsal_execution_active(NEW.app_id,NEW.instance_id,NEW.deployment_id) THEN
+   RAISE EXCEPTION 'recorder execution identity is unavailable' USING ERRCODE='23514';
+  END IF;
+  IF NEW.command_result IS NOT NULL AND (NEW.command_result::jsonb->>'task_id' IS DISTINCT FROM NEW.instance_id::text
+      OR NOT scenario_rehearsal_execution_active(NEW.app_id,NEW.instance_id,NEW.deployment_id)
+      OR NOT EXISTS(SELECT 1 FROM app_tasks WHERE id=NEW.instance_id)) THEN
+   RAISE EXCEPTION 'command retirement requires its active task identity' USING ERRCODE='23514';
+  END IF;
+  IF NEW.status='closed' AND ((NOT policy.recorder_closing AND NEW.command_result IS NULL AND NOT EXISTS
+     (SELECT 1 FROM scenario_worker_faults f WHERE f.recorder_session_id=NEW.id AND f.app_id=NEW.app_id
+      AND f.instance_id=NEW.instance_id AND f.deployment_id=NEW.deployment_id AND f.account_id=policy.account_id
+      AND f.run_id=policy.run_id AND f.state='terminated') AND NOT EXISTS
+     (SELECT 1 FROM scenario_cold_preparations c WHERE c.recorder_session_id=NEW.id AND c.app_id=NEW.app_id
+      AND c.instance_id=NEW.instance_id AND c.deployment_id=NEW.deployment_id AND c.account_id=policy.account_id
+      AND c.run_id=policy.run_id AND c.state IN ('retired','ready','booted'))) OR EXISTS(SELECT 1 FROM scenario_recorder_requests
+      WHERE session_id=NEW.id AND status<>'completed')) THEN
+   RAISE EXCEPTION 'recorder closing requires settled request receipts' USING ERRCODE='23514';
+  END IF;
+ ELSE
+  IF NEW.attempt_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM scenario_simulation_attempts e
+      WHERE e.id=NEW.attempt_id AND e.app_id=target_app AND
+       ((NEW.status='admitted' AND e.evidence->>'status'='pending') OR
+        (NEW.status='completed' AND e.evidence->>'status'='completed') OR
+        (NEW.status='failed' AND e.evidence->>'status' IN ('interrupted','unsupported')))) THEN
+   RAISE EXCEPTION 'recorder acknowledgement does not match simulation evidence' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_rehearsal_command_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_command_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE policy scenario_test_action_policies%ROWTYPE; spec jsonb;
+BEGIN
+ SELECT * INTO policy FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ spec:=scenario_rehearsal_command_spec(NEW.command);
+ IF policy.network_mode IS DISTINCT FROM 'contained' AND NEW.command[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__' THEN RETURN NEW; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:' || policy.account_id::text || ':' || policy.run_id,0));
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR KEY SHARE;
+ SELECT * INTO policy FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ IF spec IS NULL OR policy.app_id IS NULL OR policy.account_id<>NEW.account_id
+  OR policy.network_mode IS DISTINCT FROM 'contained' OR policy.simulation_plan IS NULL
+  OR policy.sealed_at IS NOT NULL OR policy.recorder_closing OR policy.simulation_failed
+  OR spec->>'run_id'<>policy.run_id OR spec->>'deployment_id'<>NEW.deployment_id::text
+  OR NEW.kind<>'manual' OR NEW.command_shell OR NEW.max_output_bytes<>65536
+  OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+  OR EXISTS(SELECT 1 FROM app_task_attach_sessions WHERE task_id=NEW.id) THEN
+  RAISE EXCEPTION 'contained command admission is unavailable' USING ERRCODE='23514';
+ END IF;
+ IF (SELECT count(*) FROM app_tasks t JOIN scenario_test_action_policies p ON p.app_id=t.app_id
+     WHERE p.account_id=policy.account_id AND p.run_id=policy.run_id)>=256 THEN
+  RAISE EXCEPTION 'contained command evidence bound exceeded' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_rehearsal_command_attach_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_command_attach_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM app_tasks t WHERE t.id=NEW.task_id AND
+  (t.command[1]='__gregale_rehearsal_command_v1__' OR EXISTS(SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=t.app_id AND p.network_mode='contained'))) THEN
+  RAISE EXCEPTION 'contained commands cannot attach an interactive client' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_rehearsal_command_spec(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_command_spec(argv text[]) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE spec jsonb;
+BEGIN
+ IF argv[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__' OR cardinality(argv) NOT BETWEEN 2 AND 5 THEN RETURN NULL; END IF;
+ BEGIN spec:=array_to_string(argv[2:cardinality(argv)],'')::jsonb;
+ EXCEPTION WHEN invalid_text_representation THEN RETURN NULL; END;
+ IF octet_length(array_to_string(argv,''))>16384 OR spec->>'version' IS DISTINCT FROM '1'
+  OR coalesce(spec->>'run_id','')!~'^[0-9a-f]{32}$'
+  OR coalesce(spec->>'deployment_id','')!~'^[0-9a-f-]{36}$' THEN RETURN NULL; END IF;
+ RETURN spec;
+END $_$;
+
+
+--
+-- Name: scenario_rehearsal_command_update_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_command_update_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.command[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__'
+  AND NEW.command[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__'
+  AND NOT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE app_id=OLD.app_id AND network_mode='contained') THEN RETURN NEW; END IF;
+ IF (NEW.id,NEW.account_id,NEW.app_id,NEW.deployment_id,NEW.kind,NEW.command,NEW.command_shell,
+     NEW.timeout_seconds,NEW.max_output_bytes,NEW.artifact_key,NEW.image_digest,NEW.deployment_scope)
+  IS DISTINCT FROM
+    (OLD.id,OLD.account_id,OLD.app_id,OLD.deployment_id,OLD.kind,OLD.command,OLD.command_shell,
+     OLD.timeout_seconds,OLD.max_output_bytes,OLD.artifact_key,OLD.image_digest,OLD.deployment_scope) THEN
+  RAISE EXCEPTION 'contained command intent is immutable' USING ERRCODE='23514';
+ END IF;
+ IF NEW.status='succeeded' AND (NEW.output_truncated OR NOT EXISTS(
+  SELECT 1 FROM scenario_recorder_sessions r WHERE r.instance_id=NEW.id AND r.app_id=NEW.app_id
+   AND r.deployment_id=NEW.deployment_id AND r.status='closed' AND r.command_result=NEW.stdout_tail)) THEN
+  RAISE EXCEPTION 'contained command success requires its owner retirement receipt' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_rehearsal_execution_active(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_execution_active(target_app uuid, execution_id uuid, deployment uuid DEFAULT NULL::uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT scenario_suspend_execution_active(target_app,execution_id) AND NOT EXISTS(SELECT 1 FROM scenario_worker_faults f WHERE f.app_id=target_app AND f.instance_id=execution_id AND f.state IN ('fenced','terminated','failed')) AND
+ (EXISTS(SELECT 1 FROM instances i WHERE i.id=execution_id AND i.app_id=target_app
+  AND (deployment IS NULL OR i.deployment_id=deployment) AND (i.state IN ('waking','cold_booting','running','draining') OR i.state='frozen' AND EXISTS
+   (SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=target_app AND r.instance_id=i.id AND r.state IN ('resuming','resumed')))
+  AND NOT EXISTS(SELECT 1 FROM scenario_cold_preparations c WHERE c.app_id=target_app AND
+   (c.state='failed' OR c.deployment_id<>i.deployment_id OR
+    (c.state IN ('armed','claimed') AND c.instance_id IS DISTINCT FROM i.id) OR
+    c.state IN ('fenced','retired') OR c.instance_id=i.id AND c.state IN ('ready','booted') OR
+    c.state='booted' AND c.boot_instance_id<>i.id)))
+ OR EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_test_action_policies p ON p.app_id=t.app_id
+  WHERE t.id=execution_id AND t.app_id=target_app AND t.account_id=p.account_id
+  AND (deployment IS NULL OR t.deployment_id=deployment) AND t.status IN ('restoring','running')
+  AND t.kind='manual' AND NOT t.command_shell AND t.max_output_bytes=65536
+  AND scenario_rehearsal_command_spec(t.command)->>'run_id'=p.run_id
+  AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
+  AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
+$$;
+
+
+--
+-- Name: scenario_simulation_policy_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_simulation_policy_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.simulation_plan IS DISTINCT FROM OLD.simulation_plan OR
+    (OLD.simulation_failed AND NOT NEW.simulation_failed) THEN
+  RAISE EXCEPTION 'rehearsal simulation policy is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_simulation_sealed_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_simulation_sealed_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.id,NEW.app_id,NEW.created_at) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.created_at)
+     OR (NEW.evidence-'status') IS DISTINCT FROM (OLD.evidence-'status')
+     OR OLD.evidence->>'status'<>'pending'
+     OR NEW.evidence->>'status' NOT IN ('completed','interrupted') THEN
+   RAISE EXCEPTION 'scenario simulation evidence is immutable' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ PERFORM id FROM apps WHERE id=NEW.app_id FOR KEY SHARE;
+ IF NOT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE app_id=NEW.app_id AND simulation_plan IS NOT NULL AND sealed_at IS NULL) THEN
+  RAISE EXCEPTION 'scenario simulation window is unavailable or sealed' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_suspend_dispatch_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_suspend_dispatch_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state='dispatching' AND (NEW.state,NEW.attempts,NEW.instance_id) IS DISTINCT FROM (OLD.state,OLD.attempts,OLD.instance_id)
+  AND EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=NEW.app_id AND r.invocation_id IS NOT NULL AND r.state<>'complete') THEN
+  RAISE EXCEPTION 'managed dispatch must wait for the original suspend/resume checkpoint' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_suspend_execution_active(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_suspend_execution_active(target_app uuid, execution_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT NOT EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.app_id=target_app AND
+  (r.state IN ('fenced','paused','failed') OR (r.instance_id<>execution_id AND EXISTS(SELECT 1 FROM instances i WHERE i.id=execution_id))));
+$$;
+
+
+--
+-- Name: scenario_suspend_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_suspend_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p scenario_test_action_policies%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM apps WHERE id=OLD.app_id) AND EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id)
+   THEN RAISE EXCEPTION 'suspend/resume evidence is retained until app deletion' USING ERRCODE='23514'; END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||p.account_id::text||':'||p.run_id,0));
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ IF p.suspend_resume_spec IS NULL OR NOT (p.suspend_resume_spec->'workloads' ? p.workload_name)
+  OR p.sealed_at IS NOT NULL OR p.recorder_closing OR p.simulation_failed
+  OR p.account_id<>NEW.account_id OR p.run_id<>NEW.run_id THEN
+  RAISE EXCEPTION 'suspend/resume enrollment unavailable or sealed' USING ERRCODE='23514'; END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.state<>(CASE WHEN p.suspend_resume_spec->>'checkpoint'='managed_job' THEN 'waiting' ELSE 'armed' END) OR NEW.method IS NOT NULL OR NEW.pause_ms<>0 OR NEW.resume_ms<>0 OR NEW.paused_at IS NOT NULL THEN
+   RAISE EXCEPTION 'suspend/resume must begin unacknowledged' USING ERRCODE='23514'; END IF;
+ ELSE
+  IF (NEW.id,NEW.account_id,NEW.app_id,NEW.run_id,NEW.deployment_id,NEW.instance_id,NEW.recorder_session_id,NEW.invocation_id,NEW.invocation_attempt,NEW.checkpoint_attempt_id,NEW.created_at)
+   IS DISTINCT FROM (OLD.id,OLD.account_id,OLD.app_id,OLD.run_id,OLD.deployment_id,OLD.instance_id,OLD.recorder_session_id,OLD.invocation_id,OLD.invocation_attempt,OLD.checkpoint_attempt_id,OLD.created_at)
+   OR NOT ((OLD.state='waiting' AND NEW.state='armed') OR (OLD.state='armed' AND NEW.state='claimed') OR (OLD.state='claimed' AND NEW.state='fenced')
+    OR (OLD.state='fenced' AND NEW.state='paused') OR (OLD.state='paused' AND NEW.state='resuming')
+    OR (OLD.state='resuming' AND NEW.state='resumed') OR (OLD.state='resumed' AND NEW.state='complete')
+    OR (OLD.state NOT IN ('complete','failed') AND NEW.state='failed'))
+   OR (NEW.state<>'paused' AND NEW.paused_at IS DISTINCT FROM OLD.paused_at)
+   OR (NEW.state<>'resuming' AND NEW.pause_ms<>OLD.pause_ms)
+   OR (NEW.state<>'resumed' AND (NEW.method,NEW.resume_ms) IS DISTINCT FROM (OLD.method,OLD.resume_ms)) THEN
+   RAISE EXCEPTION 'suspend/resume identity or lifecycle is immutable' USING ERRCODE='23514'; END IF;
+ END IF;
+ IF NEW.state<>'failed' AND NOT EXISTS(SELECT 1 FROM scenario_recorder_sessions r JOIN instances i ON i.id=r.instance_id
+  JOIN apps a ON a.id=i.app_id JOIN scenario_test_members m ON m.app_id=a.id
+  WHERE r.id=NEW.recorder_session_id AND r.app_id=NEW.app_id AND r.deployment_id=NEW.deployment_id AND r.status='recording'
+   AND i.id=NEW.instance_id AND i.app_id=NEW.app_id AND i.deployment_id=NEW.deployment_id AND i.tail_count=0
+   AND i.state=CASE WHEN NEW.state IN ('waiting','armed','claimed','complete') THEN 'running' ELSE 'frozen' END
+   AND a.account_id=NEW.account_id AND a.status='active' AND a.preview_of_slug IS NOT NULL
+   AND a.preview_pr_number=0 AND a.preview_pr_state='open' AND a.preview_expires_at>clock_timestamp()
+   AND m.account_id=NEW.account_id AND m.run_id=NEW.run_id) THEN
+  RAISE EXCEPTION 'suspend/resume requires its original live VM and recorder' USING ERRCODE='23514'; END IF;
+ IF NEW.state<>'failed' AND (
+  EXISTS(SELECT 1 FROM scenario_recorder_requests q WHERE q.session_id=NEW.recorder_session_id AND q.status<>'completed' AND NOT (NEW.state='waiting' AND q.status='admitted' AND q.attempt_id=NEW.checkpoint_attempt_id))
+  OR EXISTS(SELECT 1 FROM invocations v JOIN scenario_test_action_policies w ON w.app_id=v.app_id WHERE w.account_id=p.account_id AND w.run_id=p.run_id AND (NEW.invocation_id IS NULL OR v.id<>NEW.invocation_id))
+  OR EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_test_action_policies w ON w.app_id=t.app_id
+    WHERE w.account_id=p.account_id AND w.run_id=p.run_id AND t.status IN ('queued','restoring','running') AND NEW.state<>'waiting')
+  OR EXISTS(SELECT 1 FROM instances i WHERE i.app_id=NEW.app_id AND i.id<>NEW.instance_id AND i.state NOT IN ('stopped','parked','failed'))
+  OR EXISTS(SELECT 1 FROM exclusive_work_operations o WHERE o.app_id=NEW.app_id AND o.state IN ('pending','running'))
+  OR EXISTS(SELECT 1 FROM workflow_runs w WHERE w.app_id=NEW.app_id AND w.status IN ('pending','running','awaiting_event'))
+  OR (SELECT count(*) FROM deployments WHERE app_id=NEW.app_id)<>1) THEN
+  RAISE EXCEPTION 'suspend/resume checkpoint has unsettled work' USING ERRCODE='23514'; END IF;
+ IF (p.suspend_resume_spec->>'checkpoint'='managed_job') IS DISTINCT FROM (NEW.invocation_id IS NOT NULL)
+  OR NEW.state<>'failed' AND NEW.invocation_id IS NOT NULL AND NOT scenario_suspend_job_active(NEW) THEN
+  RAISE EXCEPTION 'suspend/resume enrolled dispatch changed or is unavailable' USING ERRCODE='23514'; END IF;
+ IF NEW.state='armed' AND NEW.invocation_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM scenario_simulation_attempts a
+   WHERE a.id=NEW.checkpoint_attempt_id AND a.app_id=NEW.app_id AND a.evidence->>'status'='completed'
+   AND a.evidence->>'fixture'=p.suspend_resume_spec->>'worker_checkpoint') THEN
+  RAISE EXCEPTION 'suspend/resume checkpoint has not completed at its broker' USING ERRCODE='23514'; END IF;
+ IF NEW.state='paused' AND NEW.paused_at IS NULL OR NEW.state IN ('resuming','resumed','complete')
+  AND (NEW.paused_at IS NULL OR NEW.pause_ms<(p.suspend_resume_spec->>'pause_ms')::bigint) THEN
+  RAISE EXCEPTION 'suspend/resume pause proof is missing' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_suspend_resumes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_suspend_resumes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    run_id text NOT NULL,
+    deployment_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    recorder_session_id uuid NOT NULL,
+    state text NOT NULL,
+    method text,
+    pause_ms bigint DEFAULT 0 NOT NULL,
+    resume_ms bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    paused_at timestamp with time zone,
+    invocation_id uuid,
+    invocation_attempt integer,
+    checkpoint_attempt_id uuid,
+    CONSTRAINT scenario_suspend_dispatch_identity CHECK ((((invocation_id IS NULL) AND (invocation_attempt IS NULL) AND (checkpoint_attempt_id IS NULL)) OR (((invocation_id IS NOT NULL) AND (invocation_attempt = 1) AND (checkpoint_attempt_id IS NOT NULL)) IS TRUE))),
+    CONSTRAINT scenario_suspend_resumes_check CHECK (((state <> ALL (ARRAY['resumed'::text, 'complete'::text])) OR (method = 'in_place'::text))),
+    CONSTRAINT scenario_suspend_resumes_method_check CHECK (((method IS NULL) OR (method = 'in_place'::text))),
+    CONSTRAINT scenario_suspend_resumes_pause_ms_check CHECK ((pause_ms >= 0)),
+    CONSTRAINT scenario_suspend_resumes_resume_ms_check CHECK ((resume_ms >= 0)),
+    CONSTRAINT scenario_suspend_resumes_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_suspend_resumes_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'armed'::text, 'claimed'::text, 'fenced'::text, 'paused'::text, 'resuming'::text, 'resumed'::text, 'complete'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: scenario_suspend_job_active(public.scenario_suspend_resumes); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_suspend_job_active(r public.scenario_suspend_resumes) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM invocations v WHERE v.id=r.invocation_id AND v.app_id=r.app_id
+  AND nullif(v.instance_id,'')::uuid=r.instance_id AND v.state='dispatching' AND v.source='async_invoke'
+  AND v.attempts=r.invocation_attempt AND v.attempts=1 AND v.lease_expires_at>clock_timestamp()
+  AND v.replay_generation=0)
+ AND (SELECT count(*) FROM invocations v JOIN scenario_test_action_policies p ON p.app_id=v.app_id
+  WHERE p.account_id=r.account_id AND p.run_id=r.run_id)=1;
+$$;
+
+
+--
+-- Name: scenario_suspend_policy_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_suspend_policy_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN IF NEW.suspend_resume_spec IS DISTINCT FROM OLD.suspend_resume_spec THEN
+ RAISE EXCEPTION 'suspend/resume plan is immutable' USING ERRCODE='23514'; END IF; RETURN NEW; END $$;
+
+
+--
+-- Name: scenario_suspend_work_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_suspend_work_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p scenario_test_action_policies%ROWTYPE;
+BEGIN
+ SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id;
+ IF p.suspend_resume_spec IS NOT NULL THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||p.account_id::text||':'||p.run_id,0));
+  IF TG_TABLE_NAME='invocations' AND p.suspend_resume_spec->>'checkpoint'='managed_job' THEN
+   IF (p.workload_name<>(p.suspend_resume_spec->'workloads'->>0) OR NEW.source<>'async_invoke' OR
+     EXISTS(SELECT 1 FROM invocations v JOIN scenario_test_action_policies w ON w.app_id=v.app_id WHERE w.account_id=p.account_id AND w.run_id=p.run_id)) THEN
+    RAISE EXCEPTION 'running-job suspend supports one managed job in its run' USING ERRCODE='23514'; END IF;
+  END IF;
+  IF EXISTS(SELECT 1 FROM scenario_suspend_resumes r WHERE r.account_id=p.account_id AND r.run_id=p.run_id AND r.state<>'complete') THEN
+   RAISE EXCEPTION 'work must wait for the suspend/resume checkpoint' USING ERRCODE='23514'; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_webhook_delivery_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_webhook_delivery_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Serialize new deliveries with the registration transaction. A registration
+    -- takes FOR UPDATE and refuses any app that already has work or deliveries.
+    PERFORM id FROM apps
+    WHERE id = NEW.app_id OR id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
+    ORDER BY id FOR KEY SHARE;
+    IF EXISTS (
+        SELECT 1 FROM scenario_test_action_policies p
+        WHERE p.app_id = NEW.app_id
+           OR p.app_id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
+    ) AND NEW.status IN ('pending', 'in_flight', 'failed') THEN
+        NEW.status := 'dead';
+        NEW.last_error := 'rehearsal: unsupported webhook delivery suppressed';
+        NEW.updated_at := clock_timestamp();
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: scenario_worker_fault_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_worker_fault_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id) AND EXISTS(SELECT 1 FROM apps WHERE id=OLD.app_id) AND EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE app_id=OLD.app_id AND sealed_at IS NULL)
+   THEN RAISE EXCEPTION 'unsealed worker fault evidence is retained' USING ERRCODE='23514'; END IF;
+  RETURN OLD;
+ END IF;
+ IF ROW(NEW.id,NEW.account_id,NEW.app_id,NEW.run_id,NEW.instance_id,NEW.deployment_id,NEW.invocation_id,NEW.checkpoint_attempt_id,NEW.recorder_session_id,NEW.created_at)
+  IS DISTINCT FROM ROW(OLD.id,OLD.account_id,OLD.app_id,OLD.run_id,OLD.instance_id,OLD.deployment_id,OLD.invocation_id,OLD.checkpoint_attempt_id,OLD.recorder_session_id,OLD.created_at)
+  OR NOT(NEW.state=OLD.state OR (OLD.state<>'terminated' AND NEW.state='failed')
+  OR (OLD.state='armed' AND NEW.state='ready') OR (OLD.state='ready' AND NEW.state='claimed')
+  OR (OLD.state='claimed' AND NEW.state='fenced') OR (OLD.state='fenced' AND NEW.state='terminated'))
+ THEN RAISE EXCEPTION 'worker fault identity or lifecycle is immutable' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: seed_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -29492,7 +30338,11 @@ CREATE TABLE public.exclusive_work_effects (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     webhook_id uuid,
     event_type text,
+    rehearsal_run_id text DEFAULT ''::text NOT NULL,
+    receiver_sha256 text DEFAULT ''::text NOT NULL,
     CONSTRAINT exclusive_work_effects_adapter_check CHECK ((((webhook_id IS NULL) AND (event_type IS NULL)) OR ((webhook_id IS NOT NULL) AND (event_type IS NOT NULL) AND ((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256)) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text)))),
+    CONSTRAINT exclusive_work_effects_check CHECK (((rehearsal_run_id = ''::text) OR ((webhook_id IS NOT NULL) AND (rehearsal_run_id ~ '^[0-9a-f]{32}$'::text)))),
+    CONSTRAINT exclusive_work_effects_check1 CHECK (((receiver_sha256 = ''::text) OR ((rehearsal_run_id <> ''::text) AND (receiver_sha256 ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT exclusive_work_effects_generation_check CHECK ((generation > 0)),
     CONSTRAINT exclusive_work_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
 );
@@ -41294,6 +42144,199 @@ CREATE TABLE public.saved_route_requirements (
 
 
 --
+-- Name: scenario_cold_preparations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_cold_preparations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    run_id text NOT NULL,
+    deployment_id uuid NOT NULL,
+    instance_id uuid,
+    recorder_session_id uuid,
+    state text NOT NULL,
+    boot_instance_id uuid,
+    boot_recorder_session_id uuid,
+    wake_id text,
+    method text,
+    startup_ms bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    ready_at timestamp with time zone,
+    CONSTRAINT scenario_cold_preparations_check CHECK (((instance_id IS NULL) = (recorder_session_id IS NULL))),
+    CONSTRAINT scenario_cold_preparations_check1 CHECK (((boot_instance_id IS NULL) = (boot_recorder_session_id IS NULL))),
+    CONSTRAINT scenario_cold_preparations_check2 CHECK (((boot_instance_id IS NULL) OR ((boot_instance_id IS DISTINCT FROM instance_id) AND (method = 'cold_boot'::text) AND (wake_id IS NOT NULL)))),
+    CONSTRAINT scenario_cold_preparations_method_check CHECK (((method IS NULL) OR (method = 'cold_boot'::text))),
+    CONSTRAINT scenario_cold_preparations_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_cold_preparations_startup_ms_check CHECK ((startup_ms >= 0)),
+    CONSTRAINT scenario_cold_preparations_state_check CHECK ((state = ANY (ARRAY['armed'::text, 'claimed'::text, 'fenced'::text, 'retired'::text, 'ready'::text, 'booted'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: scenario_command_networks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_command_networks (
+    task_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    host_ip inet NOT NULL,
+    lease_token uuid NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    CONSTRAINT scenario_command_networks_host_ip_check CHECK (((family(host_ip) = 4) AND (host_ip << '10.0.0.0/8'::inet)))
+);
+
+
+--
+-- Name: scenario_managed_work; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_managed_work (
+    invocation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    document jsonb NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT scenario_managed_work_document_check CHECK (((jsonb_typeof(document) = 'object'::text) AND (octet_length((document)::text) <= 32768))),
+    CONSTRAINT scenario_managed_work_payload_check CHECK ((octet_length((payload)::text) <= 8192)),
+    CONSTRAINT scenario_managed_work_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text))
+);
+
+
+--
+-- Name: scenario_object_fixtures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_object_fixtures (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    status text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    document jsonb NOT NULL,
+    CONSTRAINT scenario_object_fixtures_check CHECK (((document ->> 'Status'::text) = status)),
+    CONSTRAINT scenario_object_fixtures_check1 CHECK ((((document ->> 'ID'::text) = (id)::text) AND ((document ->> 'AccountID'::text) = (account_id)::text) AND ((document ->> 'RunID'::text) = run_id) AND ((document ->> 'AppID'::text) = (app_id)::text))),
+    CONSTRAINT scenario_object_fixtures_document_check CHECK ((pg_column_size(document) <= 2097152)),
+    CONSTRAINT scenario_object_fixtures_run_id_check CHECK ((run_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT scenario_object_fixtures_status_check CHECK ((status = ANY (ARRAY['ready'::text, 'sealing'::text, 'complete'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: scenario_postgres_fixtures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_postgres_fixtures (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    database_name text NOT NULL,
+    role_name text NOT NULL,
+    status text NOT NULL,
+    spec jsonb NOT NULL,
+    initial_snapshot jsonb DEFAULT '[]'::jsonb NOT NULL,
+    evidence jsonb DEFAULT '{}'::jsonb NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    backend_sha256 text DEFAULT ''::text NOT NULL,
+    CONSTRAINT scenario_postgres_fixtures_backend_sha256_check CHECK (((backend_sha256 = ''::text) OR (backend_sha256 ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT scenario_postgres_fixtures_database_name_check CHECK ((database_name ~ '^grpg_[a-f0-9]{32}$'::text)),
+    CONSTRAINT scenario_postgres_fixtures_role_name_check CHECK ((role_name ~ '^grpg_[a-f0-9]{32}$'::text)),
+    CONSTRAINT scenario_postgres_fixtures_run_id_check CHECK ((run_id ~ '^[a-f0-9]{32}$'::text)),
+    CONSTRAINT scenario_postgres_fixtures_status_check CHECK ((status = ANY (ARRAY['provisioning'::text, 'ready'::text, 'sealing'::text, 'complete'::text, 'failed'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: scenario_recorder_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_recorder_requests (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    attempt_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    CONSTRAINT scenario_recorder_requests_check CHECK (((status = 'pending'::text) = (attempt_id IS NULL))),
+    CONSTRAINT scenario_recorder_requests_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'admitted'::text, 'completed'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: scenario_recorder_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_recorder_sessions (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    status text DEFAULT 'recording'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    command_result text,
+    CONSTRAINT scenario_recorder_sessions_check CHECK (((command_result IS NULL) OR ((status = 'closed'::text) AND ((octet_length(command_result) >= 1) AND (octet_length(command_result) <= 65536))))),
+    CONSTRAINT scenario_recorder_sessions_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT scenario_recorder_sessions_instance_id_check CHECK ((instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT scenario_recorder_sessions_status_check CHECK ((status = ANY (ARRAY['recording'::text, 'closed'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: scenario_simulation_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_simulation_attempts (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    evidence jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT scenario_simulation_attempts_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT scenario_simulation_attempts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT scenario_simulation_attempts_evidence_check CHECK (((jsonb_typeof(evidence) = 'object'::text) AND (octet_length((evidence)::text) <= 131072))),
+    CONSTRAINT scenario_simulation_attempts_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT scenario_simulation_evidence_identity CHECK ((COALESCE(((evidence ->> 'id'::text) = (id)::text), false) AND COALESCE(((evidence ->> 'status'::text) = ANY (ARRAY['pending'::text, 'completed'::text, 'interrupted'::text, 'unsupported'::text])), false)))
+);
+
+
+--
+-- Name: scenario_test_action_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_test_action_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    webhook_mode text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    sealed_at timestamp with time zone,
+    sealed_snapshot jsonb,
+    network_mode text DEFAULT ''::text NOT NULL,
+    simulation_plan jsonb,
+    simulation_failed boolean DEFAULT false NOT NULL,
+    recorder_closing boolean DEFAULT false NOT NULL,
+    managed_work_plan jsonb,
+    managed_work_closing boolean DEFAULT false NOT NULL,
+    managed_work_failed boolean DEFAULT false NOT NULL,
+    cold_start_spec jsonb,
+    suspend_resume_spec jsonb,
+    CONSTRAINT scenario_action_snapshot_sealed CHECK (((sealed_snapshot IS NULL) OR (sealed_at IS NOT NULL))),
+    CONSTRAINT scenario_managed_work_plan_check CHECK (((managed_work_plan IS NULL) OR ((jsonb_typeof(managed_work_plan) = 'object'::text) AND ((managed_work_plan ->> 'version'::text) = '1'::text) AND (octet_length((managed_work_plan)::text) <= 16384) AND (simulation_plan IS NOT NULL) AND (network_mode = 'contained'::text)))),
+    CONSTRAINT scenario_suspend_plan_check CHECK (((suspend_resume_spec IS NULL) OR (((jsonb_typeof(suspend_resume_spec) = 'object'::text) AND ((suspend_resume_spec ->> 'version'::text) = '1'::text) AND (jsonb_typeof((suspend_resume_spec -> 'workloads'::text)) = 'array'::text) AND ((jsonb_array_length((suspend_resume_spec -> 'workloads'::text)) >= 1) AND (jsonb_array_length((suspend_resume_spec -> 'workloads'::text)) <= 16)) AND ((((suspend_resume_spec ->> 'pause_ms'::text))::bigint >= 1) AND (((suspend_resume_spec ->> 'pause_ms'::text))::bigint <= 30000)) AND ((((suspend_resume_spec ->> 'within_ms'::text))::bigint >= 1) AND (((suspend_resume_spec ->> 'within_ms'::text))::bigint <= 120000)) AND (simulation_plan IS NOT NULL) AND (network_mode = 'contained'::text) AND (cold_start_spec IS NULL) AND ((managed_work_plan -> 'worker_termination'::text) IS NULL) AND ((((suspend_resume_spec ->> 'checkpoint'::text) = 'after_setup'::text) AND (NOT (suspend_resume_spec ? 'worker_checkpoint'::text))) OR (((suspend_resume_spec ->> 'checkpoint'::text) = 'managed_job'::text) AND (jsonb_array_length((suspend_resume_spec -> 'workloads'::text)) = 1) AND ((suspend_resume_spec ->> 'worker_checkpoint'::text) ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (managed_work_plan IS NOT NULL)))) IS TRUE))),
+    CONSTRAINT scenario_test_action_policies_check CHECK (((simulation_plan IS NULL) OR ((network_mode = 'contained'::text) AND (jsonb_typeof(simulation_plan) = 'object'::text) AND (octet_length((simulation_plan)::text) <= 131072)))),
+    CONSTRAINT scenario_test_action_policies_check1 CHECK (((NOT simulation_failed) OR (simulation_plan IS NOT NULL))),
+    CONSTRAINT scenario_test_action_policies_check2 CHECK (((cold_start_spec IS NULL) OR ((jsonb_typeof(cold_start_spec) = 'object'::text) AND ((cold_start_spec ->> 'version'::text) = '1'::text) AND ((((cold_start_spec ->> 'within_ms'::text))::bigint >= 1) AND (((cold_start_spec ->> 'within_ms'::text))::bigint <= 120000)) AND (simulation_plan IS NOT NULL) AND (network_mode = 'contained'::text)))),
+    CONSTRAINT scenario_test_action_policies_network_mode_check CHECK ((network_mode = ANY (ARRAY[''::text, 'contained'::text]))),
+    CONSTRAINT scenario_test_action_policies_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_test_action_policies_sealed_snapshot_check CHECK (((sealed_snapshot IS NULL) OR ((jsonb_typeof(sealed_snapshot) = 'object'::text) AND (octet_length((sealed_snapshot)::text) <= 2097152)))),
+    CONSTRAINT scenario_test_action_policies_webhook_mode_check CHECK ((webhook_mode = 'capture'::text)),
+    CONSTRAINT scenario_test_action_policies_workload_name_check CHECK (((workload_name = ''::text) OR (workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)))
+);
+
+
+--
 -- Name: scenario_test_chaos_matches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -41326,6 +42369,27 @@ CREATE TABLE public.scenario_test_members (
     CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+
+--
+-- Name: scenario_worker_faults; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_worker_faults (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    run_id text NOT NULL,
+    instance_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    invocation_id uuid NOT NULL,
+    checkpoint_attempt_id uuid NOT NULL,
+    recorder_session_id uuid NOT NULL,
+    state text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT scenario_worker_faults_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_worker_faults_state_check CHECK ((state = ANY (ARRAY['armed'::text, 'ready'::text, 'claimed'::text, 'fenced'::text, 'terminated'::text, 'failed'::text])))
 );
 
 
@@ -42519,9 +43583,13 @@ CREATE TABLE public.workflow_operation_effects (
     webhook_id uuid NOT NULL,
     event_type text NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    rehearsal_run_id text DEFAULT ''::text NOT NULL,
+    receiver_sha256 text DEFAULT ''::text NOT NULL,
+    CONSTRAINT workflow_operation_effects_check CHECK (((receiver_sha256 = ''::text) OR ((rehearsal_run_id <> ''::text) AND (receiver_sha256 ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT workflow_operation_effects_event_type_check CHECK ((((octet_length(event_type) >= 1) AND (octet_length(event_type) <= 256)) AND (event_type ~ '^[a-z][a-z0-9_.-]*$'::text))),
     CONSTRAINT workflow_operation_effects_generation_check CHECK ((generation > 0)),
-    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+    CONSTRAINT workflow_operation_effects_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT workflow_operation_effects_rehearsal_run_id_check CHECK (((rehearsal_run_id = ''::text) OR (rehearsal_run_id ~ '^[0-9a-f]{32}$'::text)))
 );
 
 
@@ -51840,6 +52908,150 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_cold_preparations scenario_cold_preparations_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_cold_preparations
+    ADD CONSTRAINT scenario_cold_preparations_app_id_key UNIQUE (app_id);
+
+
+--
+-- Name: scenario_cold_preparations scenario_cold_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_cold_preparations
+    ADD CONSTRAINT scenario_cold_preparations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_command_networks scenario_command_networks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_command_networks
+    ADD CONSTRAINT scenario_command_networks_pkey PRIMARY KEY (task_id);
+
+
+--
+-- Name: scenario_managed_work scenario_managed_work_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_managed_work
+    ADD CONSTRAINT scenario_managed_work_pkey PRIMARY KEY (invocation_id);
+
+
+--
+-- Name: scenario_object_fixtures scenario_object_fixtures_account_id_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_object_fixtures
+    ADD CONSTRAINT scenario_object_fixtures_account_id_run_id_key UNIQUE (account_id, run_id);
+
+
+--
+-- Name: scenario_object_fixtures scenario_object_fixtures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_object_fixtures
+    ADD CONSTRAINT scenario_object_fixtures_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixtures_account_id_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_fixtures
+    ADD CONSTRAINT scenario_postgres_fixtures_account_id_run_id_key UNIQUE (account_id, run_id);
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixtures_database_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_fixtures
+    ADD CONSTRAINT scenario_postgres_fixtures_database_name_key UNIQUE (database_name);
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixtures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_fixtures
+    ADD CONSTRAINT scenario_postgres_fixtures_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixtures_role_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_fixtures
+    ADD CONSTRAINT scenario_postgres_fixtures_role_name_key UNIQUE (role_name);
+
+
+--
+-- Name: scenario_recorder_requests scenario_recorder_requests_attempt_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_requests
+    ADD CONSTRAINT scenario_recorder_requests_attempt_id_key UNIQUE (attempt_id);
+
+
+--
+-- Name: scenario_recorder_requests scenario_recorder_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_requests
+    ADD CONSTRAINT scenario_recorder_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_recorder_sessions scenario_recorder_sessions_app_id_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_sessions
+    ADD CONSTRAINT scenario_recorder_sessions_app_id_instance_id_key UNIQUE (app_id, instance_id);
+
+
+--
+-- Name: scenario_recorder_sessions scenario_recorder_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_sessions
+    ADD CONSTRAINT scenario_recorder_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_simulation_attempts scenario_simulation_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_simulation_attempts
+    ADD CONSTRAINT scenario_simulation_attempts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_suspend_resumes scenario_suspend_resumes_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_suspend_resumes
+    ADD CONSTRAINT scenario_suspend_resumes_app_id_key UNIQUE (app_id);
+
+
+--
+-- Name: scenario_suspend_resumes scenario_suspend_resumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_suspend_resumes
+    ADD CONSTRAINT scenario_suspend_resumes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_test_action_policies scenario_test_action_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_action_policies
+    ADD CONSTRAINT scenario_test_action_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: scenario_test_chaos_matches scenario_test_chaos_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -51861,6 +53073,30 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_pkey PRIMARY KEY (account_id, run_id, workload_name);
+
+
+--
+-- Name: scenario_worker_faults scenario_worker_faults_account_id_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_worker_faults
+    ADD CONSTRAINT scenario_worker_faults_account_id_run_id_key UNIQUE (account_id, run_id);
+
+
+--
+-- Name: scenario_worker_faults scenario_worker_faults_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_worker_faults
+    ADD CONSTRAINT scenario_worker_faults_app_id_key UNIQUE (app_id);
+
+
+--
+-- Name: scenario_worker_faults scenario_worker_faults_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_worker_faults
+    ADD CONSTRAINT scenario_worker_faults_pkey PRIMARY KEY (id);
 
 
 --
@@ -59759,6 +60995,48 @@ CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verific
 
 
 --
+-- Name: scenario_command_network_address; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_command_network_address ON public.scenario_command_networks USING btree (node_id, host_ip) WHERE active;
+
+
+--
+-- Name: scenario_managed_work_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_managed_work_run ON public.scenario_managed_work USING btree (account_id, run_id);
+
+
+--
+-- Name: scenario_object_fixtures_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_object_fixtures_expiry ON public.scenario_object_fixtures USING btree (expires_at) WHERE (status = ANY (ARRAY['ready'::text, 'sealing'::text]));
+
+
+--
+-- Name: scenario_recorder_requests_session_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_recorder_requests_session_status ON public.scenario_recorder_requests USING btree (session_id, status);
+
+
+--
+-- Name: scenario_simulation_attempts_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_simulation_attempts_app ON public.scenario_simulation_attempts USING btree (app_id);
+
+
+--
+-- Name: scenario_test_action_policies_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_test_action_policies_run_idx ON public.scenario_test_action_policies USING btree (account_id, run_id);
+
+
+--
 -- Name: scenario_test_chaos_matches_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -65482,6 +66760,216 @@ CREATE TRIGGER runtime_upgrade_target_immutable BEFORE DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER runtime_upgrade_verification_guard BEFORE INSERT OR UPDATE ON public.runtime_upgrade_verifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_upgrade_verification();
+
+
+--
+-- Name: exclusive_work_effects scenario_action_sealed_effect_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_action_sealed_effect_fence BEFORE INSERT OR UPDATE ON public.exclusive_work_effects FOR EACH ROW EXECUTE FUNCTION public.scenario_action_sealed_effect_fence();
+
+
+--
+-- Name: workflow_operation_effects scenario_action_sealed_effect_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_action_sealed_effect_fence BEFORE INSERT OR UPDATE ON public.workflow_operation_effects FOR EACH ROW EXECUTE FUNCTION public.scenario_action_sealed_effect_fence();
+
+
+--
+-- Name: scenario_cold_preparations scenario_cold_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_cold_guard BEFORE INSERT OR DELETE OR UPDATE ON public.scenario_cold_preparations FOR EACH ROW EXECUTE FUNCTION public.scenario_cold_guard();
+
+
+--
+-- Name: scenario_test_action_policies scenario_cold_policy_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_cold_policy_immutable BEFORE UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_cold_policy_immutable();
+
+
+--
+-- Name: scenario_command_networks scenario_command_network_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_command_network_fence BEFORE INSERT OR UPDATE ON public.scenario_command_networks FOR EACH ROW EXECUTE FUNCTION public.scenario_command_network_fence();
+
+
+--
+-- Name: scenario_recorder_sessions scenario_command_retirement_network_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_command_retirement_network_fence BEFORE INSERT OR UPDATE ON public.scenario_recorder_sessions FOR EACH ROW EXECUTE FUNCTION public.scenario_command_retirement_network_fence();
+
+
+--
+-- Name: invocations scenario_managed_work_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_managed_work_capture BEFORE INSERT OR DELETE OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_managed_work_capture();
+
+
+--
+-- Name: scenario_managed_work scenario_managed_work_journal_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_managed_work_journal_fence BEFORE INSERT OR DELETE OR UPDATE ON public.scenario_managed_work FOR EACH ROW EXECUTE FUNCTION public.scenario_managed_work_journal_fence();
+
+
+--
+-- Name: scenario_test_action_policies scenario_managed_work_policy_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_managed_work_policy_fence BEFORE UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_managed_work_policy_fence();
+
+
+--
+-- Name: scenario_test_action_policies scenario_network_policy_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_network_policy_immutable BEFORE UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_network_policy_immutable();
+
+
+--
+-- Name: scenario_object_fixtures scenario_object_attempt_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_object_attempt_immutable BEFORE UPDATE ON public.scenario_object_fixtures FOR EACH ROW EXECUTE FUNCTION public.scenario_object_attempt_immutable();
+
+
+--
+-- Name: scenario_object_fixtures scenario_object_fixture_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_object_fixture_immutable BEFORE DELETE OR UPDATE ON public.scenario_object_fixtures FOR EACH ROW EXECUTE FUNCTION public.scenario_object_fixture_immutable();
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_backend_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_backend_guard BEFORE INSERT OR UPDATE ON public.scenario_postgres_fixtures FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_backend_guard();
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixture_delete_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_fixture_delete_guard BEFORE DELETE ON public.scenario_postgres_fixtures FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fixture_delete_guard();
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixture_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_fixture_immutable BEFORE UPDATE ON public.scenario_postgres_fixtures FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fixture_immutable();
+
+
+--
+-- Name: scenario_test_action_policies scenario_recorder_closing_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_recorder_closing_fence BEFORE UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_recorder_closing_fence();
+
+
+--
+-- Name: scenario_recorder_requests scenario_recorder_request_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_recorder_request_fence BEFORE INSERT OR UPDATE ON public.scenario_recorder_requests FOR EACH ROW EXECUTE FUNCTION public.scenario_recorder_fence();
+
+
+--
+-- Name: scenario_recorder_sessions scenario_recorder_session_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_recorder_session_fence BEFORE INSERT OR UPDATE ON public.scenario_recorder_sessions FOR EACH ROW EXECUTE FUNCTION public.scenario_recorder_fence();
+
+
+--
+-- Name: app_tasks scenario_rehearsal_command_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_rehearsal_command_admission BEFORE INSERT ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.scenario_rehearsal_command_admission();
+
+
+--
+-- Name: app_task_attach_sessions scenario_rehearsal_command_attach_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_rehearsal_command_attach_fence BEFORE INSERT ON public.app_task_attach_sessions FOR EACH ROW EXECUTE FUNCTION public.scenario_rehearsal_command_attach_fence();
+
+
+--
+-- Name: app_tasks scenario_rehearsal_command_update_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_rehearsal_command_update_fence BEFORE UPDATE ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.scenario_rehearsal_command_update_fence();
+
+
+--
+-- Name: scenario_test_action_policies scenario_simulation_policy_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_simulation_policy_immutable BEFORE UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_simulation_policy_immutable();
+
+
+--
+-- Name: scenario_simulation_attempts scenario_simulation_sealed_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_simulation_sealed_fence BEFORE INSERT OR UPDATE ON public.scenario_simulation_attempts FOR EACH ROW EXECUTE FUNCTION public.scenario_simulation_sealed_fence();
+
+
+--
+-- Name: app_tasks scenario_suspend_command_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_suspend_command_guard BEFORE INSERT ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.scenario_suspend_work_guard();
+
+
+--
+-- Name: invocations scenario_suspend_dispatch_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_suspend_dispatch_guard BEFORE UPDATE OF state, attempts, instance_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_suspend_dispatch_guard();
+
+
+--
+-- Name: scenario_suspend_resumes scenario_suspend_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_suspend_guard BEFORE INSERT OR DELETE OR UPDATE ON public.scenario_suspend_resumes FOR EACH ROW EXECUTE FUNCTION public.scenario_suspend_guard();
+
+
+--
+-- Name: scenario_test_action_policies scenario_suspend_policy_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_suspend_policy_immutable BEFORE UPDATE ON public.scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION public.scenario_suspend_policy_immutable();
+
+
+--
+-- Name: invocations scenario_suspend_work_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_suspend_work_guard BEFORE INSERT ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_suspend_work_guard();
+
+
+--
+-- Name: app_webhook_deliveries scenario_webhook_delivery_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_webhook_delivery_fence BEFORE INSERT OR UPDATE ON public.app_webhook_deliveries FOR EACH ROW EXECUTE FUNCTION public.scenario_webhook_delivery_fence();
+
+
+--
+-- Name: scenario_worker_faults scenario_worker_fault_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_worker_fault_guard BEFORE DELETE OR UPDATE ON public.scenario_worker_faults FOR EACH ROW EXECUTE FUNCTION public.scenario_worker_fault_guard();
 
 
 --
@@ -77084,6 +78572,150 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_cold_preparations scenario_cold_preparations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_cold_preparations
+    ADD CONSTRAINT scenario_cold_preparations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_cold_preparations scenario_cold_preparations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_cold_preparations
+    ADD CONSTRAINT scenario_cold_preparations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_command_networks scenario_command_networks_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_command_networks
+    ADD CONSTRAINT scenario_command_networks_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: scenario_command_networks scenario_command_networks_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_command_networks
+    ADD CONSTRAINT scenario_command_networks_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_managed_work scenario_managed_work_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_managed_work
+    ADD CONSTRAINT scenario_managed_work_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_managed_work scenario_managed_work_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_managed_work
+    ADD CONSTRAINT scenario_managed_work_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_object_fixtures scenario_object_fixtures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_object_fixtures
+    ADD CONSTRAINT scenario_object_fixtures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_object_fixtures scenario_object_fixtures_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_object_fixtures
+    ADD CONSTRAINT scenario_object_fixtures_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixtures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_fixtures
+    ADD CONSTRAINT scenario_postgres_fixtures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_postgres_fixtures scenario_postgres_fixtures_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_postgres_fixtures
+    ADD CONSTRAINT scenario_postgres_fixtures_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_recorder_requests scenario_recorder_requests_attempt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_requests
+    ADD CONSTRAINT scenario_recorder_requests_attempt_id_fkey FOREIGN KEY (attempt_id) REFERENCES public.scenario_simulation_attempts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_recorder_requests scenario_recorder_requests_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_requests
+    ADD CONSTRAINT scenario_recorder_requests_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.scenario_recorder_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_recorder_sessions scenario_recorder_sessions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_recorder_sessions
+    ADD CONSTRAINT scenario_recorder_sessions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_simulation_attempts scenario_simulation_attempts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_simulation_attempts
+    ADD CONSTRAINT scenario_simulation_attempts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_suspend_resumes scenario_suspend_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_suspend_resumes
+    ADD CONSTRAINT scenario_suspend_resumes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_suspend_resumes scenario_suspend_resumes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_suspend_resumes
+    ADD CONSTRAINT scenario_suspend_resumes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_action_policies scenario_test_action_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_action_policies
+    ADD CONSTRAINT scenario_test_action_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_test_action_policies scenario_test_action_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_test_action_policies
+    ADD CONSTRAINT scenario_test_action_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: scenario_test_chaos_matches scenario_test_chaos_matches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77113,6 +78745,22 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_worker_faults scenario_worker_faults_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_worker_faults
+    ADD CONSTRAINT scenario_worker_faults_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_worker_faults scenario_worker_faults_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_worker_faults
+    ADD CONSTRAINT scenario_worker_faults_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

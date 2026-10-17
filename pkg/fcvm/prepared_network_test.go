@@ -505,3 +505,28 @@ func TestEnablePreparedNetworksReportsMissingHostNetwork(t *testing.T) {
 		t.Fatal("a failed enable left a cache behind")
 	}
 }
+
+// H10-141: an idle pool keeps its spares across maintenance. At a 60 s TTL
+// every spare was rebuilt each 45 s, and the bridge-port and networkd lines
+// from those rebuilds filled 96% of a production node's journal.
+func TestPreparedNetworkIdleSparesSurviveMaintenance(t *testing.T) {
+	if preparedNetworkTick >= preparedNetworkTTL/2 {
+		t.Fatalf("maintenance tick %s must be shorter than the refresh age %s", preparedNetworkTick, preparedNetworkTTL/2)
+	}
+	m, p := testPreparedPool(t, 3)
+	fillTestPreparedPool(t, m, p, 100)
+	before := map[string]bool{}
+	for i := range p.ready {
+		p.ready[i].created = time.Now().Add(-10 * time.Minute)
+		before[p.ready[i].lease.Instance] = true
+	}
+	p.fill()
+	if len(p.ready) != 3 {
+		t.Fatalf("ready = %d, want 3", len(p.ready))
+	}
+	for _, entry := range p.ready {
+		if !before[entry.lease.Instance] {
+			t.Fatalf("a 10-minute-old idle spare was rebuilt (%s)", entry.lease.Instance)
+		}
+	}
+}
