@@ -1,0 +1,9 @@
+# Accepted version-skew findings (docs/release-compatibility.md).
+#
+# One finding key per line, then "# <reason>". A key comes from the check's
+# ::error:: line, e.g.
+#
+#   proto:onebox.faas.vmmd.v1.Vmmd.OldRpc:rpc-removed  # no N-1 caller: only gregalectl used it, removed in rc.270
+#
+# An entry stops matching once a release containing the change is tagged;
+# the check then prints a notice asking for it to be deleted.

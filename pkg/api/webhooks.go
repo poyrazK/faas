@@ -116,7 +116,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
@@ -246,6 +246,10 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
 	AsOf             string                                    `json:"as_of"`
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
+	// Prepaid credit drawn at finalization and what is left to bill
+	// (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing

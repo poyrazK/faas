@@ -41,7 +41,7 @@ def test_durable_project_migration_create_and_resume_wire_identity():
     from uuid import UUID
 
     from faas_sdk.api.projects import create_project_migration, resume_project_migration
-    from faas_sdk.models import ProjectPublicBuildURLs, CreateProjectMigrationRequestBuildDependencies
+    from faas_sdk.models import CreateProjectMigrationRequestBuildDependencies, ProjectPublicBuildURLs
     from faas_sdk.models.create_project_migration_request import CreateProjectMigrationRequest
     from faas_sdk.models.project_service_connections import ProjectServiceConnections
     from faas_sdk.models.resume_project_migration_request import ResumeProjectMigrationRequest

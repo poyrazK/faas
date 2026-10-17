@@ -1,11 +1,11 @@
 from typing import Literal
 
-OperatorIntentAcceptedResponsePreviousState = Literal["COLD_BOOTING", "RUNNING", "WAKING"]
+OperatorIntentAcceptedResponsePreviousState = Literal["cold_booting", "running", "waking"]
 
 OPERATOR_INTENT_ACCEPTED_RESPONSE_PREVIOUS_STATE_VALUES: set[OperatorIntentAcceptedResponsePreviousState] = {
-    "COLD_BOOTING",
-    "RUNNING",
-    "WAKING",
+    "cold_booting",
+    "running",
+    "waking",
 }
 
 

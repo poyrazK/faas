@@ -3538,15 +3538,52 @@ release, and invalidate before waiting for retirement at shutdown. See the
 [pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
 [runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
 
+### Deadline count alerts
+
+`watchEventSubscriptionDeadlines(target, options)` provides sustained upcoming,
+expired and waiting-reason count alerts, separate recovery boundaries, fresh-evidence
+confirmation progress, cancellation and a bounded checkpoint outbox. Load checkpoints
+with `validateEventDeadlineCheckpoint`; acknowledge exact incident/sequence pairs
+with `acknowledgeEventDeadlineAlerts` or the watch's acknowledgment callback.
+
+The Node deadline-only checkpoint format is distinct from Go/CLI delivery-health
+checkpoints. Applications own persistence and notifications: persist before sending,
+replay unacknowledged alerts after a crash, and deduplicate downstream. See
+[configuration, callbacks and recovery semantics](../../docs/event-deadline-node-watch.md).
+
+`expiredRatio: { warningBasisPoints: 1000, recoveryBasisPoints: 500,
+minimumRecipients: 100 }` enables >=10% expired backlog warnings and <=5% recovery
+with a qualifying cohort. Decisions use exact BigInt arithmetic; display values
+are approximate and alerts retain the source count sample. Ratio selections use
+version 2 Node checkpoints; existing count-only selections stay at version 1. See
+[ratio validation and compatibility](../../docs/event-deadline-node-watch.md#expired-backlog-ratios).
+
+`investigateEventDeadlineAlert(checkpoint, { incidentId, sequence }, { limit: 25 })`
+maps an exact retained Node alert to one current read-only triage page. It validates
+the checkpoint and returned scope/cohort, preserves opaque cursor continuation and
+keeps the saved notification time separate from current observation clocks. Ratio
+alerts list the expired numerator only. See
+[investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).
+
 ## Issue source maps
 
-Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept
 `sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
 bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
 Ship matching maps with the deployment and load them before creating the reporter.
 Original frames determine grouping, and raw bundle stacks remain available.
 Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
 [registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+To discover maps automatically after a build, run
+`gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace` and ship
+the manifest with the bundles. Set
+`sourceMapManifest: { file: '/app/dist/.gregale-issue-maps.json', directory: '/app/dist' }`
+instead of `sourceMaps`. Initialization checks bundle hashes and resolves paths
+against the running deployment; capture never reads files. Build-time discovery
+removes embedded source content, supports local annotations and adjacent hidden
+maps, and rejects remote/inline references and mismatched artifacts. See
+[automatic discovery](../../docs/issues.md#discover-source-maps-during-node-builds).
 
 ## Reversible issue grouping
 
@@ -3558,3 +3595,14 @@ Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reporte
 cause. The dashboard preserves the outer exception and cause chain. See
 [Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
 language semantics, incomplete chains, and compatibility.
+
+Issue reporters accept explicitly reported operational context. Create a separate collector for each request or job:
+
+```ts
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.

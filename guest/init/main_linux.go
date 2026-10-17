@@ -1587,7 +1587,10 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
 	// platform default empty for musl runtimes and minimal scratch bases.
-	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
+	// A shared runner base ships the libraries Railpack's default apt step
+	// installs (libatomic1), and system packages outside /app keep an app
+	// off the /app-only layer (H10-140).
+	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || m.SharedRuntime || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
 		if _, ok := deploy["aptPackages"]; !ok {
 			deploy["aptPackages"] = []any{}
 		}
@@ -2051,6 +2054,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
+		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
 		if watchErr != nil {
 			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
 			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)

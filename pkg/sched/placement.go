@@ -48,9 +48,10 @@ const restorePressureHighWatermark = 2
 // target so the wake loop doesn't need a second lookup against the
 // compute_nodes table.
 type Placement struct {
-	NodeID    string
-	Name      string
-	TargetURL string // wire.ParseTarget-compatible (unix://|tcp://|dns://)
+	LifecycleGeneration int64
+	NodeID              string
+	Name                string
+	TargetURL           string // wire.ParseTarget-compatible (unix://|tcp://|dns://)
 	// Region is copied from compute_nodes at placement time so the wake
 	// identity can describe the locality that actually hosted the VM.
 	Region string
@@ -237,6 +238,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		(r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
 			cpuHeadroomMillicores(*warmFit, usedCPUMillicores[warmFit.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 		return Placement{
+			LifecycleGeneration: warmFit.LifecycleGeneration,
 			NodeID:              warmFit.ID,
 			Name:                warmFit.Name,
 			TargetURL:           warmFit.TargetURL,
@@ -334,6 +336,7 @@ func restorePressureCanSelect(n state.ComputeNode, candidates []state.ComputeNod
 
 func placementForNode(n state.ComputeNode, usedMB int64) Placement {
 	return Placement{
+		LifecycleGeneration: n.LifecycleGeneration,
 		NodeID:              n.ID,
 		Name:                n.Name,
 		TargetURL:           n.TargetURL,

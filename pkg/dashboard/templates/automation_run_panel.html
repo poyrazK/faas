@@ -1,0 +1,78 @@
+{{define "automation-run-panel"}}
+<section id="selected-run">
+  <h2>Selected run</h2>
+  {{with .Data.Run}}
+  <p><code>{{.ID}}</code> — <strong>{{.Status}}</strong>{{if .CurrentStep}}; current step: {{.CurrentStep}}{{end}}</p>
+  <p>Created {{.CreatedAt}}{{if .DeploymentID}} · deployment <code>{{.DeploymentID}}</code>{{end}} · continuations: {{.ResumeCount}}</p>
+  <a href="{{.URL}}#selected-run">Refresh run status</a>
+  {{end}}
+
+  {{if .Data.RunControlsDisabled}}<p class="notice" role="status">Refresh run status to review a new preview before submitting another action.</p>{{end}}
+  {{if .Data.DiagnosticsError}}<p role="status">{{.Data.DiagnosticsError}}</p>{{end}}
+  {{with .Data.Diagnostics}}
+  <h3>Run diagnosis</h3>
+  <p>{{$.Data.StateExplanation}}</p>
+  <p class="muted">State: <code>{{.StateReason}}</code>. Observed {{.ObservedAt}}.</p>
+  {{if .NextWakeAt}}<p>Next wake: {{.NextWakeAt}}.</p>{{end}}
+  {{if .DueAgeSeconds}}<p>Due for {{.DueAgeSeconds}} seconds.</p>{{end}}
+  {{if .StaleLease}}<p class="notice">The worker lease has expired. The dispatcher must reconcile ownership before more work can run.</p>{{end}}
+  {{if .LegacyUnpinned}}<p class="notice">This legacy run has no pinned deployment. Handler routing follows the existing deployment rules.</p>{{end}}
+  {{end}}
+
+  <div class="table-scroll"><table>
+    <tr><th>Step</th><th>Kind</th><th>State</th><th>Attempts</th><th>Retry budget starts after</th><th>Next retry or check</th></tr>
+    {{range .Data.Steps}}<tr><td>{{if .AttemptsURL}}<a href="{{.AttemptsURL}}" aria-label="Inspect attempts for {{.Name}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td><td>{{.Kind}}</td><td>{{.Status}}</td><td>{{.Attempt}}</td><td>{{.RetryBase}}</td><td>{{if .NextRetryAt}}{{.NextRetryAt}}{{else if .NextCheckAt}}{{.NextCheckAt}}{{else}}—{{end}}</td></tr>{{end}}
+  </table></div>
+
+  {{if .Data.SelectedStep}}<div id="selected-step">
+    <h3>Step attempts: {{.Data.SelectedStep}}</h3>
+    {{if .Data.AttemptsError}}<p role="status">{{.Data.AttemptsError}}</p>
+    {{else if .Data.Attempts}}<div class="table-scroll"><table>
+      <tr><th>Attempt</th><th>State</th><th>HTTP status</th><th>Started</th><th>Finished</th><th>Next attempt</th></tr>
+      {{range .Data.Attempts}}<tr><td>{{.Number}}</td><td>{{.Status}}</td><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}—{{end}}</td><td>{{.StartedAt}}</td><td>{{if .FinishedAt}}{{.FinishedAt}}{{else}}—{{end}}</td><td>{{if .NextAttemptAt}}{{.NextAttemptAt}}{{else}}—{{end}}</td></tr>{{end}}
+    </table></div>{{else}}<p>No executor attempts have been recorded for this step.</p>{{end}}
+  </div>{{end}}
+
+  {{with .Data.Diagnostics}}
+  <h3>Recovery preview</h3>
+  <p>A continuation keeps this run's captured definition and inputs. Successful actions keep their results; eligible failed actions receive another retry budget.</p>
+  <p>Steps to reopen: {{range .Resume.ReopenedSteps}}<span class="step">{{.}}</span>{{else}}none{{end}}.</p>
+  <p>Steps to preserve: {{range .Resume.PreservedSteps}}<span class="step">{{.}}</span>{{else}}none{{end}}.</p>
+  {{if .Resume.Blockers}}
+  <p>Recovery is blocked:</p><ul>{{range .Resume.Blockers}}<li>{{.Message}} <code>{{.Code}}</code>{{if .StepName}} · step {{.StepName}}{{end}}</li>{{end}}</ul>
+  {{else if not .Resume.Eligible}}<p>This run is not eligible for continuation.</p>{{end}}
+  {{if and .Resume.Eligible (not .Resume.Blockers) (not $.Data.RunControlsDisabled)}}
+  <form method="post" action="{{$.Data.BaseURL}}/resume" aria-label="Resume selected run">
+    <input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}">
+    <input type="hidden" name="name" value="{{$.Data.Name}}">
+    <input type="hidden" name="run_id" value="{{$.Data.Run.ID}}">
+    <input type="hidden" name="expected_resume_count" value="{{.Resume.ExpectedResumeCount}}">
+    <input type="hidden" name="action_key" value="{{$.Data.Run.ResumeKey}}">
+    <label class="check"><input type="checkbox" name="confirm_resume" value="yes" required>I confirm the reopened steps may perform real actions again.</label>
+    <div class="actions"><button class="primary" type="submit">Resume failed run</button></div>
+    <p class="muted">The server rechecks eligibility and the continuation count when you submit. This preview does not reserve capacity.</p>
+  </form>
+  {{end}}
+  {{end}}
+
+  {{if and .Data.Run.CanCancel (not .Data.RunControlsDisabled)}}
+  <details><summary>Cancel this run</summary>
+    <form method="post" action="{{.Data.BaseURL}}/cancel" aria-label="Cancel selected run">
+      <input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+      <input type="hidden" name="name" value="{{.Data.Name}}">
+      <input type="hidden" name="run_id" value="{{.Data.Run.ID}}">
+      <input type="hidden" name="action_key" value="{{.Data.Run.CancelKey}}">
+      <label class="check"><input type="checkbox" name="confirm_cancel" value="yes" required>I want to cancel this run. Completed actions will not be undone.</label>
+      <div class="actions"><button type="submit">Cancel run</button></div>
+      <p class="muted">Cancellation applies to the selected run's current state. Active work may need time to stop.</p>
+    </form>
+  </details>
+  {{end}}
+
+  <h3>Recovery history</h3>
+  {{if .Data.RecoveryHistoryError}}<p role="status">{{.Data.RecoveryHistoryError}}</p>
+  {{else if .Data.RecoveryHistory}}<ol>{{range .Data.RecoveryHistory}}<li>Continuation {{.Number}} · previous state {{.PreviousStatus}} · {{.CreatedAt}}<br>Reopened: {{range .Steps}}<span class="step">{{.}}</span>{{end}}</li>{{end}}</ol>
+  {{else}}<p>No continuations have been recorded.</p>{{end}}
+  <p class="muted">Inputs, outputs and full errors are available through the CLI and API.</p>
+</section>
+{{end}}

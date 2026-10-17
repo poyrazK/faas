@@ -76,11 +76,22 @@ def create_app(database_factory=Database):
         await run_request(request, app.state.database.query(READINESS_SQL))
         return {"ok": True, "db": "ok"}
 
+    # Lifecycle callbacks come from guest-init over loopback with one exact
+    # marker header; anything else is a forged public request.
+    def platform_hook(request, marker):
+        if (request.client is None or request.client.host not in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+                or request.headers.get(marker) != "1"):
+            raise HTTPException(403, "Forbidden")
+
+    @app.post("/internal/before-checkpoint", status_code=204)
+    async def before_checkpoint(request: Request):
+        platform_hook(request, "X-Faas-Before-Checkpoint")
+        await run_request(request, app.state.database.checkpoint())
+        return Response(status_code=204)
+
     @app.post("/internal/after-restore", status_code=204)
     async def after_restore(request: Request):
-        if (request.client is None or request.client.host not in {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
-                or request.headers.get("X-Faas-After-Restore") != "1"):
-            raise HTTPException(403, "Forbidden")
+        platform_hook(request, "X-Faas-After-Restore")
         await run_request(request, app.state.database.restore())
         return Response(status_code=204)
 

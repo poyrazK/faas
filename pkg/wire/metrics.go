@@ -986,7 +986,7 @@ type OpsMetrics struct {
 	canaryFleetInFlightHighAlertFiredTotal    prometheus.Counter
 
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
-	// meterdAccountSpendEur (account_id) is the MTD EUR spend
+	// meterdAccountSpendEur (account_id) is the MTD spend in the billing currency (ADR-1430; the name keeps eur)
 	// computed by the meterd tick loop and stamped every
 	// AlertEvalInterval. Cardinity is bounded by account count.
 	meterdAccountSpendEur *prometheus.GaugeVec
@@ -3356,7 +3356,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	meterdAccountSpendEur := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_account_spend_eur",
-		Help: "Per-{account_id} MTD EUR spend, recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
+		Help: "Per-{account_id} MTD spend in the billing currency (USD, ADR-1430), recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
 	}, []string{"account_id"})
 	apidTenantSurfaceCertExpirySeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_tenant_surface_cert_expiry_seconds",
@@ -8937,7 +8937,7 @@ func (m *OpsMetrics) AlertActionExecutedTotal(action string) func() {
 	return func() {}
 }
 
-// MeterdAccountSpendEur returns the per-{account_id} MTD EUR-spend
+// MeterdAccountSpendEur returns the per-{account_id} MTD billing-currency spend
 // gauge fed by the meterd spend aggregator. Issue #1233 / ADR-123
 // backs the alert preset spend_eur_20. Returns nil on a nil receiver.
 func (m *OpsMetrics) MeterdAccountSpendEur() *prometheus.GaugeVec {

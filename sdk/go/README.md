@@ -844,6 +844,8 @@ must not perform external effects or control the transaction lifecycle.
 
 See [the transaction contract and retention rules](../../docs/event-consumer-transactions.md).
 
+For long-running preparation, the opt-in [processing lease helper](../../docs/event-consumer-processing.md) provides durable claims, renewal and fenced transactional completion. HTTP success still follows completion.
+
 Enqueue follow-up Commit work inside the event-consumer callback with `InsertCommitEventInTransaction(ctx, tx, event)`. Install both schemas in the same database and configure a Commit source. Business writes, follow-up work and the receipt commit together; duplicate inputs return the saved result. See [the combined transaction examples](../../docs/event-consumer-transactions.md#update-and-enqueue-follow-up-work-atomically).
 
 For transactional publication to subscribers, configure an immutable `event` Commit destination with contract version 3. The existing insert helpers accept an optional schema version and run in the consumer callback transaction. See [publication setup and receipt recovery](../../docs/gregale-commit.md#version-3-application-event-publication-adr-935).
@@ -1408,3 +1410,133 @@ consumer with the reload coordinator, hold each lease through driver connection
 release, and invalidate before waiting for retirement at shutdown. See the
 [pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
 [runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Deferred delivery acknowledgments
+
+Configure future subscription acceptances with `SetEventAcknowledgmentPolicy`.
+An opted-in handler durably enqueues processing before returning HTTP 202; its
+worker uses `RenewEventAcknowledgment` and `CompleteEventAcknowledgment` with the
+secret delivery token and an appropriately scoped API credential. Inspect state
+with `GetEventAcknowledgment`. See [the protocol and rollout requirements](../../docs/event-deferred-acknowledgments.md).
+
+For application event publication, `SaveEventOutbox` stages a producer-key request
+in the business transaction; `RecoverNextEventOutbox` publishes retained due work
+with leased recovery. Install the application-owned `EventOutboxSchema` explicitly.
+See [the event outbox contract](../../docs/event-outbox.md), including the required
+server identity guard and bounded retry/retention policy.
+
+Use `ReconcileEventOutbox` to confirm a saved request from retained matching
+acceptance without publishing, `ResumeEventOutbox` for explicit guarded control
+within the original deadline, and `ListEventOutbox` for paginated unresolved
+metadata. Unavailable verification never automatically resumes publication.
+
+`GetEventOutboxHealth` summarizes retained unpublished work and
+`WatchEventOutboxHealth` emits sustained local backlog, stall, blocked and expiry
+alerts. See [the health guide](../../docs/event-outbox-health.md) for completeness,
+freshness and existing-installation index requirements.
+
+Set `CommandID` on outbox reconciliation/resume options for atomic retained
+control results. `GetEventOutboxControlReceipt` recovers a command result and
+`ListEventOutboxControlHistory` paginates one publication's retained controls.
+See [command replay and retention](../../docs/event-outbox-control-history.md).
+
+Outbox recovery can opt into `EventOutboxRetryPolicy` for capped exponential
+jitter, Retry-After guidance, and lifetime claim limits. See
+[policy and schema upgrade](../../docs/event-outbox-retry-policy.md) before enabling
+it on an existing application outbox.
+
+`RunEventOutboxWorker` adds bounded concurrent recovery, idle polling backoff and
+cooperative shutdown draining around the existing outbox helpers. See
+[worker lifecycle and callbacks](../../docs/event-outbox-worker.md) before wiring
+it into application supervision.
+
+Use `SaveEventOutboxWithRetryPolicy` for per-publication retry settings and
+`GetEventOutboxRetryPolicy` to read their current revision. Guarded
+`SetEventOutboxRetryPolicy` changes are always recorded in control history.
+See [saved policies and required migration](../../docs/event-outbox-stored-retry-policy.md).
+
+`SetEventOutboxPublishingPaused` controls app-scoped publishing with guarded,
+replayable command receipts. `GetEventOutboxPublishingControl` reads current
+state; command lookup/history APIs retain interventions separately from per-row
+controls. See [pause fencing and upgrade](../../docs/event-outbox-publishing-control.md).
+
+`SetEventOutboxRateLimit` configures an app-scoped token bucket shared by recovery
+workers. Claim commit consumes capacity atomically with its lease and attempt;
+rate-limited polls spend no attempts. Configuration uses revision guards and
+replayable command receipts. Health exposes throttled work separately from due or
+stalled work. Install the opt-in schema and replace older workers before relying
+on enforcement. See [rate limits](../../docs/event-outbox-rate-limit.md).
+
+For consumer admission, `SetEventSubscriptionRateLimit` configures a durable
+per-subscription interval/burst bucket. Revision-guarded UUID commands return
+applied or rejected receipts; lookup and bounded history support uncertain retries.
+Existing pause, circuit and per-second caps remain in force. See
+[consumer rate controls](../../docs/event-subscription-rate-limits.md).
+
+`PreviewEventSubscriptionRateLimit` reviews proposed consumer bucket settings
+without changing state. It returns the reviewed revision, projected capacity,
+current overlapping controls and bounded deadline-risk evidence. Its rate-only
+drain model is advisory and does not guarantee ordering or completion. See
+[preview semantics](../../docs/event-subscription-rate-preview.md).
+
+Set delivery-health watch `RateRisk: &EventDeliveryRateRiskOptions{ThrottledGrowth: 1,
+DeadlineRisk: 1, DeadlineWithin: 5*time.Minute, Sustain: time.Minute, RecoverySustain: time.Minute}` to monitor
+shared-bucket throttling with growing backlog, modeled deadline risk and approaching
+effective deadlines. Both
+warning and recovery require fresh sustained evidence. Progress exposes preview
+coverage and contributors; incomplete pending samples become unknown. The conditions
+support existing durable checkpoints and acknowledgements. See
+[rate-risk alerts](../../docs/event-delivery-rate-risk-alerts.md).
+
+`GetEventSubscriptionPendingSummary` reads full retained captured pending counts
+and effective deadlines under fixed read budgets. Growth and approaching-deadline
+watch conditions use that complete evidence beyond the preview's 1000-row cap;
+modeled-risk conditions retain the cap. See [full summaries and checkpoint
+compatibility](../../docs/event-subscription-pending-summary.md).
+
+`ListEventSubscriptionDeadlines` lists retained pending delivery identities by
+effective deadline with absolute bounds, expired/upcoming classification and
+scoped cursors. Pages are live and read-only; no payloads or recovery actions are
+included. See [deadline triage](../../docs/event-subscription-deadline-triage.md).
+
+`GetEventSubscriptionDeadlineWindow` counts upcoming deadlines within a selected
+horizon and partitions upcoming/expired cohorts by observed waiting reason. Set
+`RateRisk.DeadlineWindow` to `EventDeliveryDeadlineWindowOptions{Within: 5*time.Minute,
+Upcoming: 50, Expired: 1}` for sustained count alerts. The selected endpoint replaces
+the standalone summary read. See [window counts and alert semantics](../../docs/event-subscription-deadline-window.md).
+
+Set `DeadlineWindow.UpcomingReasons` and/or `.ExpiredReasons` to known-reason count
+maps for independent sustained incidents, such as `subscription_paused: 10`. These
+reuse the existing aggregate read and retain total-alert compatibility. See
+[reason-specific deadline alerts](../../docs/event-subscription-deadline-window.md#alerts-for-selected-waiting-reasons).
+
+Delivery-health `Confirmations` now explain rate/deadline warning and recovery
+sustain, growth baseline waits, resume requirements and notification capacity.
+Entries join conditions by metric and add no requests or checkpoint proof. See
+[confirmation diagnostics](../../docs/event-delivery-confirmation-progress.md).
+
+Deadline count alerts accept `UpcomingRecovery` / `ExpiredRecovery` pointers and
+`UpcomingReasonsRecovery` / `ExpiredReasonsRecovery` maps for separate inclusive
+recovery boundaries. Defaults remain warning minus one; explicit zero requires
+zero. Recovery must be below an enabled warning count. See
+[configuration and checkpoint compatibility](../../docs/event-subscription-deadline-window.md#separate-opening-and-recovery-counts).
+
+Set `DeadlineWindow.ExpiredRatio` to `EventDeliveryDeadlineRatioOptions` for an
+expired / pending-with-deadlines ratio condition. Select integer basis-point warning
+and recovery thresholds plus an explicit `MinimumRecipients`; insufficient cohorts
+remain unknown, never fabricated zero. The same full-count read and version 2
+checkpoint handling apply. See [ratio alerts and exact comparisons](../../docs/event-deadline-ratio-alerts.md).
+
+`InvestigateEventDeadlineAlert(ctx, app, alert, EventDeadlineInvestigationOptions{Limit: 25})`
+maps a Go/CLI count or ratio alert to one read-only page of current deadline triage.
+It preserves reason filters, scope checks and opaque pagination, returning a separate
+alert reference and current observation timestamps. It does not reconstruct historical
+membership or perform recovery actions. See [investigation usage and limits](../../docs/event-deadline-alert-investigation.md).
+
+Set `EventDeadlineInvestigationOptions{Limit: 25, Explain: true}` to add one
+acceptance-guarded blocker batch within the same five-second read budget. Explanation
+mode requires a page limit at most 50 and preserves one result per triage row,
+including unavailable/replaced evidence and independent read errors. Diagnostic
+timestamps and ordering-blocker identities remain separate from triage observations.
+Check `Explanations.ReadComplete` for read coverage. See
+[blocker explanation semantics](../../docs/event-deadline-alert-investigation.md#blocker-explanations).

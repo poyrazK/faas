@@ -315,6 +315,20 @@ migration-version-hygiene-check: ## Reject hand-typed migration versions and ver
 migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
 	bash scripts/ci/check_migration_version_hygiene_test.sh
 
+.PHONY: version-skew-check
+version-skew-check: ## Fail a proto or guest-protocol change an N-1 peer cannot handle (BASE=<ref>, default merge-base with origin/main)
+	$(GO) run ./scripts/ci/versionskew $(if $(BASE),-base $(BASE))
+
+.PHONY: migration-lint
+migration-lint: ## Expand/contract lint of the migrations added since BASE (default merge-base with origin/main)
+	python3 scripts/ci/check_migration_expand_contract.py $(if $(BASE),--base $(BASE))
+
+.PHONY: release-safety-check-test
+release-safety-check-test: ## Unit tests of the version-skew check, migration linter and post-deploy SLO gate
+	python3 scripts/ci/check_migration_expand_contract_test.py
+	python3 scripts/ci/slo_gate_test.py
+	$(GO) test -count=1 ./scripts/ci/versionskew
+
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
 	bash scripts/ci/check_text_encoding_test.sh
@@ -561,6 +575,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-basebackup-push_test.sh
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
+	bash deploy/scripts/faas-check-compute-edges_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -800,6 +815,11 @@ public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPO
 	@test -n "$(PUBLIC_ENDPOINT_URL)" || { echo "PUBLIC_ENDPOINT_URL is required (example: https://my-api.gregale.dev)" >&2; exit 2; }
 	@PUBLIC_ENDPOINT_URL="$(PUBLIC_ENDPOINT_URL)" PUBLIC_PLATFORM_API_URL="$(PUBLIC_PLATFORM_API_URL)" PUBLIC_HTTP_URL="$(PUBLIC_HTTP_URL)" PUBLIC_ENDPOINT_PATH="$(PUBLIC_ENDPOINT_PATH)" bash scripts/ci/check_public_endpoint.sh
 
+.PHONY: check-compute-edges
+check-compute-edges: ## ADR-1343 §5: probe every compute node's app edge and tunnel connector from the control plane (CP_SSH=user@host)
+	@test -n "$(CP_SSH)" || { echo "CP_SSH is required (the control plane's SSH destination)" >&2; exit 2; }
+	ssh "$(CP_SSH)" 'bash -s' < deploy/scripts/faas-check-compute-edges.sh
+
 .PHONY: systemd-hardening-check
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
@@ -853,6 +873,19 @@ bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honor
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
 
+.PHONY: bootstrap-postgres-standby
+bootstrap-postgres-standby: ## ADR-1344 §8: seed and converge the warm-standby PostgreSQL replica (converge the control plane first).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml
+
+.PHONY: postgres-promote
+postgres-promote: ## ADR-1344 §8: promote the warm standby. PROMOTE_MODE=planned, or PROMOTE_MODE=failover FENCED_PRIMARY=<host> after fencing it. Then docs/runbooks/ControlPlaneFailover.md.
+	@test -n "$(PROMOTE_MODE)" || (echo "PROMOTE_MODE=planned|failover is required" >&2; exit 2)
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml -e faas_promote_mode=$(PROMOTE_MODE) -e faas_promote_fenced_primary=$(FENCED_PRIMARY)
+
+.PHONY: standby-takeover
+standby-takeover: ## ADR-1344 §8: install the staged control-plane files on the promoted standby, before bootstrapping it as the control plane.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml
+
 .PHONY: bootstrap-fleet-runner
 bootstrap-fleet-runner: ## Install the pinned trusted runner. Gets a short-lived registration token via gh or the controller environment.
 	@if [ -n "$${FAAS_RUNNER_REGISTRATION_TOKEN:-}" ]; then \
@@ -881,6 +914,9 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/fleet_runner.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/node_join_control_plane.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1596,6 +1632,10 @@ check-operation-sdk-schema:
 .PHONY: check-durable-entity-sdk-contract
 check-durable-entity-sdk-contract:
 	python3 scripts/gen-durable-entity-contract.py --check
+
+.PHONY: issues-grouping-eval
+issues-grouping-eval: ## Compare grouping strategies against the labeled offline corpus
+	$(GO) run ./cmd/issues-grouping-eval
 
 .PHONY: check-binding-runner-sync
 check-binding-runner-sync:

@@ -23,14 +23,14 @@ func gitLabOAuthConfig() gitlabsource.OAuthConfig {
 }
 
 func sealGitLabTokens(tokens gitlabsource.Tokens) ([]byte, error) {
-	if setSecretRecipient == nil || setSecretRecipient() == nil {
+	if setSecretRecipient == nil || hostSecretRecipient() == nil {
 		return nil, fmt.Errorf("GitLab OAuth sealing unavailable")
 	}
 	data, err := json.Marshal(tokens)
 	if err != nil {
 		return nil, err
 	}
-	return secretbox.SealBytes(setSecretRecipient(), gitLabOAuthSecretNamespace, data, 16384)
+	return secretbox.SealBytes(hostSecretRecipient(), gitLabOAuthSecretNamespace, data, 16384)
 }
 
 func openGitLabTokens(ctx context.Context, sealed []byte) (gitlabsource.Tokens, error) {

@@ -1,0 +1,31 @@
+{{define "automation-test-editor"}}
+<fieldset id="automation-test-editor"><legend>Test case editor</legend>
+<label class="check"><input type="radio" name="test_editor_mode" value="guided" {{if eq .Data.TestEditorMode "guided"}}checked{{end}}>Guided test cases</label>
+<label class="check"><input type="radio" name="test_editor_mode" value="json" {{if eq .Data.TestEditorMode "json"}}checked{{end}}>Advanced test JSON</label>
+<button type="submit" formaction="{{.Data.BaseURL}}/test-editor">Apply editor mode</button>
+<p class="muted">Apply changes before switching to JSON. Guided controls preserve advanced conditions and detailed attempt assertions. These remain editable in JSON.</p>
+<input type="hidden" name="test_editor_source" value="{{.Data.TestEditorMode}}">
+{{if eq .Data.TestEditorMode "guided"}}{{with .Data.TestEditor}}
+{{if .Error}}<p class="notice error">{{.Error}}</p>{{else}}
+<input type="hidden" name="test_case_index" value="{{$.Data.TestCaseIndex}}"><input type="hidden" name="test_assertion_index" value="{{$.Data.TestAssertionIndex}}">
+{{if .Cases}}<label for="test-case-select">Test case</label><select id="test-case-select" name="test_case_select">{{range .Cases}}<option value="{{.Index}}" {{if eq .Index $.Data.TestCaseIndex}}selected{{end}}>{{.Label}}</option>{{end}}</select><button type="submit" formaction="{{$.Data.BaseURL}}/select-test-case">Open case</button>{{end}}
+<div class="actions"><button type="submit" formaction="{{$.Data.BaseURL}}/add-test-case" {{if not .CanAddCase}}disabled{{end}}>Add test case</button>{{if .HasCase}}<button type="submit" formaction="{{$.Data.BaseURL}}/duplicate-test-case" {{if not .CanAddCase}}disabled{{end}}>Duplicate case</button><button type="submit" formaction="{{$.Data.BaseURL}}/remove-test-case">Remove case</button>{{end}}</div>
+{{if .HasCase}}
+<label for="test-case-name">Case name</label><input id="test-case-name" type="text" name="test_case_name" value="{{.Name}}">
+<label for="test-case-simulation">Case input and mocks (JSON)</label><textarea id="test-case-simulation" name="test_case_simulation" rows="8" spellcheck="false">{{.Simulation}}</textarea>
+{{template "automation-live-editor" $}}
+{{if .Assertions}}<label for="test-assertion-select">Step assertion</label><select id="test-assertion-select" name="test_assertion_select">{{range .Assertions}}<option value="{{.Index}}" {{if eq .Index $.Data.TestAssertionIndex}}selected{{end}}>{{.Label}}</option>{{end}}</select><button type="submit" formaction="{{$.Data.BaseURL}}/select-test-assertion">Open assertion</button>{{else}}<p>Add an assertion and choose what to check.</p>{{end}}
+<div class="actions"><button type="submit" formaction="{{$.Data.BaseURL}}/add-test-assertion" {{if not .CanAddAssertion}}disabled{{end}}>Add assertion</button>{{if .HasAssertion}}<button type="submit" formaction="{{$.Data.BaseURL}}/remove-test-assertion">Remove assertion</button>{{end}}</div>
+{{if .HasAssertion}}
+<label for="test-step">Workflow step</label><select id="test-step" name="test_step">{{range .Targets}}<option value="{{.}}" {{if eq . $.Data.TestEditor.Step}}selected{{end}}>{{.}}</option>{{end}}</select>
+<label for="test-item-index">Loop item index</label><input id="test-item-index" type="text" name="test_item_index" inputmode="numeric" value="{{.ItemIndex}}"><p class="muted">For an /action step, choose the item starting at 0. Root steps ignore this field.</p>
+<label for="test-state">Expected state</label><select id="test-state" name="test_state"><option value="" {{if eq .State ""}}selected{{end}}>Do not check state</option><option {{if eq .State "mocked"}}selected{{end}}>mocked</option><option {{if eq .State "would_execute"}}selected{{end}}>would_execute</option><option {{if eq .State "resolved"}}selected{{end}}>resolved</option><option {{if eq .State "expanded"}}selected{{end}}>expanded</option><option {{if eq .State "would_wait"}}selected{{end}}>would_wait</option><option {{if eq .State "would_retry"}}selected{{end}}>would_retry</option><option {{if eq .State "timed_out"}}selected{{end}}>timed_out</option><option {{if eq .State "failed"}}selected{{end}}>failed</option><option {{if eq .State "dead"}}selected{{end}}>dead</option><option {{if eq .State "skipped"}}selected{{end}}>skipped</option><option {{if eq .State "blocked"}}selected{{end}}>blocked</option><option {{if eq .State "error"}}selected{{end}}>error</option></select>
+<label class="check"><input type="checkbox" name="test_assert_output" value="yes" {{if .AssertOutput}}checked{{end}}>Check expected output</label>
+<label for="test-output">Expected output (JSON)</label><textarea id="test-output" name="test_output" rows="4" spellcheck="false">{{.Output}}</textarea><p class="muted">Use <code>null</code> to check for a null output. Uncheck the box to omit the output assertion.</p>
+<label for="test-attempt-count">Expected attempt count</label><input id="test-attempt-count" type="text" name="test_attempt_count" inputmode="numeric" value="{{.AttemptCount}}"><p class="muted">Leave blank to omit this check. Zero checks that no attempts occurred. Detailed retry outcomes are preserved in advanced JSON.</p>
+{{end}}
+<button type="submit" formaction="{{$.Data.BaseURL}}/apply-test-case">Apply case changes</button>
+{{end}}{{end}}{{end}}{{end}}
+</fieldset>
+<details {{if eq .Data.TestEditorMode "json"}}open{{end}}><summary>Advanced test cases (JSON)</summary><label for="automation-scenarios">Check scenarios (JSON)</label><textarea id="automation-scenarios" name="scenarios" rows="10" spellcheck="false">{{.Data.Scenarios}}</textarea><p class="muted">Select advanced test JSON to apply edits here. Each case has a name, simulation input and mocks, and step expectations.</p></details>
+{{end}}

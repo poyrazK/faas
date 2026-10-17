@@ -38,7 +38,7 @@ func TestProjectServiceAliasRevisionMigrationRoundTrip(t *testing.T) {
 	if read() == before {
 		t.Fatal("repository name change retained routing evidence")
 	}
-	source, err := os.ReadFile("20261017150000000_project_service_alias_revision.sql")
+	source, err := os.ReadFile("20261017190925575_project_service_alias_revision.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
