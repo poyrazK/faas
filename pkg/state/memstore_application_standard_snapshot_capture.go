@@ -34,6 +34,10 @@ func (m *MemStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.issueStandardSnapshotCaptureLocked(ctx, expectedState, req)
+}
+
+func (m *MemStore) issueStandardSnapshotCaptureLocked(ctx context.Context, expectedState string, req ApplicationStandardSnapshotCaptureRequest) (runtimeadmission.SnapshotGrant, error) {
 	ins, parent, deadline, err := m.lockStandardSnapshotCaptureLocked(ctx, req.InstanceID, expectedState)
 	if err != nil {
 		return runtimeadmission.SnapshotGrant{}, err

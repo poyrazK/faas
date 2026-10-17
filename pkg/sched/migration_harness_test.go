@@ -61,6 +61,16 @@ func stubSpecBuilder(_ context.Context, _ string) (AppSpec, error) {
 	}, nil
 }
 
+func seedMigrationDestination(t *testing.T, store *state.MemStore, id string) {
+	t.Helper()
+	if _, err := store.NodeGet(t.Context(), id); err == nil {
+		return
+	}
+	if _, err := store.CreateComputeNode(t.Context(), state.ComputeNode{ID: id, Name: id, Lifecycle: state.NodeLifecycleActive, MemMB: 56000, AdmissionCeilingMB: api.RAMAdmissionCeilingMB, VPCPUs: 160, VCPUBudget: 160}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // newHarnessForTest builds a MigrationHarness wired against a
 // MemStore + the supplied fakeVMM. Lease seconds is short (2s)
 // so the lease-expiry test runs quickly; maxPerTick is left at
@@ -72,6 +82,7 @@ func stubSpecBuilder(_ context.Context, _ string) (AppSpec, error) {
 // resolver via newHarnessForTestWithResolver.
 func newHarnessForTest(t *testing.T, store *state.MemStore, vmm *fakeVMM, ownerNodeID string) *MigrationHarness {
 	t.Helper()
+	seedMigrationDestination(t, store, ownerNodeID)
 	ops := wire.NewOpsMetrics("schedd")
 	h := NewMigrationHarness(t.Context(), store, vmm, ops, testLog(), ownerNodeID, stubSpecBuilder, NewNodeLedger(), nil)
 	h.SetLeaseSeconds(2)
@@ -90,6 +101,7 @@ func newHarnessForTestWithResolver(
 	resolver func(ctx context.Context, nodeID string) (int, int, error),
 ) *MigrationHarness {
 	t.Helper()
+	seedMigrationDestination(t, store, ownerNodeID)
 	ops := wire.NewOpsMetrics("schedd")
 	h := NewMigrationHarness(t.Context(), store, vmm, ops, testLog(), ownerNodeID, stubSpecBuilder, NewNodeLedger(), resolver)
 	h.SetLeaseSeconds(2)
@@ -438,6 +450,7 @@ func TestMigrateOne_SpecBuilderError(t *testing.T) {
 	vmm := &fakeVMM{}
 	insID := seedInstanceForMigration(t, store, "dying")
 	ops := wire.NewOpsMetrics("schedd")
+	seedMigrationDestination(t, store, "new-owner")
 	h := NewMigrationHarness(context.Background(), store, vmm, ops, testLog(), "new-owner",
 		func(_ context.Context, _ string) (AppSpec, error) {
 			return AppSpec{}, errors.New("simulated spec build failure")
@@ -509,6 +522,7 @@ func TestMigrateOne_MetricOutcomeMigrated(t *testing.T) {
 	vmm := &fakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
 	insID := seedInstanceForMigration(t, store, "dying")
+	seedMigrationDestination(t, store, "new-owner")
 	h := NewMigrationHarness(context.Background(), store, vmm, ops, testLog(), "new-owner", stubSpecBuilder, NewNodeLedger(), nil)
 	h.SetLeaseSeconds(2)
 
@@ -525,6 +539,7 @@ func TestMigrateOne_MetricOutcomePeerFailure(t *testing.T) {
 	vmm := &fakeVMM{adoptErr: errors.New("Restore failed")}
 	ops := wire.NewOpsMetrics("schedd")
 	insID := seedInstanceForMigration(t, store, "dying")
+	seedMigrationDestination(t, store, "new-owner")
 	h := NewMigrationHarness(context.Background(), store, vmm, ops, testLog(), "new-owner", stubSpecBuilder, NewNodeLedger(), nil)
 	h.SetLeaseSeconds(2)
 
@@ -547,6 +562,7 @@ func TestMigrateOne_MetricOutcomeConflict(t *testing.T) {
 	if err := store.UpdateInstanceState(context.Background(), insID, string(state.StateParked)); err != nil {
 		t.Fatalf("UpdateInstanceState: %v", err)
 	}
+	seedMigrationDestination(t, store, "new-owner")
 	h := NewMigrationHarness(context.Background(), store, vmm, ops, testLog(), "new-owner", stubSpecBuilder, NewNodeLedger(), nil)
 	h.SetLeaseSeconds(2)
 
@@ -564,29 +580,23 @@ func TestMigrateOne_MetricOutcomeConflict(t *testing.T) {
 func TestMigrateLiveInstances_CapsPerTick(t *testing.T) {
 	store := state.NewMemStore()
 	vmm := &fakeVMM{}
-	// Seed 3 running instances on a dying node.
-	for i := 0; i < 3; i++ {
-		insID := seedInstanceForMigration(t, store, "dying")
-		ins, err := store.InstanceByID(context.Background(), insID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.CreateDeployment(context.Background(), state.Deployment{
-			ID:          uuid.NewString(),
-			AppID:       ins.AppID,
-			Kind:        state.DeploymentKindImage,
-			ImageDigest: "sha256:seed",
-			Status:      state.DeployLive,
-			CreatedAt:   time.Now(),
-		}); err != nil {
+	source := admissionPeer(t, store)
+	destination, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: "cap-destination", Lifecycle: state.NodeLifecycleActive, MemMB: 56000, AdmissionCeilingMB: api.RAMAdmissionCeilingMB, VPCPUs: 160, VCPUBudget: 160})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Use deployment/wake lineage required by the production builder.
+	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 3)
+	for range 3 {
+		if _, err := store.CreateInstance(t.Context(), app.ID, dep.ID, string(state.StateRunning), 256, source.ID, uuid.NewString()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").
+	engine := newEngine(t, store, admissionTestVMM(store, vmm), &fakeNotifier{}, "1.10.0").
 		WithOpsMetrics(wire.NewOpsMetrics("schedd")).
-		WithOwnerNodeID("new-owner").WithMigrateLiveConfig(2)
+		WithOwnerNodeID(destination.ID).WithMigrateLiveConfig(2)
 
-	attempted, err := engine.MigrateLiveInstances(context.Background(), "dying")
+	attempted, err := engine.MigrateLiveInstances(context.Background(), source.ID)
 	if err != nil {
 		t.Fatalf("MigrateLiveInstances: %v", err)
 	}

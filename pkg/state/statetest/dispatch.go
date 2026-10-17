@@ -24,13 +24,23 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
-	"ListDeploymentsForOperator":                              true,
+	"ClaimNextQueuedBuild":                                    true,
+	"ClaimQueuedBuild":                                        true,
 	"ListBuildsAwaitingImage":                                 true,
+	"ListDeploymentsForOperator":                              true,
 	"ListResumableImagePreparations":                          true,
 	"PublishImagePreparationLayer":                            true,
-	"ClaimQueuedBuild":                                        true,
-	"ClaimNextQueuedBuild":                                    true,
 	"RequeueBuildIfClaim":                                     true,
+	"CreateInstanceWithMode":                                  true,
+	"CreateAndClaimJobInstance":                               true,
+	"CompleteNodeLifecycle":                                   true,
+	"DeliverAuditEvent":                                       true,
+	"ExecuteOperatorNode":                                     true,
+	"SubmitOperatorRecovery":                                  true,
+	"ExecuteOperatorColdBoot":                                 true,
+	"BindInstanceSnapshotRecovery":                            true,
+	"CompleteOperatorPark":                                    true,
+	"CompleteOperatorRestart":                                 true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -131,40 +141,13 @@ var memDispatched = map[string]bool{
 	"WarmPoolReconciliationAppIDs":                            true,
 }
 
-func (s *Mem) ListDeploymentsForOperator(ctx context.Context, filter state.OperatorDeploymentFilter) ([]state.Deployment, error) {
-	if f, ok := s.over.(interface {
-		ListDeploymentsForOperator(context.Context, state.OperatorDeploymentFilter) ([]state.Deployment, error)
+func (s *Mem) CompleteOperatorRestart(ctx context.Context, completion state.OperatorRestartCompletion) (state.OperatorRestartResult, error) {
+	if override, ok := s.over.(interface {
+		CompleteOperatorRestart(context.Context, state.OperatorRestartCompletion) (state.OperatorRestartResult, error)
 	}); ok {
-		return f.ListDeploymentsForOperator(ctx, filter)
+		return override.CompleteOperatorRestart(ctx, completion)
 	}
-	return s.MemStore.ListDeploymentsForOperator(ctx, filter)
-}
-
-func (s *Mem) ListBuildsAwaitingImage(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
-	if o, ok := s.over.(interface {
-		ListBuildsAwaitingImage(context.Context, string, int) ([]state.BuildImageWork, error)
-	}); ok {
-		return o.ListBuildsAwaitingImage(ctx, node, limit)
-	}
-	return s.MemStore.ListBuildsAwaitingImage(ctx, node, limit)
-}
-
-func (s *Mem) ListResumableImagePreparations(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
-	if o, ok := s.over.(interface {
-		ListResumableImagePreparations(context.Context, string, int) ([]state.BuildImageWork, error)
-	}); ok {
-		return o.ListResumableImagePreparations(ctx, node, limit)
-	}
-	return s.MemStore.ListResumableImagePreparations(ctx, node, limit)
-}
-
-func (s *Mem) PublishImagePreparationLayer(ctx context.Context, id, token, path, key string, bytes int64) error {
-	if o, ok := s.over.(interface {
-		PublishImagePreparationLayer(context.Context, string, string, string, string, int64) error
-	}); ok {
-		return o.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
-	}
-	return s.MemStore.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
+	return s.MemStore.CompleteOperatorRestart(ctx, completion)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {
@@ -1051,6 +1034,7 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"SubmitOperatorRecovery":                                             true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
 	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
 	"AcquireProjectEnvironmentCloneConfigurationFence":                   true,
@@ -2385,23 +2369,24 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
-	"RecordOperatorAlertSnapshot":                   true,
-	"OperatorAlertCollectionHistory":                true,
-	"OperatorAlertRecurrence":                       true,
-	"OperatorAlertResponseTimes":                    true,
-	"OperatorAlertWorkload":                         true,
-	"OperatorAlertTriageHistory":                    true,
-	"OperatorAlertEpisodes":                         true,
-	"OperatorAlertEpisode":                          true,
-	"OperatorIncidentContext":                       true,
-	"OperatorAlertCollectionStatus":                 true,
-	"OperatorAlertRetentionStatus":                  true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
+	"OperatorAlertCollectionHistory":                true,
+	"OperatorAlertCollectionStatus":                 true,
+	"OperatorAlertEpisode":                          true,
+	"OperatorAlertEpisodes":                         true,
+	"OperatorAlertRecurrence":                       true,
+	"OperatorAlertResponseTimes":                    true,
+	"OperatorAlertRetentionStatus":                  true,
+	"OperatorAlertTriageHistory":                    true,
+	"OperatorAlertWorkload":                         true,
+	"OperatorAuditTraceCoverage":                    true,
+	"OperatorCapacityProfiles":                      true,
+	"OperatorIncidentContext":                       true,
 	"OperatorOverview":                              true,
 	"OperatorTenantApps":                            true,
-	"OperatorCapacityProfiles":                      true,
-	"OperatorAuditTraceCoverage":                    true,
+	"RecordOperatorAlertSnapshot":                   true,
+	"SubmitOperatorRecovery":                        true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
 	"LatestEdgeRuleChangeID":                        true,
@@ -2452,15 +2437,6 @@ var storeDispatched = map[string]bool{
 	"UpdateProjectEnvironmentPromotionVerification": true,
 	"UsageByAccount":                                true,
 	"UsageSLOForAccount":                            true,
-}
-
-func (s *Store) OperatorAuditTraceCoverage(ctx context.Context, since time.Time) (float64, error) {
-	if o, ok := s.over.(interface {
-		OperatorAuditTraceCoverage(context.Context, time.Time) (float64, error)
-	}); ok {
-		return o.OperatorAuditTraceCoverage(ctx, since)
-	}
-	return s.Store.OperatorAuditTraceCoverage(ctx, since)
 }
 
 func (s *Store) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
@@ -2969,22 +2945,156 @@ func (s *Store) MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, app
 	return api.MCPPolicyConvergenceSnapshot{}, state.ErrNotFound
 }
 
-func (s *Store) OperatorTenantApps(ctx context.Context, accountID string) ([]api.ObsTenantApp, error) {
-	if o, ok := s.over.(interface {
-		OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error)
-	}); ok {
-		return o.OperatorTenantApps(ctx, accountID)
+func (s *Mem) CompleteNodeLifecycle(ctx context.Context, in state.NodeLifecycleCompletion) (state.NodeLifecycleCompletionResult, error) {
+	if override, ok := s.over.(state.NodeLifecycleCompletionStore); ok {
+		return override.CompleteNodeLifecycle(ctx, in)
 	}
-	return s.Store.OperatorTenantApps(ctx, accountID)
+	return s.MemStore.CompleteNodeLifecycle(ctx, in)
 }
 
-func (s *Store) OperatorCapacityProfiles(ctx context.Context) ([]api.ObsCapacityProfile, error) {
-	if o, ok := s.over.(interface {
-		OperatorCapacityProfiles(context.Context) ([]api.ObsCapacityProfile, error)
+func (s *Mem) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, current string, ramMB int, nodeID, wakeID, mode string) (state.Instance, error) {
+	if override, ok := s.over.(interface {
+		CreateInstanceWithMode(context.Context, string, string, string, int, string, string, string) (state.Instance, error)
 	}); ok {
-		return o.OperatorCapacityProfiles(ctx)
+		return override.CreateInstanceWithMode(ctx, appID, deploymentID, current, ramMB, nodeID, wakeID, mode)
 	}
-	return s.Store.OperatorCapacityProfiles(ctx)
+	return s.MemStore.CreateInstanceWithMode(ctx, appID, deploymentID, current, ramMB, nodeID, wakeID, mode)
+}
+
+func (s *Mem) CreateAndClaimJobInstance(ctx context.Context, id, job, run string, index int, current string, ramMB int, node, wake, token string, expires time.Time, owner string) (state.Instance, error) {
+	if override, ok := s.over.(interface {
+		CreateAndClaimJobInstance(context.Context, string, string, string, int, string, int, string, string, string, time.Time, string) (state.Instance, error)
+	}); ok {
+		return override.CreateAndClaimJobInstance(ctx, id, job, run, index, current, ramMB, node, wake, token, expires, owner)
+	}
+	return s.MemStore.CreateAndClaimJobInstance(ctx, id, job, run, index, current, ramMB, node, wake, token, expires, owner)
+}
+
+func (s *Mem) DeliverAuditEvent(ctx context.Context, id int64) (bool, error) {
+	if override, ok := s.over.(interface {
+		DeliverAuditEvent(context.Context, int64) (bool, error)
+	}); ok {
+		return override.DeliverAuditEvent(ctx, id)
+	}
+	return s.MemStore.DeliverAuditEvent(ctx, id)
+}
+
+func (s *Mem) ExecuteOperatorNode(ctx context.Context, id, token string) (state.OperatorNodeResult, error) {
+	if override, ok := s.over.(state.OperatorNodeStore); ok {
+		return override.ExecuteOperatorNode(ctx, id, token)
+	}
+	return s.MemStore.ExecuteOperatorNode(ctx, id, token)
+}
+
+func (s *Mem) ExecuteOperatorColdBoot(ctx context.Context, id, token string) (state.OperatorColdBootResult, error) {
+	if override, ok := s.over.(state.OperatorColdBootStore); ok {
+		return override.ExecuteOperatorColdBoot(ctx, id, token)
+	}
+	return s.MemStore.ExecuteOperatorColdBoot(ctx, id, token)
+}
+func (s *Mem) BindInstanceSnapshotRecovery(ctx context.Context, id, wake, snapshot string) error {
+	if override, ok := s.over.(interface {
+		BindInstanceSnapshotRecovery(context.Context, string, string, string) error
+	}); ok {
+		return override.BindInstanceSnapshotRecovery(ctx, id, wake, snapshot)
+	}
+	return s.MemStore.BindInstanceSnapshotRecovery(ctx, id, wake, snapshot)
+}
+
+func (s *Mem) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	if override, ok := s.over.(state.OperatorRecoverySubmissionStore); ok {
+		return override.SubmitOperatorRecovery(ctx, in)
+	}
+	return s.MemStore.SubmitOperatorRecovery(ctx, in)
+}
+
+func (s *Pg) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	if override, ok := s.over.(state.OperatorRecoverySubmissionStore); ok {
+		return override.SubmitOperatorRecovery(ctx, in)
+	}
+	return s.PgStore.SubmitOperatorRecovery(ctx, in)
+}
+
+func (s *Store) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	if override, ok := s.over.(state.OperatorRecoverySubmissionStore); ok {
+		return override.SubmitOperatorRecovery(ctx, in)
+	}
+	if store, ok := s.Store.(state.OperatorRecoverySubmissionStore); ok {
+		return store.SubmitOperatorRecovery(ctx, in)
+	}
+	return state.OperatorRecoveryReceipt{}, state.ErrInvalidArgument
+}
+
+func (s *Mem) CompleteOperatorPark(ctx context.Context, completion state.OperatorParkCompletion) (state.OperatorParkResult, error) {
+	if override, ok := s.over.(interface {
+		CompleteOperatorPark(context.Context, state.OperatorParkCompletion) (state.OperatorParkResult, error)
+	}); ok {
+		return override.CompleteOperatorPark(ctx, completion)
+	}
+	return s.MemStore.CompleteOperatorPark(ctx, completion)
+}
+
+func (s *Mem) ClaimNextQueuedBuild(ctx context.Context) (state.Build, error) {
+	if over, ok := s.over.(interface {
+		ClaimNextQueuedBuild(context.Context) (state.Build, error)
+	}); ok {
+		return over.ClaimNextQueuedBuild(ctx)
+	}
+	return s.MemStore.ClaimNextQueuedBuild(ctx)
+}
+
+func (s *Mem) ClaimQueuedBuild(ctx context.Context, id string) (state.Build, error) {
+	if over, ok := s.over.(interface {
+		ClaimQueuedBuild(context.Context, string) (state.Build, error)
+	}); ok {
+		return over.ClaimQueuedBuild(ctx, id)
+	}
+	return s.MemStore.ClaimQueuedBuild(ctx, id)
+}
+
+func (s *Mem) ListBuildsAwaitingImage(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
+	if o, ok := s.over.(interface {
+		ListBuildsAwaitingImage(context.Context, string, int) ([]state.BuildImageWork, error)
+	}); ok {
+		return o.ListBuildsAwaitingImage(ctx, node, limit)
+	}
+	return s.MemStore.ListBuildsAwaitingImage(ctx, node, limit)
+}
+
+func (s *Mem) ListDeploymentsForOperator(ctx context.Context, filter state.OperatorDeploymentFilter) ([]state.Deployment, error) {
+	if f, ok := s.over.(interface {
+		ListDeploymentsForOperator(context.Context, state.OperatorDeploymentFilter) ([]state.Deployment, error)
+	}); ok {
+		return f.ListDeploymentsForOperator(ctx, filter)
+	}
+	return s.MemStore.ListDeploymentsForOperator(ctx, filter)
+}
+
+func (s *Mem) ListResumableImagePreparations(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
+	if o, ok := s.over.(interface {
+		ListResumableImagePreparations(context.Context, string, int) ([]state.BuildImageWork, error)
+	}); ok {
+		return o.ListResumableImagePreparations(ctx, node, limit)
+	}
+	return s.MemStore.ListResumableImagePreparations(ctx, node, limit)
+}
+
+func (s *Mem) PublishImagePreparationLayer(ctx context.Context, id, token, path, key string, bytes int64) error {
+	if o, ok := s.over.(interface {
+		PublishImagePreparationLayer(context.Context, string, string, string, string, int64) error
+	}); ok {
+		return o.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
+	}
+	return s.MemStore.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
+}
+
+func (s *Mem) RequeueBuildIfClaim(ctx context.Context, claim state.Build) error {
+	if over, ok := s.over.(interface {
+		RequeueBuildIfClaim(context.Context, state.Build) error
+	}); ok {
+		return over.RequeueBuildIfClaim(ctx, claim)
+	}
+	return s.MemStore.RequeueBuildIfClaim(ctx, claim)
 }
 
 func (s *Store) ListAllApps(ctx context.Context) ([]state.App, error) {
@@ -3005,13 +3115,31 @@ func (s *Store) ListAllInstances(ctx context.Context) ([]state.Instance, error) 
 	return s.Store.ListAllInstances(ctx)
 }
 
-func (s *Store) OperatorOverview(ctx context.Context, now time.Time) (api.ObsOverviewResponse, error) {
+func (s *Store) OperatorAlertCollectionHistory(ctx context.Context, f state.OperatorAlertCollectionHistoryFilter) (state.OperatorAlertCollectionHistorySnapshot, error) {
 	if o, ok := s.over.(interface {
-		OperatorOverview(context.Context, time.Time) (api.ObsOverviewResponse, error)
+		OperatorAlertCollectionHistory(context.Context, state.OperatorAlertCollectionHistoryFilter) (state.OperatorAlertCollectionHistorySnapshot, error)
 	}); ok {
-		return o.OperatorOverview(ctx, now)
+		return o.OperatorAlertCollectionHistory(ctx, f)
 	}
-	return s.Store.OperatorOverview(ctx, now)
+	return s.Store.OperatorAlertCollectionHistory(ctx, f)
+}
+
+func (s *Store) OperatorAlertCollectionStatus(ctx context.Context) (state.OperatorAlertCollection, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertCollectionStatus(context.Context) (state.OperatorAlertCollection, error)
+	}); ok {
+		return o.OperatorAlertCollectionStatus(ctx)
+	}
+	return s.Store.OperatorAlertCollectionStatus(ctx)
+}
+
+func (s *Store) OperatorAlertEpisode(ctx context.Context, id string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertEpisode(context.Context, string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error)
+	}); ok {
+		return o.OperatorAlertEpisode(ctx, id)
+	}
+	return s.Store.OperatorAlertEpisode(ctx, id)
 }
 
 func (s *Store) OperatorAlertEpisodes(ctx context.Context, f state.OperatorAlertFilter) (state.OperatorAlertPage, error) {
@@ -3022,30 +3150,23 @@ func (s *Store) OperatorAlertEpisodes(ctx context.Context, f state.OperatorAlert
 	}
 	return s.Store.OperatorAlertEpisodes(ctx, f)
 }
-func (s *Store) OperatorAlertEpisode(ctx context.Context, id string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error) {
+
+func (s *Store) OperatorAlertRecurrence(ctx context.Context, f state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error) {
 	if o, ok := s.over.(interface {
-		OperatorAlertEpisode(context.Context, string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error)
+		OperatorAlertRecurrence(context.Context, state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error)
 	}); ok {
-		return o.OperatorAlertEpisode(ctx, id)
+		return o.OperatorAlertRecurrence(ctx, f)
 	}
-	return s.Store.OperatorAlertEpisode(ctx, id)
+	return s.Store.OperatorAlertRecurrence(ctx, f)
 }
 
-func (s *Store) OperatorIncidentContext(ctx context.Context, f state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error) {
+func (s *Store) OperatorAlertResponseTimes(ctx context.Context, f state.OperatorAlertResponseTimesFilter) (state.OperatorAlertResponseTimesSnapshot, error) {
 	if o, ok := s.over.(interface {
-		OperatorIncidentContext(context.Context, state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error)
+		OperatorAlertResponseTimes(context.Context, state.OperatorAlertResponseTimesFilter) (state.OperatorAlertResponseTimesSnapshot, error)
 	}); ok {
-		return o.OperatorIncidentContext(ctx, f)
+		return o.OperatorAlertResponseTimes(ctx, f)
 	}
-	return s.Store.OperatorIncidentContext(ctx, f)
-}
-func (s *Store) OperatorAlertCollectionStatus(ctx context.Context) (state.OperatorAlertCollection, error) {
-	if o, ok := s.over.(interface {
-		OperatorAlertCollectionStatus(context.Context) (state.OperatorAlertCollection, error)
-	}); ok {
-		return o.OperatorAlertCollectionStatus(ctx)
-	}
-	return s.Store.OperatorAlertCollectionStatus(ctx)
+	return s.Store.OperatorAlertResponseTimes(ctx, f)
 }
 
 func (s *Store) OperatorAlertRetentionStatus(ctx context.Context, now time.Time) (state.OperatorAlertRetention, error) {
@@ -3075,31 +3196,49 @@ func (s *Store) OperatorAlertWorkload(ctx context.Context, f state.OperatorAlert
 	return s.Store.OperatorAlertWorkload(ctx, f)
 }
 
-func (s *Store) OperatorAlertResponseTimes(ctx context.Context, f state.OperatorAlertResponseTimesFilter) (state.OperatorAlertResponseTimesSnapshot, error) {
+func (s *Store) OperatorAuditTraceCoverage(ctx context.Context, since time.Time) (float64, error) {
 	if o, ok := s.over.(interface {
-		OperatorAlertResponseTimes(context.Context, state.OperatorAlertResponseTimesFilter) (state.OperatorAlertResponseTimesSnapshot, error)
+		OperatorAuditTraceCoverage(context.Context, time.Time) (float64, error)
 	}); ok {
-		return o.OperatorAlertResponseTimes(ctx, f)
+		return o.OperatorAuditTraceCoverage(ctx, since)
 	}
-	return s.Store.OperatorAlertResponseTimes(ctx, f)
+	return s.Store.OperatorAuditTraceCoverage(ctx, since)
 }
 
-func (s *Store) OperatorAlertRecurrence(ctx context.Context, f state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error) {
+func (s *Store) OperatorCapacityProfiles(ctx context.Context) ([]api.ObsCapacityProfile, error) {
 	if o, ok := s.over.(interface {
-		OperatorAlertRecurrence(context.Context, state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error)
+		OperatorCapacityProfiles(context.Context) ([]api.ObsCapacityProfile, error)
 	}); ok {
-		return o.OperatorAlertRecurrence(ctx, f)
+		return o.OperatorCapacityProfiles(ctx)
 	}
-	return s.Store.OperatorAlertRecurrence(ctx, f)
+	return s.Store.OperatorCapacityProfiles(ctx)
 }
 
-func (s *Store) OperatorAlertCollectionHistory(ctx context.Context, f state.OperatorAlertCollectionHistoryFilter) (state.OperatorAlertCollectionHistorySnapshot, error) {
+func (s *Store) OperatorIncidentContext(ctx context.Context, f state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error) {
 	if o, ok := s.over.(interface {
-		OperatorAlertCollectionHistory(context.Context, state.OperatorAlertCollectionHistoryFilter) (state.OperatorAlertCollectionHistorySnapshot, error)
+		OperatorIncidentContext(context.Context, state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error)
 	}); ok {
-		return o.OperatorAlertCollectionHistory(ctx, f)
+		return o.OperatorIncidentContext(ctx, f)
 	}
-	return s.Store.OperatorAlertCollectionHistory(ctx, f)
+	return s.Store.OperatorIncidentContext(ctx, f)
+}
+
+func (s *Store) OperatorOverview(ctx context.Context, now time.Time) (api.ObsOverviewResponse, error) {
+	if o, ok := s.over.(interface {
+		OperatorOverview(context.Context, time.Time) (api.ObsOverviewResponse, error)
+	}); ok {
+		return o.OperatorOverview(ctx, now)
+	}
+	return s.Store.OperatorOverview(ctx, now)
+}
+
+func (s *Store) OperatorTenantApps(ctx context.Context, accountID string) ([]api.ObsTenantApp, error) {
+	if o, ok := s.over.(interface {
+		OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error)
+	}); ok {
+		return o.OperatorTenantApps(ctx, accountID)
+	}
+	return s.Store.OperatorTenantApps(ctx, accountID)
 }
 
 func (s *Store) RecordOperatorAlertSnapshot(ctx context.Context, snap state.OperatorAlertSnapshot) error {
@@ -3109,31 +3248,4 @@ func (s *Store) RecordOperatorAlertSnapshot(ctx context.Context, snap state.Oper
 		return o.RecordOperatorAlertSnapshot(ctx, snap)
 	}
 	return s.Store.RecordOperatorAlertSnapshot(ctx, snap)
-}
-
-func (s *Mem) ClaimQueuedBuild(ctx context.Context, id string) (state.Build, error) {
-	if over, ok := s.over.(interface {
-		ClaimQueuedBuild(context.Context, string) (state.Build, error)
-	}); ok {
-		return over.ClaimQueuedBuild(ctx, id)
-	}
-	return s.MemStore.ClaimQueuedBuild(ctx, id)
-}
-
-func (s *Mem) ClaimNextQueuedBuild(ctx context.Context) (state.Build, error) {
-	if over, ok := s.over.(interface {
-		ClaimNextQueuedBuild(context.Context) (state.Build, error)
-	}); ok {
-		return over.ClaimNextQueuedBuild(ctx)
-	}
-	return s.MemStore.ClaimNextQueuedBuild(ctx)
-}
-
-func (s *Mem) RequeueBuildIfClaim(ctx context.Context, claim state.Build) error {
-	if over, ok := s.over.(interface {
-		RequeueBuildIfClaim(context.Context, state.Build) error
-	}); ok {
-		return over.RequeueBuildIfClaim(ctx, claim)
-	}
-	return s.MemStore.RequeueBuildIfClaim(ctx, claim)
 }

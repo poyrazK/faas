@@ -831,14 +831,35 @@ export class AdminService {
    * to `operator_force_park`; values are clamped to the
    * `[a-z0-9_]{1,64}` shape.
    *
-   * @returns OperatorIntentAcceptedResponse Intent row written + pg_notify emitted. Poll `status_url` for terminal state.
+   * ADR-1524: requires an MFA-verified operator session with step-up in
+   * the last five minutes, admin scope, the operator allowlist and same
+   * origin. Bearer keys do not satisfy step-up. Requires one
+   * Idempotency-Key (1-255 visible ASCII characters), an empty body,
+   * exactly one confirm=true and at most one reason; other query
+   * parameters are rejected. The key is scoped to the actor across all
+   * three recovery routes. Intent, exact 202 response and attributed
+   * request audit handoff commit atomically. Matching retries return
+   * the original response before reading mutable target state, without
+   * expiry; changed action, target or reason returns 409
+   * operator_submission_conflict. Trace changes do not change identity.
+   * An existing legacy recovery cache/reservation returns 409
+   * operator_submission_legacy and requires reconciliation. Notification
+   * after acceptance is best effort; the scheduler safety tick recovers
+   * a lost notification.
+   *
+   * @returns OperatorIntentAcceptedResponse Intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state.
    * @throws ApiError
    */
   public static postForceParkInstance({
+    idempotencyKey,
     id,
     confirm,
     reason,
   }: {
+    /**
+     * Park request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
+     */
+    idempotencyKey: string,
     /**
      * Instance UUID returned by /v1/apps/{slug}/instances or /v1/admin/obs/instances.
      */
@@ -858,6 +879,9 @@ export class AdminService {
       path: {
         'id': id,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       query: {
         'confirm': confirm,
         'reason': reason,
@@ -867,7 +891,7 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `Force-park 403: code: admin_required — caller is not in the FAAS_ADMIN_EMAILS allowlist.`,
         404: `code: instance_not_found — no instance row with the supplied id.`,
-        409: `code: instance_not_parkable — instance state is not in {RUNNING, WAKING, COLD_BOOTING}.`,
+        409: `code: instance_not_parkable — instance state is not in {RUNNING, WAKING, COLD_BOOTING}. Also operator_submission_conflict for changed parameters or operator_submission_legacy for an ambiguous pre-upgrade key.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -899,16 +923,37 @@ export class AdminService {
    * Requires `?confirm=true` as a tripwire. Optional
    * `?reason=<slug>` defaults to `operator_force_cold_boot`.
    *
-   * @returns OperatorIntentAcceptedResponse Intent row written + pg_notify emitted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
+   * ADR-1524: requires an MFA-verified operator session with step-up in
+   * the last five minutes, admin scope, the operator allowlist and same
+   * origin. Bearer keys do not satisfy step-up. Requires one
+   * Idempotency-Key (1-255 visible ASCII characters), an empty body,
+   * exactly one confirm=true and at most one reason; other query
+   * parameters are rejected. The key is scoped to the actor across all
+   * three recovery routes. Intent, exact 202 response and attributed
+   * request audit handoff commit atomically. Matching retries return
+   * the original response before reading mutable target state, without
+   * expiry; changed action, target or reason returns 409
+   * operator_submission_conflict. Trace changes do not change identity.
+   * An existing legacy recovery cache/reservation returns 409
+   * operator_submission_legacy and requires reconciliation. Notification
+   * after acceptance is best effort; the scheduler safety tick recovers
+   * a lost notification.
+   *
+   * @returns OperatorIntentAcceptedResponse Intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
    * @throws ApiError
    */
   public static postForceColdBootApp({
+    idempotencyKey,
     slug,
     confirm,
     reason,
   }: {
     /**
-     * App slug (e.g. "my-app"). Resolved to the app's latest deployment by `created_at DESC`.
+     * Cold-boot request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
+     */
+    idempotencyKey: string,
+    /**
+     * App slug (e.g. "my-app"). Resolved once at acceptance by `created_at DESC, id DESC`; retries retain the original deployment.
      */
     slug: string,
     /**
@@ -926,6 +971,9 @@ export class AdminService {
       path: {
         'slug': slug,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       query: {
         'confirm': confirm,
         'reason': reason,
@@ -935,6 +983,7 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `Force-cold-boot 403: code: admin_required — caller is not in the FAAS_ADMIN_EMAILS allowlist.`,
         404: `code: app_not_found — no app with the supplied slug; OR code: deployment_not_found — app has no deployments to force-cold-boot.`,
+        409: `operator_submission_conflict for changed parameters; operator_submission_legacy for an ambiguous pre-upgrade request key.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -983,14 +1032,35 @@ export class AdminService {
    * to `operator_force_restart`; values are clamped to the
    * `[a-z0-9_]{1,64}` shape.
    *
-   * @returns OperatorIntentAcceptedResponse Force-restart 202: intent row written + pg_notify emitted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
+   * ADR-1524: requires an MFA-verified operator session with step-up in
+   * the last five minutes, admin scope, the operator allowlist and same
+   * origin. Bearer keys do not satisfy step-up. Requires one
+   * Idempotency-Key (1-255 visible ASCII characters), an empty body,
+   * exactly one confirm=true and at most one reason; other query
+   * parameters are rejected. The key is scoped to the actor across all
+   * three recovery routes. Intent, exact 202 response and attributed
+   * request audit handoff commit atomically. Matching retries return
+   * the original response before reading mutable target state, without
+   * expiry; changed action, target or reason returns 409
+   * operator_submission_conflict. Trace changes do not change identity.
+   * An existing legacy recovery cache/reservation returns 409
+   * operator_submission_legacy and requires reconciliation. Notification
+   * after acceptance is best effort; the scheduler safety tick recovers
+   * a lost notification.
+   *
+   * @returns OperatorIntentAcceptedResponse Force-restart 202: intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
    * @throws ApiError
    */
   public static postForceRestartInstance({
+    idempotencyKey,
     id,
     confirm,
     reason,
   }: {
+    /**
+     * Restart request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
+     */
+    idempotencyKey: string,
     /**
      * Force-restart target. Instance UUID returned by /v1/apps/{slug}/instances or /v1/admin/obs/instances.
      */
@@ -1010,6 +1080,9 @@ export class AdminService {
       path: {
         'id': id,
       },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       query: {
         'confirm': confirm,
         'reason': reason,
@@ -1019,7 +1092,7 @@ export class AdminService {
         401: `code: unauthorized`,
         403: `Force-restart 403: code: admin_required — caller is not in the FAAS_ADMIN_EMAILS allowlist.`,
         404: `Force-restart 404: code: instance_not_found — no instance row with the supplied id.`,
-        409: `Force-restart 409: code: instance_not_restartable — instance state is not RUNNING. WAKING / COLD_BOOTING / PARKED / STOPPED all return this code without writing an intent row.`,
+        409: `Force-restart 409: code: instance_not_restartable — instance state is not RUNNING. WAKING / COLD_BOOTING / PARKED / STOPPED all return this code without writing an intent row. Also operator_submission_conflict for changed parameters or operator_submission_legacy for an ambiguous pre-upgrade key.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
