@@ -50,13 +50,23 @@ daemons still refused connections, or failed requests, while they restarted:
    authentication (ADR-015). A daemon calls `RequireInheritedListenersClaimed`
    after binding and refuses to start when its unit passes an address it does
    not serve, since such a socket would accept connections nobody reads.
-2. **Socket units** for gatewayd-internal (unix socket, plus the compute data
-   listener rendered from `faas_gateway_listen`), realtimed, and the control
-   plane's schedd. Each service `Requires=` and is ordered after its socket.
-   The roles only enable the sockets: a pre-activation daemon unlinks its
-   socket path when it exits, so the socket must first bind inside the service
-   restart, after the old process is gone. deployctl retires the schedd socket
-   on rollback to an older bundle, as it does for apid's.
+2. **Opt-in socket units** for gatewayd-internal (unix socket, plus the
+   compute data listener rendered from `faas_gateway_listen`), realtimed, and
+   the control plane's schedd. The static service units do not reference them;
+   a role drop-in adds `Wants=` and `After=` only where a socket is configured,
+   so a rollback that removes a socket unit still starts its service.
+   - **schedd**: `faas_schedd_listen_addr`, which the split-box manifest sets
+     from `daemons.schedd.bind` (the same bind the renderer writes to
+     `schedd.toml`), renders both schedd's `FAAS_SCHEDD_LISTEN_ADDR` and the
+     socket's `ListenStream`. The two cannot drift; empty leaves the socket off.
+     On the production control plane this is `tcp://0.0.0.0:9091`.
+   - **compute**: `faas_compute_durable_listeners`, off by default, until
+     node_join stops and starts these sockets with their services.
+   The roles never start a socket themselves. A daemon that bound the address
+   itself unlinks a unix socket path when it exits, so a handler stops the
+   service and its socket and starts the service, which brings the socket up
+   first. deployctl retires the schedd socket on rollback to an older bundle,
+   as it does for apid's.
 3. **Fast, bounded drains.** `drain.Tracker.BeginShutdown` runs first. SSE
    responses then end cleanly (EventSource reconnects with `Last-Event-ID`) and
    upgraded WebSocket sessions close, in both gateways. Other requests keep the
@@ -85,11 +95,14 @@ daemons still refused connections, or failed requests, while they restarted:
 - A restart costs callers latency, not errors: new connections wait for the
   old process's drain plus the replacement's start-up. Most drains are now
   milliseconds.
-- With several compute nodes, the control plane's compute pool used to fail
-  over at once when a node's gatewayd-internal refused a dial; with the durable
-  data listener, requests routed to the restarting node wait for it instead.
-  `gatewayd_internal_durable_data_listener: false` restores failover for that
-  hop; schedd's synth target has no fallback and keeps queueing only with it on.
+- With a durable data listener, a restarting compute node no longer refuses
+  dials, so the control plane's compute pool cannot fail over on a dial error.
+  The pool instead probes each node's gatewayd-internal every second and skips
+  one that has not answered within `api.ComputeGatewayRestartWaitSeconds`
+  (3 s, `FAAS_COMPUTE_GATEWAY_RESTART_WAIT`): new requests wait for a
+  restarting node at most that long before failing over. Requests already
+  queued on it wait for the restart. When no node answers, requests still go
+  to one and wait.
 - A request still running when the 25 s grace ends is cut, because systemd
   cannot start the replacement before the old process exits.
 - HTTP/1.1 has no GOAWAY: a request a client sends on an idle keep-alive
@@ -100,8 +113,9 @@ daemons still refused connections, or failed requests, while they restarted:
   window (microseconds) can still fail. Bodies up to 64 KiB are read before
   forwarding.
 - A connection to a stopped service's socket starts the service again. To keep
-  a daemon stopped, stop its socket too. Node drains that stop
-  gatewayd-internal or realtimed should stop their sockets as well.
+  a daemon stopped, stop its socket too. node_join must stop and restart the
+  compute sockets with their services before `faas_compute_durable_listeners`
+  is turned on.
 - Changing a socket's `ListenStream=` restarts the socket and its service; that
   restart refuses connections briefly.
 - A schedd restart longer than the wake hold, for example one whose loop

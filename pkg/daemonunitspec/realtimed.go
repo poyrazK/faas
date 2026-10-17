@@ -10,11 +10,10 @@ func UnitRealtimed() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas realtimed — managed realtime connection owner",
 		Documentation: "https://gregale.dev/docs/ops/realtime",
-		After:         []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.socket"},
-		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
-		// faas-realtimed.socket keeps /run/faas/realtimed.sock open across
-		// restarts so gatewayd-internal's connects queue for the replacement.
-		Requires: []string{"faas-realtimed.socket"},
+		// faas-realtimed.socket is opt-in with gatewayd-internal's
+		// (faas_compute_durable_listeners, ADR-1580).
+		After: []string{"faas-cp.slice", "faas-vmmd.service"},
+		Wants: []string{"faas-cp.slice", "faas-vmmd.service"},
 
 		Type:       "simple",
 		User:       "faas",

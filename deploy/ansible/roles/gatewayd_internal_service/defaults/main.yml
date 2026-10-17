@@ -13,13 +13,12 @@ gatewayd_route_metrics_enabled: true
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
 
-# Hold the split-box data listener (faas_gateway_listen) in
-# faas-gatewayd-internal.socket so a restart queues the control plane's
-# connections instead of refusing them. With several compute nodes, false
-# trades that for the control plane's compute pool failing over to another
-# node at once; schedd's synth target has no such fallback
-# (docs/adr/1580-zero-downtime-daemon-restarts.md).
-gatewayd_internal_durable_data_listener: true
+# ADR-1580: hold gatewayd-internal's unix socket and split-box data listener
+# (faas_gateway_listen), and realtimed's socket, in systemd sockets so a
+# restart queues callers instead of refusing them. Off until node_join stops
+# and starts these sockets with their services; while a socket is active, a
+# connection to it restarts a service node_join stopped.
+faas_compute_durable_listeners: false
 
 # Set this URL once for the gateway fleet through Ansible Vault. The role
 # copies it to a root-only systemd credential on each gateway node. Set

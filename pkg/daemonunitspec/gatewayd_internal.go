@@ -56,12 +56,11 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// only produced "Unit is masked" noise at every start. It dials
 		// both over the split-box mTLS transport, so vmmd is the only
 		// local dependency.
-		After: []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service", "faas-realtimed.service", "faas-gatewayd-internal.socket"},
-		Wants: []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.service"},
-		// The socket unit owns /run/faas/gatewayd-internal.sock (and the
-		// split-box data listener) so a restart queues gatewayd-public's
-		// connections instead of refusing them.
-		Requires:              []string{"faas-gatewayd-internal.socket"},
+		// faas-gatewayd-internal.socket is opt-in: the gatewayd_internal_service
+		// role adds Wants=/After= on it in a drop-in when
+		// faas_compute_durable_listeners is on (ADR-1580).
+		After:                 []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service", "faas-realtimed.service"},
+		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.service"},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 

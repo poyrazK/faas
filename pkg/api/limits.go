@@ -6248,9 +6248,15 @@ const (
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
-	GatewayDrainGraceSeconds        = 25
-	ReplicaHeartbeatIntervalSeconds = 5
-	WarmHintCacheSize               = 1000
+	GatewayDrainGraceSeconds = 25
+	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
+	// sending new requests to a compute node whose gatewayd-internal stopped
+	// answering (for example while it restarts behind its durable socket)
+	// before failing over to another node (ADR-1580). Override with
+	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
+	ComputeGatewayRestartWaitSeconds = 3
+	ReplicaHeartbeatIntervalSeconds  = 5
+	WarmHintCacheSize                = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.

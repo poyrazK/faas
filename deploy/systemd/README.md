@@ -32,16 +32,17 @@ bootstrap and verification flow.
 
 ## Durable listeners
 
-`faas-apid.socket`, `faas-gatewayd-public.socket`, `faas-gatewayd-internal.socket`,
-`faas-realtimed.socket` and `faas-schedd.socket` hold their daemon's listening
-socket while the service restarts, so callers' connections wait in the backlog
-for the replacement instead of being refused
-(`docs/adr/1580-zero-downtime-daemon-restarts.md`). Each service
-`Requires=` its socket, which therefore starts inside the service restart,
-after any pre-activation process has released the address. Do not start these
-sockets by hand while an older daemon that binds the address itself is
-running: it unlinks the unix socket path when it exits. A daemon refuses to
-start when its socket unit passes an address it does not serve.
+`faas-apid.socket` and `faas-gatewayd-public.socket` hold their daemon's
+listening socket while the service restarts, so callers' connections wait in
+the backlog for the replacement instead of being refused. `faas-schedd.socket`,
+`faas-gatewayd-internal.socket` and `faas-realtimed.socket` do the same but are
+opt-in (`docs/adr/1580-zero-downtime-daemon-restarts.md`): the roles add a
+service drop-in with `Wants=`/`After=` on the socket, and the listen address,
+only when `faas_schedd_listen_addr` or `faas_compute_durable_listeners` turns
+them on. Do not start these sockets by hand while a daemon that binds the
+address itself is running: it unlinks the unix socket path when it exits. A
+daemon refuses to start when its socket unit passes an address it does not
+serve.
 
 ## Manual inspection
 

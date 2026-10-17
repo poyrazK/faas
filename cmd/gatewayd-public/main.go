@@ -120,8 +120,9 @@ func selectInternalUpstreamMode(computeDiscovery, internalTarget string) interna
 func selectInternalDialer(ctx context.Context, mode internalUpstreamMode, internalTarget string, target *url.URL, pgStore *state.PgStore, pool *pgxpool.Pool, log *slog.Logger) (gateway.InternalDialer, error) {
 	switch mode {
 	case internalUpstreamDatabase:
-		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
-		log.Info("gatewayd-public: database-backed compute gateway pool enabled")
+		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool).withRestartWait()
+		go cgp.WatchReadiness(ctx)
+		log.Info("gatewayd-public: database-backed compute gateway pool enabled", "restart_wait", cgp.readiness.wait)
 		if internalTarget != "" {
 			log.Warn("gatewayd-public: ignoring legacy FAAS_INTERNAL_TARGET because database discovery is enabled",
 				"target", internalTarget)
@@ -387,7 +388,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR-1343 §2: this node's gatewayd-internal first, the compute pool
 		// only while it is unhealthy.
 		localDialer := gateway.NewUnixSocketDialer(envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket))
-		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
+		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool).withRestartWait()
+		go cgp.WatchReadiness(ctx)
 		if pool != nil {
 			go cgp.WatchInvalidations(ctx, pool)
 		}
