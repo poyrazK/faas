@@ -6604,8 +6604,17 @@ const (
 	// vmmd.toml nor FAAS_PREPARED_NETWORKS sets one (ADR-149, amended
 	// 2026-10-12). It matches the vmmd_service role default, which nodes
 	// joined through node_join never received.
-	DefaultPreparedNetworkCacheSize        = 4
-	PreparedNetworkCacheTTLSeconds         = 60
+	DefaultPreparedNetworkCacheSize = 4
+	// PreparedNetworkCacheTTLSeconds is how long an unused prepared network
+	// stays claimable; maintenance replaces it at half this age (ADR-149,
+	// amended 2026-10-17). A claim re-checks the namespace, veth ownership and
+	// complete network config, so age is not a correctness guard. At 60 s an
+	// idle node rebuilt every spare each 45 s, and the bridge and networkd
+	// lines from those rebuilds were 96% of a production node's journal.
+	PreparedNetworkCacheTTLSeconds = 3600
+	// PreparedNetworkMaintenanceSeconds is how often vmmd retries a failed
+	// spare teardown and replaces spares past half their TTL.
+	PreparedNetworkMaintenanceSeconds      = 15
 	PreparedNetworkOperationTimeoutSeconds = 2
 	// PreparedNetworkRefillDelayMillis defers the wake-triggered refill
 	// until the wake's publish and first proxied byte have left the host;

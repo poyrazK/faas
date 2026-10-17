@@ -1,6 +1,6 @@
 # ADR-149 · Prepare unused network namespaces before a wake
 
-- **Status:** accepted; on by default since 2026-10-12 (amendment below)
+- **Status:** accepted; on by default since 2026-10-12; spare lifetime amended 2026-10-17 (amendments below)
 - **Date:** 2026-09-05
 - **Amends:** spec §6.2 resource allocation timing and §7 network setup timing.
 - **Decision:** vmmd may hold a bounded cache of fresh network namespaces which
@@ -47,6 +47,18 @@
   the slot reserved and retries, rather than exposing a surviving network to
   another VM. Startup removes only UUID-qualified `fc-prepared-*` names left
   by an interrupted daemon; claimed instance names use ordinary VM recovery.
+  *Amended 2026-10-17 (H10-141):* entries now stay claimable for one hour
+  (`PreparedNetworkCacheTTLSeconds`) and are replaced at 30 minutes;
+  maintenance still runs every 15 seconds (`PreparedNetworkMaintenanceSeconds`)
+  so failed teardowns are retried as before. At 60 seconds an idle node
+  rebuilt every spare each 45 seconds. Each rebuild writes about fifteen
+  kernel bridge-port and networkd carrier lines, about 4,800 journal entries
+  an hour with the default four spares. That was 96% of an idle production
+  compute node's journal: the 512 MiB journal held four days instead of
+  `MaxRetentionSec=7day`, and `FaasHostJournalNearLimit` fired continuously.
+  Age was never a correctness guard: a claim re-checks namespace identity,
+  veth ownership and the complete network config, and any mismatch uses
+  ordinary setup.
   [ADR-460](460-prepared-network-policy-retention.md) proposes preserving fresh
   spares for other exact policies within the same global capacity, replacing
   only one oldest spare when a new target policy is absent from a full pool.
