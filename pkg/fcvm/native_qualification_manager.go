@@ -224,6 +224,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 				err = errors.Join(err, m.alloc.Release(lease.Instance))
 				m.mu.Lock()
 				delete(m.processGenerations, lease.Instance)
+				delete(m.processStartedAt, lease.Instance)
 				delete(m.pendingProcessExits, lease.Instance)
 				m.mu.Unlock()
 				return
@@ -494,6 +495,7 @@ func (m *Manager) retireUnownedQualificationTarget(ctx context.Context, instance
 	delete(m.pendingCleanup, instance)
 	delete(m.pendingProcessExits, instance)
 	delete(m.processGenerations, instance)
+	delete(m.processStartedAt, instance)
 	delete(m.waking, instance)
 	return proof, nil
 }

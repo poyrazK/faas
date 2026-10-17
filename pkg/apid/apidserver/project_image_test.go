@@ -156,6 +156,11 @@ func testProjectComposeImageScanAndApply(t *testing.T, healthy bool) {
 	if err := json.Unmarshal(post("/v1/projects").Body.Bytes(), &applied); err != nil || len(applied.Builds) != 0 {
 		t.Fatalf("unchanged reapply = %+v, %v", applied, err)
 	}
+	// H10-88: the members it did not rebuild are named, so clients stop
+	// counting them as missing builds.
+	if len(applied.Unchanged) != len(applied.Apps) || len(applied.Apps) != 2 {
+		t.Fatalf("unchanged reapply unchanged=%v apps=%v, want every member", applied.Unchanged, applied.Apps)
+	}
 }
 
 func TestEnqueueBuild_ProjectImageUsesImageWorker(t *testing.T) {

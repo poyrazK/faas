@@ -4,11 +4,12 @@ import argparse
 import datetime as dt
 import hashlib
 import json
-import os
-from pathlib import Path
 import re
-import sys
-import tempfile
+from pathlib import Path
+
+from native_guest_evidence import MAX_IDENTITY_BYTES as MAX_IDENTITY_BYTES
+from native_guest_evidence import verify as verify_guest_events
+from native_guest_evidence import write_report
 
 CONTRACT = json.loads((Path(__file__).resolve().parents[2] /
                        "pkg/managedpostgres/guestqualification/contract.json").read_text())
@@ -18,68 +19,8 @@ PACKAGE = CONTRACT["package"]
 IDENTITY_PREFIX = "GREGALE_POSTGRES_GUEST_IDENTITY "
 
 
-def timestamp(value):
-    if not isinstance(value, str):
-        raise ValueError("guest_event_time_invalid")
-    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.utcoffset() != dt.timedelta(0):
-        raise ValueError("guest_event_time_invalid")
-    return parsed
-
-
 def verify(lines):
-    required = {ROOT, *(f"{ROOT}/{phase}" for phase in PHASES)}
-    running, passed = set(), set()
-    started = completed = identity = None
-    package_started = package_passed = False
-    for line in lines:
-        event = json.loads(line)
-        if not isinstance(event, dict):
-            raise ValueError("guest_event_invalid")
-        if event.get("Package") != PACKAGE:
-            if event.get("Action") in ("fail", "build-fail"):
-                raise ValueError("guest_package_failed")
-            continue
-        if package_passed:
-            raise ValueError("guest_events_after_package_pass")
-        name, action = event.get("Test", ""), event.get("Action", "")
-        when = timestamp(event.get("Time"))
-        if started is not None and when < started:
-            raise ValueError("guest_event_time_invalid")
-        if action == "start" and not name:
-            if package_started:
-                raise ValueError("guest_package_start_duplicate")
-            package_started, started = True, when
-        if not package_started:
-            raise ValueError("guest_package_start_missing")
-        if action in ("fail", "build-fail") or ((name == ROOT or name.startswith(ROOT + "/")) and action == "skip"):
-            raise ValueError("guest_test_failed_or_skipped")
-        if name in required:
-            if action == "run":
-                if name in running or name in passed or (name != ROOT and ROOT not in running):
-                    raise ValueError("guest_test_run_invalid")
-                running.add(name)
-            elif action == "pass":
-                if name == ROOT and required - {ROOT} - passed:
-                    raise ValueError("guest_phases_incomplete: " + ", ".join(sorted(required - {ROOT} - passed)))
-                if name not in running:
-                    raise ValueError("guest_test_pass_invalid")
-                running.remove(name)
-                passed.add(name)
-        if name == ROOT and action == "output" and IDENTITY_PREFIX in event.get("Output", ""):
-            if identity is not None:
-                raise ValueError("guest_identity_duplicate")
-            identity = json.loads(event["Output"].split(IDENTITY_PREFIX, 1)[1].strip())
-        if action == "pass" and not name:
-            if running or required - passed:
-                raise ValueError("guest_phases_incomplete: " + ", ".join(sorted(required - passed)))
-            package_passed, completed = True, when
-    missing = required - passed
-    if missing:
-        raise ValueError("guest_phases_incomplete: " + ", ".join(sorted(missing)))
-    if not package_passed or not started or not completed or completed <= started:
-        raise ValueError("guest_package_pass_missing")
-    return started, completed, identity
+    return verify_guest_events(lines, CONTRACT, IDENTITY_PREFIX)
 
 
 def make_report(data, host_class, source_clean, leakcheck_before, leakcheck_after, ttl):
@@ -89,20 +30,26 @@ def make_report(data, host_class, source_clean, leakcheck_before, leakcheck_afte
     manifest = identity["runtime"]
     if not isinstance(manifest, dict) or set(manifest) != {"version", "source_revision", "artifacts"}:
         raise ValueError("guest_runtime_invalid")
-    if manifest["version"] != 1 or not re.fullmatch(r"[0-9a-f]{40}", manifest["source_revision"]):
+    if (type(manifest["version"]) is not int or manifest["version"] != CONTRACT["version"]
+            or not isinstance(manifest["source_revision"], str) or not re.fullmatch(r"[0-9a-f]{40}", manifest["source_revision"])):
         raise ValueError("guest_runtime_invalid")
     artifacts = manifest["artifacts"]
     if not isinstance(artifacts, dict) or set(artifacts) != set(CONTRACT["artifacts"]) or any(
             not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v) for v in artifacts.values()):
         raise ValueError("guest_runtime_invalid")
     major = identity["postgres_major"]
-    if type(major) is not int or not 14 <= major <= 18 or not 1 <= ttl <= 7 * 86400:
+    applications = [artifacts[workload + "_app_layer"] for workload in CONTRACT["workloads"]]
+    sources = [artifacts[workload + "_source_archive"] for workload in CONTRACT["workloads"]]
+    if len(set(applications)) != len(applications) or len(set(sources)) != len(sources):
+        raise ValueError("guest_workload_artifacts_reused")
+    if (type(major) is not int or not 14 <= major <= 18 or type(ttl) is not int or not 1 <= ttl <= 7 * 86400
+            or host_class not in ("native", "nested-diagnostic") or source_clean is not True):
         raise ValueError("guest_report_parameters_invalid")
     if not leakcheck_before or not leakcheck_after:
         raise ValueError("guest_host_cleanup_unverified")
     def utc(value):
-        return value.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    report = dict(version=1, suite_version=CONTRACT["version"], root_test=ROOT,
+        return value.astimezone(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    report = dict(version=CONTRACT["version"], suite_version=CONTRACT["version"], root_test=ROOT,
                   host_class=host_class, host_os="linux", host_arch="amd64",
                   source_clean=source_clean, postgres_major=major,
                   started_at=utc(started), completed_at=utc(completed),
@@ -113,6 +60,8 @@ def make_report(data, host_class, source_clean, leakcheck_before, leakcheck_afte
     canonical = json.dumps(report, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     report["evidence_sha256"] = hashlib.sha256(canonical).hexdigest()
     return report
+
+
 
 
 if __name__ == "__main__":
@@ -132,19 +81,9 @@ if __name__ == "__main__":
                 raise ValueError("guest_host_class_missing")
             report = make_report(data, args.host_class, args.source_clean,
                                  args.leakcheck_before, args.leakcheck_after, args.ttl_seconds)
-            # Refuse to replace older evidence after a failed/repeated run.
-            descriptor, temporary = tempfile.mkstemp(prefix=".guest-evidence-", dir=Path(args.report).parent)
-            try:
-                with os.fdopen(descriptor, "w") as output:
-                    json.dump(report, output, sort_keys=True, indent=2, allow_nan=False)
-                    output.write("\n")
-                    output.flush()
-                    os.fsync(output.fileno())
-                os.link(temporary, args.report)
-            finally:
-                os.unlink(temporary)
+            write_report(args.report, report)
         else:
             verify(data.decode("utf-8").splitlines())
     except (OSError, ValueError, TypeError, KeyError) as error:
         raise SystemExit("PostgreSQL guest evidence rejected") from error
-    print("All thirteen PostgreSQL probe, shipped starter, public rotation, restore, cold-boot and cleanup phases passed.")
+    print(f"All {len(PHASES)} PostgreSQL probe, Node/Python starter, public rotation, restore, cold-boot and cleanup phases passed.")

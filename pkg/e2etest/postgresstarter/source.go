@@ -8,11 +8,38 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
-func Source(ca []byte) (map[string]string, error) {
+// CAPath is covered by the unchanged starter Dockerfile's runtime COPY.
+const CAPath = "runtime/fixture-ca.pem"
+
+// Starter describes an unchanged embedded app's native acceptance configuration.
+type Starter struct {
+	Template, Runtime, PhasePrefix, TrustEnv, ReleaseCommand string
+	TaskCommand                                              []string
+}
+
+// Starters lists the supported customer SQL workloads in deployment order.
+func Starters() []Starter {
+	return []Starter{
+		{Template: "rest-api-postgres", Runtime: "node22", PhasePrefix: "starter", TrustEnv: "NODE_EXTRA_CA_CERTS", ReleaseCommand: "node migrate.js",
+			TaskCommand: []string{"node", "-e", `if (!process.env.DATABASE_URL || Object.hasOwn(process.env, 'MIGRATION_DATABASE_URL')) process.exit(1)`}},
+		{Template: "rest-api-postgres-python", Runtime: "python312", PhasePrefix: "python_starter", TrustEnv: "SSL_CERT_FILE", ReleaseCommand: "python migrate.py",
+			TaskCommand: []string{"python", "-c", `import os; raise SystemExit(0 if os.environ.get('DATABASE_URL') and 'MIGRATION_DATABASE_URL' not in os.environ else 1)`}},
+	}
+}
+
+func Source(template string, ca []byte) (map[string]string, error) {
+	supported := false
+	for _, starter := range Starters() {
+		supported = supported || starter.Template == template
+	}
+	if !supported {
+		return nil, fmt.Errorf("unsupported PostgreSQL starter")
+	}
 	rest := bytes.TrimSpace(ca)
 	certificates := 0
 	for len(rest) > 0 {
@@ -33,7 +60,7 @@ func Source(ca []byte) (map[string]string, error) {
 		return nil, fmt.Errorf("starter fixture CA is required")
 	}
 	source := make(map[string]string)
-	err := fs.WalkDir(templates.FS, "rest-api-postgres", func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(templates.FS, template, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -44,12 +71,12 @@ func Source(ca []byte) (map[string]string, error) {
 		if err != nil {
 			return err
 		}
-		source[path[len("rest-api-postgres/"):]] = string(content)
+		source[strings.TrimPrefix(path, template+"/")] = string(content)
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read embedded PostgreSQL starter: %w", err)
 	}
-	source["fixture-ca.pem"] = string(ca)
+	source[CAPath] = string(ca)
 	return source, nil
 }

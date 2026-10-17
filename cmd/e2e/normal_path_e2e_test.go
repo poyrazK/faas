@@ -76,6 +76,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net/http"
 	"os"
@@ -131,6 +132,10 @@ func newNormalPathFixtureWith(t *testing.T, slug string, plan api.Plan, extra e2
 }
 
 func newNormalPathFixtureWithRequest(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, request api.CreateAppRequest, extraEnv ...string) *normalPathFixture {
+	return newNormalPathFixtureWithSetup(t, slug, plan, extra, request, nil, extraEnv...)
+}
+
+func newNormalPathFixtureWithSetup(t *testing.T, slug string, plan api.Plan, extra e2etest.Which, request api.CreateAppRequest, setup func(*pgxpool.Pool) []string, extraEnv ...string) *normalPathFixture {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -196,6 +201,9 @@ func newNormalPathFixtureWithRequest(t *testing.T, slug string, plan api.Plan, e
 	// metal-tagged and therefore never runs; this is its first coverage on a
 	// gate that executes. Requests go through h.EdgeURL(), which resolves to
 	// the public listener whenever it is booted.
+	if setup != nil {
+		extraEnv = append(extraEnv, setup(pool)...)
+	}
 	h := e2etest.StartWithEnv(t, pool,
 		e2etest.APID|e2etest.Schedd|e2etest.Gatewayd|e2etest.GatewaydPublic|extra, extraEnv)
 	ctx := context.Background()

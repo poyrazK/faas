@@ -24,6 +24,7 @@ package daemonunitspec
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -424,11 +425,16 @@ func TestUnitS3Gateway_OptionalShape(t *testing.T) {
 }
 
 func TestOptionalRegistry_ExplicitlyConfiguredDataPlanes(t *testing.T) {
-	if len(OptionalRegistry) != 3 || OptionalRegistry[0].Name != "s3-gatewayd" || OptionalRegistry[1].Name != "bridged" || OptionalRegistry[2].Name != "apid-clone-worker" {
-		t.Fatalf("optional registry = %+v, want [s3-gatewayd, bridged, apid-clone-worker]", OptionalRegistry)
+	want := []string{"s3-gatewayd", "bridged", "apid-clone-worker", "gatewayd-public-edge"}
+	got := make([]string, 0, len(OptionalRegistry))
+	for _, entry := range OptionalRegistry {
+		got = append(got, entry.Name)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("optional registry = %v, want %v", got, want)
 	}
 	for _, core := range Registry {
-		if core.Name == "s3-gatewayd" || core.Name == "bridged" || core.Name == "apid-clone-worker" {
+		if slices.Contains(want, core.Name) {
 			t.Fatal("optional workers and data planes must stay out of the always-on registry")
 		}
 	}

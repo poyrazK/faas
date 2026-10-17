@@ -273,6 +273,3702 @@ $$;
 
 
 --
+-- Name: application_standard_account_input_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_account_input_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE account_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN account_ids := array_append(account_ids, OLD.account_id); END IF;
+    IF TG_OP <> 'DELETE' THEN account_ids := array_append(account_ids, NEW.account_id); END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.account-quota.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(account_ids) id ORDER BY id) owners;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_app_account_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_app_account_identity_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'application creating account identity is immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_app_account_identity';
+END;
+$$;
+
+
+--
+-- Name: application_standard_app_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_app_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.org_id IS NOT NULL AND NEW.org_id IS NULL THEN
+            RAISE EXCEPTION 'application organization owner cannot be removed'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+    END IF;
+    PERFORM 1 FROM orgs WHERE id = NEW.org_id FOR SHARE;
+    IF NEW.project_id IS NOT NULL THEN
+        PERFORM 1 FROM projects WHERE id = NEW.project_id FOR SHARE;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM application_standard_assignments a
+        WHERE a.active AND a.org_id IS DISTINCT FROM NEW.org_id
+          AND ((a.scope = 'project' AND a.scope_id = NEW.project_id)
+            OR (a.scope = 'application' AND a.scope_id = NEW.id))
+    ) THEN
+        RAISE EXCEPTION 'application scope is assigned to another organization'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_artifact_child_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_artifact_child_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE deployment_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN deployment_ids := array_append(deployment_ids, OLD.deployment_id); END IF;
+    IF TG_OP <> 'DELETE' THEN deployment_ids := array_append(deployment_ids, NEW.deployment_id); END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.artifact-children.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(deployment_ids) id WHERE id IS NOT NULL ORDER BY id) artifacts;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_artifact_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_artifact_identity_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'deployment application identity is immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_artifact_identity';
+END;
+$$;
+
+
+--
+-- Name: application_standard_assignment_retention_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_assignment_retention_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF pg_trigger_depth() < 2 OR EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+        RAISE EXCEPTION 'application standard assignments must be deactivated through review'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_assignment_retention';
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: application_standard_assignment_revision_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_assignment_revision_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.scope IS DISTINCT FROM OLD.scope OR NEW.scope_id IS DISTINCT FROM OLD.scope_id
+       OR NEW.standard_id IS DISTINCT FROM OLD.standard_id
+       OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at IS DISTINCT FROM OLD.created_at
+       OR NEW.revision <> OLD.revision + 1 THEN
+        RAISE EXCEPTION 'application standard assignment identity or revision changed'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_assignment_revision';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_assignment_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_assignment_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE creator uuid;
+BEGIN
+    PERFORM 1 FROM orgs WHERE id = NEW.org_id FOR UPDATE;
+    IF NEW.scope = 'application' THEN
+        IF NOT EXISTS (SELECT 1 FROM apps WHERE id = NEW.scope_id AND org_id = NEW.org_id AND status <> 'deleted') THEN
+            RAISE EXCEPTION 'application standard scope does not belong to its organization'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+    ELSIF NEW.scope = 'project' THEN
+        PERFORM 1 FROM projects WHERE id = NEW.scope_id FOR UPDATE;
+        IF EXISTS (SELECT 1 FROM application_standard_assignments
+                   WHERE active AND scope = 'project' AND scope_id = NEW.scope_id AND org_id IS DISTINCT FROM NEW.org_id) THEN
+            RAISE EXCEPTION 'project scope is already assigned to another organization'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+        SELECT account_id INTO creator FROM projects WHERE id = NEW.scope_id;
+        IF creator IS NULL OR NOT EXISTS (
+            SELECT 1 FROM orgs o WHERE o.id = NEW.org_id AND
+              (o.personal_owner_account_id = creator OR EXISTS (
+                SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.account_id = creator AND m.removed_at IS NULL
+              ))
+        ) OR EXISTS (SELECT 1 FROM apps WHERE project_id = NEW.scope_id AND status <> 'deleted' AND org_id IS DISTINCT FROM NEW.org_id) THEN
+            RAISE EXCEPTION 'project standard scope has no verified organization owner'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_boot_receipt_reuse_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_boot_receipt_reuse_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state IN ('waking','cold_booting') AND EXISTS(
+  SELECT 1 FROM instance_application_standard_boots WHERE instance_id=NEW.id AND receipt IS NOT NULL
+ ) THEN
+  RAISE EXCEPTION 'published native receipt cannot authorize another boot'
+   USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_boot_restore_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_boot_restore_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE locked jsonb;
+BEGIN
+ IF TG_OP='UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+ IF coalesce(NEW.binding->>'snapshot_capture_token','')='' AND coalesce(NEW.binding->>'snapshot_evidence_hash','')='' THEN RETURN NEW; END IF;
+ locked:=application_standard_lock_native_boot(NEW.instance_id,NEW.expected_state);
+ PERFORM application_standard_lock_snapshot_restore(NEW.binding,locked->'input_snapshot');
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_control_input_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_control_input_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN app_ids := array_append(app_ids, OLD.app_id); END IF;
+    IF TG_OP <> 'DELETE' THEN app_ids := array_append(app_ids, NEW.app_id); END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.controls.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(app_ids) id WHERE id IS NOT NULL ORDER BY id) controls;
+    IF TG_NARGS > 0 AND TG_ARGV[0] = 'account_quota' THEN
+        PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.account-quota.' || account_id::text, 0))
+        FROM (SELECT DISTINCT account_id FROM apps WHERE id = ANY(app_ids) ORDER BY account_id) owners;
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_deployment_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_deployment_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM apps WHERE id = NEW.app_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM app_application_standards WHERE app_id = NEW.app_id
+               AND state IN ('pending', 'applying', 'blocked')) THEN
+        RAISE EXCEPTION 'application standards enrollment is not persisted'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standards_pending';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_drain_projection_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_drain_projection_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid; logical uuid; e jsonb; expected record; backup jsonb; desired jsonb;
+BEGIN
+    IF TG_OP = 'DELETE' THEN app := OLD.app_id; ELSE app := NEW.app_id; END IF;
+    IF NOT EXISTS (SELECT 1 FROM apps WHERE id = app AND status <> 'deleted') THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = app;
+    IF coalesce(jsonb_array_length(e->'sources'->'log_destinations'), 0) = 0 THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
+    SELECT resource_id INTO logical FROM application_standard_control_bindings
+    WHERE app_id = app AND field = 'log_destinations' AND physical_id = logical::text;
+    IF logical IS NULL THEN
+        IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
+    END IF;
+    desired := coalesce(e->'values'->'log_destinations', '[]'::jsonb);
+    IF TG_OP = 'DELETE' THEN
+        IF NOT desired ? logical::text THEN RETURN OLD; END IF;
+    ELSIF desired ? logical::text THEN
+        SELECT d.* INTO expected FROM application_standard_log_destinations d
+        JOIN apps a ON a.org_id = d.org_id AND a.id = app
+        JOIN application_standard_control_bindings b ON b.app_id = app AND b.field = 'log_destinations'
+            AND b.resource_id = d.id AND b.physical_id = NEW.id::text
+        WHERE d.id = logical;
+        IF FOUND AND NEW.app_id = app AND NEW.account_id = (SELECT account_id FROM apps WHERE id = app)
+            AND NEW.kind = expected.kind AND NEW.target_url = expected.target_url
+            AND coalesce(NEW.auth_header_sealed, ''::bytea) = coalesce(expected.auth_header_sealed, ''::bytea)
+            AND NEW.enabled THEN RETURN NEW; END IF;
+        SELECT body INTO backup FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'log_destinations' AND logical_id = logical;
+        IF backup IS NOT NULL AND NEW.id::text = backup->>'ID' AND NEW.app_id::text = backup->>'AppID'
+            AND NEW.account_id::text = backup->>'AccountID' AND NEW.kind = backup->>'Kind'
+            AND NEW.target_url = backup->>'TargetURL' AND NEW.enabled = (backup->>'Enabled')::boolean
+            AND coalesce(NEW.auth_header_sealed, ''::bytea) = decode(coalesce(backup->>'AuthHeaderSealed', ''), 'base64') THEN RETURN NEW; END IF;
+    END IF;
+    RAISE EXCEPTION 'application standard manages this control'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+END;
+$$;
+
+
+--
+-- Name: application_standard_egress_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
+ PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
+  AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
+ actual:=application_standard_egress_target(NEW.app_id,NEW.node_id);
+ IF actual IS NULL OR actual<>NEW.target OR actual->>'org_id'<>NEW.org_id::text
+  OR actual->'identity'->>'ProtocolVersion'<>'2' OR actual->'identity'->>'Incarnation'=''
+  OR NEW.receipt<>jsonb_build_object('identity',actual->'identity','app_id',actual->>'app_id',
+   'revision',actual->'policy'->'revision','policy_hash',actual->>'policy_hash') THEN
+  RAISE EXCEPTION 'standard egress process or inputs changed' USING ERRCODE='40001',CONSTRAINT='application_standard_egress_current';
+ END IF;
+ NEW.observed_at:=clock_timestamp();
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM accounts
+         WHERE id = p_account_id
+           AND plan <> 'free'
+    );
+$$;
+
+
+SET default_table_access_method = heap;
+
+--
+-- Name: apps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    type text DEFAULT 'app'::text NOT NULL,
+    runtime text,
+    ram_mb integer NOT NULL,
+    idle_timeout_s integer,
+    max_concurrency integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
+    github_install_id bigint,
+    github_repo_full_name text,
+    github_production_branch text,
+    min_instances integer DEFAULT 0 NOT NULL,
+    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    autoscale_target_rps integer,
+    autoscale_target_cpu_pct integer,
+    github_install_binding_id text,
+    github_install_account_id uuid,
+    github_install_linked_at timestamp with time zone,
+    project_id uuid,
+    root_dir text DEFAULT ''::text NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    workload_class text DEFAULT 'http'::text NOT NULL,
+    start_command text,
+    streaming_enabled boolean DEFAULT false NOT NULL,
+    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_scale_out_at timestamp with time zone,
+    last_scale_in_at timestamp with time zone,
+    require_signed boolean DEFAULT false NOT NULL,
+    node_id uuid,
+    reassigned_at timestamp with time zone,
+    org_id uuid,
+    migrated_at timestamp with time zone,
+    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
+    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
+    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
+    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
+    require_authn boolean DEFAULT false NOT NULL,
+    public_auth_mode text DEFAULT 'open'::text NOT NULL,
+    public_auth_basic bytea,
+    websocket_enabled boolean DEFAULT false NOT NULL,
+    auth_default_flipped_at timestamp with time zone,
+    overflow_node uuid,
+    route_metrics_enabled boolean DEFAULT false NOT NULL,
+    preview_of_slug text,
+    preview_pr_number integer,
+    preview_pr_state text,
+    preview_expires_at timestamp with time zone,
+    cors_default_enabled boolean DEFAULT false NOT NULL,
+    cors_default_origins text[],
+    maintenance_mode boolean DEFAULT false NOT NULL,
+    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    static_egress_ip inet,
+    static_egress_ip_set_at timestamp with time zone,
+    preview_destroy_commented_at timestamp with time zone,
+    app_protocol text DEFAULT 'http1'::text NOT NULL,
+    cpu_millicores integer DEFAULT 1000 NOT NULL,
+    last_deploy_failed_email_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    delete_grace_until timestamp with time zone,
+    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
+    only_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    purge_claimed_at timestamp with time zone,
+    visibility text DEFAULT 'public'::text NOT NULL,
+    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    warm_pool_size integer DEFAULT 0 NOT NULL,
+    security_policy text DEFAULT 'off'::text NOT NULL,
+    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
+    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
+    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
+    request_rate_limit_rps integer,
+    request_rate_limit_burst integer,
+    github_owner_id bigint,
+    github_repo_id bigint,
+    park_transition_id uuid,
+    wake_transition_id uuid,
+    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
+    platform_tenant_required boolean DEFAULT false NOT NULL,
+    managed_postgres_admission_cutover_id uuid,
+    managed_postgres_admission_fenced_at timestamp with time zone,
+    service_address_index integer,
+    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
+    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
+    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
+    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
+    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
+    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
+    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
+    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
+    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
+    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
+    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
+    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
+    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
+    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
+    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
+    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
+    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
+    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
+    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text, 'binary'::text])))),
+    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
+    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
+    CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
+    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
+    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
+    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
+    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
+    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
+    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
+    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
+    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
+);
+
+
+--
+-- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
+
+
+--
+-- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
+
+
+--
+-- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
+
+
+--
+-- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
+
+
+--
+-- Name: application_standard_egress_policy_hash(public.apps); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_policy_hash(a public.apps) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT encode(sha256(convert_to('gregale.egress-policy.v1'||E'\n'||a.id::text||E'\n'||
+ a.egress_allowlist_revision::text||E'\n'||
+ coalesce((SELECT string_agg(c.key,',' ORDER BY c.key COLLATE "C") FROM
+  (SELECT DISTINCT encode(substring(inet_send(prefix) from 5),'hex')||'/'||masklen(prefix)::text AS key FROM unnest(a.egress_allowlist) prefix) c),'')||E'\n'||
+ coalesce((SELECT string_agg(p.port::text,',' ORDER BY p.port) FROM (SELECT DISTINCT port FROM unnest(a.egress_ports) port) p),''),'UTF8')),'hex');
+$$;
+
+
+--
+-- Name: application_standard_egress_target(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_egress_target(app uuid, node uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $_$
+ SELECT jsonb_build_object('org_id',a.org_id::text,'app_id',a.id::text,
+ 'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,
+ 'identity',jsonb_build_object('ProtocolVersion',coalesce(n.vmmd_admission_protocol,0),'NodeID',n.id::text,'Incarnation',coalesce(n.vmmd_incarnation::text,'')),
+ 'policy',jsonb_build_object('app_id',a.id::text,'revision',a.egress_allowlist_revision,'allowlist',to_jsonb(a.egress_allowlist::text[]),'ports',to_jsonb(a.egress_ports)),
+ 'policy_hash',application_standard_egress_policy_hash(a))
+ FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id JOIN compute_nodes n ON n.id=node
+ WHERE a.id=app AND a.status='active' AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND e.effective_hash~'^[a-f0-9]{64}$' AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
+ AND n.active AND n.role IS DISTINCT FROM 'control-plane'
+ AND EXISTS(SELECT 1 FROM instances i WHERE i.app_id=a.id AND i.node_id=n.id
+  AND i.state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining'));
+$_$;
+
+
+--
+-- Name: application_standard_enroll_app(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_enroll_app() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pins jsonb;
+BEGIN
+    IF NEW.org_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT coalesce(jsonb_agg(jsonb_build_object('assignment_id', id::text, 'version', admission_version) ORDER BY id), '[]'::jsonb)
+    INTO pins FROM application_standard_assignments WHERE active AND org_id = NEW.org_id
+      AND ((scope = 'organization' AND scope_id = NEW.org_id)
+        OR (scope = 'project' AND scope_id = NEW.project_id) OR (scope = 'application' AND scope_id = NEW.id));
+    INSERT INTO app_application_standards (app_id, org_id, project_id, base_settings, adoptions, state)
+    VALUES (NEW.id, NEW.org_id, NEW.project_id,
+      jsonb_build_object('require_signed', NEW.require_signed, 'security_policy', NEW.security_policy,
+        'egress_cidrs', to_jsonb(NEW.egress_allowlist::text[]), 'egress_extra_ports', to_jsonb(NEW.egress_ports)),
+      pins, CASE WHEN pins = '[]'::jsonb THEN 'unmanaged' ELSE 'pending' END)
+    ON CONFLICT (app_id) DO UPDATE SET org_id = EXCLUDED.org_id, project_id = EXCLUDED.project_id, adoptions = EXCLUDED.adoptions,
+      state = CASE WHEN EXCLUDED.adoptions <> '[]'::jsonb OR cardinality(app_application_standards.materialized_fields)>0 OR app_application_standards.persisted_revision>0 THEN 'pending' ELSE 'unmanaged' END,
+      desired_revision = app_application_standards.desired_revision + 1, error_code = '', updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_enrollment_generation_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_enrollment_generation_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.persisted_revision < OLD.persisted_revision THEN
+        RAISE EXCEPTION 'application standard installation history regressed'
+          USING ERRCODE='23514',CONSTRAINT='application_standard_enrollment_generation';
+    END IF;
+    IF NEW.lease_generation < OLD.lease_generation THEN
+        RAISE EXCEPTION 'application standard enrollment generation regressed'
+          USING ERRCODE='23514',CONSTRAINT='application_standard_enrollment_generation';
+    END IF;
+    IF NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+        RAISE EXCEPTION 'application standard enrollment identity changed'
+          USING ERRCODE='23514',CONSTRAINT='application_standard_enrollment_identity';
+    END IF;
+    IF NEW.org_id IS DISTINCT FROM OLD.org_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
+      OR NEW.base_settings IS DISTINCT FROM OLD.base_settings OR NEW.local_settings IS DISTINCT FROM OLD.local_settings
+      OR NEW.additional_log_destinations IS DISTINCT FROM OLD.additional_log_destinations OR NEW.adoptions IS DISTINCT FROM OLD.adoptions
+      OR NEW.desired_revision IS DISTINCT FROM OLD.desired_revision OR NEW.effective IS DISTINCT FROM OLD.effective
+      OR NEW.exception_expires_at IS DISTINCT FROM OLD.exception_expires_at
+      OR NEW.effective_hash IS DISTINCT FROM OLD.effective_hash OR NEW.materialized_fields IS DISTINCT FROM OLD.materialized_fields THEN
+        NEW.lease_owner := ''; NEW.lease_until := NULL;
+        NEW.lease_generation := greatest(NEW.lease_generation,OLD.lease_generation+1);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_environment_workload_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_environment_workload_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[] := '{}'; project_ids uuid[] := '{}'; deployment_ids uuid[] := '{}';
+BEGIN
+    IF TG_TABLE_NAME = 'project_environments' THEN
+        IF TG_OP <> 'INSERT' THEN project_ids := array_append(project_ids, OLD.project_id); END IF;
+        IF TG_OP <> 'DELETE' THEN project_ids := array_append(project_ids, NEW.project_id); END IF;
+        SELECT coalesce(array_agg(id), '{}') INTO app_ids FROM apps WHERE project_id = ANY(project_ids);
+    ELSIF TG_TABLE_NAME = 'project_environment_workload_deployment_specs' THEN
+        IF TG_OP <> 'INSERT' THEN deployment_ids := array_append(deployment_ids, OLD.deployment_id); END IF;
+        IF TG_OP <> 'DELETE' THEN deployment_ids := array_append(deployment_ids, NEW.deployment_id); END IF;
+        SELECT coalesce(array_agg(app_id), '{}') INTO app_ids FROM deployments WHERE id = ANY(deployment_ids);
+    ELSE
+        IF TG_OP <> 'INSERT' THEN app_ids := array_append(app_ids, OLD.app_id); END IF;
+        IF TG_OP <> 'DELETE' THEN app_ids := array_append(app_ids, NEW.app_id); END IF;
+    END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.environment-workloads.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(app_ids) id WHERE id IS NOT NULL ORDER BY id) owners;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_exception_deadline(jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_exception_deadline(input jsonb, now_utc timestamp with time zone) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE nano bigint; deadline timestamptz;
+BEGIN
+ IF NOT input ? 'exception_expires_at_unix_nano' THEN RETURN NULL; END IF;
+ IF jsonb_typeof(input->'exception_expires_at_unix_nano') IS DISTINCT FROM 'number'
+   OR (input->>'exception_expires_at_unix_nano') !~ '^[1-9][0-9]{0,18}$' THEN
+  RAISE EXCEPTION 'exception deadline invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ nano:=(input->>'exception_expires_at_unix_nano')::bigint;
+ deadline:=timestamptz 'epoch'+(nano/1000000000)*interval '1 second'+((nano%1000000000)/1000)*interval '1 microsecond';
+ IF deadline<=greatest(now_utc,clock_timestamp()) THEN
+  RAISE EXCEPTION 'exception authority expired' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN deadline;
+EXCEPTION WHEN numeric_value_out_of_range THEN
+ RAISE EXCEPTION 'exception deadline invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+END;
+$_$;
+
+
+--
+-- Name: application_standard_exception_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_exception_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actor uuid;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF pg_trigger_depth()>1 AND (NOT EXISTS(SELECT 1 FROM orgs WHERE id=OLD.org_id)
+    OR NOT EXISTS(SELECT 1 FROM apps WHERE id=OLD.app_id)) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'exception history is retained' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_immutable';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF (to_jsonb(NEW)-ARRAY['revoked_at','revoked_by']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['revoked_at','revoked_by'])
+    OR OLD.revoked_at IS NOT NULL OR NEW.revoked_at IS NULL OR NEW.revoked_at>clock_timestamp() THEN
+   RAISE EXCEPTION 'exception approval is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_immutable';
+  END IF;
+  actor:=NEW.revoked_by;
+ ELSE
+  IF NEW.revoked_at IS NOT NULL OR NEW.expires_at<=clock_timestamp() OR NEW.created_at>clock_timestamp() THEN
+   RAISE EXCEPTION 'exception approval time invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope';
+  END IF;
+  actor:=NEW.approved_by;
+ END IF;
+ PERFORM 1 FROM orgs WHERE id=NEW.org_id AND status='active' AND NOT deleted_pending FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'exception organization unavailable' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope'; END IF;
+ PERFORM 1 FROM apps WHERE id=NEW.app_id AND org_id=NEW.org_id AND status<>'deleted' FOR UPDATE NOWAIT;
+ IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id=a.id
+   WHERE a.id=actor AND a.status='active' AND m.org_id=NEW.org_id AND m.removed_at IS NULL AND m.role IN ('owner','admin')) THEN
+  RAISE EXCEPTION 'exception authority unavailable' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NOT EXISTS(SELECT 1 FROM app_application_standards e CROSS JOIN LATERAL jsonb_array_elements(e.adoptions) pin
+    JOIN application_standard_assignments a ON a.id=(pin->>'assignment_id')::uuid
+    JOIN application_standard_versions v ON v.org_id=a.org_id AND v.standard_id=a.standard_id AND v.version=(pin->>'version')::bigint
+    WHERE e.app_id=NEW.app_id AND a.org_id=NEW.org_id AND v.standard_id=NEW.standard_id AND v.version=NEW.version AND v.definition ? NEW.field)
+   OR EXISTS(SELECT 1 FROM application_standard_exceptions x WHERE x.app_id=NEW.app_id AND x.standard_id=NEW.standard_id
+    AND x.version=NEW.version AND x.field=NEW.field AND x.revoked_at IS NULL AND x.expires_at>clock_timestamp()) THEN
+   RAISE EXCEPTION 'exception adoption or overlap invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_exception_scope';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_go_json_string(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_go_json_string(value text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+ SELECT replace(replace(replace(replace(replace(to_json(value)::text,
+  '<',E'\\u003c'),'>',E'\\u003e'),'&',E'\\u0026'),U&'\2028',E'\\u2028'),U&'\2029',E'\\u2029');
+$$;
+
+
+--
+-- Name: application_standard_instance_runtime_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_instance_runtime_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.app_id IS NOT NULL AND NEW.kind='wake' AND NEW.state IN ('waking','cold_booting','running','warm','migrating') THEN
+  IF application_standard_runtime_is_unowned(NEW.app_id) THEN RETURN NEW; END IF;
+  INSERT INTO instance_application_standard_admissions(instance_id,app_id,deployment_id,node_id,input_snapshot)
+  VALUES(NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,
+   application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) || jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode));
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_instance_runtime_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_instance_runtime_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_input jsonb; captured_input jsonb; artifact_deadline timestamptz;
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.kind='wake' AND OLD.app_id IS NOT NULL AND
+   (NEW.app_id IS DISTINCT FROM OLD.app_id OR NEW.deployment_id IS DISTINCT FROM OLD.deployment_id OR NEW.kind IS DISTINCT FROM OLD.kind) THEN
+  RAISE EXCEPTION 'runtime application and artifact identity are immutable'
+   USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_identity';
+ END IF;
+ IF NEW.app_id IS NULL OR NEW.kind <> 'wake' THEN RETURN NEW; END IF;
+ -- Cleanup, bookkeeping and nonresident fixtures remain possible while the
+ -- standard is pending. Entry into boot, serving, warm and migration is gated.
+ IF NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
+ IF application_standard_runtime_is_unowned(NEW.app_id) THEN RETURN NEW; END IF;
+ current_input := application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) ||
+   jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
+ IF TG_OP='INSERT' THEN
+  IF NEW.state IN ('running','warm','migrating') AND
+    application_standard_runtime_requires_native(current_input) THEN
+   RAISE EXCEPTION 'managed runtime requires a captured boot attempt'
+    USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ ELSE
+  SELECT input_snapshot INTO captured_input FROM instance_application_standard_admissions WHERE instance_id=NEW.id;
+  IF captured_input IS NULL THEN
+   -- A legacy instance can continue only while it is still unmanaged. A new
+   -- standard requires a fresh instance, never a fabricated historical capture.
+   IF application_standard_runtime_requires_native(current_input) THEN
+    RAISE EXCEPTION 'managed runtime has no admission capture'
+     USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+   END IF;
+  ELSE
+   -- Legacy unmanaged captures have no native revision; they gain no native
+   -- grant authority from this compatibility comparison.
+   IF NOT (captured_input ? 'egress_revision') AND NOT application_standard_runtime_requires_native(current_input) THEN
+    current_input:=current_input-'egress_revision';
+   END IF;
+   IF NOT application_standard_runtime_inputs_match(captured_input,current_input) OR
+     (captured_input->'account_plan' IS DISTINCT FROM current_input->'account_plan' AND OLD.state IN ('waking','cold_booting')) THEN
+   RAISE EXCEPTION 'runtime inputs changed after admission'
+    USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+   END IF;
+  END IF;
+  IF application_standard_runtime_requires_native(current_input) AND current_input ? 'runtime_artifacts' THEN
+   artifact_deadline:=application_standard_native_artifact_deadline(current_input,clock_timestamp());
+   IF artifact_deadline IS NULL OR artifact_deadline<=clock_timestamp() THEN
+    RAISE EXCEPTION 'managed runtime artifact approval expired' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+   END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_ledger_recovery_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_ledger_recovery_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'ledger recovery evidence is immutable'
+  USING ERRCODE='23514',CONSTRAINT='application_standard_ledger_recovery_immutable';
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_native_boot(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_native_boot(instance_id uuid, expected_state text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE i instances%ROWTYPE; c instance_application_standard_admissions%ROWTYPE;
+        input jsonb; incarnation uuid; protocol smallint; artifact_deadline timestamptz; now_utc timestamptz;
+BEGIN
+ SELECT * INTO i FROM instances WHERE id=instance_id FOR UPDATE NOWAIT;
+ IF NOT FOUND OR i.state IS DISTINCT FROM expected_state OR i.kind<>'wake' OR i.app_id IS NULL THEN
+  RAISE EXCEPTION 'runtime boot state changed' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
+ END IF;
+ SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_application_standard_admissions.instance_id=i.id FOR SHARE NOWAIT;
+ input:=application_standard_native_runtime_snapshot(i.app_id,i.deployment_id) || jsonb_build_object('instance_ram_mb',i.ram_mb,'instance_mode',i.mode);
+ IF c.instance_id IS NULL OR c.node_id IS DISTINCT FROM i.node_id OR NOT application_standard_native_inputs_match(c.input_snapshot,input)
+   OR (input->>'desired_revision')::bigint<=0 OR input->>'effective_hash'=''
+   OR input->'desired_revision' IS DISTINCT FROM input->'persisted_revision'
+   OR NOT application_standard_runtime_requires_native(input) THEN
+  RAISE EXCEPTION 'runtime admission inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT vmmd_incarnation,vmmd_admission_protocol INTO incarnation,protocol FROM compute_nodes WHERE id=i.node_id FOR SHARE NOWAIT;
+ IF incarnation IS NULL THEN
+  RAISE EXCEPTION 'native process is not registered' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ now_utc:=clock_timestamp();
+ IF expected_state<>'running' THEN
+  artifact_deadline:=application_standard_native_artifact_deadline(input,now_utc);
+ END IF;
+ now_utc:=clock_timestamp();
+ IF artifact_deadline IS NOT NULL AND artifact_deadline<=now_utc THEN
+  RAISE EXCEPTION 'native artifact lease expired during its locked read' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN jsonb_build_object('artifact_expires_at_unix_nano',(extract(epoch FROM artifact_deadline)*1000000000)::bigint,
+  'input_snapshot',input,'captured_input_hash',c.native_input_hash,
+  'protocol_version',protocol,'node_id',i.node_id::text,'incarnation',incarnation::text,'clock_unix_nano',(extract(epoch FROM now_utc)*1000000000)::bigint);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_native_promotion(uuid, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_native_promotion(instance_id uuid, allow_running boolean) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE i instances%ROWTYPE; g instance_application_standard_boots%ROWTYPE; locked jsonb; b jsonb; r jsonb;
+BEGIN
+ SELECT * INTO i FROM instances WHERE id=instance_id FOR UPDATE NOWAIT;
+ IF NOT FOUND OR (i.state<>'warm' AND NOT(allow_running AND i.state='running')) THEN
+  RAISE EXCEPTION 'runtime promotion state changed' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
+ END IF;
+ locked:=application_standard_lock_native_boot(i.id,i.state);
+ SELECT * INTO g FROM instance_application_standard_boots WHERE token=i.application_standard_boot_token FOR SHARE NOWAIT;
+ b:=g.binding; r:=g.receipt;
+ IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL OR (r->>'paused')::boolean IS DISTINCT FROM true
+  OR b->>'node_id' IS DISTINCT FROM locked->>'node_id' OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
+  OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash'
+  OR r->>'netns' IS DISTINCT FROM i.netns OR r->>'host_ip' IS DISTINCT FROM host(i.host_ip)
+  OR (r->>'lease_uid')::integer IS DISTINCT FROM i.guest_uid
+  OR (i.state='warm' AND i.application_standard_promotion_token IS NOT NULL) THEN
+  RAISE EXCEPTION 'paused native lease changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN locked || jsonb_build_object('parent',r,'state',i.state,'promotion_token',i.application_standard_promotion_token);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime promotion inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_observation(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_observation(application_id uuid, organization_id uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE locked uuid;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.consumer-membership',0)) THEN
+  RAISE EXCEPTION 'application standard membership is busy' USING ERRCODE='55P03';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.observation.'||application_id::text,0)) THEN
+  RAISE EXCEPTION 'application standard children are busy' USING ERRCODE='55P03';
+ END IF;
+ SELECT a.id INTO locked FROM apps a JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=application_id AND a.org_id=organization_id AND a.status<>'deleted'
+ FOR UPDATE OF a,e NOWAIT;
+ IF NOT FOUND THEN RETURN NULL; END IF;
+ PERFORM n.id FROM compute_nodes n ORDER BY n.id FOR SHARE NOWAIT;
+ PERFORM c.node_id FROM application_standard_log_consumers c ORDER BY c.node_id FOR SHARE NOWAIT;
+ PERFORM i.id FROM instances i WHERE i.app_id=application_id ORDER BY i.id FOR SHARE NOWAIT;
+ PERFORM d.id FROM deployments d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
+ PERFORM s.id FROM snapshots s JOIN deployments d ON d.id=s.deployment_id
+ WHERE d.app_id=application_id ORDER BY s.id FOR SHARE OF s NOWAIT;
+ RETURN locked;
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_observation_evidence(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_observation_evidence(application_id uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||application_id::text,0)) THEN
+  RAISE EXCEPTION 'application standard controls are busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ WHERE a.id=application_id FOR SHARE OF o,acct NOWAIT;
+ PERFORM p.id FROM projects p JOIN apps a ON a.project_id=p.id WHERE a.id=application_id FOR SHARE OF p NOWAIT;
+ PERFORM d.id FROM app_log_drains d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
+ PERFORM b.app_id FROM application_standard_control_bindings b WHERE b.app_id=application_id
+ ORDER BY b.field,b.resource_id FOR SHARE NOWAIT;
+ PERFORM r.id FROM application_standard_log_destinations r JOIN application_standard_control_bindings b
+ ON b.resource_id=r.id AND b.field='log_destinations' WHERE b.app_id=application_id ORDER BY r.id FOR SHARE OF r NOWAIT;
+ PERFORM x.app_id FROM application_standard_log_inventories x WHERE x.app_id=application_id ORDER BY x.node_id FOR SHARE NOWAIT;
+ PERFORM h.app_id FROM application_standard_log_health h WHERE h.app_id=application_id ORDER BY h.node_id,h.drain_id FOR SHARE NOWAIT;
+ PERFORM e.app_id FROM application_standard_egress_observations e WHERE e.app_id=application_id ORDER BY e.node_id FOR SHARE NOWAIT;
+ RETURN true;
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_snapshot_capture(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_snapshot_capture(instance_id uuid, expected_state text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE locked jsonb; i instances%ROWTYPE; g instance_application_standard_boots%ROWTYPE;
+ p instance_application_standard_promotions%ROWTYPE; r jsonb; b jsonb; deadline timestamptz; now_utc timestamptz;
+BEGIN
+ IF expected_state NOT IN ('running','snapshotting','migrating') THEN
+  RAISE EXCEPTION 'snapshot source state is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
+ END IF;
+ locked:=application_standard_lock_native_boot(instance_id,expected_state);
+ SELECT * INTO i FROM instances WHERE id=instance_id;
+ SELECT * INTO g FROM instance_application_standard_boots WHERE token=i.application_standard_boot_token FOR SHARE NOWAIT;
+ r:=g.receipt;
+ IF i.application_standard_promotion_token IS NOT NULL THEN
+  SELECT * INTO p FROM instance_application_standard_promotions WHERE token=i.application_standard_promotion_token FOR SHARE NOWAIT;
+  IF NOT FOUND OR p.instance_id IS DISTINCT FROM i.id OR p.parent_token IS DISTINCT FROM g.token
+   OR p.receipt IS NULL OR p.received_at IS NULL OR p.receipt->'binding' IS DISTINCT FROM p.binding THEN
+   RAISE EXCEPTION 'serving promotion ownership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  r:=p.receipt;
+ ELSIF r->'binding' IS DISTINCT FROM g.binding THEN
+  RAISE EXCEPTION 'serving boot ownership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ b:=r->'binding';
+ IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL
+  OR b->>'protocol_version' IS DISTINCT FROM '2' OR (locked->>'protocol_version')::integer<2
+  OR b->>'node_id' IS DISTINCT FROM i.node_id::text OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
+  OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash'
+  OR b->>'instance_id' IS DISTINCT FROM i.id::text OR b->>'app_id' IS DISTINCT FROM i.app_id::text
+  OR b->>'deployment_id' IS DISTINCT FROM i.deployment_id::text
+  OR b->>'account_id' IS DISTINCT FROM locked->'input_snapshot'->>'account_id'
+  OR r->>'netns' IS DISTINCT FROM i.netns OR r->>'host_ip' IS DISTINCT FROM host(i.host_ip)
+  OR r->>'lease_uid' IS DISTINCT FROM i.guest_uid::text OR r->>'paused' IS DISTINCT FROM 'false'
+  OR i.started_at IS NULL THEN
+  RAISE EXCEPTION 'snapshot source ownership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ PERFORM application_standard_native_artifact_protocol(b,r,locked->'input_snapshot',(locked->>'protocol_version')::smallint);
+ -- Resident boot history may expire; every NEW capture still needs fresh approval.
+ now_utc:=clock_timestamp();
+ deadline:=application_standard_native_artifact_deadline(locked->'input_snapshot',now_utc);
+ now_utc:=clock_timestamp();
+ IF deadline IS NOT NULL AND deadline<=now_utc THEN
+  RAISE EXCEPTION 'snapshot approval expired during review' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN locked || jsonb_build_object('parent',r,'source_started_at_unix_nano',(extract(epoch FROM i.started_at)*1000000000)::bigint,
+  'clock_unix_nano',(extract(epoch FROM now_utc)*1000000000)::bigint,
+  'artifact_expires_at_unix_nano',(extract(epoch FROM deadline)*1000000000)::bigint);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'snapshot source inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_lock_snapshot_restore(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_snapshot_restore(b jsonb, input jsonb) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE restore_token_text text:=coalesce(b->>'snapshot_capture_token',''); evidence text:=coalesce(b->>'snapshot_evidence_hash','');
+ selected record;
+BEGIN
+ IF restore_token_text='' AND evidence='' THEN RETURN; END IF;
+ IF (b->>'protocol_version'='2' AND jsonb_typeof(b->'snapshot_capture_token')='string'
+  AND restore_token_text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND restore_token_text<>'00000000-0000-0000-0000-000000000000' AND jsonb_typeof(b->'snapshot_evidence_hash')='string'
+  AND evidence ~ '^[0-9a-f]{64}$') IS NOT TRUE THEN
+  RAISE EXCEPTION 'restore binding is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT c.grant_data,c.acknowledgment,c.input_snapshot,to_jsonb(s) AS snapshot_row INTO selected FROM application_standard_snapshot_captures c
+ JOIN snapshots s ON s.application_standard_capture_token=c.token
+ WHERE c.token=restore_token_text::uuid AND c.account_id::text=b->>'account_id' AND c.app_id::text=b->>'app_id'
+  AND c.deployment_id::text=b->>'deployment_id' AND s.deployment_id=c.deployment_id
+  AND c.acknowledgment IS NOT NULL AND c.received_at IS NOT NULL AND NOT s.stale AND NOT s.delete_pending
+ ORDER BY s.created_at DESC,s.id DESC LIMIT 1 FOR SHARE OF c,s NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'restore catalog is unavailable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF application_standard_restore_catalog_matches(b,input,selected.grant_data,selected.acknowledgment,selected.input_snapshot,selected.snapshot_row) IS NOT TRUE
+  OR (b->>'expires_at_unix_nano')::bigint<=(extract(epoch FROM clock_timestamp())*1000000000)::bigint THEN
+  RAISE EXCEPTION 'restore catalog or current input is stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'restore catalog is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$_$;
+
+
+--
+-- Name: application_standard_lock_source_runtime_rootfs(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_lock_source_runtime_rootfs(input jsonb, artifact_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE failed_constraint text;
+BEGIN
+ PERFORM lock_source_build_runtime_rootfs(input,artifact_id);
+EXCEPTION WHEN check_violation THEN
+ GET STACKED DIAGNOSTICS failed_constraint=CONSTRAINT_NAME;
+ IF failed_constraint NOT IN ('build_export_publication_stale','build_export_publication_missing') THEN RAISE; END IF;
+ RAISE EXCEPTION 'native source runtime inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ WHEN lock_not_available THEN
+ RAISE EXCEPTION 'native source runtime inputs busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_binding(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_binding(app uuid, drain uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('org_id',e.org_id::text,'app_id',a.id::text,'drain_id',d.id::text,
+  'resource_id',r.id::text,'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,
+  'resource_config_hash',r.config_hash,'drain_config_hash',application_standard_log_drain_hash(d))
+FROM app_log_drains d
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
+ JOIN application_standard_log_destinations r ON r.id=b.resource_id
+ WHERE d.app_id=app AND d.id=drain AND d.enabled AND a.status='active' AND d.account_id=a.account_id
+ AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp())
+ AND jsonb_array_length(coalesce(e.effective->'sources'->'log_destinations','[]'::jsonb))>0
+ AND (coalesce(e.effective->'values'->'log_destinations','[]'::jsonb) ? b.resource_id::text
+      OR b.resource_id=ANY(e.additional_log_destinations))
+ AND r.org_id=e.org_id;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM n.id FROM compute_nodes n WHERE n.id=NEW.node_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'logging consumer node is absent' USING ERRCODE='55000'; END IF;
+ IF TG_OP='UPDATE' THEN
+  IF NEW.node_id<>OLD.node_id OR NEW.generation<>OLD.generation+(CASE WHEN NEW.session_id=OLD.session_id THEN 0 ELSE 1 END) THEN
+   RAISE EXCEPTION 'logging consumer generation changed' USING ERRCODE='40001';
+  END IF;
+  IF NEW.session_id=OLD.session_id THEN
+   NEW.registered_at:=OLD.registered_at;
+   IF OLD.stopped_at IS NOT NULL AND NEW.stopped_at IS NULL THEN
+    RAISE EXCEPTION 'logging consumer session is stopped' USING ERRCODE='55000';
+   END IF;
+   IF NEW.stopped_at IS NOT NULL THEN
+    NEW.stopped_at:=coalesce(OLD.stopped_at,clock_timestamp());
+    RETURN NEW;
+   END IF;
+  END IF;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=NEW.node_id AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
+  RAISE EXCEPTION 'logging consumer node is unavailable' USING ERRCODE='40001';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.generation<>1 OR NEW.stopped_at IS NOT NULL THEN
+   RAISE EXCEPTION 'invalid logging consumer generation' USING ERRCODE='40001';
+  END IF;
+  NEW.registered_at:=clock_timestamp();
+ ELSIF NEW.session_id<>OLD.session_id THEN
+  IF NEW.stopped_at IS NOT NULL THEN RAISE EXCEPTION 'new logging session is stopped' USING ERRCODE='40001'; END IF;
+  NEW.registered_at:=clock_timestamp();
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_open_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_open_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+ WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation AND c.stopped_at IS NULL
+ FOR SHARE OF c,n NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'logging consumer session is stopped or superseded' USING ERRCODE='55000'; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_session_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_session_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO application_standard_log_consumer_sessions(node_id,session_id,generation,registered_at)
+ VALUES(NEW.node_id,NEW.session_id,NEW.generation,NEW.registered_at) ON CONFLICT(node_id,session_id) DO NOTHING;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_session_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_session_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM compute_nodes WHERE id=OLD.node_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'logging consumer session history is immutable' USING ERRCODE='55000';
+ END IF;
+ SELECT c.registered_at INTO NEW.registered_at FROM application_standard_log_consumers c
+ WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation;
+ IF NOT FOUND THEN RAISE EXCEPTION 'logging consumer session history is not current' USING ERRCODE='55000'; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_consumer_session_once(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_consumer_session_once() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM compute_nodes WHERE id=OLD.node_id) THEN
+   RAISE EXCEPTION 'logging consumer lineage is retained' USING ERRCODE='55000';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF EXISTS(SELECT 1 FROM application_standard_log_consumer_sessions h WHERE h.node_id=NEW.node_id AND h.session_id=NEW.session_id)
+ AND NOT EXISTS(SELECT 1 FROM application_standard_log_consumers c WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id) THEN
+  RAISE EXCEPTION 'logging consumer session is superseded' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_delivery_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_delivery_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb; expected jsonb;
+BEGIN
+ NEW.observed_at:=clock_timestamp();
+ actual:=application_standard_log_binding(NEW.app_id,NEW.drain_id);
+ expected:=jsonb_build_object('org_id',NEW.org_id::text,'app_id',NEW.app_id::text,'drain_id',NEW.drain_id::text,
+  'resource_id',NEW.resource_id::text,'desired_revision',NEW.desired_revision,'effective_hash',NEW.effective_hash,
+  'resource_config_hash',NEW.resource_config_hash,'drain_config_hash',NEW.drain_config_hash);
+ IF actual IS NULL OR actual<>expected OR NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=NEW.source_instance_id AND i.app_id=NEW.app_id) THEN
+  RAISE EXCEPTION 'application standard logging projection changed' USING ERRCODE='40001';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_log_drains (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    target_url text NOT NULL,
+    auth_header_sealed bytea,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
+    CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: application_standard_log_drain_hash(public.app_log_drains); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_drain_hash(d public.app_log_drains) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+ SELECT encode(sha256(convert_to('gregale.standard.log-drain.v1','UTF8')||decode('00','hex')
+  ||convert_to(d.id::text,'UTF8')||decode('00','hex')
+  ||convert_to(d.app_id::text,'UTF8')||decode('00','hex')
+  ||convert_to(d.account_id::text,'UTF8')||decode('00','hex')
+  ||convert_to(d.kind,'UTF8')||decode('00','hex')
+  ||convert_to(d.target_url,'UTF8')||decode('00','hex')
+  ||convert_to(d.enabled::text,'UTF8')||decode('00','hex')||coalesce(d.auth_header_sealed,''::bytea)),'hex');
+$$;
+
+
+--
+-- Name: application_standard_log_health_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_health_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'logging health projection is busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM h.app_id FROM application_standard_log_health h
+  WHERE h.app_id=NEW.app_id AND h.drain_id=NEW.drain_id AND h.node_id=NEW.node_id FOR UPDATE NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM d.id FROM app_log_drains d JOIN application_standard_control_bindings b ON b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text
+  JOIN application_standard_log_destinations r ON r.id=b.resource_id
+  WHERE d.app_id=NEW.app_id AND d.id=NEW.drain_id FOR SHARE OF d,b,r NOWAIT;
+ PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+  WHERE c.node_id=NEW.node_id FOR SHARE OF c,n NOWAIT;
+ IF NOT EXISTS(SELECT 1 FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+  WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation
+   AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
+  RAISE EXCEPTION 'logging health consumer changed' USING ERRCODE='55000';
+ END IF;
+ IF NEW.status='healthy' THEN
+  PERFORM i.id FROM instances i WHERE i.id=NEW.source_instance_id AND i.app_id=NEW.app_id FOR SHARE NOWAIT;
+  IF NOT FOUND THEN RAISE EXCEPTION 'logging health source changed' USING ERRCODE='40001'; END IF;
+ END IF;
+ actual:=application_standard_log_binding(NEW.app_id,NEW.drain_id);
+ IF actual IS NULL OR actual<>NEW.binding OR actual->>'org_id'<>NEW.org_id::text THEN
+  RAISE EXCEPTION 'logging health binding changed' USING ERRCODE='40001';
+ END IF;
+ NEW.observed_at:=clock_timestamp();
+ NEW.event_at:=NEW.observed_at;
+ IF TG_OP='UPDATE' THEN
+  IF (NEW.app_id,NEW.drain_id,NEW.node_id) IS DISTINCT FROM (OLD.app_id,OLD.drain_id,OLD.node_id) THEN
+   RAISE EXCEPTION 'logging health identity changed' USING ERRCODE='40001';
+  END IF;
+  IF NEW.binding=OLD.binding AND NEW.session_id=OLD.session_id AND NEW.generation=OLD.generation THEN
+   IF NEW.event_revision<OLD.event_revision OR (NEW.event_revision=OLD.event_revision AND
+    (NEW.status,NEW.reason,NEW.source_instance_id,NEW.sequence) IS DISTINCT FROM (OLD.status,OLD.reason,OLD.source_instance_id,OLD.sequence)) THEN
+    RAISE EXCEPTION 'logging health event superseded' USING ERRCODE='GS001';
+   END IF;
+   IF NEW.event_revision=OLD.event_revision THEN NEW.event_at:=OLD.event_at; END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_log_inventory(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_inventory(app uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT jsonb_build_object('org_id',a.org_id::text,'app_id',a.id::text,'account_id',a.account_id::text,
+  'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,'drains',
+  coalesce((SELECT jsonb_agg(jsonb_build_object('drain_id',d.id::text,'config_hash',application_standard_log_drain_hash(d)) ORDER BY d.id)
+   FROM app_log_drains d WHERE d.app_id=a.id AND d.enabled),'[]'::jsonb))
+ FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=app AND a.status='active' AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
+ AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
+ AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision
+ AND (e.exception_expires_at IS NULL OR e.exception_expires_at>clock_timestamp());
+$$;
+
+
+--
+-- Name: application_standard_log_inventory_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_log_inventory_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE actual jsonb;
+BEGIN
+ -- This nonwaiting exclusive fence also covers drain inserts/deletes, not just existing rows.
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
+  RAISE EXCEPTION 'logging inventory is busy' USING ERRCODE='55P03';
+ END IF;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN app_application_standards e ON e.app_id=a.id
+ WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+ WHERE c.node_id=NEW.node_id FOR SHARE OF c,n NOWAIT;
+ NEW.observed_at:=clock_timestamp();
+ actual:=application_standard_log_inventory(NEW.app_id);
+ IF actual IS NULL OR actual<>NEW.inventory OR actual->>'org_id'<>NEW.org_id::text THEN
+  RAISE EXCEPTION 'application standard logging inventory changed' USING ERRCODE='40001';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
+  WHERE c.node_id=NEW.node_id AND c.session_id=NEW.session_id AND c.generation=NEW.generation
+   AND n.active AND n.role IS DISTINCT FROM 'control-plane') THEN
+  RAISE EXCEPTION 'application standard logging consumer changed' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_managed_control_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_managed_control_identity_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (NEW.app_id IS DISTINCT FROM OLD.app_id OR NEW.account_id IS DISTINCT FROM OLD.account_id
+        OR to_jsonb(NEW)->TG_ARGV[1] IS DISTINCT FROM to_jsonb(OLD)->TG_ARGV[1])
+       AND EXISTS (SELECT 1 FROM app_application_standards e WHERE e.app_id IN (OLD.app_id,NEW.app_id)
+         AND coalesce(jsonb_array_length(e.effective->'sources'->TG_ARGV[0]),0) > 0) THEN
+        RAISE EXCEPTION 'application standard manages this control'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_artifact_deadline(jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_artifact_deadline(input jsonb, now_utc timestamp with time zone) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE identity jsonb:=input->'runtime_artifacts'; artifact jsonb; s deployment_runtime_scans%ROWTYPE;
+ deadline timestamptz; enforce boolean:=input->'settings'->>'security_policy'='enforce'; source_hash text;
+BEGIN
+ IF NOT input ? 'runtime_artifacts' THEN
+  IF coalesce((input->'settings'->>'require_signed')::boolean,false) OR enforce THEN
+   RAISE EXCEPTION 'native signed producer evidence missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  RETURN application_standard_exception_deadline(input,now_utc);
+ END IF;
+ IF (identity->>'format'='gregale.runtime-artifact-input.v1' AND identity->>'account_id'=input->>'account_id'
+  AND identity->>'org_id'=input->>'org_id' AND identity->>'app_id'=input->>'app_id'
+  AND identity->>'deployment_id'=input->'artifact'->>'id' AND identity->>'scope'=input->'artifact'->>'scope') IS NOT TRUE THEN
+  RAISE EXCEPTION 'native runtime identity invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ source_hash:=application_standard_native_source_hash(identity->'artifacts');
+ IF (SELECT sum((a->>'bytes')::bigint) FROM jsonb_array_elements(identity->'artifacts') a)>34359738368 THEN
+  RAISE EXCEPTION 'native runtime sources exceed bounds' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT scan.* INTO s FROM deployment_runtime_scan_current c JOIN deployment_runtime_scans scan ON scan.id=c.scan_id
+ WHERE c.deployment_id=(identity->>'deployment_id')::uuid FOR SHARE OF scan NOWAIT;
+ IF (s.input_snapshot-ARRAY['facts','status','reports','failure']=identity AND s.input_snapshot->>'status'='complete'
+  AND jsonb_typeof(s.input_snapshot->'facts'->'version')='number' AND s.input_snapshot->'facts'->>'version'='1'
+  AND (s.input_snapshot->'facts')-ARRAY['version','input_hash','sources_hash','views']='{}'::jsonb
+  AND s.input_snapshot->'facts'->>'input_hash'=application_standard_runtime_identity_hash(identity)
+  AND s.input_snapshot->'facts'->>'sources_hash'=source_hash AND s.scanned_at<=now_utc AND s.expires_at>now_utc) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native composed scan missing or stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ deadline:=least(s.expires_at,application_standard_native_composed_views_deadline(s.input_snapshot,identity,now_utc,enforce));
+ FOR artifact IN SELECT value FROM jsonb_array_elements(identity->'artifacts') LOOP
+  IF artifact->>'kind'='base-image' THEN PERFORM application_standard_native_base_producer_current(artifact,now_utc);
+  ELSE deadline:=least(deadline,application_standard_native_producer_deadline(input,artifact,now_utc)); END IF;
+ END LOOP;
+ IF deadline<=clock_timestamp() THEN
+  RAISE EXCEPTION 'native composed authority expired during read' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN least(deadline,application_standard_exception_deadline(input,now_utc));
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'native composed inputs busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+ WHEN invalid_text_representation OR numeric_value_out_of_range OR invalid_parameter_value OR datetime_field_overflow THEN
+ RAISE EXCEPTION 'native composed inputs invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_artifact_protocol(jsonb, jsonb, jsonb, smallint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_artifact_protocol(b jsonb, r jsonb, input jsonb, protocol smallint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE version integer; actual text; captured jsonb; paused_load boolean; parent jsonb;
+BEGIN
+ IF jsonb_typeof(b->'protocol_version') IS DISTINCT FROM 'number' OR b->>'protocol_version' NOT IN ('1','2') THEN
+  RAISE EXCEPTION 'native protocol is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ version:=(b->>'protocol_version')::integer;
+ IF version>protocol THEN
+  RAISE EXCEPTION 'native protocol is not registered' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF version<>2 AND EXISTS(SELECT 1 FROM jsonb_array_elements(input->'runtime_artifacts'->'artifacts') a
+  WHERE a->>'kind' IN ('source-app-layer','function-layer')) THEN
+  RAISE EXCEPTION 'source native byte capability required' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF coalesce((input->>'persisted_revision')::bigint,0)>0 AND input->'adoptions'='[]'::jsonb
+  AND input->'materialized_fields'='[]'::jsonb AND version<>2 THEN
+  RAISE EXCEPTION 'retained native byte capability required' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF version=1 THEN
+  IF coalesce(b->>'artifact_sources_hash','')<>'' OR (r IS NOT NULL AND (r ? 'artifact_consumption' OR r ? 'snapshot_consumption' OR r ? 'snapshot_resume_evidence')) THEN
+   RAISE EXCEPTION 'legacy authority cannot acknowledge consumed artifacts' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+  RETURN;
+ END IF;
+ actual:=application_standard_native_source_hash(input->'runtime_artifacts'->'artifacts');
+ IF jsonb_typeof(b->'artifact_sources_hash') IS DISTINCT FROM 'string' OR b->>'artifact_sources_hash' IS DISTINCT FROM actual THEN
+  RAISE EXCEPTION 'native source hash differs from captured producers' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF r IS NULL THEN RETURN; END IF;
+ IF (jsonb_typeof(r->'method')='number' AND r->>'method' IN ('0','1')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native method is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ IF (jsonb_typeof(r->'paused')='boolean' AND application_standard_native_consumption_valid(r->'artifact_consumption',actual)) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native consumed artifact receipt is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ IF r->'method'='0'::jsonb AND r->'paused'='false'::jsonb AND NOT (r ? 'snapshot_consumption' OR r ? 'snapshot_resume_evidence') THEN RETURN; END IF;
+ paused_load:=r->'paused'='true'::jsonb OR r ? 'snapshot_resume_evidence';
+ IF (r->'method'='1'::jsonb AND r ? 'snapshot_consumption'
+  AND r-ARRAY['binding','native_input_hash','netns','host_ip','lease_uid','method','paused','completed_at_unix_nano','artifact_consumption','snapshot_consumption','snapshot_resume_evidence']='{}'::jsonb
+  AND r->'artifact_consumption'->>'config_hash'=encode(sha256(convert_to('{"mem_backend":{"backend_path":"snap-in-mem","backend_type":"File"},"resume_vm":' || CASE WHEN paused_load THEN 'false' ELSE 'true' END || ',"snapshot_path":"snap-in-vmstate"}','UTF8')),'hex')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native restore receipt is incomplete' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ IF r ? 'snapshot_resume_evidence' THEN
+  parent:=application_standard_snapshot_resume_parent(r);
+  IF NOT application_standard_snapshot_resume_valid(b,r,parent,(r->>'completed_at_unix_nano')::bigint) THEN
+   RAISE EXCEPTION 'native resume lineage is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+ END IF;
+ SELECT c.acknowledgment->'capture' INTO captured FROM application_standard_snapshot_captures c
+ WHERE c.token::text=b->>'snapshot_capture_token' AND c.account_id::text=b->>'account_id' AND c.app_id::text=b->>'app_id'
+  AND c.deployment_id::text=b->>'deployment_id' AND c.acknowledgment IS NOT NULL AND c.received_at IS NOT NULL FOR SHARE NOWAIT;
+ IF NOT FOUND OR NOT application_standard_snapshot_consumption_matches(r->'snapshot_consumption',b,captured,r->'artifact_consumption') THEN
+  RAISE EXCEPTION 'native restore backing differs from catalog' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_base_deadline(jsonb, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_base_deadline(artifact jsonb, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p base_image_producers%ROWTYPE; s base_image_scans%ROWTYPE;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || (artifact->>'storage_key'),0)) THEN
+  RAISE EXCEPTION 'native base approval is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+ END IF;
+ SELECT b.* INTO p FROM base_image_producer_current c JOIN base_image_producers b ON b.id=c.producer_id
+ WHERE c.storage_key=artifact->>'storage_key' FOR SHARE OF b NOWAIT;
+ SELECT scan.* INTO s FROM base_image_scan_current c JOIN base_image_scans scan ON scan.id=c.scan_id
+ WHERE c.storage_key=p.storage_key FOR SHARE OF scan NOWAIT;
+ IF (p.id::text=artifact->>'producer_id' AND p.input_hash=artifact->>'producer_hash'
+  AND p.input_snapshot->'artifact'=jsonb_build_object('storage_key',artifact->>'storage_key','digest',artifact->>'digest','bytes',artifact->'bytes')
+  AND s.base_producer_id=p.id AND s.input_snapshot->>'base_input_hash'=p.input_hash
+  AND s.input_snapshot->'artifact'=p.input_snapshot->'artifact'
+  AND s.input_snapshot->>'source_reference'=p.input_snapshot->>'source_reference'
+  AND s.scanned_at>=p.published_at AND p.published_at<=now_utc) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native base scan selection changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN application_standard_native_scan_deadline(s.input_snapshot,s.scanned_at,s.expires_at,now_utc,enforce);
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_base_producer_current(jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_base_producer_current(artifact jsonb, now_utc timestamp with time zone) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p base_image_producers%ROWTYPE;
+BEGIN
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || (artifact->>'storage_key'),0)) THEN
+  RAISE EXCEPTION 'native runtime base is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+ END IF;
+ SELECT b.* INTO p FROM base_image_producer_current c JOIN base_image_producers b ON b.id=c.producer_id
+ WHERE c.storage_key=artifact->>'storage_key' FOR SHARE OF b NOWAIT;
+ IF (p.id::text=artifact->>'producer_id' AND p.input_hash=artifact->>'producer_hash' AND p.published_at<=now_utc
+  AND p.input_snapshot->'artifact'=jsonb_build_object('storage_key',artifact->>'storage_key','digest',artifact->>'digest','bytes',artifact->'bytes')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native runtime base changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_boot_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_boot_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE locked jsonb; input jsonb; b jsonb; r jsonb; now_nano bigint;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF NOT EXISTS(SELECT 1 FROM instances WHERE id=OLD.instance_id) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'native boot history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  IF NEW.token IS DISTINCT FROM OLD.token OR NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.expected_state IS DISTINCT FROM OLD.expected_state
+    OR NEW.binding IS DISTINCT FROM OLD.binding OR NEW.created_at IS DISTINCT FROM OLD.created_at OR OLD.receipt IS NOT NULL OR NEW.receipt IS NULL THEN
+   RAISE EXCEPTION 'native boot history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+  END IF;
+ ELSIF NEW.receipt IS NOT NULL THEN
+  RAISE EXCEPTION 'native receipt requires a saved grant' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ locked:=application_standard_lock_native_boot(NEW.instance_id,NEW.expected_state);
+ input:=locked->'input_snapshot'; b:=NEW.binding;
+ now_nano:=(locked->>'clock_unix_nano')::bigint;
+ PERFORM application_standard_native_artifact_protocol(b,NULL,input,(locked->>'protocol_version')::smallint);
+ IF (b->>'protocol_version')::integer NOT IN (1,2) OR b->>'protocol_version' IS NULL OR b->>'token' IS DISTINCT FROM NEW.token::text
+  OR b->>'instance_id' IS DISTINCT FROM NEW.instance_id::text OR b->>'app_id' IS DISTINCT FROM input->>'app_id'
+  OR b->>'deployment_id' IS DISTINCT FROM input->'artifact'->>'id' OR b->>'account_id' IS DISTINCT FROM input->>'account_id'
+  OR b->>'node_id' IS DISTINCT FROM locked->>'node_id' OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
+  OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash' OR b->>'effective_hash' IS DISTINCT FROM input->>'effective_hash'
+  OR (b->>'desired_revision')::bigint IS DISTINCT FROM (input->>'desired_revision')::bigint
+  OR (b->>'egress_revision')::bigint IS DISTINCT FROM (input->>'egress_revision')::bigint
+  OR coalesce(b->>'payload_hash','') !~ '^[0-9a-f]{64}$'
+  OR coalesce((b->>'issued_at_unix_nano')::bigint,0)<=0
+  OR coalesce((b->>'expires_at_unix_nano')::bigint,0)<=now_nano
+  OR (b->>'expires_at_unix_nano')::bigint <= (b->>'issued_at_unix_nano')::bigint
+  OR (locked->>'artifact_expires_at_unix_nano' IS NOT NULL AND (b->>'expires_at_unix_nano')::bigint>(locked->>'artifact_expires_at_unix_nano')::bigint)
+  OR (b->>'expires_at_unix_nano')::numeric - (b->>'issued_at_unix_nano')::numeric > 600000000000
+  OR (b->>'issued_at_unix_nano')::bigint > now_nano+5000000000 THEN
+  RAISE EXCEPTION 'native boot grant is stale or invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF TG_OP='INSERT' AND (b->>'issued_at_unix_nano')::bigint < now_nano-5000000000 THEN
+  RAISE EXCEPTION 'native boot issue time is stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  r:=NEW.receipt;
+  PERFORM application_standard_native_artifact_protocol(b,r,input,(locked->>'protocol_version')::smallint);
+  IF r->'binding' IS DISTINCT FROM b OR coalesce(r->>'native_input_hash','') !~ '^[0-9a-f]{64}$'
+   OR coalesce(r->>'netns','')='' OR coalesce(r->>'host_ip','')='' OR coalesce((r->>'lease_uid')::integer,0)<=0
+   OR coalesce((r->>'method')::integer,-1) NOT IN (0,1) OR (r->>'paused')::boolean IS NULL
+   OR coalesce((r->>'completed_at_unix_nano')::bigint,0)<(b->>'issued_at_unix_nano')::bigint-5000000000
+   OR (r->>'completed_at_unix_nano')::bigint>= (b->>'expires_at_unix_nano')::bigint
+   OR (r->>'completed_at_unix_nano')::bigint>now_nano+5000000000 OR NEW.received_at IS NULL THEN
+   RAISE EXCEPTION 'native boot receipt is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_native_component_deadline(jsonb, jsonb, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_component_deadline(input jsonb, artifact jsonb, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f deployment_registry_rootfs%ROWTYPE; s deployment_artifact_scans%ROWTYPE;
+        origin deployment_registry_verifications%ROWTYPE; approval deployment_registry_verifications%ROWTYPE;
+        owner_inputs jsonb; limit_at timestamptz;
+BEGIN
+ SELECT p.* INTO f FROM deployment_registry_rootfs_current c JOIN deployment_registry_rootfs p ON p.id=c.artifact_id
+ WHERE c.deployment_id=(input->'artifact'->>'id')::uuid AND c.workload_name=artifact->>'workload_name' FOR SHARE OF p NOWAIT;
+ SELECT scan.* INTO s FROM deployment_artifact_scan_current c JOIN deployment_artifact_scans scan ON scan.id=c.scan_id
+ WHERE c.deployment_id=f.deployment_id AND c.workload_name=f.workload_name FOR SHARE OF scan NOWAIT;
+ SELECT * INTO origin FROM deployment_registry_verifications WHERE id=f.registry_verification_id FOR SHARE NOWAIT;
+ SELECT * INTO approval FROM deployment_registry_verifications WHERE id=coalesce(s.registry_verification_id,f.registry_verification_id) FOR SHARE NOWAIT;
+ IF (f.id::text=artifact->>'producer_id' AND f.input_hash=artifact->>'producer_hash' AND s.rootfs_producer_id=f.id
+  AND s.input_snapshot->>'rootfs_input_hash'=f.input_hash AND s.input_snapshot->>'account_id'=input->>'account_id'
+  AND s.input_snapshot->>'app_id'=input->>'app_id' AND s.input_snapshot->>'org_id'=input->>'org_id'
+  AND s.input_snapshot->>'scope'=input->'artifact'->>'scope' AND s.input_snapshot->>'artifact_digest'=artifact->>'digest'
+  AND s.input_snapshot->'artifact_bytes'=artifact->'bytes' AND s.scanned_at>=f.published_at AND f.published_at<=now_utc
+  AND f.input_snapshot->>'registry_input_hash'=origin.input_hash AND f.published_at>=origin.verified_at
+  AND f.expires_at<=origin.expires_at AND approval.verified_at<=s.scanned_at AND approval.expires_at>now_utc
+  AND approval.input_snapshot-'proof'=origin.input_snapshot-'proof'
+  AND approval.input_snapshot->'proof'->>'SubjectDigest'=origin.input_snapshot->'proof'->>'SubjectDigest'
+  AND (s.registry_verification_id IS NULL AND f.expires_at>now_utc
+    OR s.registry_verification_id IS NOT NULL AND s.input_snapshot->>'registry_input_hash'=approval.input_hash)) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native artifact approval changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ owner_inputs:=lock_deployment_artifact_scan_with_verification(f.id,s.registry_verification_id);
+ IF (approval.app_id::text=input->>'app_id' AND approval.account_id::text=input->>'account_id'
+  AND approval.input_snapshot->>'org_id'=input->>'org_id' AND approval.deployment_id=f.deployment_id
+  AND approval.workload_name=f.workload_name AND approval.input_snapshot->>'image_reference'=owner_inputs->>'image_reference'
+  AND s.input_snapshot->>'image_reference'=owner_inputs->>'image_reference'
+  AND encode(sha256(decode(owner_inputs->>'key_der','base64')),'hex')=approval.input_snapshot->'proof'->>'PublisherKeySHA256'
+  AND 'sha256:' || encode(sha256(approval.payload),'hex')=approval.input_snapshot->'proof'->>'PayloadDigest'
+  AND 'sha256:' || encode(sha256(approval.signature),'hex')=approval.input_snapshot->'proof'->>'SignatureDigest') IS NOT TRUE THEN
+  RAISE EXCEPTION 'native publisher approval changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ limit_at:=CASE WHEN s.registry_verification_id IS NULL THEN least(f.expires_at,approval.expires_at) ELSE approval.expires_at END;
+ IF s.expires_at>limit_at THEN
+  RAISE EXCEPTION 'native scan exceeds publisher approval' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN least(limit_at,application_standard_native_scan_deadline(s.input_snapshot,s.scanned_at,s.expires_at,now_utc,enforce));
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_composed_report_deadline(jsonb, jsonb, text, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_composed_report_deadline(report jsonb, view jsonb, source_hash text, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE built timestamptz; counts jsonb;
+BEGIN
+ built:=(report->>'scanner_db_built_at')::timestamptz;
+ IF (report->>'image_digest'='sha256:' || (view->'source_tree'->>'Digest') AND report->>'artifact_digest'='sha256:' || source_hash
+  AND report->>'scanner_db_status'='valid' AND octet_length(report->>'scanner_version') BETWEEN 1 AND 256
+  AND octet_length(report->>'scanner_db_version') BETWEEN 1 AND 256 AND coalesce(report->>'status','')=''
+  AND coalesce(report->>'scanned_at','')='' AND coalesce(report->>'error','')=''
+  AND built<=now_utc AND built+interval '30 days'>now_utc AND jsonb_typeof(report->'vulnerabilities')='array'
+  AND jsonb_array_length(report->'vulnerabilities')<=100000) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native composed report is stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(report->'vulnerabilities') v
+  WHERE v->>'severity' IS NULL OR v->>'severity' NOT IN ('CRITICAL','HIGH','MEDIUM','LOW','UNKNOWN')) THEN
+  RAISE EXCEPTION 'native composed findings are invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT jsonb_build_object('critical',count(*) FILTER(WHERE v->>'severity'='CRITICAL'),'high',count(*) FILTER(WHERE v->>'severity'='HIGH'),
+  'medium',count(*) FILTER(WHERE v->>'severity'='MEDIUM'),'low',count(*) FILTER(WHERE v->>'severity'='LOW'),'unknown',count(*) FILTER(WHERE v->>'severity'='UNKNOWN'))
+ INTO counts FROM jsonb_array_elements(report->'vulnerabilities') v;
+ IF report->'severity_counts' IS DISTINCT FROM counts OR enforce AND ((counts->>'critical')::integer>0 OR (counts->>'high')::integer>0 OR (counts->>'unknown')::integer>0) THEN
+  RAISE EXCEPTION 'native composed findings block enforcement' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN built+interval '30 days';
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_composed_views_deadline(jsonb, jsonb, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_composed_views_deadline(snapshot jsonb, identity jsonb, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE facts jsonb:=snapshot->'facts'; view jsonb; report jsonb; name text; names text[]:='{}';
+ n integer; bytes bigint:=0; entries bigint:=0; deadline timestamptz;
+BEGIN
+ SELECT count(*) INTO n FROM jsonb_array_elements(identity->'artifacts') a WHERE a->>'kind'<>'base-image';
+ IF (jsonb_typeof(facts->'views')='array' AND jsonb_typeof(snapshot->'reports')='array'
+  AND jsonb_array_length(facts->'views')=n AND jsonb_array_length(snapshot->'reports')=n) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native composed workload membership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ FOR view IN SELECT value FROM jsonb_array_elements(facts->'views') LOOP
+  name:=view->>'workload_name';
+  IF name IS NULL OR name=ANY(names) OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(identity->'artifacts') a
+   WHERE a->>'kind'<>'base-image' AND a->>'workload_name'=name)
+   OR NOT application_standard_native_scan_tree_valid(view->'source_tree') OR NOT application_standard_native_scan_tree_valid(view->'projection_tree')
+   OR view->'source_tree'->'ProjectionDigest' IS DISTINCT FROM view->'projection_tree'->'ProjectionDigest'
+   OR view->'source_tree'->'Entries' IS DISTINCT FROM view->'projection_tree'->'Entries'
+   OR view->'source_tree'->'Bytes' IS DISTINCT FROM view->'projection_tree'->'Bytes' THEN
+   RAISE EXCEPTION 'native composed view is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  names:=array_append(names,name); bytes:=bytes+(view->'source_tree'->>'Bytes')::bigint; entries:=entries+(view->'source_tree'->>'Entries')::bigint;
+  IF bytes>34359738368 OR entries>1000000 OR (SELECT count(*) FROM jsonb_array_elements(snapshot->'reports') r WHERE r->>'workload_name'=name)<>1 THEN
+   RAISE EXCEPTION 'native composed scan exceeds bounds' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  SELECT r->'report' INTO report FROM jsonb_array_elements(snapshot->'reports') r WHERE r->>'workload_name'=name;
+  deadline:=least(deadline,application_standard_native_composed_report_deadline(report,view,facts->>'sources_hash',now_utc,enforce));
+ END LOOP;
+ RETURN deadline;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_consumed_drive_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_consumed_drive_valid(d jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE a jsonb; role text;
+BEGIN
+ a:=d->'source'; role:=application_standard_native_source_role(a);
+ RETURN coalesce(jsonb_typeof(d)='object' AND role IS NOT NULL
+  AND d-ARRAY['source','drive_id','read_only','root_device','producer_digest','producer_bytes','injected_digest','injected_bytes']='{}'::jsonb
+  AND a-ARRAY['kind','workload_name','storage_key','digest','bytes']='{}'::jsonb
+  AND jsonb_typeof(d->'drive_id')='string' AND octet_length(d->>'drive_id') BETWEEN 1 AND 512
+  AND position(chr(13) IN (d->>'drive_id'))=0 AND position(chr(10) IN (d->>'drive_id'))=0
+  AND jsonb_typeof(d->'read_only')='boolean' AND d->'read_only'=to_jsonb(role<>'main')
+  AND jsonb_typeof(d->'root_device')='boolean' AND d->'root_device'=to_jsonb(role='base')
+  AND d->'producer_digest'=a->'digest' AND jsonb_typeof(d->'producer_bytes')='number'
+  AND d->>'producer_bytes'=a->>'bytes'
+  AND jsonb_typeof(d->'injected_bytes')='number' AND d->>'injected_bytes'=a->>'bytes' AND jsonb_typeof(d->'injected_digest')='string'
+  AND d->>'injected_digest' ~ '^sha256:[0-9a-f]{64}$'
+  AND (role='main' OR d->'injected_digest'=d->'producer_digest'),false);
+END;
+$_$;
+
+
+--
+-- Name: application_standard_native_consumption_valid(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_consumption_valid(c jsonb, source_hash text) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE d jsonb; sources jsonb:='[]'; ids text[]:='{}';
+BEGIN
+ IF (jsonb_typeof(c)='object'
+  AND c-ARRAY['config_hash','process_pid','process_start','drives']='{}'::jsonb
+  AND jsonb_typeof(c->'config_hash')='string' AND c->>'config_hash' ~ '^[0-9a-f]{64}$'
+  AND jsonb_typeof(c->'process_pid')='number' AND c->>'process_pid' ~ '^[1-9][0-9]{0,9}$'
+  AND (c->>'process_pid')::bigint<=2147483647
+  AND jsonb_typeof(c->'process_start')='string' AND c->>'process_start' ~ '^[1-9][0-9]{0,19}$'
+  AND (c->>'process_start')::numeric<=18446744073709551615
+  AND jsonb_typeof(c->'drives')='array') IS NOT TRUE THEN RETURN false; END IF;
+ IF jsonb_array_length(c->'drives') NOT BETWEEN 2 AND 7 THEN RETURN false; END IF;
+ FOR d IN SELECT value FROM jsonb_array_elements(c->'drives') LOOP
+  IF NOT application_standard_native_consumed_drive_valid(d) OR d->>'drive_id'=ANY(ids) THEN RETURN false; END IF;
+  ids:=array_append(ids,d->>'drive_id'); sources:=sources || jsonb_build_array(d->'source');
+ END LOOP;
+ RETURN application_standard_native_source_hash(sources)=source_hash;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR invalid_parameter_value OR check_violation THEN RETURN false;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_native_incarnation_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_incarnation_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.vmmd_incarnation IS NOT NULL THEN
+  INSERT INTO application_standard_native_incarnations(node_id,incarnation,protocol_version)
+   VALUES(NEW.id,NEW.vmmd_incarnation,NEW.vmmd_admission_protocol) ON CONFLICT(node_id,incarnation) DO NOTHING;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_incarnation_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_incarnation_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM compute_nodes WHERE id=OLD.node_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'native process history is immutable' USING ERRCODE='55000';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=NEW.node_id AND n.vmmd_incarnation=NEW.incarnation AND n.vmmd_admission_protocol=NEW.protocol_version) THEN
+  RAISE EXCEPTION 'native process history must name current identity' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ NEW.registered_at:=clock_timestamp();
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_incarnation_once(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_incarnation_once() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.vmmd_incarnation IS NOT NULL THEN
+  IF NEW.vmmd_incarnation IS NULL OR (NEW.vmmd_incarnation=OLD.vmmd_incarnation AND NEW.vmmd_admission_protocol<>OLD.vmmd_admission_protocol) THEN
+   RAISE EXCEPTION 'native process identity is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ IF NEW.vmmd_incarnation IS NOT NULL AND EXISTS(
+  SELECT 1 FROM application_standard_native_incarnations h WHERE h.node_id=NEW.id AND h.incarnation=NEW.vmmd_incarnation
+ ) THEN
+  IF TG_OP='INSERT' OR NEW.vmmd_incarnation IS DISTINCT FROM OLD.vmmd_incarnation THEN
+   RAISE EXCEPTION 'native process identity was superseded' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_input_hash(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_input_hash(input jsonb, node uuid) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    SET search_path TO 'pg_catalog'
+    AS $$
+ SELECT encode(sha256(convert_to(input::text || E'\n' || coalesce(node::text,''),'UTF8')),'hex');
+$$;
+
+
+--
+-- Name: application_standard_native_inputs_match(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_inputs_match(captured jsonb, current_input jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT CASE WHEN jsonb_typeof(captured)='object' AND jsonb_typeof(current_input)='object'
+ THEN coalesce(application_standard_stable_runtime_input(captured)=application_standard_stable_runtime_input(current_input),false)
+ ELSE false END;
+$$;
+
+
+--
+-- Name: application_standard_native_producer_deadline(jsonb, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_producer_deadline(input jsonb, artifact jsonb, now_utc timestamp with time zone) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f deployment_registry_rootfs%ROWTYPE; origin deployment_registry_verifications%ROWTYPE;
+ approval deployment_registry_verifications%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ IF artifact->>'kind' IN ('source-app-layer','function-layer') THEN
+  RETURN application_standard_native_source_producer_deadline(input,artifact,now_utc);
+ END IF;
+ SELECT p.* INTO f FROM deployment_registry_rootfs_current c JOIN deployment_registry_rootfs p ON p.id=c.artifact_id
+ WHERE c.deployment_id=(input->'artifact'->>'id')::uuid AND c.workload_name=artifact->>'workload_name' FOR SHARE OF p NOWAIT;
+ SELECT * INTO origin FROM deployment_registry_verifications WHERE id=f.registry_verification_id FOR SHARE NOWAIT;
+ SELECT v.* INTO approval FROM deployment_registry_verifications v JOIN deployments d ON d.id=v.deployment_id AND d.app_id=v.app_id
+ JOIN apps a ON a.id=v.app_id AND a.account_id=v.account_id
+ WHERE v.deployment_id=f.deployment_id AND v.workload_name=f.workload_name AND a.status<>'deleted'
+  AND v.account_id::text=input->>'account_id' AND v.app_id::text=input->>'app_id'
+  AND v.input_snapshot->>'org_id'=coalesce(a.org_id::text,'')
+  AND v.input_snapshot->>'image_reference'=CASE WHEN v.workload_name='' AND d.kind='image' THEN d.image_digest
+   ELSE (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=v.workload_name) END
+ ORDER BY v.verified_at DESC,v.id DESC LIMIT 1 FOR SHARE OF v NOWAIT;
+ IF (f.id::text=artifact->>'producer_id' AND f.input_hash=artifact->>'producer_hash'
+  AND f.input_snapshot->>'kind'=artifact->>'kind' AND f.input_snapshot->>'storage_key'=artifact->>'storage_key'
+  AND f.input_snapshot->>'artifact_digest'=artifact->>'digest' AND f.input_snapshot->'artifact_bytes'=artifact->'bytes'
+  AND coalesce(f.input_snapshot->>'base_producer_id','')=coalesce(artifact->>'base_producer_id','')
+  AND coalesce(f.input_snapshot->>'base_input_hash','')=coalesce(artifact->>'base_input_hash','')
+  AND f.published_at<=now_utc AND f.published_at>=origin.verified_at AND f.expires_at<=origin.expires_at
+  AND f.input_snapshot->>'registry_input_hash'=origin.input_hash AND approval.verified_at<=now_utc AND approval.expires_at>now_utc
+  AND approval.input_snapshot-'proof'=origin.input_snapshot-'proof'
+  AND approval.input_snapshot->'proof'->>'SubjectDigest'=origin.input_snapshot->'proof'->>'SubjectDigest') IS NOT TRUE THEN
+  RAISE EXCEPTION 'native runtime producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ owner_inputs:=lock_deployment_artifact_scan_with_verification(f.id,approval.id);
+ PERFORM application_standard_runtime_default_base(f.input_snapshot,
+  (SELECT coalesce(a.runtime,'') FROM apps a WHERE a.id=(input->>'app_id')::uuid));
+ IF (approval.account_id::text=input->>'account_id' AND approval.app_id::text=input->>'app_id'
+  AND approval.input_snapshot->>'org_id'=input->>'org_id' AND f.input_snapshot->>'scope'=input->'artifact'->>'scope'
+  AND approval.input_snapshot->>'image_reference'=owner_inputs->>'image_reference'
+  AND encode(sha256(decode(owner_inputs->>'key_der','base64')),'hex')=approval.input_snapshot->'proof'->>'PublisherKeySHA256'
+  AND 'sha256:' || encode(sha256(approval.payload),'hex')=approval.input_snapshot->'proof'->>'PayloadDigest'
+  AND 'sha256:' || encode(sha256(approval.signature),'hex')=approval.input_snapshot->'proof'->>'SignatureDigest') IS NOT TRUE THEN
+  RAISE EXCEPTION 'native runtime publisher changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN approval.expires_at;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_promotion_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_promotion_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE locked jsonb; parent jsonb; b jsonb; r jsonb; now_nano bigint;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF NOT EXISTS(SELECT 1 FROM instances WHERE id=OLD.instance_id) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'native promotion history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  IF NEW.token IS DISTINCT FROM OLD.token OR NEW.instance_id IS DISTINCT FROM OLD.instance_id
+   OR NEW.parent_token IS DISTINCT FROM OLD.parent_token OR NEW.binding IS DISTINCT FROM OLD.binding
+   OR NEW.created_at IS DISTINCT FROM OLD.created_at OR OLD.receipt IS NOT NULL OR NEW.receipt IS NULL THEN
+   RAISE EXCEPTION 'native promotion history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+  END IF;
+ ELSIF NEW.receipt IS NOT NULL THEN
+  RAISE EXCEPTION 'promotion receipt requires a saved grant' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ locked:=application_standard_lock_native_promotion(NEW.instance_id,false);
+ parent:=locked->'parent'; b:=NEW.binding; now_nano:=(locked->>'clock_unix_nano')::bigint;
+ IF parent->'binding'->>'token' IS DISTINCT FROM NEW.parent_token::text OR NEW.token=NEW.parent_token
+  OR b->>'token' IS DISTINCT FROM NEW.token::text
+  OR (b-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano']) IS DISTINCT FROM
+     ((parent->'binding')-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano'])
+  OR coalesce(b->>'payload_hash','') !~ '^[0-9a-f]{64}$'
+  OR coalesce((b->>'issued_at_unix_nano')::bigint,0)<=0
+  OR coalesce((b->>'expires_at_unix_nano')::bigint,0)<=now_nano
+  OR (b->>'expires_at_unix_nano')::bigint <= (b->>'issued_at_unix_nano')::bigint
+  OR (locked->>'artifact_expires_at_unix_nano' IS NOT NULL AND (b->>'expires_at_unix_nano')::bigint>(locked->>'artifact_expires_at_unix_nano')::bigint)
+  OR (b->>'expires_at_unix_nano')::numeric-(b->>'issued_at_unix_nano')::numeric >600000000000
+  OR (b->>'issued_at_unix_nano')::bigint>now_nano+5000000000
+  OR (TG_OP='INSERT' AND (b->>'issued_at_unix_nano')::bigint<now_nano-5000000000) THEN
+  RAISE EXCEPTION 'native promotion grant is stale or invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF b->'protocol_version'='2'::jsonb THEN
+  PERFORM application_standard_lock_snapshot_restore(b,locked->'input_snapshot');
+  IF b->>'payload_hash' IS DISTINCT FROM encode(sha256(convert_to('gregale.runtime-promotion.v1','UTF8') || decode('00','hex') ||
+   application_standard_restore_wire_message('promotion',jsonb_build_object('parent',parent))),'hex') THEN
+   RAISE EXCEPTION 'native promotion payload differs from parent' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  r:=NEW.receipt;
+  IF r->'binding' IS DISTINCT FROM b OR (r->>'paused')::boolean IS DISTINCT FROM false
+   OR (r-ARRAY['binding','paused','completed_at_unix_nano','snapshot_resume_evidence']) IS DISTINCT FROM (parent-ARRAY['binding','paused','completed_at_unix_nano'])
+   OR coalesce((r->>'completed_at_unix_nano')::bigint,0)<(b->>'issued_at_unix_nano')::bigint-5000000000
+   OR (r->>'completed_at_unix_nano')::bigint<(parent->>'completed_at_unix_nano')::bigint
+   OR (r->>'completed_at_unix_nano')::bigint >= (b->>'expires_at_unix_nano')::bigint
+   OR (r->>'completed_at_unix_nano')::bigint>now_nano+5000000000 OR NEW.received_at IS NULL THEN
+   RAISE EXCEPTION 'native promotion receipt is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+  IF b->'protocol_version'='2'::jsonb THEN
+   IF NOT application_standard_snapshot_resume_valid(b,r,parent,now_nano) THEN
+    RAISE EXCEPTION 'native measured resume proof is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+   END IF;
+   PERFORM application_standard_native_artifact_protocol(b,r,locked->'input_snapshot',(locked->>'protocol_version')::smallint);
+  ELSIF r ? 'snapshot_resume_evidence' THEN
+   RAISE EXCEPTION 'legacy promotion cannot acknowledge measured resume' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+ END IF;
+ RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_native_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c instance_application_standard_admissions%ROWTYPE; g instance_application_standard_boots%ROWTYPE;
+        p instance_application_standard_promotions%ROWTYPE;
+        incarnation uuid; protocol smallint; b jsonb; r jsonb; managed boolean; publishing boolean; input jsonb; artifact_deadline timestamptz;
+BEGIN
+ IF NEW.app_id IS NULL OR NEW.kind<>'wake' OR NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
+ SELECT * INTO c FROM instance_application_standard_admissions WHERE instance_id=NEW.id;
+ managed:=application_standard_runtime_requires_native(c.input_snapshot);
+ IF NOT managed THEN RETURN NEW; END IF;
+ publishing:=NEW.state IN ('running','warm','migrating') OR coalesce(NEW.netns,'')<>'' OR NEW.host_ip IS NOT NULL OR coalesce(NEW.guest_uid,0)>0;
+ IF NOT publishing THEN RETURN NEW; END IF;
+ SELECT * INTO g FROM instance_application_standard_boots WHERE token=NEW.application_standard_boot_token FOR SHARE NOWAIT;
+ b:=g.binding; r:=g.receipt;
+ IF NEW.application_standard_promotion_token IS NOT NULL THEN
+  SELECT * INTO p FROM instance_application_standard_promotions WHERE token=NEW.application_standard_promotion_token FOR SHARE NOWAIT;
+  IF p.instance_id IS DISTINCT FROM NEW.id OR p.parent_token IS DISTINCT FROM g.token THEN
+   RAISE EXCEPTION 'promotion parent changed' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+  END IF;
+  b:=p.binding; r:=p.receipt;
+ END IF;
+ IF TG_OP='UPDATE' AND OLD.application_standard_promotion_token IS NOT NULL AND OLD.application_standard_promotion_token IS DISTINCT FROM NEW.application_standard_promotion_token THEN
+  RAISE EXCEPTION 'published promotion identity is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ SELECT vmmd_incarnation,vmmd_admission_protocol INTO incarnation,protocol FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
+ IF g.instance_id IS DISTINCT FROM NEW.id OR r IS NULL OR b->>'node_id' IS DISTINCT FROM NEW.node_id::text
+  OR b->>'incarnation' IS DISTINCT FROM incarnation::text OR b->>'captured_input_hash' IS DISTINCT FROM c.native_input_hash
+  OR r->'binding' IS DISTINCT FROM b OR r->>'netns' IS DISTINCT FROM NEW.netns OR r->>'host_ip' IS DISTINCT FROM host(NEW.host_ip)
+  OR (r->>'lease_uid')::integer IS DISTINCT FROM NEW.guest_uid OR (r->>'paused')::boolean IS DISTINCT FROM (NEW.state='warm') THEN
+  RAISE EXCEPTION 'managed runtime requires its exact native receipt' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ PERFORM application_standard_native_artifact_protocol(b,r,c.input_snapshot,protocol);
+ IF TG_OP='INSERT' OR OLD.state IN ('waking','cold_booting') OR OLD.application_standard_boot_token IS DISTINCT FROM NEW.application_standard_boot_token
+  OR OLD.application_standard_promotion_token IS DISTINCT FROM NEW.application_standard_promotion_token THEN
+  input:=application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) || jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
+  IF NOT application_standard_native_inputs_match(c.input_snapshot,input) THEN
+   RAISE EXCEPTION 'native publication inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  artifact_deadline:=application_standard_native_artifact_deadline(input,clock_timestamp());
+  IF (artifact_deadline IS NOT NULL AND (b->>'expires_at_unix_nano')::bigint>(extract(epoch FROM artifact_deadline)*1000000000)::bigint)
+   OR (b->>'expires_at_unix_nano')::bigint <= (extract(epoch FROM clock_timestamp())*1000000000)::bigint THEN
+   RAISE EXCEPTION 'native runtime authority expired before publication' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ RETURN NEW;
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'native publication inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_residency_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_residency_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE managed boolean;
+BEGIN
+ IF OLD.app_id IS NULL OR OLD.kind<>'wake' THEN RETURN NEW; END IF;
+ SELECT application_standard_runtime_requires_native(input_snapshot)
+  INTO managed FROM instance_application_standard_admissions WHERE instance_id=OLD.id;
+ IF NOT coalesce(managed,false) THEN RETURN NEW; END IF;
+ IF (OLD.application_standard_boot_token IS NOT NULL AND NEW.application_standard_boot_token IS DISTINCT FROM OLD.application_standard_boot_token)
+  OR (OLD.application_standard_promotion_token IS NOT NULL AND NEW.application_standard_promotion_token IS DISTINCT FROM OLD.application_standard_promotion_token) THEN
+  RAISE EXCEPTION 'native authority history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ IF NEW.state IN ('running','warm','migrating') AND OLD.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN
+  RAISE EXCEPTION 'historical native receipt cannot recreate residency' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_runtime_snapshot(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_runtime_snapshot(application_id uuid, artifact_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE input jsonb; revision bigint;
+BEGIN
+ input:=application_standard_runtime_snapshot(application_id,artifact_id);
+ SELECT egress_allowlist_revision INTO revision FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ RETURN input || jsonb_build_object('egress_revision',revision);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_scan_deadline(jsonb, timestamp with time zone, timestamp with time zone, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_scan_deadline(input jsonb, scanned_at timestamp with time zone, expires_at timestamp with time zone, now_utc timestamp with time zone, enforce boolean) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE report jsonb; built timestamptz;
+BEGIN
+ report:=input->'report'; built:=(report->>'scanner_db_built_at')::timestamptz;
+ IF (input->>'status'='complete' AND input->>'scanner_name'='grype'
+  AND report->>'scanner_db_status'='valid' AND coalesce(report->>'scanner_version','')<>''
+  AND coalesce(report->>'scanner_db_version','')<>'' AND scanned_at<=now_utc AND expires_at>now_utc
+  AND built<=now_utc AND built+interval '30 days'>now_utc) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native artifact scan is stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF enforce AND ((report->'severity_counts'->>'critical')::integer=0
+  AND (report->'severity_counts'->>'high')::integer=0
+  AND (report->'severity_counts'->>'unknown')::integer=0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native artifact scan blocks enforcement' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN least(expires_at,built+interval '30 days');
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_scan_tree_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_scan_tree_valid(t jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+ SELECT coalesce(jsonb_typeof(t)='object' AND jsonb_typeof(t->'Version')='number' AND t->>'Version'='1'
+  AND t-ARRAY['Version','Digest','ProjectionDigest','Entries','Bytes']='{}'::jsonb
+  AND jsonb_typeof(t->'Digest')='string' AND t->>'Digest' ~ '^[a-f0-9]{64}$'
+  AND jsonb_typeof(t->'ProjectionDigest')='string' AND t->>'ProjectionDigest' ~ '^[a-f0-9]{64}$'
+  AND jsonb_typeof(t->'Entries')='number' AND t->>'Entries' ~ '^[1-9][0-9]{0,6}$'
+  AND (t->>'Entries')::bigint BETWEEN 1 AND 1000000
+  AND jsonb_typeof(t->'Bytes')='number' AND t->>'Bytes' ~ '^[0-9]{1,11}$'
+  AND (t->>'Bytes')::bigint BETWEEN 0 AND 34359738368,false);
+$_$;
+
+
+--
+-- Name: application_standard_native_source_hash(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_source_hash(sources jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE a jsonb; role text; roles text[]:='{}'; keys text[]:='{}';
+ bytes bytea; field text;
+BEGIN
+ IF jsonb_typeof(sources) IS DISTINCT FROM 'array' THEN
+  RAISE EXCEPTION 'native sources are not an array' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF jsonb_array_length(sources) NOT BETWEEN 2 AND 7 THEN
+  RAISE EXCEPTION 'native source membership is incomplete' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ bytes:=convert_to('gregale.native-artifact-sources.v2','UTF8') || decode('00','hex')
+  || int8send(jsonb_array_length(sources)::bigint);
+ FOR a IN SELECT value FROM jsonb_array_elements(sources)
+  ORDER BY application_standard_native_source_role(value) COLLATE "C" LOOP
+  role:=application_standard_native_source_role(a);
+  IF role IS NULL OR role=ANY(roles) OR a->>'storage_key'=ANY(keys) THEN
+   RAISE EXCEPTION 'native source membership is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  roles:=array_append(roles,role); keys:=array_append(keys,a->>'storage_key');
+  FOREACH field IN ARRAY ARRAY[a->>'kind',a->>'workload_name',a->>'storage_key',a->>'digest'] LOOP
+   bytes:=bytes || int8send(octet_length(convert_to(field,'UTF8'))::bigint) || convert_to(field,'UTF8');
+  END LOOP;
+  bytes:=bytes || int8send((a->>'bytes')::bigint);
+ END LOOP;
+ IF NOT ('base'=ANY(roles) AND 'main'=ANY(roles)) THEN
+  RAISE EXCEPTION 'native base or main is missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN encode(sha256(bytes),'hex');
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_source_producer_deadline(jsonb, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_source_producer_deadline(input jsonb, artifact jsonb, now_utc timestamp with time zone) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f source_build_rootfs%ROWTYPE; origin build_export_publications%ROWTYPE; approval build_export_publications%ROWTYPE;
+ a apps%ROWTYPE; d deployments%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ SELECT * INTO d FROM deployments WHERE id=(input->'artifact'->>'id')::uuid FOR UPDATE NOWAIT;
+ SELECT * INTO a FROM apps WHERE id=d.app_id FOR SHARE NOWAIT;
+ IF (a.id::text=input->>'app_id' AND a.account_id::text=input->>'account_id'
+  AND coalesce(a.org_id::text,'')=input->>'org_id' AND d.scope=input->'artifact'->>'scope'
+  AND artifact=application_standard_source_runtime_producer(a,d)) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native source identity changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
+ WHERE c.deployment_id=d.id FOR SHARE OF c,r NOWAIT;
+ SELECT * INTO origin FROM build_export_publications WHERE id=f.publication_id FOR SHARE NOWAIT;
+ SELECT * INTO approval FROM build_export_publications WHERE build_id=origin.build_id
+  AND deployment_id=d.id AND app_id=a.id AND account_id=a.account_id
+ ORDER BY verified_at DESC,id DESC LIMIT 1 FOR SHARE NOWAIT;
+ IF (f.published_at<=now_utc AND approval.input_snapshot->'claims'=origin.input_snapshot->'claims'
+  AND approval.verified_at<=now_utc AND approval.expires_at>now_utc) IS NOT TRUE THEN
+  RAISE EXCEPTION 'native source approval stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ owner_inputs:=lock_build_export_publication(approval.input_snapshot,approval.input_snapshot->'proof'->>'publisher_name',true);
+ IF (encode(sha256(decode(owner_inputs->>'key_der','base64')),'hex')=approval.input_snapshot->'proof'->>'publisher_key_sha256'
+  AND 'sha256:'||encode(sha256(approval.payload),'hex')=approval.input_snapshot->'proof'->>'payload_digest'
+  AND 'sha256:'||encode(sha256(approval.signature),'hex')=approval.input_snapshot->'proof'->>'signature_digest') IS NOT TRUE THEN
+  RAISE EXCEPTION 'native source publisher changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ -- SQL fences are not ECDSA verification. Go verifies retained proof bytes in
+ -- this same transaction before a native grant or publication can commit.
+ RETURN approval.expires_at;
+END;
+$$;
+
+
+--
+-- Name: application_standard_native_source_role(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_native_source_role(a jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE k text; n text; key text;
+BEGIN
+ IF jsonb_typeof(a)<>'object' OR jsonb_typeof(a->'kind') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'workload_name') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'storage_key') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'digest') IS DISTINCT FROM 'string'
+  OR jsonb_typeof(a->'bytes') IS DISTINCT FROM 'number' THEN RETURN NULL; END IF;
+ k:=a->>'kind'; n:=a->>'workload_name'; key:=a->>'storage_key';
+ IF key IN ('','.') OR octet_length(key)>512 OR left(key,1)='/' OR right(key,1)='/'
+  OR position('..' IN key)>0 OR position('//' IN key)>0
+  OR key ~ '(^|/)[.](/|$)' OR position(chr(92) IN key)>0
+  OR position(chr(13) IN key)>0 OR position(chr(10) IN key)>0
+  OR a->>'digest' !~ '^sha256:[0-9a-f]{64}$'
+  OR a->>'bytes' !~ '^[1-9][0-9]{0,10}$'
+  OR (a->>'bytes')::bigint>17179869184 THEN RETURN NULL; END IF;
+ IF k='base-image' AND n='' THEN RETURN 'base'; END IF;
+ IF k IN ('app-layer','full-rootfs','source-app-layer','function-layer') AND n='' THEN RETURN 'main'; END IF;
+ IF k='sidecar-layer' AND n<>'main' AND n ~ '^[a-z0-9][a-z0-9-]{0,62}$' THEN RETURN 'sidecar:' || n; END IF;
+ RETURN NULL;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN NULL;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_observation_child_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_observation_child_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bodies jsonb[]; body jsonb; app_id uuid; ids uuid[] := '{}';
+BEGIN
+ IF TG_OP='INSERT' THEN bodies:=ARRAY[to_jsonb(NEW)];
+ ELSIF TG_OP='DELETE' THEN bodies:=ARRAY[to_jsonb(OLD)];
+ ELSE bodies:=ARRAY[to_jsonb(OLD),to_jsonb(NEW)]; END IF;
+ FOREACH body IN ARRAY bodies LOOP
+  IF TG_TABLE_NAME='snapshots' THEN
+   SELECT d.app_id INTO app_id FROM deployments d WHERE d.id=(body->>'deployment_id')::uuid;
+  ELSE app_id:=(body->>'app_id')::uuid; END IF;
+  IF app_id IS NOT NULL THEN ids:=array_append(ids,app_id); END IF;
+ END LOOP;
+ FOR app_id IN SELECT DISTINCT x.id FROM unnest(ids) AS x(id) ORDER BY x.id LOOP
+  IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.observation.'||app_id::text,0)) THEN
+   RAISE EXCEPTION 'application standard observation is busy' USING ERRCODE='55P03';
+  END IF;
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_observation_membership_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_observation_membership_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND NEW.role IS NOT DISTINCT FROM OLD.role THEN RETURN NEW; END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.consumer-membership',0)) THEN
+  RAISE EXCEPTION 'application standard membership is busy' USING ERRCODE='55P03';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_operation_intent_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_operation_intent_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'application standard operation history is retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_operation_intent_immutable';
+    END IF;
+    IF NEW.lease_generation < OLD.lease_generation THEN
+        RAISE EXCEPTION 'application standard worker generation regressed'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_operation_generation';
+    END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.plan_id IS DISTINCT FROM OLD.plan_id OR NEW.assignment_id IS DISTINCT FROM OLD.assignment_id
+       OR NEW.approval_hash IS DISTINCT FROM OLD.approval_hash OR NEW.approved_by IS DISTINCT FROM OLD.approved_by
+       OR NEW.batch_size IS DISTINCT FROM OLD.batch_size OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'application standard operation intent is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_operation_intent_immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_pending_child_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_pending_child_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN app_ids:=array_append(app_ids,OLD.app_id); END IF;
+    IF TG_OP <> 'DELETE' THEN app_ids:=array_append(app_ids,NEW.app_id); END IF;
+    IF EXISTS (SELECT 1 FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+      WHERE e.app_id=ANY(app_ids) AND a.status <> 'deleted' AND e.state IN ('pending','blocked') AND TG_ARGV[0]=ANY(e.materialized_fields)) THEN
+      IF TG_OP='UPDATE' AND (to_jsonb(NEW)-'updated_at')=(to_jsonb(OLD)-'updated_at') THEN RETURN NEW; END IF;
+      RAISE EXCEPTION 'application standard manages this control'
+        USING ERRCODE='23514',CONSTRAINT='application_standard_managed_control';
+    END IF;
+    IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_pending_scalar_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_pending_scalar_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE fields text[];
+BEGIN
+    SELECT materialized_fields INTO fields FROM app_application_standards WHERE app_id=OLD.id AND state IN ('pending','blocked');
+    IF ('require_signed'=ANY(fields) AND NEW.require_signed IS DISTINCT FROM OLD.require_signed)
+      OR ('security_policy'=ANY(fields) AND NEW.security_policy IS DISTINCT FROM OLD.security_policy)
+      OR ('egress_cidrs'=ANY(fields) AND NEW.egress_allowlist IS DISTINCT FROM OLD.egress_allowlist)
+      OR ('egress_extra_ports'=ANY(fields) AND NEW.egress_ports IS DISTINCT FROM OLD.egress_ports) THEN
+        RAISE EXCEPTION 'application standard manages this control'
+          USING ERRCODE='23514',CONSTRAINT='application_standard_managed_control';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_restore_catalog_matches(jsonb, jsonb, jsonb, jsonb, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_catalog_matches(b jsonb, input jsonb, grant_data jsonb, acknowledgment jsonb, captured_input jsonb, snapshot_row jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE capture jsonb:=acknowledgment->'capture'; parent jsonb:=capture->'parent'->'binding'; ram bigint;
+BEGIN
+ IF (application_standard_snapshot_positive_integer(input->'instance_ram_mb')
+  AND jsonb_typeof(capture)='object' AND capture->>'version'='1'
+  AND capture->'parent'=grant_data->'parent' AND capture->'parent'->'paused'='false'::jsonb
+  AND application_standard_snapshot_acknowledgment_valid(acknowledgment,grant_data,(acknowledgment->>'completed_at_unix_nano')::bigint)
+  AND b->>'snapshot_evidence_hash'=application_standard_restore_evidence_hash((b->>'snapshot_capture_token')::uuid,grant_data->>'fc_version',capture)
+  AND b->>'token'<>parent->>'token' AND b->>'instance_id'<>parent->>'instance_id'
+  AND b->>'app_id'=parent->>'app_id' AND b->>'account_id'=parent->>'account_id' AND b->>'deployment_id'=parent->>'deployment_id'
+  AND b->>'desired_revision'=parent->>'desired_revision' AND b->>'effective_hash'=parent->>'effective_hash'
+  AND b->>'egress_revision'=parent->>'egress_revision' AND b->>'artifact_sources_hash'=parent->>'artifact_sources_hash'
+  AND application_standard_native_inputs_match(captured_input,input)
+  AND snapshot_row->>'storage_key'=capture->'memory'->>'storage_key'
+  AND snapshot_row->>'fc_version'=grant_data->>'fc_version'
+  AND snapshot_row->>'disk_bytes'=capture->'vmstate'->>'bytes'
+  AND (b->>'issued_at_unix_nano')::numeric+5000000000>=(capture->>'captured_at_unix_nano')::numeric) IS NOT TRUE THEN RETURN false; END IF;
+ ram:=(input->>'instance_ram_mb')::bigint;
+ RETURN ram<=16384 AND ram*1048576=(capture->'memory'->>'bytes')::bigint
+  AND ram*1048576=(snapshot_row->>'mem_bytes')::bigint;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
+END;
+$$;
+
+
+--
+-- Name: application_standard_restore_evidence_hash(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_evidence_hash(token uuid, fc_version text, capture jsonb) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+ SELECT encode(sha256(convert_to('gregale.snapshot-restore-evidence.v1','UTF8') || decode('00','hex') ||
+  application_standard_restore_wire_message('evidence',jsonb_build_object('version',1,'capture_token',token::text,'fc_version',fc_version,'capture',capture))),'hex');
+$$;
+
+
+--
+-- Name: application_standard_restore_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b jsonb; locked jsonb;
+BEGIN
+ IF NEW.state NOT IN ('waking','cold_booting','running','warm','migrating')
+  OR NEW.application_standard_boot_token IS NULL
+  OR (NEW.state NOT IN ('running','warm','migrating') AND coalesce(NEW.netns,'')=''
+   AND NEW.host_ip IS NULL AND coalesce(NEW.guest_uid,0)=0)
+  OR (NEW.application_standard_boot_token IS NOT DISTINCT FROM OLD.application_standard_boot_token AND NEW.application_standard_promotion_token IS NOT DISTINCT FROM OLD.application_standard_promotion_token AND OLD.state NOT IN ('waking','cold_booting')) THEN RETURN NEW; END IF;
+ SELECT binding INTO b FROM instance_application_standard_boots
+  WHERE token=NEW.application_standard_boot_token AND instance_id=NEW.id FOR SHARE NOWAIT;
+ IF NEW.application_standard_promotion_token IS NOT NULL THEN
+  SELECT binding INTO b FROM instance_application_standard_promotions
+   WHERE token=NEW.application_standard_promotion_token AND instance_id=NEW.id FOR SHARE NOWAIT;
+ END IF;
+ IF coalesce(b->>'snapshot_capture_token','')='' AND coalesce(b->>'snapshot_evidence_hash','')='' THEN RETURN NEW; END IF;
+ locked:=application_standard_lock_native_boot(OLD.id,OLD.state);
+ PERFORM application_standard_lock_snapshot_restore(b,locked->'input_snapshot');
+ RETURN NEW;
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'restore publication is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_restore_varint(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_varint(value bigint) RETURNS bytea
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE result bytea:=''::bytea; octet integer;
+BEGIN
+ IF value<0 THEN RAISE EXCEPTION 'restore wire scalar is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;
+ LOOP
+  octet:=(value%128)::integer; value:=value/128;
+  IF value>0 THEN octet:=octet+128; END IF;
+  result:=result || decode(lpad(to_hex(octet),2,'0'),'hex');
+  EXIT WHEN value=0;
+ END LOOP;
+ RETURN result;
+END;
+$$;
+
+
+--
+-- Name: application_standard_restore_wire_field(integer, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_wire_field(number integer, kind text, value jsonb) RETURNS bytea
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $_$
+DECLARE data bytea; n bigint; child jsonb; result bytea:=''::bytea;
+BEGIN
+ IF kind IN ('u32','i32','i64') THEN
+  IF jsonb_typeof(value)<>'number' OR value::text !~ '^(0|[1-9][0-9]{0,18})$' THEN
+   RAISE EXCEPTION 'restore wire number is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  n:=value::text::bigint;
+  IF kind='u32' AND n>4294967295 OR kind='i32' AND n>2147483647 THEN
+   RAISE EXCEPTION 'restore wire number exceeds its type' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  IF n=0 THEN RETURN result; END IF;
+  RETURN application_standard_restore_varint(number*8) || application_standard_restore_varint(n);
+ ELSIF kind='bool' THEN
+  IF jsonb_typeof(value)<>'boolean' THEN RAISE EXCEPTION 'restore wire boolean is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;
+  IF value='false'::jsonb THEN RETURN result; END IF;
+  RETURN application_standard_restore_varint(number*8) || decode('01','hex');
+ ELSIF kind='string' THEN
+  IF jsonb_typeof(value)<>'string' THEN RAISE EXCEPTION 'restore wire string is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;
+  data:=convert_to(value#>>'{}','UTF8');
+  IF octet_length(data)=0 THEN RETURN result; END IF;
+ ELSIF kind='drives' THEN
+  IF jsonb_typeof(value)<>'array' OR jsonb_array_length(value)>7 THEN RAISE EXCEPTION 'restore wire drives are invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;
+  FOR child IN SELECT jsonb_array_elements(value) LOOP
+   result:=result || application_standard_restore_wire_field(number,'drive',child);
+  END LOOP;
+  RETURN result;
+ ELSE
+  data:=application_standard_restore_wire_message(kind,value);
+ END IF;
+ RETURN application_standard_restore_varint(number*8+2) || application_standard_restore_varint(octet_length(data)) || data;
+EXCEPTION WHEN numeric_value_out_of_range THEN
+ RAISE EXCEPTION 'restore wire number exceeds its type' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+END;
+$_$;
+
+
+--
+-- Name: application_standard_restore_wire_fields(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_wire_fields(kind text) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT CASE kind
+ WHEN 'evidence' THEN '[[1,"version","u32"],[2,"capture_token","string"],[3,"fc_version","string"],[4,"capture","capture"]]'::jsonb
+ WHEN 'capture' THEN '[[1,"version","u32"],[2,"parent","receipt"],[3,"memory","artifact"],[4,"vmstate","artifact"],[5,"private_drive","artifact"],[6,"captured_at_unix_nano","i64"]]'::jsonb
+ WHEN 'artifact' THEN '[[1,"storage_key","string"],[2,"digest","string"],[3,"bytes","i64"]]'::jsonb
+ WHEN 'source' THEN '[[1,"kind","string"],[2,"workload_name","string"],[3,"storage_key","string"],[4,"digest","string"],[5,"bytes","i64"]]'::jsonb
+ WHEN 'drive' THEN '[[1,"source","source"],[2,"drive_id","string"],[3,"read_only","bool"],[4,"root_device","bool"],[5,"producer_digest","string"],[6,"producer_bytes","i64"],[7,"injected_digest","string"],[8,"injected_bytes","i64"]]'::jsonb
+ WHEN 'consumption' THEN '[[1,"config_hash","string"],[2,"process_pid","u32"],[3,"process_start","string"],[4,"drives","drives"]]'::jsonb
+ WHEN 'receipt' THEN '[[1,"binding","binding"],[2,"native_input_hash","string"],[3,"netns","string"],[4,"host_ip","string"],[5,"lease_uid","i32"],[6,"method","i32"],[7,"paused","bool"],[8,"completed_at_unix_nano","i64"],[9,"artifact_consumption","consumption"],[10,"snapshot_consumption","snapshot-consumption"],[11,"snapshot_resume_evidence","resume"]]'::jsonb
+ WHEN 'snapshot-consumption' THEN '[[1,"version","u32"],[2,"capture_token","string"],[3,"evidence_hash","string"],[4,"memory","artifact"],[5,"vmstate","artifact"],[6,"private_drive","artifact"],[7,"mapped_memory_bytes","i64"]]'::jsonb
+ WHEN 'resume' THEN '[[1,"version","u32"],[2,"binding","binding"],[3,"parent_receipt_hash","string"],[4,"resume_command_hash","string"],[5,"resume_hook_payload_hash","string"],[6,"command_completed_at_unix_nano","i64"],[7,"host_time_unix_nano","i64"],[8,"hook_completed_at_unix_nano","i64"],[9,"completed_at_unix_nano","i64"],[10,"parent_binding","binding"],[11,"parent_completed_at_unix_nano","i64"]]'::jsonb
+ WHEN 'promotion' THEN '[[1,"binding","binding"],[2,"parent","receipt"]]'::jsonb
+ WHEN 'binding' THEN '[[1,"protocol_version","u32"],[2,"token","string"],[3,"instance_id","string"],[4,"app_id","string"],[5,"deployment_id","string"],[6,"account_id","string"],[7,"node_id","string"],[8,"incarnation","string"],[9,"desired_revision","i64"],[10,"effective_hash","string"],[11,"captured_input_hash","string"],[12,"payload_hash","string"],[13,"egress_revision","i64"],[14,"issued_at_unix_nano","i64"],[15,"expires_at_unix_nano","i64"],[16,"artifact_sources_hash","string"],[17,"snapshot_capture_token","string"],[18,"snapshot_evidence_hash","string"]]'::jsonb
+ END;
+$$;
+
+
+--
+-- Name: application_standard_restore_wire_message(text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_restore_wire_message(kind text, value jsonb) RETURNS bytea
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+DECLARE fields jsonb:=application_standard_restore_wire_fields(kind); field jsonb; result bytea:=''::bytea; item jsonb;
+BEGIN
+ IF fields IS NULL OR jsonb_typeof(value)<>'object' THEN
+  RAISE EXCEPTION 'restore wire message is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ FOR field IN SELECT jsonb_array_elements(fields) LOOP
+  item:=value->(field->>1);
+  IF item IS NOT NULL THEN
+   result:=result || application_standard_restore_wire_field((field->>0)::integer,field->>2,item);
+  END IF;
+ END LOOP;
+ RETURN result;
+END;
+$$;
+
+
+--
+-- Name: application_standard_review_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_review_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1
+       AND NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'DELETE' AND OLD.expires_at < now()
+       AND NOT EXISTS (SELECT 1 FROM application_standard_operations WHERE plan_id = OLD.id) THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'application standard review plans are immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_review_immutable';
+END;
+$$;
+
+
+--
+-- Name: application_standard_runtime_base_producer(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_base_producer(root_producer jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p base_image_producers%ROWTYPE; selected uuid;
+BEGIN
+ IF NOT root_producer ? 'base_producer_id' THEN RETURN NULL; END IF;
+ SELECT * INTO p FROM base_image_producers WHERE id=(root_producer->>'base_producer_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND OR p.input_hash IS DISTINCT FROM root_producer->>'base_input_hash' THEN
+  RAISE EXCEPTION 'runtime base producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('gregale.base-producer.' || p.storage_key,0)) THEN
+  RAISE EXCEPTION 'runtime base producer is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+ END IF;
+ SELECT producer_id INTO selected FROM base_image_producer_current WHERE storage_key=p.storage_key FOR SHARE NOWAIT;
+ IF selected IS DISTINCT FROM p.id OR p.storage_key IS NOT DISTINCT FROM root_producer->>'storage_key' THEN
+  RAISE EXCEPTION 'runtime base producer selection changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN jsonb_build_object('kind','base-image','workload_name','','producer_id',p.id::text,'producer_hash',p.input_hash,
+  'storage_key',p.storage_key,'digest',p.input_snapshot->'artifact'->>'digest','bytes',(p.input_snapshot->'artifact'->>'bytes')::bigint);
+END;
+$$;
+
+
+--
+-- Name: application_standard_runtime_capture_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_capture_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND pg_trigger_depth()>1 THEN RETURN NEW; END IF;
+ -- Stored generated hashes are computed after BEFORE triggers. Compare only
+ -- their immutable source columns here, including the captured node identity.
+ IF TG_OP='UPDATE' AND NEW.instance_id IS NOT DISTINCT FROM OLD.instance_id AND NEW.app_id IS NOT DISTINCT FROM OLD.app_id
+  AND NEW.deployment_id IS NOT DISTINCT FROM OLD.deployment_id AND NEW.node_id IS NOT DISTINCT FROM OLD.node_id
+  AND NEW.input_snapshot IS NOT DISTINCT FROM OLD.input_snapshot AND NEW.captured_at IS NOT DISTINCT FROM OLD.captured_at THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM instances WHERE id=OLD.instance_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'runtime admission capture is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_capture_immutable';
+END;
+$$;
+
+
+--
+-- Name: application_standard_runtime_default_base(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_default_base(root_input jsonb, app_runtime text) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE base jsonb; producer base_image_producers%ROWTYPE; expected_key text;
+BEGIN
+ IF root_input->>'kind' IS DISTINCT FROM 'full-rootfs' THEN RETURN; END IF;
+ -- OCI producer intake and native consumers support linux/amd64 only.
+ expected_key:=CASE WHEN coalesce(app_runtime,'')='' THEN 'base/base-amd64.ext4'
+  ELSE 'base/runner-' || app_runtime || '-amd64.ext4' END;
+ base:=application_standard_runtime_base_producer(root_input);
+ IF (base IS NOT NULL AND base->>'storage_key'=expected_key
+  AND coalesce((root_input->>'layer_start')::integer,0)=0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime-default base binding changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT * INTO producer FROM base_image_producers WHERE id=(base->>'producer_id')::uuid;
+ IF (producer.input_snapshot->>'layout_version'='faas-base-layout-v3'
+  AND producer.input_snapshot->>'guest_init_digest' ~ '^sha256:[a-f0-9]{64}$') IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime-default base boot layout changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_runtime_identity_hash(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_identity_hash(identity jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE body text:='{'; field text; a jsonb; item text; items text[]:='{}';
+BEGIN
+ FOREACH field IN ARRAY ARRAY['format','account_id','org_id','app_id','deployment_id','scope'] LOOP
+  IF jsonb_typeof(identity->field) IS DISTINCT FROM 'string' THEN RETURN NULL; END IF;
+  body:=body || to_json(field)::text || ':' || application_standard_go_json_string(identity->>field) || ',';
+ END LOOP;
+ FOR a IN SELECT value FROM jsonb_array_elements(identity->'artifacts')
+  ORDER BY CASE WHEN value->>'kind'='base-image' THEN 0 ELSE 1 END,value->>'workload_name' COLLATE "C" LOOP
+  item:='{';
+  FOREACH field IN ARRAY ARRAY['kind','workload_name','producer_id','producer_hash','storage_key','digest'] LOOP
+   IF jsonb_typeof(a->field) IS DISTINCT FROM 'string' THEN RETURN NULL; END IF;
+   item:=item || to_json(field)::text || ':' || application_standard_go_json_string(a->>field) || ',';
+  END LOOP;
+  item:=item || '"bytes":' || (a->>'bytes');
+  FOREACH field IN ARRAY ARRAY['base_producer_id','base_input_hash'] LOOP
+   IF coalesce(a->>field,'')<>'' THEN item:=item || ',' || to_json(field)::text || ':' || application_standard_go_json_string(a->>field); END IF;
+  END LOOP;
+  items:=array_append(items,item || '}');
+ END LOOP;
+ RETURN encode(sha256(convert_to(body || '"artifacts":[' || array_to_string(items,',') || ']}','UTF8')),'hex');
+EXCEPTION WHEN invalid_parameter_value THEN RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: application_standard_runtime_inputs_match(jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_inputs_match(captured jsonb, current_input jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+BEGIN
+ IF jsonb_typeof(captured) IS DISTINCT FROM 'object' OR jsonb_typeof(current_input) IS DISTINCT FROM 'object' THEN RETURN false; END IF;
+ captured:=application_standard_stable_runtime_input(captured); current_input:=application_standard_stable_runtime_input(current_input);
+ IF NOT application_standard_runtime_requires_native(captured)
+  AND NOT application_standard_runtime_requires_native(current_input)
+  AND captured ? 'account_plan' AND current_input ? 'account_plan' THEN
+  captured:=captured-'account_plan'; current_input:=current_input-'account_plan';
+  -- Mirror classification changes billing, but conveys no worker or native
+  -- authority. Preserve the pre-standards normal/mirror retrofit contract.
+  IF captured->>'instance_mode' IN ('normal','mirror')
+   AND current_input->>'instance_mode' IN ('normal','mirror') THEN
+   captured:=captured-'instance_mode'; current_input:=current_input-'instance_mode';
+  END IF;
+ END IF;
+ RETURN captured=current_input;
+END;
+$$;
+
+
+--
+-- Name: application_standard_runtime_is_unowned(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_is_unowned(application_id uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; acct accounts%ROWTYPE;
+BEGIN
+ SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR a.org_id IS NOT NULL OR a.status='deleted' THEN RETURN false; END IF;
+ SELECT * INTO acct FROM accounts WHERE id=a.account_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR acct.status NOT IN ('active','past_due') OR acct.abuse_hold_at IS NOT NULL THEN RETURN false; END IF;
+ -- Legacy residency creates no company enrollment, capture, grant or receipt.
+ -- Retained company intent must never acquire this compatibility allowance.
+ RETURN NOT EXISTS (SELECT 1 FROM app_application_standards WHERE app_id=a.id)
+  AND NOT EXISTS (SELECT 1 FROM application_standard_assignments s WHERE s.active
+    AND ((s.scope='application' AND s.scope_id=a.id) OR (s.scope='project' AND s.scope_id=a.project_id)));
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: deployments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    build_id uuid,
+    image_digest text NOT NULL,
+    rootfs_path text,
+    rootfs_bytes bigint,
+    status text NOT NULL,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text DEFAULT 'image'::text NOT NULL,
+    source_path text,
+    source_bytes bigint,
+    handler text,
+    log_path text,
+    error_code text,
+    rootfs_key text DEFAULT ''::text NOT NULL,
+    source_url text,
+    commit_sha text,
+    override_entrypoint text[],
+    override_cmd text[],
+    override_env jsonb,
+    override_env_secrets jsonb,
+    override_port integer,
+    override_healthcheck jsonb,
+    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
+    min_instances integer DEFAULT 0 NOT NULL,
+    scan_result jsonb,
+    scan_status text,
+    scanned_at timestamp with time zone,
+    override_liveness_probe jsonb,
+    parked_reason text,
+    parked_at timestamp with time zone,
+    traffic_percent integer DEFAULT 100 NOT NULL,
+    scope text DEFAULT 'default'::text NOT NULL,
+    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    secret_scanned_at timestamp with time zone,
+    error_hint text,
+    error_why text,
+    error_fix text,
+    error_relevant_logs jsonb,
+    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
+    deployed_by_user_id uuid,
+    deployed_via text DEFAULT 'api'::text NOT NULL,
+    deployed_from_ip inet,
+    pusher_login text,
+    reason text,
+    tag text,
+    deployed_by text,
+    pr_number integer,
+    rollback_on_5xx boolean DEFAULT false NOT NULL,
+    first_wake_at timestamp with time zone,
+    first_5xx_window_ends_at timestamp with time zone,
+    first_5xx_count integer DEFAULT 0 NOT NULL,
+    last_auto_rollback_at timestamp with time zone,
+    last_auto_rollback_reason text,
+    liveness_restart_count integer DEFAULT 0 NOT NULL,
+    canary_preset text DEFAULT 'none'::text NOT NULL,
+    canary_step integer DEFAULT 0 NOT NULL,
+    canary_total_steps integer DEFAULT 0 NOT NULL,
+    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollout_state text DEFAULT 'pending'::text NOT NULL,
+    rollout_started_at timestamp with time zone,
+    rollout_completed_at timestamp with time zone,
+    rollout_aborted_at timestamp with time zone,
+    rollout_aborted_reason text,
+    cancelled_at timestamp with time zone,
+    cancelled_by_principal text,
+    cancel_reason text,
+    deleted_at timestamp with time zone,
+    deleted_by_principal text,
+    priority integer DEFAULT 100 NOT NULL,
+    reordered_at timestamp with time zone,
+    reordered_by_principal text,
+    canary_stages jsonb,
+    snapshot_miss_count integer DEFAULT 0 NOT NULL,
+    snapshot_miss_last_at timestamp with time zone,
+    snapshot_miss_backoff_until timestamp with time zone,
+    workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
+    source_root text,
+    full_rootfs_allow_auto boolean DEFAULT false NOT NULL,
+    full_rootfs_override boolean,
+    source_sha256 text,
+    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
+    inferred_profile jsonb,
+    traffic_percent_explicit boolean DEFAULT false NOT NULL,
+    revision integer DEFAULT 0 NOT NULL,
+    service_rollout_handoff jsonb DEFAULT '{}'::jsonb NOT NULL,
+    release_command text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    release_command_shell boolean DEFAULT false NOT NULL,
+    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
+    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
+    override_readiness_probe jsonb,
+    secret_reload_signal text,
+    github_source_ref text,
+    github_installation_id bigint,
+    environment_workload_runtime jsonb,
+    serving_ended_at timestamp with time zone,
+    runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
+    environment_workload_held boolean DEFAULT false NOT NULL,
+    CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
+    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
+    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
+    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
+    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
+    CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
+    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
+    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
+    CONSTRAINT deployments_environment_workload_held_requires_runtime CHECK (((NOT environment_workload_held) OR (environment_workload_runtime IS NOT NULL))),
+    CONSTRAINT deployments_environment_workload_runtime_shape CHECK (((environment_workload_runtime IS NULL) OR ((jsonb_typeof(environment_workload_runtime) = 'object'::text) AND (environment_workload_runtime ?& ARRAY['source_id'::text, 'environment_id'::text, 'revision_id'::text, 'generation'::text, 'intent_version'::text, 'resource'::text, 'plan_hash'::text, 'app_id'::text, 'scope'::text, 'baseline'::text, 'start_command'::text, 'runtime'::text]) AND (jsonb_typeof((environment_workload_runtime -> 'runtime'::text)) = 'object'::text) AND (jsonb_typeof((environment_workload_runtime -> 'baseline'::text)) = 'object'::text) AND (((environment_workload_runtime ->> 'generation'::text))::bigint > 0) AND (((environment_workload_runtime ->> 'intent_version'::text))::bigint >= 0) AND ((environment_workload_runtime ->> 'plan_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((environment_workload_runtime ->> 'resource'::text) ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))),
+    CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
+    CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
+    CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
+    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
+    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
+    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
+    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
+    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
+    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
+    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
+    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
+    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
+    CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
+    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
+    CONSTRAINT deployments_service_rollout_handoff_object_chk CHECK ((jsonb_typeof(service_rollout_handoff) = 'object'::text)),
+    CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
+    CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
+    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
+    CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
+    CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
+    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
+    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
+    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
+);
+
+
+--
+-- Name: application_standard_runtime_producers(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_producers(a public.apps, d public.deployments) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE workloads text[]; workload text; root_producer jsonb; base_producer jsonb; artifacts jsonb:='[]'::jsonb;
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id)
+  AND NOT EXISTS(SELECT 1 FROM deployment_registry_rootfs WHERE deployment_id=d.id) THEN RETURN NULL; END IF;
+ IF jsonb_typeof(d.sidecars) IS DISTINCT FROM 'array' OR EXISTS(
+  SELECT 1 FROM jsonb_array_elements(d.sidecars) x GROUP BY x->>'name'
+  HAVING count(*)<>1 OR coalesce(x->>'name','') !~ '^[a-z0-9][a-z0-9-]{0,62}$' OR x->>'name'='main') THEN
+  RAISE EXCEPTION 'runtime workload membership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ workloads:=ARRAY[''] || ARRAY(SELECT x->>'name' FROM jsonb_array_elements(d.sidecars) x WHERE coalesce(x->>'image','')<>'' ORDER BY x->>'name');
+ FOREACH workload IN ARRAY workloads LOOP
+  IF workload='' AND EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id) THEN
+   root_producer:=application_standard_source_runtime_producer(a,d);
+  ELSE root_producer:=application_standard_runtime_root_producer(a,d,workload); END IF;
+  artifacts:=artifacts || jsonb_build_array(root_producer);
+  base_producer:=application_standard_runtime_base_producer(root_producer);
+  IF base_producer IS NOT NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(artifacts) x
+   WHERE x->>'kind'='base-image' AND x->>'producer_id'=base_producer->>'producer_id') THEN
+   artifacts:=artifacts || jsonb_build_array(base_producer);
+  END IF;
+ END LOOP;
+ SELECT jsonb_agg(x ORDER BY CASE WHEN x->>'kind'='base-image' THEN 0 ELSE 1 END,x->>'workload_name') INTO artifacts
+  FROM jsonb_array_elements(artifacts) x;
+ RETURN jsonb_build_object('format','gregale.runtime-artifact-input.v1','account_id',a.account_id::text,'org_id',a.org_id::text,
+  'app_id',a.id::text,'deployment_id',d.id::text,'scope',d.scope,'artifacts',artifacts);
+END;
+$_$;
+
+
+--
+-- Name: application_standard_runtime_requires_native(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_requires_native(input jsonb) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT coalesce((input->>'persisted_revision')::bigint,0)>0
+   OR coalesce(input->'adoptions'<>'[]'::jsonb OR input->'materialized_fields'<>'[]'::jsonb,false);
+$$;
+
+
+--
+-- Name: application_standard_runtime_root_producer(public.apps, public.deployments, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_root_producer(a public.apps, d public.deployments, workload text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE p deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE;
+        l deployment_sidecar_layers%ROWTYPE; image_ref text; value jsonb;
+BEGIN
+ SELECT f.* INTO p FROM deployment_registry_rootfs_current c
+ JOIN deployment_registry_rootfs f ON f.id=c.artifact_id
+ WHERE c.deployment_id=d.id AND c.workload_name=workload FOR SHARE OF f NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'runtime producer selection is incomplete' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=p.registry_verification_id FOR SHARE NOWAIT;
+ image_ref:=CASE WHEN workload='' AND d.kind='image' THEN d.image_digest ELSE
+  (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=workload) END;
+ IF (p.deployment_id=d.id AND p.workload_name=workload AND r.deployment_id=d.id AND r.workload_name=workload
+  AND r.app_id=a.id AND r.account_id=a.account_id AND p.input_snapshot->>'app_id'=a.id::text
+  AND p.input_snapshot->>'account_id'=a.account_id::text AND p.input_snapshot->>'org_id'=a.org_id::text
+  AND r.input_snapshot->>'org_id'=a.org_id::text AND p.input_snapshot->>'scope'=d.scope
+  AND p.input_snapshot->>'registry_input_hash'=r.input_hash AND r.input_snapshot->>'image_reference'=image_ref
+  AND p.input_snapshot->>'artifact_digest' ~ '^sha256:[a-f0-9]{64}$'
+  AND (p.input_snapshot->>'artifact_bytes')::bigint>0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime producer identity changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF workload='' THEN
+  IF (p.input_snapshot->>'kind' IN ('app-layer','full-rootfs') AND p.input_snapshot->>'storage_key'=d.rootfs_key
+   AND p.input_snapshot->>'rootfs_path'=d.rootfs_path AND (p.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes) IS NOT TRUE THEN
+   RAISE EXCEPTION 'runtime main producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ ELSE
+  SELECT * INTO l FROM deployment_sidecar_layers WHERE deployment_id=d.id AND sidecar_name=workload FOR SHARE NOWAIT;
+  IF (p.input_snapshot->>'kind'='sidecar-layer' AND p.input_snapshot->>'storage_key'=l.storage_key
+   AND (p.input_snapshot->>'content_bytes')::bigint=l.bytes AND r.input_snapshot->>'selected_reference'=l.content_digest) IS NOT TRUE THEN
+   RAISE EXCEPTION 'runtime sidecar producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ value:=jsonb_build_object('kind',p.input_snapshot->>'kind','workload_name',workload,'producer_id',p.id::text,
+  'producer_hash',p.input_hash,'storage_key',p.input_snapshot->>'storage_key','digest',p.input_snapshot->>'artifact_digest',
+  'bytes',(p.input_snapshot->>'artifact_bytes')::bigint);
+ IF coalesce(p.input_snapshot->>'base_producer_id','')<>'' THEN
+  value:=value || jsonb_build_object('base_producer_id',p.input_snapshot->>'base_producer_id','base_input_hash',p.input_snapshot->>'base_input_hash');
+ END IF;
+ IF coalesce(p.input_snapshot->>'base_producer_id','')<>'' THEN
+  PERFORM application_standard_runtime_default_base(p.input_snapshot,coalesce(a.runtime,''));
+ END IF;
+ RETURN value;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_runtime_snapshot(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_snapshot(application_id uuid, artifact_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; e app_application_standards%ROWTYPE;
+        acct accounts%ROWTYPE; o orgs%ROWTYPE; d deployments%ROWTYPE; producers jsonb;
+BEGIN
+ SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'runtime application is missing' USING ERRCODE='23514',CONSTRAINT='application_standards_pending';
+ END IF;
+ SELECT * INTO o FROM orgs WHERE id=a.org_id FOR SHARE NOWAIT;
+ SELECT * INTO acct FROM accounts WHERE id=a.account_id FOR SHARE NOWAIT;
+ SELECT * INTO e FROM app_application_standards WHERE app_id=a.id FOR SHARE NOWAIT;
+ IF NOT FOUND OR a.status='deleted' OR acct.status NOT IN ('active','past_due') OR acct.abuse_hold_at IS NOT NULL OR o.status NOT IN ('active','past_due') OR o.deleted_pending
+   OR e.org_id IS DISTINCT FROM a.org_id OR e.project_id IS DISTINCT FROM a.project_id
+   OR (e.exception_expires_at IS NOT NULL AND e.exception_expires_at<=clock_timestamp())
+   OR NOT ((e.state='unmanaged' AND e.persisted_revision=0 AND e.adoptions='[]'::jsonb AND cardinality(e.materialized_fields)=0)
+     OR (e.state IN ('persisted','observed') AND e.persisted_revision=e.desired_revision AND e.effective_hash <> '')) THEN
+  RAISE EXCEPTION 'runtime application standards are incomplete' USING ERRCODE='23514',CONSTRAINT='application_standards_pending';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || a.id::text,0)) THEN
+  RAISE EXCEPTION 'runtime controls are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+ END IF;
+ IF artifact_id IS NOT NULL THEN
+  SELECT * INTO d FROM deployments WHERE id=artifact_id FOR SHARE NOWAIT;
+  IF NOT FOUND OR d.app_id IS DISTINCT FROM a.id THEN
+   RAISE EXCEPTION 'runtime artifact belongs to another application' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_identity';
+  END IF;
+  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.' || d.id::text,0)) THEN
+   RAISE EXCEPTION 'runtime artifact children are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+  END IF;
+ END IF;
+ IF artifact_id IS NOT NULL THEN producers:=application_standard_runtime_producers(a,d); END IF;
+ RETURN application_standard_stable_runtime_input(jsonb_build_object(
+  'app_id',a.id::text,'org_id',a.org_id::text,'project_id',coalesce(a.project_id::text,''),'account_id',a.account_id::text,
+  'account_plan',acct.plan,'account_egress_allowlist_extra',acct.egress_allowlist_extra,
+  'desired_revision',e.desired_revision,'persisted_revision',e.persisted_revision,'effective_hash',e.effective_hash,
+  'adoptions',e.adoptions,'materialized_fields',to_jsonb(e.materialized_fields),'effective',e.effective,
+  'base_settings',e.base_settings,'local_settings',e.local_settings,'additional_log_destinations',to_jsonb(e.additional_log_destinations::text[]),
+  'settings',jsonb_build_object('require_signed',a.require_signed,'security_policy',a.security_policy,
+    'egress_cidrs',to_jsonb(a.egress_allowlist::text[]),'egress_extra_ports',to_jsonb(a.egress_ports)),
+  'runtime',jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'ram_mb',a.ram_mb,'app_protocol',a.app_protocol),
+  'drains',coalesce((SELECT jsonb_agg(jsonb_build_object('id',r.id::text,'kind',r.kind,'enabled',r.enabled,
+    'target_hash',encode(sha256(convert_to(r.target_url,'UTF8')),'hex'),
+    'auth_hash',encode(sha256(coalesce(r.auth_header_sealed,''::bytea)),'hex')) ORDER BY r.id)
+    FROM app_log_drains r WHERE r.app_id=a.id),'[]'::jsonb),
+  'signers',coalesce((SELECT jsonb_agg(jsonb_build_object('name',r.signer_name,
+    'fingerprint',encode(sha256(r.cosign_public_key),'hex')) ORDER BY r.signer_name)
+    FROM app_trusted_signers r WHERE r.app_id=a.id),'[]'::jsonb),
+  'artifact',CASE WHEN artifact_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object(
+    'id',d.id::text,'scope',d.scope,'kind',d.kind,'image_digest',coalesce(d.image_digest,''),
+    'rootfs_key',coalesce(d.rootfs_key,''),'rootfs_path',coalesce(d.rootfs_path,''),'rootfs_bytes',coalesce(d.rootfs_bytes,0),
+    'source_sha256',coalesce(d.source_sha256,''),'parked_reason',coalesce(d.parked_reason,''),
+    'scan_status',d.scan_status,'scan_result_hash',encode(sha256(convert_to(coalesce(d.scan_result::text,''),'UTF8')),'hex'),
+    'sidecars',coalesce((SELECT jsonb_agg(jsonb_build_object('sidecar_name',r.sidecar_name,
+      'storage_key',r.storage_key,'bytes',r.bytes,'content_digest',r.content_digest) ORDER BY r.sidecar_name)
+      FROM deployment_sidecar_layers r WHERE r.deployment_id=d.id),'[]'::jsonb)) END)
+  || CASE WHEN e.exception_expires_at IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('exception_expires_at_unix_nano',(extract(epoch FROM e.exception_expires_at)*1000000000)::bigint) END
+  || CASE WHEN producers IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runtime_artifacts',producers) END);
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+END;
+$$;
+
+
+--
+-- Name: application_standard_scalar_control_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_scalar_control_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE e jsonb;
+BEGIN
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = OLD.id;
+    IF (coalesce(jsonb_array_length(e->'sources'->'require_signed'), 0) > 0
+        AND to_jsonb(NEW.require_signed) IS DISTINCT FROM e->'values'->'require_signed')
+       OR (coalesce(jsonb_array_length(e->'sources'->'security_policy'), 0) > 0
+        AND to_jsonb(NEW.security_policy) IS DISTINCT FROM e->'values'->'security_policy')
+       OR (coalesce(jsonb_array_length(e->'sources'->'egress_cidrs'), 0) > 0
+        AND to_jsonb(NEW.egress_allowlist::text[]) IS DISTINCT FROM e->'values'->'egress_cidrs')
+       OR (coalesce(jsonb_array_length(e->'sources'->'egress_extra_ports'), 0) > 0
+        AND to_jsonb(NEW.egress_ports) IS DISTINCT FROM e->'values'->'egress_extra_ports') THEN
+        RAISE EXCEPTION 'application standard manages this control'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_signer_projection_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_signer_projection_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid; control_name text; logical uuid; e jsonb; expected record; backup jsonb; desired jsonb;
+BEGIN
+    IF TG_OP = 'DELETE' THEN app := OLD.app_id; control_name := OLD.signer_name;
+    ELSE app := NEW.app_id; control_name := NEW.signer_name; END IF;
+    IF NOT EXISTS (SELECT 1 FROM apps WHERE id = app AND status <> 'deleted') THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = app;
+    IF coalesce(jsonb_array_length(e->'sources'->'trusted_publishers'), 0) = 0 THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT resource_id INTO logical FROM application_standard_control_bindings
+    WHERE app_id = app AND field = 'trusted_publishers' AND physical_id = control_name;
+    IF logical IS NULL THEN
+        SELECT logical_id INTO logical FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'trusted_publishers' AND body->>'SignerName' = control_name
+          AND decode(coalesce(body->>'CosignPublicKey', ''), 'base64') = CASE WHEN TG_OP = 'DELETE' THEN OLD.cosign_public_key ELSE NEW.cosign_public_key END
+        ORDER BY logical_id LIMIT 1;
+    END IF;
+    desired := coalesce(e->'values'->'trusted_publishers', '[]'::jsonb);
+    IF TG_OP = 'DELETE' THEN
+        IF logical IS NULL OR NOT desired ? logical::text THEN RETURN OLD; END IF;
+    ELSIF logical IS NOT NULL AND desired ? logical::text THEN
+        SELECT p.* INTO expected FROM application_standard_publishers p
+        JOIN apps a ON a.org_id = p.org_id AND a.id = app
+        JOIN application_standard_control_bindings b ON b.app_id = app AND b.field = 'trusted_publishers'
+            AND b.resource_id = p.id AND b.physical_id = control_name
+        WHERE p.id = logical;
+        IF FOUND AND NEW.app_id = app AND NEW.account_id = (SELECT account_id FROM apps WHERE id = app)
+            AND NEW.cosign_public_key = expected.public_key_der THEN RETURN NEW; END IF;
+        SELECT body INTO backup FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'trusted_publishers' AND logical_id = logical;
+        IF backup IS NOT NULL AND NEW.app_id::text = backup->>'AppID' AND NEW.account_id::text = backup->>'AccountID'
+            AND NEW.signer_name = backup->>'SignerName'
+            AND NEW.cosign_public_key = decode(coalesce(backup->>'CosignPublicKey', ''), 'base64') THEN RETURN NEW; END IF;
+    END IF;
+    RAISE EXCEPTION 'application standard manages this control'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_acknowledgment_valid(jsonb, jsonb, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_acknowledgment_valid(a jsonb, g jsonb, now_nano bigint) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE c jsonb; main_bytes bigint;
+BEGIN
+ c:=a->'capture';
+ IF (jsonb_typeof(a)='object' AND a ?& ARRAY['grant','capture','completed_at_unix_nano']
+  AND a-ARRAY['grant','capture','completed_at_unix_nano']='{}'::jsonb AND (a->'grant')::text=g::text
+  AND application_standard_snapshot_positive_integer(a->'completed_at_unix_nano')
+  AND jsonb_typeof(c)='object' AND c ?& ARRAY['version','parent','memory','vmstate','private_drive','captured_at_unix_nano']
+  AND c-ARRAY['version','parent','memory','vmstate','private_drive','captured_at_unix_nano']='{}'::jsonb
+  AND jsonb_typeof(c->'version')='number' AND c->>'version'='1' AND (c->'parent')::text=(g->'parent')::text
+  AND application_standard_snapshot_positive_integer(c->'captured_at_unix_nano')
+  AND application_standard_snapshot_artifact_valid(c->'memory',g->>'memory_key')
+  AND application_standard_snapshot_artifact_valid(c->'vmstate',g->>'vmstate_key')
+  AND application_standard_snapshot_artifact_valid(c->'private_drive',g->>'private_drive_key')) IS NOT TRUE THEN RETURN false; END IF;
+ SELECT (d->>'injected_bytes')::bigint INTO main_bytes FROM jsonb_array_elements(g->'parent'->'artifact_consumption'->'drives') d
+  WHERE application_standard_native_source_role(d->'source')='main';
+ RETURN coalesce((c->'private_drive'->>'bytes')::bigint=main_bytes
+  AND (c->>'captured_at_unix_nano')::bigint>=(g->'parent'->>'completed_at_unix_nano')::bigint
+  AND (c->>'captured_at_unix_nano')::numeric>=(g->>'issued_at_unix_nano')::numeric-5000000000
+  AND (a->>'completed_at_unix_nano')::bigint>=(c->>'captured_at_unix_nano')::bigint
+  AND (a->>'completed_at_unix_nano')::bigint<(g->>'expires_at_unix_nano')::bigint
+  AND (a->>'completed_at_unix_nano')::numeric<=now_nano::numeric+5000000000,false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR invalid_parameter_value THEN RETURN false;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_artifact_valid(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_artifact_valid(a jsonb, key text) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+BEGIN
+ RETURN coalesce(jsonb_typeof(a)='object' AND a ?& ARRAY['storage_key','digest','bytes']
+  AND a-ARRAY['storage_key','digest','bytes']='{}'::jsonb
+  AND jsonb_typeof(a->'storage_key')='string' AND a->>'storage_key'=key
+  AND jsonb_typeof(a->'digest')='string' AND a->>'digest' ~ '^sha256:[0-9a-f]{64}$'
+  AND application_standard_snapshot_positive_integer(a->'bytes') AND (a->>'bytes')::numeric<=17179869184,false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_snapshot_capture_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_capture_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE locked jsonb; parent jsonb; b jsonb; now_nano bigint; deadline bigint;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF NOT EXISTS(SELECT 1 FROM apps WHERE id=OLD.app_id) OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id)
+   OR NOT EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id) THEN RETURN OLD; END IF;
+  RAISE EXCEPTION 'snapshot lineage is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
+  IF (to_jsonb(NEW)-ARRAY['acknowledgment','received_at']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['acknowledgment','received_at'])
+   OR OLD.acknowledgment IS NOT NULL OR NEW.acknowledgment IS NULL THEN
+   RAISE EXCEPTION 'snapshot lineage is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+  END IF;
+ ELSIF NEW.acknowledgment IS NOT NULL OR NEW.received_at IS NOT NULL THEN
+  RAISE EXCEPTION 'snapshot acknowledgment requires a saved grant' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ locked:=application_standard_lock_snapshot_capture(NEW.instance_id,NEW.expected_state);
+ parent:=locked->'parent'; b:=parent->'binding'; now_nano:=(locked->>'clock_unix_nano')::bigint;
+ deadline:=(locked->>'artifact_expires_at_unix_nano')::bigint;
+ IF NEW.app_id::text IS DISTINCT FROM b->>'app_id' OR NEW.deployment_id::text IS DISTINCT FROM b->>'deployment_id'
+  OR NEW.account_id::text IS DISTINCT FROM b->>'account_id' OR NEW.node_id::text IS DISTINCT FROM b->>'node_id'
+  OR NEW.parent_token::text IS DISTINCT FROM b->>'token' OR NEW.memory_key IS DISTINCT FROM NEW.grant_data->>'memory_key'
+  OR NOT application_standard_native_inputs_match(NEW.input_snapshot,locked->'input_snapshot')
+  OR NOT application_standard_snapshot_grant_valid(NEW.grant_data,NEW.token,parent,NEW.expected_state,
+   (locked->>'source_started_at_unix_nano')::bigint,now_nano,deadline) THEN
+  RAISE EXCEPTION 'snapshot grant or scope is stale' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF (NEW.grant_data->>'issued_at_unix_nano')::numeric<now_nano::numeric-5000000000
+   OR NEW.input_snapshot::text IS DISTINCT FROM (locked->'input_snapshot')::text THEN
+   RAISE EXCEPTION 'snapshot grant issue inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  NEW.created_at:=clock_timestamp();
+ ELSE
+  IF NOT application_standard_snapshot_acknowledgment_valid(NEW.acknowledgment,NEW.grant_data,now_nano) THEN
+   RAISE EXCEPTION 'snapshot acknowledgment is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  NEW.received_at:=clock_timestamp();
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_snapshot_captures (
+    token uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    parent_token uuid NOT NULL,
+    memory_key text NOT NULL,
+    expected_state text NOT NULL,
+    grant_data jsonb NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    acknowledgment jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    received_at timestamp with time zone,
+    CONSTRAINT application_standard_snapshot_captures_acknowledgment_check CHECK ((jsonb_typeof(acknowledgment) = 'object'::text)),
+    CONSTRAINT application_standard_snapshot_captures_check CHECK (((acknowledgment IS NULL) = (received_at IS NULL))),
+    CONSTRAINT application_standard_snapshot_captures_expected_state_check CHECK ((expected_state = ANY (ARRAY['running'::text, 'snapshotting'::text, 'migrating'::text]))),
+    CONSTRAINT application_standard_snapshot_captures_grant_data_check CHECK ((jsonb_typeof(grant_data) = 'object'::text)),
+    CONSTRAINT application_standard_snapshot_captures_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    fc_version text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    disk_bytes bigint NOT NULL,
+    stale boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    tier text DEFAULT 'init'::text NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
+    base_image_version text DEFAULT ''::text NOT NULL,
+    delete_pending boolean DEFAULT false NOT NULL,
+    application_standard_capture_token uuid,
+    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
+    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
+);
+
+
+--
+-- Name: COLUMN snapshots.stored_bytes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.stored_bytes IS 'Filesystem allocation of published mem + vmstate artifacts. Zero means a legacy writer; telemetry conservatively falls back to logical bytes.';
+
+
+--
+-- Name: COLUMN snapshots.base_image_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.';
+
+
+--
+-- Name: COLUMN snapshots.application_standard_capture_token; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.application_standard_capture_token IS 'Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.';
+
+
+--
+-- Name: application_standard_snapshot_catalog_matches(public.snapshots, public.application_standard_snapshot_captures); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_catalog_matches(s public.snapshots, c public.application_standard_snapshot_captures) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE g jsonb; a jsonb;
+BEGIN
+ g:=c.grant_data; a:=c.acknowledgment;
+ RETURN coalesce(c.received_at IS NOT NULL AND a IS NOT NULL
+  AND c.deployment_id=s.deployment_id AND c.memory_key=s.storage_key AND g->>'memory_key'=s.storage_key
+  AND g->>'vmstate_key'=left(s.storage_key,length(s.storage_key)-3)||'vmstate'
+  AND g->>'private_drive_key'=left(s.storage_key,length(s.storage_key)-3)||'drive'
+  AND g->>'mode' IN ('warm','park') AND s.tier=CASE WHEN g->>'mode'='warm' THEN 'warm' ELSE 'init' END
+  AND g->>'fc_version'=s.fc_version AND s.stored_bytes>=0
+  AND (a->'capture'->'memory'->>'bytes')::bigint=s.mem_bytes
+  AND (a->'capture'->'vmstate'->>'bytes')::bigint=s.disk_bytes
+  AND application_standard_snapshot_acknowledgment_valid(a,g,(a->>'completed_at_unix_nano')::bigint),false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_consumption_matches(jsonb, jsonb, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_consumption_matches(c jsonb, b jsonb, capture jsonb, drives jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+BEGIN
+ RETURN coalesce(jsonb_typeof(c)='object'
+  AND c-ARRAY['version','capture_token','evidence_hash','memory','vmstate','private_drive','mapped_memory_bytes']='{}'::jsonb
+  AND jsonb_typeof(c->'version')='number' AND c->>'version'='1' AND b->'protocol_version'='2'::jsonb
+  AND jsonb_typeof(c->'capture_token')='string' AND c->'capture_token'=b->'snapshot_capture_token'
+  AND c->>'capture_token' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND c->>'capture_token'<>'00000000-0000-0000-0000-000000000000'
+  AND jsonb_typeof(c->'evidence_hash')='string' AND c->'evidence_hash'=b->'snapshot_evidence_hash'
+  AND c->>'evidence_hash' ~ '^[0-9a-f]{64}$'
+  AND c->'memory'=capture->'memory' AND c->'vmstate'=capture->'vmstate' AND c->'private_drive'=capture->'private_drive'
+  AND jsonb_typeof(c->'mapped_memory_bytes')='number' AND c->>'mapped_memory_bytes' ~ '^[1-9][0-9]{0,10}$'
+  AND c->'mapped_memory_bytes'=c->'memory'->'bytes'
+  AND (c->>'mapped_memory_bytes')::bigint%1048576=0
+  AND EXISTS(SELECT 1 FROM jsonb_array_elements(drives->'drives') d
+   WHERE application_standard_native_source_role(d->'source')='main' AND d->'injected_bytes'=c->'private_drive'->'bytes'),false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR invalid_parameter_value THEN RETURN false;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_snapshot_grant_valid(jsonb, uuid, jsonb, text, bigint, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_grant_valid(g jsonb, token uuid, parent jsonb, expected_state text, source_started bigint, now_nano bigint, deadline bigint) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE prefix text; dep text; mode text;
+BEGIN
+ IF (jsonb_typeof(g)='object' AND g ?& ARRAY['version','token','parent','memory_key','vmstate_key','private_drive_key',
+  'fc_version','mode','before_checkpoint','source_started_at_unix_nano','issued_at_unix_nano','expires_at_unix_nano']
+  AND g-ARRAY['version','token','parent','memory_key','vmstate_key','private_drive_key','fc_version','mode',
+  'before_checkpoint','source_started_at_unix_nano','issued_at_unix_nano','expires_at_unix_nano']='{}'::jsonb
+  AND jsonb_typeof(g->'version')='number' AND g->>'version'='1'
+  AND jsonb_typeof(g->'token')='string' AND g->>'token'=token::text
+  AND token<>'00000000-0000-0000-0000-000000000000'::uuid
+  AND g->>'token' IS DISTINCT FROM parent->'snapshot_consumption'->>'capture_token' AND (g->'parent')::text=parent::text
+  AND jsonb_typeof(g->'memory_key')='string' AND octet_length(g->>'memory_key')<=512
+  AND jsonb_typeof(g->'vmstate_key')='string' AND jsonb_typeof(g->'private_drive_key')='string'
+  AND jsonb_typeof(g->'fc_version')='string' AND octet_length(g->>'fc_version') BETWEEN 1 AND 128
+  AND g->>'fc_version' !~ '[[:space:]/\\]' AND jsonb_typeof(g->'mode')='string'
+  AND jsonb_typeof(g->'before_checkpoint')='boolean'
+  AND application_standard_snapshot_positive_integer(g->'source_started_at_unix_nano')
+  AND application_standard_snapshot_positive_integer(g->'issued_at_unix_nano')
+  AND application_standard_snapshot_positive_integer(g->'expires_at_unix_nano')) IS NOT TRUE THEN RETURN false; END IF;
+ dep:=parent->'binding'->>'deployment_id'; mode:=g->>'mode';
+ IF NOT (mode='warm' AND expected_state='running' AND g->'before_checkpoint'='false'::jsonb
+  OR mode='park' AND expected_state='snapshotting'
+  OR mode='migration' AND expected_state='migrating' AND g->'before_checkpoint'='false'::jsonb) THEN RETURN false; END IF;
+ prefix:='snap/' || dep || CASE WHEN mode='warm' THEN '/warm' ELSE '' END || '/captures/' || token::text || '/v2/';
+ IF g->>'memory_key'<>(prefix || 'mem') THEN
+  prefix:='snap/' || replace(dep,'-','') || CASE WHEN mode='warm' THEN '/warm' ELSE '' END || '/captures/' || token::text || '/v2/';
+ END IF;
+ RETURN coalesce(g->>'memory_key'=prefix || 'mem' AND g->>'vmstate_key'=prefix || 'vmstate'
+  AND g->>'private_drive_key'=prefix || 'drive'
+  AND (g->>'source_started_at_unix_nano')::bigint=source_started
+  AND source_started<=(g->>'issued_at_unix_nano')::numeric+5000000000
+  AND (g->>'issued_at_unix_nano')::bigint<=now_nano::numeric+5000000000
+  AND (g->>'expires_at_unix_nano')::bigint>now_nano
+  AND (g->>'expires_at_unix_nano')::numeric>(g->>'issued_at_unix_nano')::numeric
+  AND (g->>'expires_at_unix_nano')::numeric-(g->>'issued_at_unix_nano')::numeric<=600000000000
+  AND (deadline IS NULL OR (g->>'expires_at_unix_nano')::bigint<=deadline),false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_namespace_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_namespace_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtextextended(NEW.memory_key,43120261002));
+ IF EXISTS(SELECT 1 FROM snapshots WHERE storage_key=NEW.memory_key) THEN
+  RAISE EXCEPTION 'snapshot key was published before its grant' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_conflict';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_positive_integer(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_positive_integer(v jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+BEGIN
+ RETURN coalesce(jsonb_typeof(v)='number' AND v::text ~ '^[1-9][0-9]{0,18}$'
+  AND v::text::numeric<=9223372036854775807,false);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_snapshot_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c application_standard_snapshot_captures;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW.application_standard_capture_token IS DISTINCT FROM OLD.application_standard_capture_token
+   OR (OLD.application_standard_capture_token IS NOT NULL AND
+    (to_jsonb(NEW)-ARRAY['stale','delete_pending','stored_bytes']) IS DISTINCT FROM
+    (to_jsonb(OLD)-ARRAY['stale','delete_pending','stored_bytes'])) THEN
+   RAISE EXCEPTION 'snapshot capture association is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+  END IF;
+  IF (to_jsonb(NEW)-ARRAY['stale','delete_pending','stored_bytes']) IS NOT DISTINCT FROM
+   (to_jsonb(OLD)-ARRAY['stale','delete_pending','stored_bytes']) THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(NEW.storage_key,43120261002));
+ IF NEW.application_standard_capture_token IS NULL THEN
+  IF EXISTS(SELECT 1 FROM application_standard_snapshot_captures WHERE memory_key=NEW.storage_key) THEN
+   RAISE EXCEPTION 'snapshot requires its catalog reference' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_identity';
+  END IF;
+  RETURN NEW; -- Unknown legacy cache rows never become measured capture proof.
+ END IF;
+ SELECT * INTO c FROM application_standard_snapshot_captures
+ WHERE token=NEW.application_standard_capture_token FOR KEY SHARE;
+ IF NOT FOUND OR NOT application_standard_snapshot_catalog_matches(NEW,c)
+  OR NOT EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+   WHERE d.id=NEW.deployment_id AND a.id=c.app_id AND a.account_id=c.account_id) THEN
+  RAISE EXCEPTION 'snapshot does not match published capture' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_identity';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_resume_boot_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_resume_boot_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.receipt ? 'snapshot_resume_evidence' THEN
+  RAISE EXCEPTION 'resume requires an issued promotion' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_snapshot_resume_parent(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_resume_parent(r jsonb) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+ SELECT (r-'snapshot_resume_evidence') || jsonb_build_object('binding',r->'snapshot_resume_evidence'->'parent_binding',
+  'paused',true,'completed_at_unix_nano',r->'snapshot_resume_evidence'->'parent_completed_at_unix_nano');
+$$;
+
+
+--
+-- Name: application_standard_snapshot_resume_parent_hash(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_resume_parent_hash(parent jsonb) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+ SELECT encode(sha256(convert_to('gregale.runtime-snapshot-resume.parent.v1','UTF8') || decode('00','hex') ||
+  application_standard_restore_wire_message('receipt',parent)),'hex');
+$$;
+
+
+--
+-- Name: application_standard_snapshot_resume_valid(jsonb, jsonb, jsonb, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_resume_valid(b jsonb, r jsonb, parent jsonb, now_nano bigint) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE e jsonb:=r->'snapshot_resume_evidence'; old jsonb:=parent->'binding'; command_nano bigint; host_nano bigint;
+ hook_nano bigint; completed_nano bigint; parent_nano bigint; payload text;
+BEGIN
+ IF (jsonb_typeof(e)='object' AND e-ARRAY['version','binding','parent_receipt_hash','resume_command_hash','resume_hook_payload_hash',
+    'command_completed_at_unix_nano','host_time_unix_nano','hook_completed_at_unix_nano','completed_at_unix_nano','parent_binding','parent_completed_at_unix_nano']='{}'::jsonb
+  AND (SELECT count(*) FROM jsonb_object_keys(e))=11
+  AND e->'version'='1'::jsonb AND jsonb_typeof(e->'version')='number' AND e->>'version'='1'
+  AND r-ARRAY['binding','native_input_hash','netns','host_ip','lease_uid','method','paused','completed_at_unix_nano','artifact_consumption','snapshot_consumption','snapshot_resume_evidence']='{}'::jsonb
+  AND old-ARRAY['protocol_version','token','instance_id','app_id','deployment_id','account_id','node_id','incarnation','desired_revision','effective_hash','captured_input_hash','payload_hash','egress_revision','issued_at_unix_nano','expires_at_unix_nano','artifact_sources_hash','snapshot_capture_token','snapshot_evidence_hash']='{}'::jsonb
+  AND old->'protocol_version'='2'::jsonb AND parent->'paused'='true'::jsonb AND parent->'method'='1'::jsonb
+  AND NOT(parent ? 'snapshot_resume_evidence') AND r->'paused'='false'::jsonb AND r->'method'='1'::jsonb
+  AND r->'binding'=b AND e->'binding'=b AND e->'parent_binding'=old
+  AND e->'parent_completed_at_unix_nano'=parent->'completed_at_unix_nano'
+  AND (r-ARRAY['binding','paused','completed_at_unix_nano','snapshot_resume_evidence'])=(parent-ARRAY['binding','paused','completed_at_unix_nano'])
+  AND (b-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano'])=(old-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano'])
+  AND b->>'token'<>old->>'token' AND old->>'token' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND old->>'token'<>'00000000-0000-0000-0000-000000000000' AND old->>'payload_hash' ~ '^[0-9a-f]{64}$'
+  AND e->>'parent_receipt_hash'=application_standard_snapshot_resume_parent_hash(parent)
+  AND e->>'resume_command_hash'=encode(sha256(convert_to('gregale.runtime-resume.command.v1','UTF8') || decode('00','hex') || convert_to('{"state":"Resumed"}','UTF8')),'hex')
+  AND e->>'resume_hook_payload_hash' ~ '^[0-9a-f]{64}$'
+  AND e->'completed_at_unix_nano'=r->'completed_at_unix_nano') IS NOT TRUE THEN RETURN false; END IF;
+ -- Enforce integer/bool/string wire types, including nested bindings, before casts.
+ PERFORM application_standard_restore_wire_message('receipt',r);
+ PERFORM application_standard_restore_wire_message('receipt',parent);
+ command_nano:=(e->>'command_completed_at_unix_nano')::bigint; host_nano:=(e->>'host_time_unix_nano')::bigint;
+ hook_nano:=(e->>'hook_completed_at_unix_nano')::bigint; completed_nano:=(e->>'completed_at_unix_nano')::bigint;
+ parent_nano:=(parent->>'completed_at_unix_nano')::bigint;
+ payload:=encode(sha256(convert_to('gregale.runtime-promotion.v1','UTF8') || decode('00','hex') ||
+  application_standard_restore_wire_message('promotion',jsonb_build_object('parent',parent))),'hex');
+ RETURN coalesce(b->>'payload_hash'=payload AND parent_nano>0 AND (old->>'issued_at_unix_nano')::bigint>0
+  AND (old->>'expires_at_unix_nano')::numeric>(old->>'issued_at_unix_nano')::numeric
+  AND (old->>'expires_at_unix_nano')::numeric-(old->>'issued_at_unix_nano')::numeric<=600000000000
+  AND parent_nano::numeric>=(old->>'issued_at_unix_nano')::numeric-5000000000
+  AND parent_nano<(old->>'expires_at_unix_nano')::bigint
+  AND command_nano>0 AND command_nano>=parent_nano AND command_nano::numeric>=(b->>'issued_at_unix_nano')::numeric-5000000000
+  AND host_nano>=command_nano AND hook_nano>=host_nano AND completed_nano>=hook_nano
+  AND completed_nano<(b->>'expires_at_unix_nano')::bigint AND completed_nano::numeric<=now_nano::numeric+5000000000,false);
+EXCEPTION WHEN data_exception OR check_violation THEN RETURN false;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_source_runtime_producer(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_source_runtime_producer(a public.apps, d public.deployments) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE f source_build_rootfs%ROWTYPE; origin build_export_publications%ROWTYPE;
+ base jsonb; b base_image_producers%ROWTYPE; runtime text; kind text;
+BEGIN
+ SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
+ WHERE c.deployment_id=d.id FOR SHARE OF c,r NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'source runtime selection missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ PERFORM application_standard_lock_source_runtime_rootfs(f.input_snapshot,f.id);
+ SELECT * INTO origin FROM build_export_publications WHERE id=f.publication_id FOR SHARE NOWAIT;
+ runtime:=CASE WHEN a.type='function' OR coalesce(a.runtime,'')<>'' THEN coalesce(nullif(a.runtime,''),d.handler,'') ELSE '' END;
+ kind:=CASE WHEN a.type='function' OR coalesce(a.runtime,'')<>'' THEN 'function-layer' ELSE 'source-app-layer' END;
+ IF (origin.input_snapshot->'claims'->>'account_id'=a.account_id::text AND origin.input_snapshot->'claims'->>'app_id'=a.id::text
+  AND origin.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
+  AND origin.input_snapshot->'claims'->>'deployment_id'=d.id::text
+  AND origin.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+  AND (coalesce(d.source_sha256,'')='' OR origin.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
+  AND d.kind IN ('tarball','dockerfile','github','preview')
+  AND f.published_at>=origin.verified_at AND f.expires_at<=origin.expires_at
+  AND f.input_snapshot->>'kind'=kind AND f.input_snapshot->>'runtime'=runtime
+  AND f.input_snapshot->>'layout_version'='faas-app-layer-layout-v1'
+  AND (kind<>'function-layer' OR f.input_snapshot->>'runner_digest' ~ '^sha256:[a-f0-9]{64}$')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'source runtime lineage changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ base:=application_standard_runtime_base_producer(f.input_snapshot);
+ SELECT * INTO b FROM base_image_producers WHERE id=(base->>'producer_id')::uuid FOR SHARE NOWAIT;
+ IF (base IS NOT NULL AND base->>'storage_key'=CASE WHEN runtime='' THEN 'base/base-amd64.ext4' ELSE 'base/runner-'||runtime||'-amd64.ext4' END
+  AND base->>'storage_key'<>f.input_snapshot->>'storage_key' AND b.input_snapshot->>'layout_version'='faas-base-layout-v3'
+  AND b.input_snapshot->>'guest_init_digest'=f.input_snapshot->>'guest_init_digest') IS NOT TRUE THEN
+  RAISE EXCEPTION 'source runtime base changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ -- This historical projection grants no fresh trust. The Go native transaction
+ -- authenticates the current signature and conversion intent through freshRuntimeScanTx.
+ RETURN jsonb_build_object('kind',kind,'workload_name','','producer_id',f.id::text,'producer_hash',f.input_hash,
+  'storage_key',f.input_snapshot->>'storage_key','digest',f.input_snapshot->>'artifact_digest','bytes',f.input_snapshot->'artifact_bytes',
+  'base_producer_id',f.input_snapshot->>'base_producer_id','base_input_hash',f.input_snapshot->>'base_input_hash');
+END;
+$_$;
+
+
+--
+-- Name: application_standard_stable_runtime_input(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_stable_runtime_input(input jsonb) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE identity jsonb;
+BEGIN
+ IF NOT input ? 'runtime_artifacts' THEN RETURN input; END IF;
+ identity:=input->'runtime_artifacts';
+ IF jsonb_typeof(input->'artifact') IS DISTINCT FROM 'object' OR jsonb_typeof(identity) IS DISTINCT FROM 'object'
+  OR jsonb_typeof(identity->'artifacts') IS DISTINCT FROM 'array' THEN
+  RAISE EXCEPTION 'runtime producer projection invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF (identity->>'format'='gregale.runtime-artifact-input.v1' AND identity->>'account_id'=input->>'account_id'
+  AND identity->>'org_id'=input->>'org_id' AND identity->>'app_id'=input->>'app_id'
+  AND identity->>'deployment_id'=input->'artifact'->>'id' AND identity->>'scope'=input->'artifact'->>'scope'
+  AND jsonb_array_length(identity->'artifacts')>0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime producer projection owner changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ -- Producer membership, complete bytes and every control stay in the input.
+ -- Private native artifact leases remain independently mandatory at admission.
+ RETURN input #- '{artifact,scan_status}' #- '{artifact,scan_result_hash}';
+END;
+$$;
+
+
+--
+-- Name: application_standard_target_intent_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_target_intent_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM application_standard_operations WHERE id = OLD.operation_id) THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'application standard target history is retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_target_intent_immutable';
+    END IF;
+    IF NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.app_id IS DISTINCT FROM OLD.app_id
+       OR NEW.position IS DISTINCT FROM OLD.position OR NEW.approved_app IS DISTINCT FROM OLD.approved_app THEN
+        RAISE EXCEPTION 'application standard target intent is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_target_intent_immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_version_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_version_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Organization erasure cascades through the parent foreign key. Direct
+    -- customer/version deletion and every update remain prohibited.
+    IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'application standards and their versions are immutable' USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
 -- Name: apps_bump_cpu_policy_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -577,22 +4273,6 @@ $$;
 
 
 --
--- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-    SELECT EXISTS (
-        SELECT 1
-          FROM accounts
-         WHERE id = p_account_id
-           AND plan <> 'free'
-    );
-$$;
-
-
---
 -- Name: apps_streaming_plan_app_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -649,10 +4329,14 @@ BEGIN
     SELECT state INTO guard_state FROM project_environment_clone_configuration_guards
     WHERE project_id = project FOR SHARE;
     IF NOT FOUND THEN
-        -- The project BEFORE DELETE guard already admitted this deletion.
-        -- FK cascades can remove the guard before dependent rows are cleaned.
-        -- A live project with missing evidence must still fail closed.
-        IF NOT EXISTS (SELECT 1 FROM projects WHERE id = project) THEN RETURN; END IF;
+        -- The project or account BEFORE DELETE guard already admitted this
+        -- deletion. FK cascades can remove the guard before dependent rows,
+        -- or before the project itself, are cleaned. A live project in a
+        -- live account with missing evidence must still fail closed.
+        IF NOT EXISTS (
+            SELECT 1 FROM projects p JOIN accounts a ON a.id = p.account_id
+            WHERE p.id = project
+        ) THEN RETURN; END IF;
         RAISE EXCEPTION 'project configuration guard is missing'
             USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
     END IF;
@@ -720,6 +4404,64 @@ $$;
 
 
 --
+-- Name: authorize_binding_release_deactivation(uuid, text, uuid, text, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_binding_release_deactivation(target_project uuid, target_environment text, receipt_id uuid, prior_release text, members jsonb, fences jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g jsonb;
+BEGIN
+ IF prior_release='' THEN RAISE EXCEPTION 'active graph required' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
+ IF EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id WHERE a.project_id=target_project AND a.status<>'deleted' AND coalesce(a.preview_of_slug,'')='' AND d.scope=target_environment AND d.environment_workload_runtime IS NOT NULL) THEN
+  RAISE EXCEPTION 'managed workload requires GitOps graph' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ PERFORM authorize_binding_release_graph(target_project,target_environment,receipt_id,prior_release,members,fences);
+ g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ -- This grant can retire the exact current graph, never insert a replacement.
+ PERFORM set_config('gregale.binding_release_graph',(g || jsonb_build_object('new_id','','action','deactivate','receipt_id',receipt_id))::text,true);
+ RETURN true;
+END $$;
+
+
+--
+-- Name: authorize_binding_release_graph(uuid, text, uuid, text, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_binding_release_graph(target_project uuid, target_environment text, next_release uuid, prior_release text, members jsonb, fences jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; f jsonb; ready_count integer; latest text;
+BEGIN
+ IF jsonb_typeof(members) <> 'object' OR (SELECT count(*) FROM jsonb_each(members)) = 0 THEN
+  RAISE EXCEPTION 'invalid checked graph' USING ERRCODE='23514', CONSTRAINT='binding_release_changed';
+ END IF;
+ -- publishProjectReleaseSetTx already holds the project and app locks.
+ SELECT id::text INTO latest FROM project_release_sets WHERE project_id=target_project AND environment_slug=target_environment AND active;
+ IF coalesce(latest,'') <> prior_release THEN RAISE EXCEPTION 'active graph changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
+ PERFORM authorize_binding_release_traffic(fences);
+ IF (SELECT count(*) FROM apps WHERE project_id=target_project AND status<>'deleted' AND coalesce(preview_of_slug,'')='') <> (SELECT count(*) FROM jsonb_each(members)) THEN
+  RAISE EXCEPTION 'graph membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ FOR a IN SELECT * FROM apps WHERE project_id=target_project AND status<>'deleted' AND coalesce(preview_of_slug,'')='' ORDER BY id LOOP
+  SELECT value INTO f FROM jsonb_array_elements(fences) WHERE value->>'app_id'=a.id::text;
+  IF f IS NULL OR f->>'deployment_id' IS DISTINCT FROM members->>a.id::text OR f->>'account_id' IS DISTINCT FROM a.account_id::text OR f->>'scope' IS DISTINCT FROM target_environment OR
+    NOT EXISTS (SELECT 1 FROM app_binding_release_policies p WHERE p.app_id=a.id AND p.scope=target_environment AND p.mode='enforce') THEN
+   RAISE EXCEPTION 'graph member lacks enforced evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+  END IF;
+  IF coalesce(a.manifest->>'execution_mode','')='service' THEN
+   SELECT count(*) INTO ready_count FROM (SELECT id FROM instances WHERE app_id=a.id AND deployment_id=(members->>a.id::text)::uuid AND mode='service' AND state='running' FOR SHARE) ready;
+   IF ready_count < greatest(1,coalesce((a.manifest->'service_replicas'->>'desired')::integer,1)) THEN
+    RAISE EXCEPTION 'graph service recipient is not ready' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+   END IF;
+  END IF;
+ END LOOP;
+ PERFORM set_config('gregale.binding_release_graph',jsonb_build_object('project_id',target_project,'environment',target_environment,'new_id',next_release,'old_id',prior_release,'members',members,'fences',fences)::text,true);
+ RETURN true;
+END $$;
+
+
+--
 -- Name: authorize_binding_release_traffic(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -743,7 +4485,7 @@ BEGIN
    RAISE EXCEPTION 'binding evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
   END IF;
   SELECT * INTO p FROM app_binding_release_policies WHERE app_id=d.app_id AND scope=d.scope;
-  IF p.mode='enforce' AND NOT coalesce((f->>'policy_revision')::bigint=p.revision AND (f->>'max_age_seconds')::numeric>0 AND (f->>'max_age_seconds')::numeric<=p.max_age_seconds AND NOT (f->>'allow_unsupported')::boolean AND (NOT p.require_application_ack OR (f->>'require_application_ack')::boolean) AND coalesce(NULLIF(f->'object_storage_requirements','null'::jsonb),'{}'::jsonb)=p.object_storage_requirements,false) THEN
+  IF p.mode='enforce' AND NOT coalesce((f->>'policy_revision')::bigint=p.revision AND (f->>'max_age_seconds')::numeric>0 AND (f->>'max_age_seconds')::numeric<=p.max_age_seconds AND NOT (f->>'allow_unsupported')::boolean AND (NOT p.require_application_ack OR (f->>'require_application_ack')::boolean) AND coalesce(NULLIF(f->'object_storage_requirements','null'::jsonb),'{}'::jsonb)=p.object_storage_requirements AND coalesce(NULLIF(f->'queue_requirements','null'::jsonb),'{}'::jsonb)=p.queue_requirements,false) THEN
    RAISE EXCEPTION 'binding release policy changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
   END IF;
  END LOOP;
@@ -784,6 +4526,64 @@ BEGIN
         PERFORM enqueue_automatic_route_check(NEW.app_id);
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: base_image_producer_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_producer_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'DELETE' AND current_setting('gregale.base_producer_insert',true)=NEW.producer_id::text
+   AND (TG_OP='INSERT' OR NEW.storage_key=OLD.storage_key) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base producer selection is private' USING ERRCODE='23514',CONSTRAINT='base_image_producer_immutable';
+END;
+$$;
+
+
+--
+-- Name: base_image_producer_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_producer_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.base_producer_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base producer evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='base_image_producer_immutable';
+END;
+$$;
+
+
+--
+-- Name: base_image_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_scan_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'DELETE' AND current_setting('gregale.base_scan_insert',true)=NEW.scan_id::text
+   AND (TG_OP='INSERT' OR NEW.storage_key=OLD.storage_key) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base scan selection is private' USING ERRCODE='23514',CONSTRAINT='base_image_scan_immutable';
+END;
+$$;
+
+
+--
+-- Name: base_image_scan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_scan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.base_scan_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base scan evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='base_image_scan_immutable';
 END;
 $$;
 
@@ -835,6 +4635,31 @@ BEGIN
           AND image_storage_key_snapshot IS NULL;
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: build_export_publication_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.build_export_publication_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF current_setting('gregale.build_export_publication_insert',true) IS DISTINCT FROM NEW.id::text THEN
+   RAISE EXCEPTION 'build export must use private store' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+  END IF;
+  IF EXISTS(SELECT 1 FROM build_export_publications p WHERE p.build_id=NEW.build_id
+   AND p.input_snapshot->'claims'->>'claim_started_at'=NEW.input_snapshot->'claims'->>'claim_started_at'
+   AND p.input_snapshot->'claims' IS DISTINCT FROM NEW.input_snapshot->'claims') THEN
+   RAISE EXCEPTION 'build export claim already published' USING ERRCODE='23514',CONSTRAINT='build_export_publication_conflict';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' AND (NOT EXISTS(SELECT 1 FROM builds WHERE id=OLD.build_id) OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id)) THEN RETURN OLD;END IF;
+ RAISE EXCEPTION 'build export is immutable' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
 END;
 $$;
 
@@ -1199,6 +5024,23 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: capture_queue_canary_invocation_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_queue_canary_invocation_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE affected_app uuid;
+BEGIN
+ IF ROW(OLD.state,OLD.attempts,OLD.replay_generation,OLD.received_at,OLD.completed_at,OLD.headers,OLD.queue_binding_id,OLD.deployment_scope,OLD.deadline_at,OLD.account_id,OLD.app_id)
+ IS NOT DISTINCT FROM ROW(NEW.state,NEW.attempts,NEW.replay_generation,NEW.received_at,NEW.completed_at,NEW.headers,NEW.queue_binding_id,NEW.deployment_scope,NEW.deadline_at,NEW.account_id,NEW.app_id) THEN RETURN NEW; END IF;
+ SELECT app_id INTO affected_app FROM queue_binding_canaries WHERE id=NEW.id;
+ IF affected_app IS NOT NULL THEN PERFORM bump_binding_promotion_revision(affected_app); END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -1753,6 +5595,37 @@ $$;
 
 
 --
+-- Name: deployment_artifact_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_artifact_scan_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'DELETE' AND current_setting('gregale.artifact_scan_insert',true)=NEW.scan_id::text
+   AND (TG_OP='INSERT' OR (NEW.deployment_id=OLD.deployment_id AND NEW.workload_name=OLD.workload_name)) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'artifact scan selection is private' USING ERRCODE='23514',CONSTRAINT='deployment_artifact_scan_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_artifact_scan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_artifact_scan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.artifact_scan_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'artifact scan evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='deployment_artifact_scan_immutable';
+END;
+$$;
+
+
+--
 -- Name: deployment_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1762,6 +5635,88 @@ CREATE FUNCTION public.deployment_openapi_docs_set_updated_at() RETURNS trigger
 BEGIN
   NEW.updated_at = now();
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployment_registry_rootfs_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_registry_rootfs_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ IF TG_OP <> 'DELETE' AND current_setting('gregale.registry_rootfs_insert',true)=NEW.artifact_id::text
+   AND (TG_OP='INSERT' OR (NEW.deployment_id=OLD.deployment_id AND NEW.workload_name=OLD.workload_name)) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'registry rootfs selection must use private publication' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_registry_rootfs_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_registry_rootfs_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.registry_rootfs_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'registry rootfs evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_registry_verification_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_registry_verification_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF current_setting('gregale.registry_verification_insert',true) IS DISTINCT FROM NEW.id::text THEN
+   RAISE EXCEPTION 'registry verification must use private store' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'registry verification is immutable' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_runtime_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_runtime_scan_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'DELETE' AND current_setting('gregale.runtime_scan_insert',true)=NEW.scan_id::text
+  AND (TG_OP='INSERT' OR NEW.deployment_id=OLD.deployment_id) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'runtime scan selection is private' USING ERRCODE='23514',CONSTRAINT='deployment_runtime_scan_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_runtime_scan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_runtime_scan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.runtime_scan_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'runtime scan evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='deployment_runtime_scan_immutable';
 END;
 $$;
 
@@ -2072,15 +6027,26 @@ $$;
 CREATE FUNCTION public.enforce_binding_release_graph() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE app uuid;
+DECLARE grant_value jsonb; f jsonb;
 BEGIN
- IF (TG_OP='UPDATE' AND NEW.active=OLD.active) OR (TG_OP='INSERT' AND NOT NEW.active) THEN RETURN NEW; END IF;
- FOR app IN SELECT id FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' ORDER BY id LOOP
-  PERFORM 1 FROM app_binding_promotion_revisions WHERE app_id=app FOR UPDATE;
-  IF EXISTS(SELECT 1 FROM app_binding_release_policies WHERE app_id=app AND scope=NEW.environment_slug AND mode='enforce') THEN
-   RAISE EXCEPTION 'project release switching requires a binding release gate' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ IF TG_OP='UPDATE' AND NEW.active=OLD.active THEN RETURN NEW; END IF;
+ IF TG_OP='INSERT' AND NOT NEW.active THEN RETURN NEW; END IF;
+ PERFORM 1 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+ WHERE a.project_id=NEW.project_id ORDER BY r.app_id FOR UPDATE OF r;
+ IF EXISTS (SELECT 1 FROM app_binding_release_policies p JOIN apps a ON a.id=p.app_id
+ WHERE a.project_id=NEW.project_id AND p.scope=NEW.environment_slug AND p.mode='enforce') THEN
+  grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+  IF grant_value IS NULL OR grant_value->>'project_id' IS DISTINCT FROM NEW.project_id::text OR grant_value->>'environment' IS DISTINCT FROM NEW.environment_slug OR
+   (TG_OP='INSERT' AND (NOT NEW.active OR grant_value->>'new_id' IS DISTINCT FROM NEW.id::text)) OR
+   (TG_OP='UPDATE' AND (NEW.active OR grant_value->>'old_id' IS DISTINCT FROM NEW.id::text)) THEN
+   RAISE EXCEPTION 'project graph requires checked binding evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
   END IF;
- END LOOP;
+  FOR f IN SELECT value FROM jsonb_array_elements(grant_value->'fences') LOOP
+   IF nullif(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN
+    RAISE EXCEPTION 'graph evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+   END IF;
+  END LOOP;
+ END IF;
  RETURN NEW;
 END $$;
 
@@ -3392,8 +7358,6 @@ CREATE FUNCTION public.environment_gitops_queue_recovery_declared(target_source 
 $$;
 
 
-SET default_table_access_method = heap;
-
 --
 -- Name: environment_workload_qualification_requests; Type: TABLE; Schema: public; Owner: -
 --
@@ -3458,6 +7422,8 @@ CREATE TABLE public.instances (
     migration_started_at timestamp with time zone,
     startup_cpu_boost_until timestamp with time zone,
     exclusive_capture_blocked boolean DEFAULT false NOT NULL,
+    application_standard_boot_token uuid,
+    application_standard_promotion_token uuid,
     capacity_ram_mb bigint DEFAULT 0 NOT NULL,
     capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
     capacity_vcpu integer DEFAULT 0 NOT NULL,
@@ -3639,152 +7605,6 @@ $$;
 
 
 --
--- Name: deployments; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    build_id uuid,
-    image_digest text NOT NULL,
-    rootfs_path text,
-    rootfs_bytes bigint,
-    status text NOT NULL,
-    error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    kind text DEFAULT 'image'::text NOT NULL,
-    source_path text,
-    source_bytes bigint,
-    handler text,
-    log_path text,
-    error_code text,
-    rootfs_key text DEFAULT ''::text NOT NULL,
-    source_url text,
-    commit_sha text,
-    override_entrypoint text[],
-    override_cmd text[],
-    override_env jsonb,
-    override_env_secrets jsonb,
-    override_port integer,
-    override_healthcheck jsonb,
-    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
-    min_instances integer DEFAULT 0 NOT NULL,
-    scan_result jsonb,
-    scan_status text,
-    scanned_at timestamp with time zone,
-    override_liveness_probe jsonb,
-    parked_reason text,
-    parked_at timestamp with time zone,
-    traffic_percent integer DEFAULT 100 NOT NULL,
-    scope text DEFAULT 'default'::text NOT NULL,
-    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
-    secret_scanned_at timestamp with time zone,
-    error_hint text,
-    error_why text,
-    error_fix text,
-    error_relevant_logs jsonb,
-    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
-    deployed_by_user_id uuid,
-    deployed_via text DEFAULT 'api'::text NOT NULL,
-    deployed_from_ip inet,
-    pusher_login text,
-    reason text,
-    tag text,
-    deployed_by text,
-    pr_number integer,
-    rollback_on_5xx boolean DEFAULT false NOT NULL,
-    first_wake_at timestamp with time zone,
-    first_5xx_window_ends_at timestamp with time zone,
-    first_5xx_count integer DEFAULT 0 NOT NULL,
-    last_auto_rollback_at timestamp with time zone,
-    last_auto_rollback_reason text,
-    liveness_restart_count integer DEFAULT 0 NOT NULL,
-    canary_preset text DEFAULT 'none'::text NOT NULL,
-    canary_step integer DEFAULT 0 NOT NULL,
-    canary_total_steps integer DEFAULT 0 NOT NULL,
-    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
-    rollout_state text DEFAULT 'pending'::text NOT NULL,
-    rollout_started_at timestamp with time zone,
-    rollout_completed_at timestamp with time zone,
-    rollout_aborted_at timestamp with time zone,
-    rollout_aborted_reason text,
-    cancelled_at timestamp with time zone,
-    cancelled_by_principal text,
-    cancel_reason text,
-    deleted_at timestamp with time zone,
-    deleted_by_principal text,
-    priority integer DEFAULT 100 NOT NULL,
-    reordered_at timestamp with time zone,
-    reordered_by_principal text,
-    canary_stages jsonb,
-    snapshot_miss_count integer DEFAULT 0 NOT NULL,
-    snapshot_miss_last_at timestamp with time zone,
-    snapshot_miss_backoff_until timestamp with time zone,
-    workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
-    source_root text,
-    full_rootfs_allow_auto boolean DEFAULT false NOT NULL,
-    full_rootfs_override boolean,
-    source_sha256 text,
-    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
-    inferred_profile jsonb,
-    traffic_percent_explicit boolean DEFAULT false NOT NULL,
-    revision integer DEFAULT 0 NOT NULL,
-    service_rollout_handoff jsonb DEFAULT '{}'::jsonb NOT NULL,
-    release_command text[] DEFAULT ARRAY[]::text[] NOT NULL,
-    release_command_shell boolean DEFAULT false NOT NULL,
-    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
-    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
-    override_readiness_probe jsonb,
-    secret_reload_signal text,
-    github_source_ref text,
-    github_installation_id bigint,
-    environment_workload_runtime jsonb,
-    serving_ended_at timestamp with time zone,
-    runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
-    environment_workload_held boolean DEFAULT false NOT NULL,
-    CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
-    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
-    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
-    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
-    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
-    CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
-    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
-    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
-    CONSTRAINT deployments_environment_workload_held_requires_runtime CHECK (((NOT environment_workload_held) OR (environment_workload_runtime IS NOT NULL))),
-    CONSTRAINT deployments_environment_workload_runtime_shape CHECK (((environment_workload_runtime IS NULL) OR ((jsonb_typeof(environment_workload_runtime) = 'object'::text) AND (environment_workload_runtime ?& ARRAY['source_id'::text, 'environment_id'::text, 'revision_id'::text, 'generation'::text, 'intent_version'::text, 'resource'::text, 'plan_hash'::text, 'app_id'::text, 'scope'::text, 'baseline'::text, 'start_command'::text, 'runtime'::text]) AND (jsonb_typeof((environment_workload_runtime -> 'runtime'::text)) = 'object'::text) AND (jsonb_typeof((environment_workload_runtime -> 'baseline'::text)) = 'object'::text) AND (((environment_workload_runtime ->> 'generation'::text))::bigint > 0) AND (((environment_workload_runtime ->> 'intent_version'::text))::bigint >= 0) AND ((environment_workload_runtime ->> 'plan_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((environment_workload_runtime ->> 'resource'::text) ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))),
-    CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
-    CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
-    CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
-    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
-    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
-    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
-    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
-    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
-    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
-    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
-    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
-    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
-    CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
-    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
-    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
-    CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
-    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
-    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
-    CONSTRAINT deployments_service_rollout_handoff_object_chk CHECK ((jsonb_typeof(service_rollout_handoff) = 'object'::text)),
-    CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
-    CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
-    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
-    CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
-    CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
-    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
-    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
-    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
-);
-
-
---
 -- Name: environment_workload_activation_authorized(public.deployments); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3826,6 +7646,19 @@ BEGIN
             AND job.lease_until>clock_timestamp() AND job.lease_token=token AND token<>''
     );
 END $$;
+
+
+--
+-- Name: environment_workload_admission_retired(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_admission_retired(application uuid, deployment_scope text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM environment_workload_retirements r
+  JOIN project_environments e ON e.id=r.environment_id
+  WHERE r.app_id=application AND e.slug=CASE WHEN coalesce(deployment_scope,'') IN ('','default') THEN 'production' ELSE deployment_scope END AND r.phase IN ('retiring','retired','recovering'))
+$$;
 
 
 --
@@ -4316,6 +8149,157 @@ SELECT EXISTS (
             (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL AND
              coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? target_deployment::text))
 )
+$$;
+
+
+--
+-- Name: environment_workload_retirements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_workload_retirements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    resource text NOT NULL,
+    revision_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    plan_hash text NOT NULL,
+    phase text DEFAULT 'planned'::text NOT NULL,
+    deployment_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    queue_binding_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    job_id uuid,
+    route_deployment_id uuid,
+    route_generation bigint DEFAULT 0 NOT NULL,
+    expected_gateways text[] DEFAULT '{}'::text[] NOT NULL,
+    acknowledged_gateways text[] DEFAULT '{}'::text[] NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    retired_at timestamp with time zone,
+    recovery_revision_id uuid,
+    recovery_generation bigint DEFAULT 0 NOT NULL,
+    recovered_at timestamp with time zone,
+    CONSTRAINT environment_workload_retirements_check CHECK (((array_position(acknowledged_gateways, NULL::text) IS NULL) AND (acknowledged_gateways <@ expected_gateways))),
+    CONSTRAINT environment_workload_retirements_check1 CHECK (((route_deployment_id IS NULL) OR (route_deployment_id = ANY (deployment_ids)))),
+    CONSTRAINT environment_workload_retirements_check2 CHECK (((phase = ANY (ARRAY['planned'::text, 'retiring'::text, 'cancelled'::text])) = (retired_at IS NULL))),
+    CONSTRAINT environment_workload_retirements_check3 CHECK (((retired_at IS NULL) OR (retired_at >= requested_at))),
+    CONSTRAINT environment_workload_retirements_check4 CHECK (((phase = ANY (ARRAY['recovering'::text, 'recovered'::text])) = (recovery_revision_id IS NOT NULL))),
+    CONSTRAINT environment_workload_retirements_check5 CHECK (((recovery_revision_id IS NULL) = (recovery_generation = 0))),
+    CONSTRAINT environment_workload_retirements_check6 CHECK (((recovery_generation = 0) OR (recovery_generation > generation))),
+    CONSTRAINT environment_workload_retirements_check7 CHECK (((phase = 'recovered'::text) = (recovered_at IS NOT NULL))),
+    CONSTRAINT environment_workload_retirements_check8 CHECK (((recovered_at IS NULL) OR (recovered_at >= retired_at))),
+    CONSTRAINT environment_workload_retirements_deployment_ids_check CHECK ((array_position(deployment_ids, NULL::uuid) IS NULL)),
+    CONSTRAINT environment_workload_retirements_expected_gateways_check CHECK ((array_position(expected_gateways, NULL::text) IS NULL)),
+    CONSTRAINT environment_workload_retirements_generation_check CHECK ((generation > 0)),
+    CONSTRAINT environment_workload_retirements_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'retiring'::text, 'retired'::text, 'recovering'::text, 'recovered'::text, 'cancelled'::text]))),
+    CONSTRAINT environment_workload_retirements_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT environment_workload_retirements_queue_binding_ids_check CHECK ((array_position(queue_binding_ids, NULL::uuid) IS NULL)),
+    CONSTRAINT environment_workload_retirements_recovery_generation_check CHECK ((recovery_generation >= 0)),
+    CONSTRAINT environment_workload_retirements_resource_check CHECK ((resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)),
+    CONSTRAINT environment_workload_retirements_route_generation_check CHECK ((route_generation >= 0))
+);
+
+
+--
+-- Name: environment_workload_retirement_cutover_authorized(public.environment_workload_retirements); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_retirement_cutover_authorized(r public.environment_workload_retirements) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT nullif(current_setting('gregale.gitops_activation',true),'')=nullif(current_setting('gregale.gitops_lease',true),'')
+ AND EXISTS(SELECT 1 FROM active_environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
+  JOIN environment_gitops_jobs j ON j.source_id=s.id
+  WHERE s.id=(r).source_id AND s.mode='enforce' AND NOT s.suspended AND s.generation=(r).generation AND rev.id=(r).revision_id
+   AND j.desired_generation=s.generation AND j.claimed_generation=s.generation AND j.lease_token=current_setting('gregale.gitops_lease',true)
+   AND j.lease_until>clock_timestamp() AND (rev.definition->'workloads'='{}'::jsonb OR EXISTS(
+    SELECT 1 FROM environment_workload_graphs g WHERE g.source_id=s.id AND g.revision_id=rev.id AND g.generation=s.generation
+     AND g.intent_version=s.intent_version AND g.phase='prepared' AND environment_workload_graph_serving_supported(g.id)
+     AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.members) m WHERE NOT (
+      CASE WHEN coalesce(m->>'candidate_deployment_id','')<>'' THEN EXISTS(
+       SELECT 1 FROM deployments d WHERE d.id=(m->>'candidate_deployment_id')::uuid AND environment_workload_activation_authorized(d))
+      ELSE EXISTS(SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id
+       JOIN deployments d ON d.id=rm.deployment_id JOIN project_environments e ON e.id=s.environment_id
+       WHERE rs.project_id=s.project_id AND rs.environment_slug=e.slug AND rs.active AND rm.app_id=(m->>'app_id')::uuid
+        AND m->'retained_deployments' ? d.id::text AND d.status='live' AND NOT d.environment_workload_held) END)))))
+$$;
+
+
+--
+-- Name: environment_workload_retirement_drain_authorized(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_retirement_drain_authorized(d public.deployments) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM environment_workload_retirements r JOIN active_environment_git_sources s ON s.id=r.source_id
+  JOIN environment_gitops_jobs j ON j.source_id=s.id JOIN project_environments e ON e.id=r.environment_id
+  WHERE r.phase='retiring' AND r.app_id=(d).app_id AND e.slug=(d).scope AND (d).id=ANY(r.deployment_ids)
+   AND environment_workload_retirement_routes_withdrawn(r) AND j.desired_generation=s.generation AND j.claimed_generation=s.generation
+   AND j.lease_until>clock_timestamp() AND j.lease_token=current_setting('gregale.gitops_lease',true))
+$$;
+
+
+--
+-- Name: environment_workload_retirement_drained(public.environment_workload_retirements); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_retirement_drained(r public.environment_workload_retirements) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT environment_workload_retirement_routes_withdrawn(r)
+ AND ((r).job_id IS NULL OR EXISTS(SELECT 1 FROM jobs j WHERE j.id=(r).job_id AND j.status IN ('paused','deleted')))
+ AND NOT EXISTS(SELECT 1 FROM unnest((r).queue_binding_ids) original(id) WHERE NOT EXISTS(
+  SELECT 1 FROM queue_bindings b WHERE b.id=original.id AND b.app_id=(r).app_id AND b.environment_id=(r).environment_id AND NOT b.enabled AND b.retired_at IS NOT NULL))
+ AND NOT EXISTS(SELECT 1 FROM triggers consumer WHERE consumer.queue_binding_id=ANY((r).queue_binding_ids) AND consumer.enabled)
+
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE (i.deployment_id=ANY((r).deployment_ids) OR i.job_id=(r).job_id) AND i.state NOT IN ('parked','stopped','failed'))
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.id=ANY((r).deployment_ids) AND d.status NOT IN ('superseded','cancelled','failed'))
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions x
+  WHERE (x.frame->>'deployment_id')::uuid=ANY((r).deployment_ids) AND x.retired_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM invocations i WHERE i.app_id=(r).app_id AND (i.environment_id=(r).environment_id OR CASE WHEN coalesce(i.deployment_scope,'') IN ('','default') THEN 'production' ELSE i.deployment_scope END=(SELECT slug FROM project_environments WHERE id=(r).environment_id)) AND i.state='dispatching')
+ AND NOT EXISTS(SELECT 1 FROM trigger_records receipt JOIN triggers consumer ON consumer.id=receipt.trigger_id
+  WHERE consumer.queue_binding_id=ANY((r).queue_binding_ids) AND receipt.state='claimed' AND receipt.claim_expires_at>clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs j ON j.id=t.run_id WHERE j.job_id=(r).job_id AND t.status='claimed')
+$$;
+
+
+--
+-- Name: environment_workload_retirement_gateway_roster(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_retirement_gateway_roster() RETURNS text[]
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT ARRAY(SELECT name FROM compute_nodes WHERE active AND role IN ('compute-only','compute-node')
+  AND nullif(btrim(gateway_target_url),'') IS NOT NULL ORDER BY name)
+$$;
+
+
+--
+-- Name: environment_workload_retirement_routes_withdrawn(public.environment_workload_retirements); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_retirement_routes_withdrawn(r public.environment_workload_retirements) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT (r).route_deployment_id IS NULL OR ((r).route_generation>0 AND cardinality((r).expected_gateways)>0
+  AND (r).expected_gateways=environment_workload_retirement_gateway_roster()
+  AND (r).expected_gateways <@ (r).acknowledged_gateways)
+$$;
+
+
+--
+-- Name: environment_workload_retirement_withdrawal_authorized(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_retirement_withdrawal_authorized(d public.deployments) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM environment_workload_retirements r JOIN project_environments e ON e.id=r.environment_id
+  WHERE r.phase='retiring' AND r.app_id=(d).app_id AND e.slug=(d).scope AND (d).id=ANY(r.deployment_ids)
+   AND environment_workload_retirement_cutover_authorized(r))
 $$;
 
 
@@ -7120,6 +11104,24 @@ END $$;
 
 
 --
+-- Name: guard_customer_operation_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_customer_operation_webhook_routing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM inbound_webhook_endpoints WHERE id = NEW.endpoint_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = NEW.endpoint_id)
+       OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = NEW.endpoint_id) THEN
+        RAISE EXCEPTION 'endpoint already has another delivery mode' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_deployment_layer_artifacts(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8218,7 +12220,7 @@ BEGIN
   END IF;
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL AND OLD.status='live' AND
-  NEW.status NOT IN ('live','failed') THEN
+  NEW.status NOT IN ('live','failed') AND NOT (NEW.status='superseded' AND environment_workload_retirement_drain_authorized(OLD)) THEN
   RAISE EXCEPTION 'activated environment workload status is immutable' USING ERRCODE='23514';
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL AND OLD.status='live' AND
@@ -8491,6 +12493,9 @@ BEGIN
  IF q.id IS NOT NULL AND (q.app_id IS DISTINCT FROM NEW.app_id OR q.deployment_id IS DISTINCT FROM NEW.deployment_id) THEN
   RAISE EXCEPTION 'environment qualification reservation cannot be reassigned' USING ERRCODE='23514';
  END IF;
+ IF TG_OP='UPDATE' AND q.id IS NULL AND NEW.state IN ('draining','snapshotting','parked','stopped','failed','evicting_account_deleting') AND
+  EXISTS(SELECT 1 FROM environment_workload_retirements r JOIN deployments d ON d.id=OLD.deployment_id
+   WHERE d.id=ANY(r.deployment_ids) AND d.status='superseded' AND NOT d.environment_workload_held AND r.phase NOT IN ('planned','cancelled')) THEN RETURN NEW; END IF;
  IF q.id IS NULL AND EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id
   AND environment_workload_runtime IS NOT NULL AND NOT environment_workload_held AND status='live') THEN RETURN NEW; END IF;
  IF NOT EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND environment_workload_runtime IS NOT NULL) THEN RETURN NEW; END IF;
@@ -8830,6 +12835,123 @@ END $$;
 
 
 --
+-- Name: guard_environment_workload_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE src environment_git_sources%ROWTYPE; rev environment_desired_revisions%ROWTYPE; token text; original_app uuid;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id AND status<>'deleted_pending') THEN
+   RAISE EXCEPTION 'workload retirement history must be retained' USING ERRCODE='23514';
+  END IF;
+  RETURN OLD;
+ END IF;
+ SELECT * INTO src FROM active_environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
+ token:=nullif(current_setting('gregale.gitops_lease',true),'');
+ IF src.id IS NULL OR src.mode<>'enforce' OR src.suspended OR token IS NULL OR
+  ROW(src.account_id,src.project_id,src.environment_id) IS DISTINCT FROM ROW(NEW.account_id,NEW.project_id,NEW.environment_id) OR
+  NOT EXISTS(SELECT 1 FROM environment_gitops_jobs j WHERE j.source_id=src.id AND j.desired_generation=src.generation
+   AND j.claimed_generation=src.generation AND j.lease_token=token AND j.lease_until>clock_timestamp()) THEN
+  RAISE EXCEPTION 'workload retirement requires its current scoped lease' USING ERRCODE='23514';
+ END IF;
+ SELECT * INTO rev FROM environment_desired_revisions WHERE id=src.approved_revision_id AND source_id=src.id;
+ SELECT app_id INTO original_app FROM environment_gitops_resources WHERE source_id=src.id AND logical_name=NEW.resource;
+ IF rev.id IS NULL OR original_app IS DISTINCT FROM NEW.app_id OR NOT EXISTS(
+  SELECT 1 FROM apps WHERE id=NEW.app_id AND account_id=src.account_id AND project_id=src.project_id AND status<>'deleted') THEN
+  RAISE EXCEPTION 'workload retirement lost its original identity' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='INSERT' THEN
+  IF NOT src.prune OR jsonb_typeof(rev.definition->'workloads') IS DISTINCT FROM 'object' OR
+   rev.definition->>'workload_pruning_policy' IS DISTINCT FROM 'retain' OR
+   rev.definition->'workloads' ? substring(NEW.resource from 10) OR NEW.revision_id<>rev.id OR NEW.generation<>src.generation OR
+   NEW.route_deployment_id IS DISTINCT FROM (SELECT d.id FROM deployments d JOIN project_environments e ON e.id=src.environment_id
+    WHERE d.app_id=NEW.app_id AND d.scope=e.slug AND d.environment_workload_runtime->>'source_id'=src.id::text
+     AND NOT d.environment_workload_held
+     AND coalesce(d.environment_workload_runtime->'runtime'->>'execution_mode',d.environment_workload_runtime->'baseline'->>'execution_mode','request')<>'job'
+    ORDER BY d.id LIMIT 1) OR
+   NEW.phase<>'planned' OR
+   NEW.deployment_ids IS DISTINCT FROM ARRAY(SELECT d.id FROM deployments d JOIN project_environments e ON e.id=src.environment_id
+    WHERE d.app_id=NEW.app_id AND d.scope=e.slug AND d.environment_workload_runtime->>'source_id'=src.id::text ORDER BY d.id) OR
+   NEW.queue_binding_ids IS DISTINCT FROM ARRAY(SELECT q.binding_id FROM environment_gitops_queue_bindings q
+    WHERE q.source_id=src.id AND q.resource=NEW.resource AND q.binding_id IS NOT NULL ORDER BY q.binding_id) OR
+   NEW.job_id IS DISTINCT FROM (SELECT w.job_id FROM app_environment_workload_intents w WHERE w.app_id=NEW.app_id AND w.environment_id=src.environment_id) OR
+   NEW.route_generation<>0 OR cardinality(NEW.expected_gateways)<>0 OR cardinality(NEW.acknowledged_gateways)<>0 OR
+   NOT EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.manager_id=src.id::text
+    AND f.resource=NEW.resource AND f.field_path='presence') OR
+   EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=src.environment_id AND o.resource=NEW.resource AND o.expires_at>clock_timestamp()) THEN
+   RAISE EXCEPTION 'workload retirement has no reviewed retain authority' USING ERRCODE='23514';
+  END IF;
+ ELSE
+  IF ROW(NEW.id,NEW.source_id,NEW.account_id,NEW.project_id,NEW.environment_id,NEW.app_id,NEW.resource,NEW.revision_id,
+   NEW.generation,NEW.plan_hash,NEW.deployment_ids,NEW.queue_binding_ids,NEW.job_id,NEW.route_deployment_id,NEW.requested_at)
+   IS DISTINCT FROM ROW(OLD.id,OLD.source_id,OLD.account_id,OLD.project_id,OLD.environment_id,OLD.app_id,OLD.resource,OLD.revision_id,
+   OLD.generation,OLD.plan_hash,OLD.deployment_ids,OLD.queue_binding_ids,OLD.job_id,OLD.route_deployment_id,OLD.requested_at) OR
+   OLD.retired_at IS NOT NULL AND NEW.retired_at IS DISTINCT FROM OLD.retired_at OR
+   OLD.recovered_at IS NOT NULL AND NEW.recovered_at IS DISTINCT FROM OLD.recovered_at THEN
+   RAISE EXCEPTION 'original workload retirement records are immutable' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase IS DISTINCT FROM OLD.phase AND NOT (
+   OLD.phase='planned' AND NEW.phase IN ('retiring','cancelled') OR
+   OLD.phase='retiring' AND NEW.phase='retired' OR OLD.phase='retired' AND NEW.phase='recovering' OR
+   OLD.phase='recovering' AND NEW.phase IN ('recovered','retired')) THEN
+   RAISE EXCEPTION 'invalid workload retirement transition' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase='recovering' AND (OLD.phase IS DISTINCT FROM 'recovering' OR
+   ROW(NEW.recovery_revision_id,NEW.recovery_generation) IS DISTINCT FROM ROW(OLD.recovery_revision_id,OLD.recovery_generation)) AND (
+   rev.definition->'workload_recoveries'->>substring(NEW.resource from 10) IS DISTINCT FROM NEW.app_id::text OR
+   NOT (rev.definition->'workloads' ? substring(NEW.resource from 10)) OR NEW.recovery_revision_id<>rev.id OR NEW.recovery_generation<>src.generation) THEN
+   RAISE EXCEPTION 'workload recovery must review the original retained app identity' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase='retiring' AND OLD.phase='planned' AND (
+   NOT environment_workload_retirement_cutover_authorized(NEW) OR NOT src.prune OR
+   rev.definition->>'workload_pruning_policy' IS DISTINCT FROM 'retain' OR rev.definition->'workloads' ? substring(NEW.resource from 10) OR
+   NEW.generation<>src.generation OR NEW.revision_id<>rev.id OR
+   NOT EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.manager_id=src.id::text AND f.resource=NEW.resource AND f.field_path='presence') OR
+   EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=src.environment_id AND f.resource=NEW.resource AND f.manager_id<>src.id::text) OR
+   EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=src.environment_id AND f.resource IN (NEW.resource,'app/'||NEW.app_id::text)) OR
+   EXISTS(SELECT 1 FROM deployments d JOIN project_environments e ON e.id=src.environment_id WHERE d.app_id=NEW.app_id AND d.scope=e.slug
+    AND d.status='live' AND d.environment_workload_runtime->>'source_id' IS DISTINCT FROM src.id::text) OR
+   NEW.deployment_ids IS DISTINCT FROM ARRAY(SELECT d.id FROM deployments d JOIN project_environments e ON e.id=src.environment_id
+    WHERE d.app_id=NEW.app_id AND d.scope=e.slug AND d.environment_workload_runtime->>'source_id'=src.id::text ORDER BY d.id) OR
+   NEW.queue_binding_ids IS DISTINCT FROM ARRAY(SELECT q.binding_id FROM environment_gitops_queue_bindings q
+    WHERE q.source_id=src.id AND q.resource=NEW.resource AND q.binding_id IS NOT NULL ORDER BY q.binding_id) OR
+   EXISTS(SELECT 1 FROM queue_bindings b WHERE b.app_id=NEW.app_id AND b.environment_id=src.environment_id
+    AND NOT (b.id=ANY(NEW.queue_binding_ids))) OR
+   EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=src.environment_id AND o.resource=NEW.resource AND o.expires_at>clock_timestamp())) THEN
+   RAISE EXCEPTION 'retirement requires the current qualified cutover' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase='cancelled' AND OLD.phase='planned' AND NEW.generation>=src.generation THEN
+   RAISE EXCEPTION 'current retirement reservation cannot be cancelled' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase='retired' AND OLD.phase='retiring' AND NOT environment_workload_retirement_drained(NEW) THEN
+   RAISE EXCEPTION 'retirement requires route withdrawal and original execution drain' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase='retired' AND OLD.phase='recovering' AND (src.generation<=OLD.recovery_generation OR rev.definition->'workloads' ? substring(NEW.resource from 10)) THEN
+   RAISE EXCEPTION 'only a superseding removal can abandon recovery' USING ERRCODE='23514';
+  END IF;
+  IF NEW.route_generation IS DISTINCT FROM OLD.route_generation OR NEW.expected_gateways IS DISTINCT FROM OLD.expected_gateways THEN
+   IF NEW.route_generation<=OLD.route_generation OR cardinality(NEW.acknowledged_gateways)<>0 OR
+    NEW.expected_gateways IS DISTINCT FROM environment_workload_retirement_gateway_roster() THEN
+    RAISE EXCEPTION 'route withdrawal requires a fresh generation and current gateway roster' USING ERRCODE='23514';
+   END IF;
+  ELSIF NOT OLD.acknowledged_gateways <@ NEW.acknowledged_gateways THEN
+   RAISE EXCEPTION 'withdrawal acknowledgements cannot be removed' USING ERRCODE='23514';
+  END IF;
+  IF NEW.phase='recovered' AND OLD.phase='recovering' AND NOT EXISTS(
+   SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=(SELECT slug FROM project_environments WHERE id=NEW.environment_id)
+    AND d.environment_workload_runtime->>'source_id'=src.id::text AND d.environment_workload_runtime->>'revision_id'=rev.id::text
+    AND d.environment_workload_runtime->>'generation'=src.generation::text AND environment_workload_activation_authorized(d)) THEN
+   RAISE EXCEPTION 'workload recovery requires fresh qualified activation' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_serving_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8947,6 +13069,7 @@ BEGIN
  IF NEW.traffic_percent IS DISTINCT FROM OLD.traffic_percent AND
     EXISTS(SELECT 1 FROM deployments managed WHERE managed.app_id=OLD.app_id AND managed.scope=OLD.scope AND managed.environment_workload_runtime IS NOT NULL) AND
     NOT environment_workload_serving_traffic_authorized(NEW.app_id,NEW.scope,NEW.id,NEW.traffic_percent) AND
+    NOT (NEW.traffic_percent=0 AND NEW.traffic_percent_explicit AND environment_workload_retirement_withdrawal_authorized(OLD)) AND
     NOT (NEW.traffic_percent=0 AND OLD.environment_workload_held AND NOT NEW.environment_workload_held AND
       environment_workload_activation_authorized(NEW)) THEN
   RAISE EXCEPTION 'GitOps-managed workload traffic requires a current serving transition' USING ERRCODE='23514';
@@ -8963,7 +13086,7 @@ CREATE FUNCTION public.guard_event_delivery_replay() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
- consumer_count bigint; app_count bigint; account_count bigint; scope text;
+ consumer_count bigint; app_count bigint; account_count bigint; scope text; consumer_limit integer;
 BEGIN
  IF NEW.state NOT IN ('pending','dispatching') THEN RETURN NEW; END IF;
  IF TG_OP = 'UPDATE' AND OLD.state IN ('pending','dispatching') THEN RETURN NEW; END IF;
@@ -8978,7 +13101,10 @@ BEGIN
  INTO account_count, app_count, consumer_count
  FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
  WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
- scope := CASE WHEN consumer_count>=caps.consumer_limit THEN 'consumer'
+ SELECT CASE WHEN c.max_pending_deliveries>0 THEN least(c.max_pending_deliveries,caps.consumer_limit) ELSE caps.consumer_limit END INTO consumer_limit
+ FROM event_subscription_delivery_controls c WHERE c.account_id=slot.account_id AND c.app_id=slot.app_id AND c.subscription_id::text=slot.subscription_id;
+ consumer_limit := coalesce(consumer_limit,caps.consumer_limit);
+ scope := CASE WHEN consumer_count>=consumer_limit THEN 'consumer'
    WHEN app_count>=caps.app_limit THEN 'app' WHEN account_count>=caps.account_limit THEN 'account' END;
  IF scope IS NOT NULL THEN
   RAISE EXCEPTION 'event delivery capacity exhausted: %',scope USING ERRCODE='23514', CONSTRAINT='event_delivery_capacity', DETAIL=scope;
@@ -9609,6 +13735,105 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_source_fence_cancellation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_source_fence_cancellation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state='cancelling' AND OLD.state<>'cancelling' THEN
+  UPDATE managed_postgres_cutover_source_fences SET state='abandoning',lease_token=NULL,lease_until=NULL,
+   retry_at=clock_timestamp(),updated_at=clock_timestamp() WHERE cutover_id=NEW.id AND state<>'released';
+ END IF;
+ IF NEW.state='cancelled' AND EXISTS(SELECT 1 FROM managed_postgres_cutover_source_fences WHERE cutover_id=NEW.id AND state<>'released') THEN
+  RAISE EXCEPTION 'source SQL fence cleanup is incomplete' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_managed_postgres_source_fence_evidence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_source_fence_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP IN ('DELETE','TRUNCATE') THEN
+  RAISE EXCEPTION 'source fence recovery evidence is retained' USING ERRCODE='55000';
+ END IF;
+ IF OLD.state='released' OR ROW(NEW.cutover_id,NEW.owner_token,NEW.maintenance_id,NEW.source_database_id,
+   NEW.backend_id,NEW.backend_fingerprint,NEW.source_provider_resource_id,NEW.source_data_resource_id,NEW.source_generation,
+   NEW.source_spec,NEW.owner_node_id,NEW.owner_revision,NEW.admission_fenced_at,NEW.runtime_fingerprint,NEW.created_at)
+  IS DISTINCT FROM ROW(OLD.cutover_id,OLD.owner_token,OLD.maintenance_id,OLD.source_database_id,
+   OLD.backend_id,OLD.backend_fingerprint,OLD.source_provider_resource_id,OLD.source_data_resource_id,OLD.source_generation,
+   OLD.source_spec,OLD.owner_node_id,OLD.owner_revision,OLD.admission_fenced_at,OLD.runtime_fingerprint,OLD.created_at)
+  OR (cardinality(OLD.database_names)>0 AND NEW.database_names IS DISTINCT FROM OLD.database_names)
+  OR (OLD.close_requested_at IS NOT NULL AND NEW.close_requested_at IS DISTINCT FROM OLD.close_requested_at)
+  OR (OLD.state='abandoning' AND NEW.state NOT IN ('abandoning','released'))
+  OR (OLD.state IN ('closing','closed') AND NEW.state='pending') THEN
+  RAISE EXCEPTION 'source fence identity or terminal state changed' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_managed_postgres_source_fence_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_source_fence_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state='released' THEN RETURN NEW; END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'source fence insertion requires read committed' USING ERRCODE='55000';
+ END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(NEW.backend_id||':'||NEW.backend_fingerprint||':'||NEW.source_data_resource_id,1334));
+ IF TG_TABLE_NAME='managed_postgres_cutover_source_fences' THEN
+  IF EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences
+    WHERE backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint
+      AND source_data_resource_id=NEW.source_data_resource_id AND state<>'released') THEN
+   RAISE EXCEPTION 'source dataset already held' USING ERRCODE='55000';
+  END IF;
+ ELSE
+  IF EXISTS(SELECT 1 FROM managed_postgres_cutover_source_fences
+    WHERE backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint
+      AND source_data_resource_id=NEW.source_data_resource_id AND state<>'released') THEN
+   RAISE EXCEPTION 'source dataset already held' USING ERRCODE='55000';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_managed_postgres_writer_catalog_baseline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_writer_catalog_baseline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND ((OLD.catalog_fingerprint<>'' AND NEW.catalog_fingerprint IS DISTINCT FROM OLD.catalog_fingerprint)
+  OR (OLD.catalog_invalidated_at IS NOT NULL AND NEW.catalog_invalidated_at IS DISTINCT FROM OLD.catalog_invalidated_at)) THEN
+  RAISE EXCEPTION 'original source writer catalog is retained' USING ERRCODE='55000';
+ END IF;
+ IF NEW.catalog_fingerprint<>'' AND (TG_OP='INSERT' OR OLD.catalog_fingerprint='') AND (
+  NEW.state<>'closed' OR NEW.closure IS NULL OR
+  NEW.closure->'writer_inventory'->>'catalog_fingerprint' IS DISTINCT FROM NEW.catalog_fingerprint OR
+  NEW.closure->'writer_inventory'->>'catalog_complete' IS DISTINCT FROM 'true' OR
+  NEW.closure->>'unselected_databases' IS DISTINCT FROM '0') THEN
+  RAISE EXCEPTION 'original source writer catalog is incomplete' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_object_multipart_initiation_dispatch(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9870,6 +14095,28 @@ END $$;
 
 
 --
+-- Name: guard_project_deactivation_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_deactivation_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g jsonb;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.deactivation IS NOT NULL THEN RAISE EXCEPTION 'receipt requires retirement' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.deactivation IS NOT DISTINCT FROM OLD.deactivation THEN RETURN NEW; END IF;
+ g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF OLD.deactivation IS NOT NULL OR NEW.deactivation IS NULL OR g->>'action' IS DISTINCT FROM 'deactivate' OR g->>'old_id' IS DISTINCT FROM NEW.id::text OR NEW.deactivation->>'id' IS DISTINCT FROM g->>'receipt_id' THEN
+  RAISE EXCEPTION 'immutable checked deactivation receipt' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_queue_binding_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10022,6 +14269,59 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_retired_workload_execution(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_retired_workload_execution() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE application uuid; environment uuid; scope text; linked_job uuid; r environment_workload_retirements%ROWTYPE; d deployments%ROWTYPE;
+BEGIN
+ IF TG_TABLE_NAME='instances' THEN
+  IF TG_OP='UPDATE' AND (NEW.state IS NOT DISTINCT FROM OLD.state OR NEW.state IN ('draining','snapshotting','parked','stopped','failed','evicting_account_deleting')) THEN RETURN NEW; END IF;
+  SELECT * INTO d FROM deployments WHERE id=NEW.deployment_id;
+  application:=NEW.app_id;scope:=d.scope;
+ ELSIF TG_TABLE_NAME='deployments' THEN
+  IF NEW.status<>'live' OR TG_OP='UPDATE' AND OLD.status='live' THEN RETURN NEW; END IF;
+  application:=NEW.app_id;scope:=NEW.scope;
+ ELSIF TG_TABLE_NAME='invocations' THEN
+  IF TG_OP='UPDATE' AND (NEW.state<>'dispatching' OR OLD.state='dispatching') THEN RETURN NEW; END IF;
+  application:=NEW.app_id;environment:=NEW.environment_id;scope:=NEW.deployment_scope;
+ ELSIF TG_TABLE_NAME='trigger_records' THEN
+  IF NEW.state<>'claimed' THEN RETURN NEW; END IF;
+  IF TG_OP='UPDATE' THEN IF OLD.state='claimed' AND OLD.claim_generation=NEW.claim_generation THEN RETURN NEW; END IF; END IF;
+  SELECT app_id,queue_binding_scope INTO application,scope FROM triggers WHERE id=NEW.trigger_id;
+ ELSIF TG_TABLE_NAME='job_runs' THEN linked_job:=NEW.job_id;
+ ELSIF TG_TABLE_NAME='job_tasks' THEN
+  IF NEW.status<>'claimed' OR TG_OP='UPDATE' AND OLD.status='claimed' THEN RETURN NEW; END IF;
+  SELECT job_id INTO linked_job FROM job_runs WHERE id=NEW.run_id;
+ END IF;
+ IF coalesce(scope,'') IN ('','default') THEN scope:='production'; END IF;
+ IF application IS NOT NULL THEN
+  PERFORM id FROM apps WHERE id=application FOR SHARE;
+ ELSIF linked_job IS NOT NULL THEN
+  PERFORM a.id FROM apps a JOIN environment_workload_retirements x ON x.app_id=a.id WHERE x.job_id=linked_job FOR SHARE OF a;
+ END IF;
+ SELECT * INTO r FROM environment_workload_retirements x WHERE x.phase IN ('retiring','retired','recovering') AND
+  (linked_job IS NOT NULL AND x.job_id=linked_job OR application=x.app_id AND
+   (environment=x.environment_id OR scope=(SELECT slug FROM project_environments WHERE id=x.environment_id)));
+ IF r.id IS NULL THEN RETURN NEW; END IF;
+ -- Serialize dispatch with the app lock held through cutover. Recheck after
+ -- obtaining the lock to avoid admitting work from an earlier snapshot.
+ PERFORM id FROM apps WHERE id=r.app_id FOR SHARE;
+ IF NOT EXISTS(SELECT 1 FROM environment_workload_retirements WHERE id=r.id AND phase IN ('retiring','retired','recovering')) THEN RETURN NEW; END IF;
+ IF r.phase='recovering' THEN
+  IF TG_TABLE_NAME='deployments' THEN
+   IF NEW.id<>ALL(r.deployment_ids) AND environment_workload_activation_authorized(NEW) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='instances' AND d.environment_workload_held AND d.environment_workload_runtime->>'revision_id'=r.recovery_revision_id::text
+   AND d.environment_workload_runtime->>'generation'=r.recovery_generation::text THEN RETURN NEW; END IF;
+ END IF;
+ RAISE EXCEPTION 'workload execution is retired in this environment' USING ERRCODE='23514',CONSTRAINT='environment_workload_retired';
+END $$;
 
 
 --
@@ -10707,15 +15007,39 @@ BEGIN
     PERFORM 1 FROM inbound_webhook_endpoints WHERE id = endpoint FOR UPDATE;
     IF TG_TABLE_NAME = 'workflow_webhook_bindings' THEN
         IF EXISTS (SELECT 1 FROM workflow_callback_webhook_bindings WHERE endpoint_id = endpoint)
-           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint) THEN
+           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint)
+           OR EXISTS (SELECT 1 FROM customer_operation_webhook_bindings WHERE endpoint_id = endpoint) THEN
             RAISE EXCEPTION 'endpoint already has a callback or operation binding' USING ERRCODE = '23505';
         END IF;
     ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
         RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
+    ELSIF TG_TABLE_NAME = 'exclusive_work_trigger_bindings'
+          AND EXISTS (SELECT 1 FROM customer_operation_webhook_bindings WHERE endpoint_id = endpoint) THEN
+        RAISE EXCEPTION 'endpoint already starts a customer operation' USING ERRCODE = '23505';
     END IF;
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_workload_retirement_source_lifecycle(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_workload_retirement_source_lifecycle() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM environment_workload_retirements r WHERE r.source_id=OLD.id AND r.phase NOT IN ('recovered','cancelled')) AND
+  EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id AND status<>'deleted_pending') THEN
+  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'retained workloads must recover before detaching their source' USING ERRCODE='23514'; END IF;
+  IF NEW.detached OR NEW.mode<>'enforce' OR ROW(NEW.account_id,NEW.project_id,NEW.environment_id,NEW.provider,NEW.repository_id,NEW.repository,NEW.installation_id)
+   IS DISTINCT FROM ROW(OLD.account_id,OLD.project_id,OLD.environment_id,OLD.provider,OLD.repository_id,OLD.repository,OLD.installation_id) THEN
+   RAISE EXCEPTION 'retained workloads must recover before changing their source identity' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;RETURN NEW;
+END $$;
 
 
 --
@@ -11087,6 +15411,51 @@ $$;
 
 
 --
+-- Name: lock_build_export_publication(jsonb, text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_build_export_publication(input jsonb, publisher text, fresh boolean) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c jsonb:=input->'claims';a apps%ROWTYPE;d deployments%ROWTYPE;b builds%ROWTYPE;p build_provenance%ROWTYPE;key_der bytea;
+BEGIN
+ SELECT * INTO d FROM deployments WHERE id=(c->>'deployment_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'build export owner missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ SELECT * INTO a FROM apps WHERE id=(c->>'app_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'build export owner missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ -- The build lock serializes publication for one exact claim. No parent wait.
+ SELECT * INTO b FROM builds WHERE id=(c->>'build_id')::uuid FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'build export claim missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ IF (a.id=d.app_id AND b.deployment_id=d.id AND a.account_id::text=c->>'account_id'
+  AND coalesce(a.org_id::text,'')=c->>'org_id' AND coalesce(a.runtime,'')=c->>'runtime' AND a.status<>'deleted'
+  AND b.started_at=(c->>'claim_started_at')::timestamptz
+  AND d.kind IN ('tarball','dockerfile','github','preview')
+  AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+  AND (coalesce(d.source_sha256,'')='' OR d.source_sha256=c->>'source_sha256')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'build export owner changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||a.id::text,0))
+  OR NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.'||d.id::text,0)) THEN
+  RAISE EXCEPTION 'build export inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
+ END IF;
+ IF fresh OR b.status='succeeded' THEN
+  SELECT * INTO p FROM build_provenance WHERE build_id=b.id FOR SHARE NOWAIT;
+  IF (b.status='succeeded' AND p.started_at=b.started_at AND p.source_sha256=c->>'source_sha256'
+   AND coalesce(p.builder_node_id,'')=c->>'builder_node_id') IS NOT TRUE THEN
+   RAISE EXCEPTION 'build export completion changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+  END IF;
+ ELSIF b.status<>'running' THEN
+  RAISE EXCEPTION 'build export claim changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND account_id=a.account_id AND encode(sha256(cosign_public_key),'hex')=input->'proof'->>'publisher_key_sha256' ORDER BY signer_name LIMIT 1;
+ RETURN jsonb_build_object('key_der',coalesce(encode(key_der,'base64'),''),'checked_at',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'build export inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
+END;
+$$;
+
+
+--
 -- Name: lock_clone_checkpoint_scheduler_admission(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11130,6 +15499,122 @@ END $$;
 
 
 --
+-- Name: lock_deployment_artifact_scan(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_artifact_scan(producer_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE; d deployments%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ SELECT * INTO f FROM deployment_registry_rootfs WHERE id=producer_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'rootfs producer missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=f.registry_verification_id;
+ SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'scan deployment missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherKeySHA256');
+ RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'artifact scan inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
+END;
+$$;
+
+
+--
+-- Name: lock_deployment_artifact_scan_with_verification(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_artifact_scan_with_verification(producer_id uuid, verification_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE; d deployments%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ SELECT * INTO f FROM deployment_registry_rootfs WHERE id=producer_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'rootfs producer missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=coalesce(verification_id,f.registry_verification_id);
+ IF NOT FOUND THEN RAISE EXCEPTION 'scan verification missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ IF r.deployment_id<>f.deployment_id OR r.workload_name<>f.workload_name THEN
+  RAISE EXCEPTION 'scan approval workload changed' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'scan deployment missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherKeySHA256');
+ RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'artifact scan renewal inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
+END;
+$$;
+
+
+--
+-- Name: lock_deployment_registry_rootfs(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_registry_rootfs(verification_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r deployment_registry_verifications%ROWTYPE; d deployments%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=verification_id;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'registry verification missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing';
+ END IF;
+ SELECT * INTO d FROM deployments WHERE id=r.deployment_id FOR UPDATE NOWAIT;
+ IF NOT FOUND OR d.status NOT IN ('pending','building','imaging','snapshotting') THEN
+  RAISE EXCEPTION 'registry conversion is no longer active' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherKeySHA256');
+ RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'registry rootfs inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
+END;
+$$;
+
+
+--
+-- Name: lock_deployment_registry_verification(uuid, uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_registry_verification(application_id uuid, artifact_id uuid, owner_id uuid, workload text, publisher text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; d deployments%ROWTYPE; image_ref text; key_der bytea; matches integer;
+BEGIN
+ SELECT * INTO d FROM deployments WHERE id=artifact_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'registry artifact missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing';
+ END IF;
+ SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'registry application missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing';
+ END IF;
+ IF a.id IS DISTINCT FROM d.app_id OR a.account_id IS DISTINCT FROM owner_id OR a.status='deleted'
+   OR d.status NOT IN ('pending','building','imaging','snapshotting','live','superseded') THEN
+  RAISE EXCEPTION 'registry artifact scope changed' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || a.id::text,0))
+   OR NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.' || d.id::text,0)) THEN
+  RAISE EXCEPTION 'registry verification inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
+ END IF;
+ IF workload='' AND d.kind='image' THEN
+  image_ref := d.image_digest;
+ ELSIF workload <> '' THEN
+  SELECT count(*),min(s->>'image') INTO matches,image_ref FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=workload;
+  IF matches <> 1 THEN image_ref := NULL; END IF;
+ END IF;
+ IF image_ref IS NULL OR image_ref='' THEN
+  RAISE EXCEPTION 'registry workload missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND account_id=a.account_id AND encode(sha256(cosign_public_key),'hex')=publisher ORDER BY signer_name LIMIT 1;
+ RETURN jsonb_build_object('app_id',a.id::text,'account_id',a.account_id::text,'org_id',coalesce(a.org_id::text,''),
+   'image_reference',image_ref,'key_der',coalesce(encode(key_der,'base64'),''));
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'registry verification inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
+END;
+$$;
+
+
+--
 -- Name: lock_environment_qualification_cleanup_writers(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11165,6 +15650,73 @@ BEGIN
  PERFORM lock_route_removal_coverage();
  PERFORM 1 FROM request_telemetry_app_gaps WHERE app_id=target_app ORDER BY node_name FOR SHARE;
 END $$;
+
+
+--
+-- Name: lock_source_build_rootfs(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_source_build_rootfs(input jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p build_export_publications%ROWTYPE; a apps%ROWTYPE; d deployments%ROWTYPE; b builds%ROWTYPE;
+BEGIN
+ SELECT * INTO p FROM build_export_publications WHERE id=(input->>'publication_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'source approval missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
+ SELECT * INTO d FROM deployments WHERE id=p.deployment_id FOR UPDATE NOWAIT;
+ SELECT * INTO a FROM apps WHERE id=p.app_id FOR SHARE NOWAIT;
+ -- Lock queued claims too. Deployment FOR UPDATE blocks new FK children.
+ PERFORM id FROM builds WHERE deployment_id=d.id ORDER BY id FOR SHARE NOWAIT;
+ SELECT * INTO b FROM builds WHERE deployment_id=d.id ORDER BY started_at DESC NULLS LAST,id DESC LIMIT 1 FOR SHARE NOWAIT;
+ IF (d.app_id=a.id AND a.account_id=p.account_id AND a.status<>'deleted'
+  AND p.build_id=b.id AND d.build_id=p.build_id AND p.deployment_id::text=input->>'deployment_id' AND p.app_id::text=input->>'app_id'
+  AND p.account_id::text=input->>'account_id' AND p.input_hash=input->>'publication_hash'
+  AND p.verified_at<=clock_timestamp() AND p.expires_at>clock_timestamp()
+  AND d.status IN ('pending','building','imaging','snapshotting')) IS NOT TRUE THEN
+  RAISE EXCEPTION 'source conversion inputs changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ RETURN jsonb_build_object('intent',source_build_rootfs_intent(a,d),'status',d.status,'checked_at',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'source conversion inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
+END;
+$$;
+
+
+--
+-- Name: lock_source_build_runtime_rootfs(jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_source_build_runtime_rootfs(input jsonb, expected_artifact uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f source_build_rootfs%ROWTYPE; p build_export_publications%ROWTYPE; a apps%ROWTYPE; d deployments%ROWTYPE; b builds%ROWTYPE;
+BEGIN
+ SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
+ WHERE c.artifact_id=expected_artifact AND c.deployment_id=(input->>'deployment_id')::uuid FOR SHARE OF c,r NOWAIT;
+ IF NOT FOUND OR f.input_snapshot IS DISTINCT FROM input THEN
+  RAISE EXCEPTION 'source runtime selection changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ SELECT * INTO p FROM build_export_publications WHERE id=f.publication_id FOR SHARE NOWAIT;
+ SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR UPDATE NOWAIT;
+ SELECT * INTO a FROM apps WHERE id=d.app_id FOR SHARE NOWAIT;
+ -- Fence queued claims and new FK children as well as the successful build.
+ PERFORM id FROM builds WHERE deployment_id=d.id ORDER BY id FOR SHARE NOWAIT;
+ SELECT * INTO b FROM builds WHERE deployment_id=d.id ORDER BY started_at DESC NULLS LAST,id DESC LIMIT 1 FOR SHARE NOWAIT;
+ IF (p.deployment_id=d.id AND p.app_id=a.id AND p.account_id=a.account_id AND a.status<>'deleted'
+  AND p.build_id=b.id AND d.build_id=p.build_id AND p.input_hash=input->>'publication_hash'
+  AND a.id::text=input->>'app_id' AND a.account_id::text=input->>'account_id'
+  AND coalesce(a.org_id::text,'')=input->>'org_id' AND input->>'scope'=d.scope
+  AND input->>'storage_key'=d.rootfs_key AND input->>'rootfs_path'=d.rootfs_path
+  AND (input->>'content_bytes')::bigint=d.rootfs_bytes) IS NOT TRUE THEN
+  RAISE EXCEPTION 'source runtime inputs changed' USING ERRCODE='23514',CONSTRAINT='build_export_publication_stale';
+ END IF;
+ -- This is an owner fence. Go authenticates the latest exact-claim proof under
+ -- current controls and verifies intent/base hashes before publishing a scan.
+ RETURN jsonb_build_object('intent',source_build_rootfs_intent(a,d));
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'source runtime inputs busy' USING ERRCODE='55P03',CONSTRAINT='build_export_publication_busy';
+END;
+$$;
 
 
 --
@@ -15465,6 +20017,66 @@ $$;
 
 
 --
+-- Name: source_build_rootfs_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND source_build_rootfs_owner_erasing(OLD.deployment_id) THEN RETURN OLD;END IF;
+ IF TG_OP<>'DELETE' AND current_setting('gregale.source_build_rootfs_insert',true)=NEW.artifact_id::text
+  AND (TG_OP='INSERT' OR NEW.deployment_id=OLD.deployment_id) THEN RETURN NEW;END IF;
+ RAISE EXCEPTION 'source rootfs selection must use private publication' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
+-- Name: source_build_rootfs_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.source_build_rootfs_insert',true)=NEW.id::text THEN RETURN NEW;END IF;
+ IF TG_OP='DELETE' AND source_build_rootfs_owner_erasing(OLD.deployment_id) THEN RETURN OLD;END IF;
+ RAISE EXCEPTION 'source rootfs evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
+-- Name: source_build_rootfs_intent(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_intent(a public.apps, d public.deployments) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT jsonb_build_object('slug',a.slug,'type',a.type,'runtime',coalesce(a.runtime,''),'start_command',coalesce(a.start_command,''),
+ 'manifest',a.manifest,'require_signed',a.require_signed,'security_policy',a.security_policy,'handler',coalesce(d.handler,''),
+ 'scope',d.scope,'override_entrypoint',d.override_entrypoint,'override_cmd',d.override_cmd,'override_env',d.override_env,
+ 'override_env_secrets',d.override_env_secrets,'override_port',coalesce(d.override_port,0),'override_healthcheck',d.override_healthcheck,
+ 'override_liveness_probe',d.override_liveness_probe,'override_readiness_probe',d.override_readiness_probe,
+ 'override_main_depends_on',d.override_main_depends_on);
+$$;
+
+
+--
+-- Name: source_build_rootfs_owner_erasing(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.source_build_rootfs_owner_erasing(deployment uuid) RETURNS boolean
+    LANGUAGE sql
+    AS $$
+ SELECT NOT EXISTS(SELECT 1 FROM deployments WHERE id=deployment)
+ OR EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+  WHERE d.id=deployment AND a.status='deleted' AND a.delete_grace_until<=clock_timestamp() AND a.purge_claimed_at IS NOT NULL);
+$$;
+
+
+--
 -- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15861,6 +20473,128 @@ BEGIN
  IF r ? 'legal_hold' AND (jsonb_typeof(r->'legal_hold')<>'object' OR (r->'legal_hold')-ARRAY['status']<>'{}' OR coalesce(r->'legal_hold'->>'status','') NOT IN ('ON','OFF')) THEN RETURN false; END IF;
  RETURN true;
 EXCEPTION WHEN OTHERS THEN RETURN false;
+END $$;
+
+
+--
+-- Name: valid_queue_release_requirements(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_queue_release_requirements(requirements jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE entry record; count integer:=0;
+BEGIN
+ IF requirements IS NULL OR jsonb_typeof(requirements)<>'object' THEN RETURN false; END IF;
+ FOR entry IN SELECT key,value FROM jsonb_each(requirements) LOOP
+  count:=count+1;
+  IF count>32 OR entry.key !~ '^[a-z][a-z0-9-]{0,62}$'
+   OR jsonb_typeof(entry.value)<>'string' OR entry.value #>> '{}' NOT IN ('consumer_readiness','handler_completion') THEN RETURN false; END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: validate_checked_binding_release_graph(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_checked_binding_release_graph() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE grant_value jsonb; actual_members jsonb; f jsonb;
+BEGIN
+ grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF grant_value IS NULL OR NEW.id::text IS DISTINCT FROM grant_value->>'new_id' THEN RETURN NEW; END IF;
+ SELECT coalesce(jsonb_object_agg(app_id::text,deployment_id::text),'{}'::jsonb) INTO actual_members FROM project_release_members WHERE release_id=NEW.id;
+ IF actual_members IS DISTINCT FROM grant_value->'members' THEN
+  RAISE EXCEPTION 'checked graph members changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ FOR f IN SELECT value FROM jsonb_array_elements(grant_value->'fences') LOOP
+  IF nullif(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN
+   RAISE EXCEPTION 'graph evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: validate_checked_project_deactivation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_checked_project_deactivation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g jsonb; receipt jsonb; selected jsonb; actual jsonb; a apps%ROWTYPE; expected text; f jsonb;
+BEGIN
+ g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF g->>'action' IS DISTINCT FROM 'deactivate' THEN
+  IF OLD.active AND NOT NEW.active AND g->>'old_id'=NEW.id::text AND NOT EXISTS (SELECT 1 FROM project_release_sets WHERE id=(g->>'new_id')::uuid AND active AND project_id=NEW.project_id AND environment_slug=NEW.environment_slug) THEN
+   RAISE EXCEPTION 'forward grant requires replacement graph' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF g->>'old_id' IS DISTINCT FROM NEW.id::text THEN RETURN NEW; END IF;
+ SELECT deactivation INTO receipt FROM project_release_sets WHERE id=NEW.id AND NOT active;
+ IF receipt IS NULL OR receipt->>'id' IS DISTINCT FROM g->>'receipt_id' OR EXISTS (SELECT 1 FROM project_release_sets WHERE project_id=NEW.project_id AND environment_slug=NEW.environment_slug AND active) THEN
+  RAISE EXCEPTION 'deactivation lacks exact receipt' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ SELECT jsonb_object_agg(value->>'app_id',value->>'deployment_id') INTO selected FROM jsonb_array_elements(receipt->'fallback_members');
+ IF selected IS DISTINCT FROM g->'members' OR jsonb_array_length(receipt->'fallback_members')<>(SELECT count(*) FROM jsonb_each(g->'members')) THEN
+  RAISE EXCEPTION 'deactivation recipients changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ IF (SELECT count(*) FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='')<>(SELECT count(*) FROM jsonb_each(selected)) THEN
+  RAISE EXCEPTION 'fallback membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ FOR a IN SELECT * FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='' ORDER BY id LOOP
+  expected:=selected->>a.id::text;
+  SELECT jsonb_object_agg(id::text,traffic_percent) INTO actual FROM deployments WHERE app_id=a.id AND scope=NEW.environment_slug AND status='live' AND traffic_percent>0;
+  IF expected IS NULL OR actual IS DISTINCT FROM jsonb_build_object(expected,100) OR NOT EXISTS (SELECT 1 FROM deployments WHERE id=expected::uuid AND app_id=a.id AND scope=NEW.environment_slug AND status='live' AND NOT environment_workload_held AND coalesce(rootfs_key,'')<>'' AND coalesce(image_digest,'')<>'') THEN
+   RAISE EXCEPTION 'fallback routing or eligibility changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+ END LOOP;
+ FOR f IN SELECT value FROM jsonb_array_elements(g->'fences') LOOP
+  IF nullif(f->>'valid_until','')::timestamptz<=clock_timestamp() THEN
+   RAISE EXCEPTION 'deactivation evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: validate_checked_project_rollback(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_checked_project_rollback() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE source project_release_sets%ROWTYPE; prior project_release_sets%ROWTYPE; grant_value jsonb; selected jsonb; historical jsonb;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW.rollback_source_release_id IS DISTINCT FROM OLD.rollback_source_release_id OR NEW.rollback_previous_release_id IS DISTINCT FROM OLD.rollback_previous_release_id THEN
+   RAISE EXCEPTION 'immutable recovery identity' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.rollback_source_release_id IS NULL THEN RETURN NEW; END IF;
+ grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF grant_value IS NULL OR grant_value->>'new_id' IS DISTINCT FROM NEW.id::text OR grant_value->>'old_id' IS DISTINCT FROM NEW.rollback_previous_release_id::text THEN
+  RAISE EXCEPTION 'rollback requires checked graph authorization' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ END IF;
+ SELECT * INTO source FROM project_release_sets WHERE id=NEW.rollback_source_release_id FOR SHARE;
+ SELECT * INTO prior FROM project_release_sets WHERE id=NEW.rollback_previous_release_id FOR SHARE;
+ IF source.account_id IS DISTINCT FROM NEW.account_id OR source.project_id IS DISTINCT FROM NEW.project_id OR source.environment_slug IS DISTINCT FROM NEW.environment_slug OR source.active OR source.expires_at IS NULL OR source.expires_at <= clock_timestamp()
+  OR prior.account_id IS DISTINCT FROM NEW.account_id OR prior.project_id IS DISTINCT FROM NEW.project_id OR prior.environment_slug IS DISTINCT FROM NEW.environment_slug OR prior.active THEN
+  RAISE EXCEPTION 'rollback history expired or changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO selected FROM project_release_members WHERE release_id=NEW.id;
+ SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO historical FROM project_release_members WHERE release_id=source.id;
+ IF selected IS DISTINCT FROM historical THEN
+  RAISE EXCEPTION 'rollback membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ RETURN NEW;
 END $$;
 
 
@@ -16778,6 +21512,51 @@ CREATE TABLE public.app_api_routes (
 
 
 --
+-- Name: app_application_standards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_application_standards (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    project_id uuid,
+    base_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    local_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    additional_log_destinations uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    adoptions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    effective jsonb DEFAULT '{}'::jsonb NOT NULL,
+    effective_hash text DEFAULT ''::text NOT NULL,
+    desired_revision bigint DEFAULT 1 NOT NULL,
+    persisted_revision bigint DEFAULT 0 NOT NULL,
+    observed_revision bigint DEFAULT 0 NOT NULL,
+    state text DEFAULT 'unmanaged'::text NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_owner text DEFAULT ''::text NOT NULL,
+    lease_generation bigint DEFAULT 0 NOT NULL,
+    lease_until timestamp with time zone,
+    materialized_fields text[] DEFAULT '{}'::text[] NOT NULL,
+    exception_expires_at timestamp with time zone,
+    observation_checked_at timestamp with time zone,
+    observation_revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
+    CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
+    CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
+    CONSTRAINT app_application_standards_check1 CHECK (((observed_revision >= 0) AND (observed_revision <= persisted_revision))),
+    CONSTRAINT app_application_standards_check2 CHECK (((observation_revision >= 0) AND (observation_revision <= desired_revision))),
+    CONSTRAINT app_application_standards_desired_revision_check CHECK ((desired_revision > 0)),
+    CONSTRAINT app_application_standards_effective_check CHECK ((jsonb_typeof(effective) = 'object'::text)),
+    CONSTRAINT app_application_standards_effective_hash_check CHECK (((effective_hash = ''::text) OR (effective_hash ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT app_application_standards_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT app_application_standards_lease_check CHECK (((lease_owner = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT app_application_standards_lease_generation_check CHECK ((lease_generation >= 0)),
+    CONSTRAINT app_application_standards_lease_owner_check CHECK ((octet_length(lease_owner) <= 128)),
+    CONSTRAINT app_application_standards_local_settings_check CHECK ((jsonb_typeof(local_settings) = 'object'::text)),
+    CONSTRAINT app_application_standards_materialized_fields_check CHECK ((materialized_fields <@ ARRAY['log_destinations'::text, 'require_signed'::text, 'security_policy'::text, 'trusted_publishers'::text, 'egress_cidrs'::text, 'egress_extra_ports'::text])),
+    CONSTRAINT app_application_standards_state_check CHECK ((state = ANY (ARRAY['unmanaged'::text, 'pending'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text])))
+);
+
+
+--
 -- Name: app_binding_promotion_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16805,12 +21584,14 @@ CREATE TABLE public.app_binding_release_policies (
     reason text DEFAULT ''::text NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     object_storage_requirements jsonb DEFAULT '{}'::jsonb NOT NULL,
+    queue_requirements jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT app_binding_release_policies_max_age_seconds_check CHECK (((max_age_seconds >= 1) AND (max_age_seconds <= 86400))),
     CONSTRAINT app_binding_release_policies_mode_check CHECK ((mode = ANY (ARRAY['off'::text, 'enforce'::text]))),
     CONSTRAINT app_binding_release_policies_reason_check CHECK (((octet_length(reason) <= 256) AND (reason !~ '[[:cntrl:]]'::text))),
     CONSTRAINT app_binding_release_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT app_binding_release_policies_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
-    CONSTRAINT object_storage_release_requirements CHECK (public.valid_object_storage_release_requirements(object_storage_requirements))
+    CONSTRAINT object_storage_release_requirements CHECK (public.valid_object_storage_release_requirements(object_storage_requirements)),
+    CONSTRAINT queue_release_requirements CHECK (public.valid_queue_release_requirements(queue_requirements))
 );
 
 
@@ -16886,6 +21667,28 @@ CREATE TABLE public.app_egress_policy_node_status (
     CONSTRAINT app_egress_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+
+--
+-- Name: app_environment_route_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_environment_route_budgets (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    project_id uuid,
+    environment_id uuid,
+    inherit boolean NOT NULL,
+    enabled boolean NOT NULL,
+    revision bigint NOT NULL,
+    routes jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_environment_route_budgets_check CHECK ((((scope = 'default'::text) AND (environment_id IS NULL) AND (project_id IS NULL)) OR ((scope <> 'default'::text) AND (environment_id IS NOT NULL) AND (project_id IS NOT NULL)))),
+    CONSTRAINT app_environment_route_budgets_check1 CHECK (((NOT inherit) OR ((NOT enabled) AND (routes = '[]'::jsonb)))),
+    CONSTRAINT app_environment_route_budgets_revision_check CHECK (((revision > 0) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT app_environment_route_budgets_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20)))
 );
 
 
@@ -17214,25 +22017,6 @@ CREATE TABLE public.app_log_drain_health (
     CONSTRAINT app_log_drain_health_retries_total_check CHECK ((retries_total >= 0)),
     CONSTRAINT app_log_drain_health_status_check CHECK ((status = ANY (ARRAY['unknown'::text, 'healthy'::text, 'degraded'::text, 'inactive'::text]))),
     CONSTRAINT app_log_drain_health_stream_reconnects_total_check CHECK ((stream_reconnects_total >= 0))
-);
-
-
---
--- Name: app_log_drains; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_log_drains (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    kind text NOT NULL,
-    target_url text NOT NULL,
-    auth_header_sealed bytea,
-    enabled boolean DEFAULT true NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
-    CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
 
@@ -17644,13 +22428,17 @@ CREATE TABLE public.app_tasks (
     exclusive_generation bigint,
     binding_verification jsonb,
     CONSTRAINT app_tasks_artifact_key_chk CHECK (((octet_length(artifact_key) >= 1) AND (octet_length(artifact_key) <= 2048))),
-    CONSTRAINT app_tasks_binding_verification_check CHECK (((binding_verification IS NULL) OR COALESCE(((jsonb_typeof(binding_verification) = 'object'::text) AND (binding_verification ?& ARRAY['type'::text, 'binding'::text, 'revision'::text]) AND ((binding_verification ->> 'type'::text) = ANY (ARRAY['service'::text, 'postgres'::text, 'object_storage'::text, 'outbound'::text])) AND ((NOT (binding_verification ? 'object_storage_mode'::text)) OR ((binding_verification ->> 'object_storage_mode'::text) = ''::text) OR (((binding_verification ->> 'type'::text) = 'object_storage'::text) AND ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text])) AND ((binding_verification ->> 'object_storage_mode'::text) = command[3]))) AND ((binding_verification ->> 'binding'::text) = command[2]) AND ((binding_verification ->> 'revision'::text) ~ '^[a-f0-9]{64}$'::text) AND (cardinality(command) =
+    CONSTRAINT app_tasks_binding_verification_check CHECK ((((binding_verification IS NULL) OR COALESCE(((jsonb_typeof(binding_verification) = 'object'::text) AND (binding_verification ?& ARRAY['type'::text, 'binding'::text, 'revision'::text]) AND ((binding_verification ->> 'type'::text) = ANY (ARRAY['service'::text, 'postgres'::text, 'object_storage'::text, 'outbound'::text])) AND ((NOT (binding_verification ? 'object_storage_mode'::text)) OR ((binding_verification ->> 'object_storage_mode'::text) = ''::text) OR (((binding_verification ->> 'type'::text) = 'object_storage'::text) AND ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text])) AND ((binding_verification ->> 'object_storage_mode'::text) = command[3]))) AND ((binding_verification ->> 'binding'::text) = command[2]) AND ((binding_verification ->> 'revision'::text) ~ '^[a-f0-9]{64}$'::text) AND (cardinality(command) =
 CASE
-    WHEN (((binding_verification ->> 'type'::text) = 'outbound'::text) OR ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text]))) THEN 3
+    WHEN (((binding_verification ->> 'type'::text) = 'outbound'::text) OR ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text])) OR (COALESCE((binding_verification ->> 'target_deployment_id'::text), ''::text) <> ''::text)) THEN 3
     ELSE 2
 END) AND (NOT command_shell) AND (kind = 'manual'::text) AND (command[1] =
 CASE (binding_verification ->> 'type'::text)
-    WHEN 'service'::text THEN '__gregale_service_binding_probe_v1__'::text
+    WHEN 'service'::text THEN
+    CASE
+        WHEN (COALESCE((binding_verification ->> 'target_deployment_id'::text), ''::text) <> ''::text) THEN '__gregale_service_binding_probe_v2__'::text
+        ELSE '__gregale_service_binding_probe_v1__'::text
+    END
     WHEN 'postgres'::text THEN '__gregale_postgres_binding_probe_v1__'::text
     WHEN 'object_storage'::text THEN
     CASE
@@ -17658,7 +22446,7 @@ CASE (binding_verification ->> 'type'::text)
         ELSE '__gregale_object_storage_binding_probe_v1__'::text
     END
     ELSE '__gregale_outbound_binding_probe_v1__'::text
-END)), false))),
+END)), false)) AND ((binding_verification IS NULL) OR (COALESCE((binding_verification ->> 'target_deployment_id'::text), ''::text) = ''::text) OR COALESCE((((binding_verification ->> 'type'::text) = 'service'::text) AND ((binding_verification ->> 'target_deployment_id'::text) ~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'::text) AND ((binding_verification ->> 'target_deployment_id'::text) = command[3])), false)))),
     CONSTRAINT app_tasks_command_chk CHECK ((((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1)))),
     CONSTRAINT app_tasks_exclusive_generation_check CHECK ((((exclusive_operation_id IS NULL) AND (exclusive_generation IS NULL)) OR ((exclusive_operation_id IS NOT NULL) AND (exclusive_generation > 0)))),
     CONSTRAINT app_tasks_exit_code_chk CHECK (((exit_code IS NULL) OR ((exit_code >= 0) AND (exit_code <= 255)))),
@@ -17904,177 +22692,399 @@ CREATE TABLE public.app_work_policies (
 
 
 --
--- Name: apps; Type: TABLE; Schema: public; Owner: -
+-- Name: application_standard_assignments; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.apps (
+CREATE TABLE public.application_standard_assignments (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    type text DEFAULT 'app'::text NOT NULL,
-    runtime text,
-    ram_mb integer NOT NULL,
-    idle_timeout_s integer,
-    max_concurrency integer DEFAULT 1 NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
+    org_id uuid NOT NULL,
+    scope text NOT NULL,
+    scope_id uuid NOT NULL,
+    standard_id uuid NOT NULL,
+    admission_version bigint NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    github_install_id bigint,
-    github_repo_full_name text,
-    github_production_branch text,
-    min_instances integer DEFAULT 0 NOT NULL,
-    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    autoscale_target_rps integer,
-    autoscale_target_cpu_pct integer,
-    github_install_binding_id text,
-    github_install_account_id uuid,
-    github_install_linked_at timestamp with time zone,
-    project_id uuid,
-    root_dir text DEFAULT ''::text NOT NULL,
-    workload_name text DEFAULT ''::text NOT NULL,
-    workload_class text DEFAULT 'http'::text NOT NULL,
-    start_command text,
-    streaming_enabled boolean DEFAULT false NOT NULL,
-    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_scale_out_at timestamp with time zone,
-    last_scale_in_at timestamp with time zone,
-    require_signed boolean DEFAULT false NOT NULL,
-    node_id uuid,
-    reassigned_at timestamp with time zone,
-    org_id uuid,
-    migrated_at timestamp with time zone,
-    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
-    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
-    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
-    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
-    require_authn boolean DEFAULT false NOT NULL,
-    public_auth_mode text DEFAULT 'open'::text NOT NULL,
-    public_auth_basic bytea,
-    websocket_enabled boolean DEFAULT false NOT NULL,
-    auth_default_flipped_at timestamp with time zone,
-    overflow_node uuid,
-    route_metrics_enabled boolean DEFAULT false NOT NULL,
-    preview_of_slug text,
-    preview_pr_number integer,
-    preview_pr_state text,
-    preview_expires_at timestamp with time zone,
-    cors_default_enabled boolean DEFAULT false NOT NULL,
-    cors_default_origins text[],
-    maintenance_mode boolean DEFAULT false NOT NULL,
-    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    static_egress_ip inet,
-    static_egress_ip_set_at timestamp with time zone,
-    preview_destroy_commented_at timestamp with time zone,
-    app_protocol text DEFAULT 'http1'::text NOT NULL,
-    cpu_millicores integer DEFAULT 1000 NOT NULL,
-    last_deploy_failed_email_at timestamp with time zone,
-    deleted_at timestamp with time zone,
-    delete_grace_until timestamp with time zone,
-    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
-    only_declared_routes boolean DEFAULT false NOT NULL,
-    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
-    purge_claimed_at timestamp with time zone,
-    visibility text DEFAULT 'public'::text NOT NULL,
-    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    warm_pool_size integer DEFAULT 0 NOT NULL,
-    security_policy text DEFAULT 'off'::text NOT NULL,
-    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
-    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
-    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
-    request_rate_limit_rps integer,
-    request_rate_limit_burst integer,
-    github_owner_id bigint,
-    github_repo_id bigint,
-    park_transition_id uuid,
-    wake_transition_id uuid,
-    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
-    platform_tenant_required boolean DEFAULT false NOT NULL,
-    managed_postgres_admission_cutover_id uuid,
-    managed_postgres_admission_fenced_at timestamp with time zone,
-    service_address_index integer,
-    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
-    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
-    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
-    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
-    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
-    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
-    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
-    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
-    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
-    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
-    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
-    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
-    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
-    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
-    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
-    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
-    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
-    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
-    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
-    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
-    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
-    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text, 'binary'::text])))),
-    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
-    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
-    CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
-    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
-    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
-    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
-    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
-    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
-    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
-    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
-    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_assignments_admission_version_check CHECK (((admission_version >= 1) AND (admission_version <= '9007199254740991'::bigint))),
+    CONSTRAINT application_standard_assignments_check CHECK (((scope <> 'organization'::text) OR (scope_id = org_id))),
+    CONSTRAINT application_standard_assignments_revision_check CHECK ((revision > 0)),
+    CONSTRAINT application_standard_assignments_scope_check CHECK ((scope = ANY (ARRAY['organization'::text, 'project'::text, 'application'::text])))
 );
 
 
 --
--- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
+-- Name: application_standard_control_backups; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
-
-
---
--- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
-
-
---
--- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
+CREATE TABLE public.application_standard_control_backups (
+    app_id uuid NOT NULL,
+    field text NOT NULL,
+    logical_id uuid NOT NULL,
+    body jsonb NOT NULL,
+    config_hash text NOT NULL,
+    CONSTRAINT application_standard_control_backups_body_check CHECK ((jsonb_typeof(body) = 'object'::text)),
+    CONSTRAINT application_standard_control_backups_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_control_backups_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text])))
+);
 
 
 --
--- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
+-- Name: application_standard_control_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
+CREATE TABLE public.application_standard_control_bindings (
+    app_id uuid NOT NULL,
+    field text NOT NULL,
+    resource_id uuid NOT NULL,
+    physical_id text NOT NULL,
+    CONSTRAINT application_standard_control_bindings_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text]))),
+    CONSTRAINT application_standard_control_bindings_physical_id_check CHECK (((octet_length(physical_id) >= 1) AND (octet_length(physical_id) <= 128)))
+);
 
 
 --
--- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
+-- Name: application_standard_egress_observations; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
+CREATE TABLE public.application_standard_egress_observations (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    target jsonb NOT NULL,
+    receipt jsonb NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT application_standard_egress_observations_observed_at_check CHECK ((observed_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_egress_observations_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT application_standard_egress_observations_target_check CHECK ((jsonb_typeof(target) = 'object'::text))
+);
 
 
 --
--- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
+-- Name: application_standard_exceptions; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
+CREATE TABLE public.application_standard_exceptions (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    standard_id uuid NOT NULL,
+    version bigint NOT NULL,
+    field text NOT NULL,
+    value jsonb NOT NULL,
+    reason text NOT NULL,
+    approved_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_by uuid,
+    revoked_at timestamp with time zone,
+    CONSTRAINT application_standard_exceptions_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '30 days'::interval)))),
+    CONSTRAINT application_standard_exceptions_check1 CHECK (((revoked_by IS NULL) = (revoked_at IS NULL))),
+    CONSTRAINT application_standard_exceptions_check2 CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
+    CONSTRAINT application_standard_exceptions_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'require_signed'::text, 'security_policy'::text, 'trusted_publishers'::text, 'egress_cidrs'::text, 'egress_extra_ports'::text]))),
+    CONSTRAINT application_standard_exceptions_reason_check CHECK ((((octet_length(reason) >= 1) AND (octet_length(reason) <= 512)) AND (btrim(reason) <> ''::text))),
+    CONSTRAINT application_standard_exceptions_value_check CHECK (((value <> 'null'::jsonb) AND (octet_length((value)::text) <= 131072))),
+    CONSTRAINT application_standard_exceptions_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: application_standard_ledger_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_ledger_recoveries (
+    approval_hash text NOT NULL,
+    target_hash text NOT NULL,
+    schema_hash text NOT NULL,
+    source_hash text NOT NULL,
+    ledger_hash text NOT NULL,
+    actor text DEFAULT CURRENT_USER NOT NULL,
+    plan jsonb NOT NULL,
+    repaired_versions bigint[] NOT NULL,
+    recovered_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT application_standard_ledger_recoveries_actor_check CHECK ((actor <> ''::text)),
+    CONSTRAINT application_standard_ledger_recoveries_approval_hash_check CHECK ((approval_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_ledger_hash_check CHECK ((ledger_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_repaired_versions_check CHECK ((cardinality(repaired_versions) > 0)),
+    CONSTRAINT application_standard_ledger_recoveries_schema_hash_check CHECK ((schema_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_source_hash_check CHECK ((source_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_ledger_recoveries_target_hash_check CHECK ((target_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: application_standard_log_consumer_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_consumer_sessions (
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    registered_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_consumer_sessions_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_consumer_sessions_registered_at_check CHECK ((registered_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_consumer_sessions_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: application_standard_log_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_consumers (
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    registered_at timestamp with time zone NOT NULL,
+    stopped_at timestamp with time zone,
+    CONSTRAINT application_standard_log_consumers_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_consumers_registered_at_check CHECK ((registered_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_consumers_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_log_consumers_stopped_at_check CHECK (((stopped_at IS NULL) OR (stopped_at > '1970-01-01 00:00:00+00'::timestamp with time zone)))
+);
+
+
+--
+-- Name: application_standard_log_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_deliveries (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    drain_id uuid NOT NULL,
+    resource_id uuid NOT NULL,
+    desired_revision bigint NOT NULL,
+    effective_hash text NOT NULL,
+    resource_config_hash text NOT NULL,
+    drain_config_hash text NOT NULL,
+    source_instance_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_deliveries_desired_revision_check CHECK (((desired_revision >= 1) AND (desired_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT application_standard_log_deliveries_drain_config_hash_check CHECK ((drain_config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_deliveries_effective_hash_check CHECK ((effective_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_deliveries_observed_at_check CHECK ((observed_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_deliveries_resource_config_hash_check CHECK ((resource_config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_deliveries_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: application_standard_log_destinations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_destinations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    target_url text NOT NULL,
+    auth_header_sealed bytea DEFAULT '\x'::bytea NOT NULL,
+    config_hash text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_log_destinations_auth_header_sealed_check CHECK ((octet_length(auth_header_sealed) <= 8192)),
+    CONSTRAINT application_standard_log_destinations_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_destinations_kind_check CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
+    CONSTRAINT application_standard_log_destinations_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT application_standard_log_destinations_target_url_check CHECK (((target_url ~~ 'https://%'::text) AND (octet_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: application_standard_log_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_health (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    drain_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    binding jsonb NOT NULL,
+    event_revision bigint NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    source_instance_id uuid,
+    sequence bigint NOT NULL,
+    event_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_health_binding_check CHECK ((jsonb_typeof(binding) = 'object'::text)),
+    CONSTRAINT application_standard_log_health_check CHECK (((event_revision < '9223372036854775807'::bigint) OR ((status = 'degraded'::text) AND (reason = 'reporter_exhausted'::text)))),
+    CONSTRAINT application_standard_log_health_check1 CHECK ((((status = 'healthy'::text) AND (reason = 'delivered'::text) AND (source_instance_id IS NOT NULL) AND (sequence > 0)) OR ((status = 'unknown'::text) AND (reason = 'idle'::text) AND (source_instance_id IS NULL) AND (sequence = 0)) OR ((status = 'degraded'::text) AND (reason <> ALL (ARRAY['idle'::text, 'delivered'::text])) AND (source_instance_id IS NULL) AND (sequence = 0)))),
+    CONSTRAINT application_standard_log_health_event_at_check CHECK ((event_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_health_event_revision_check CHECK ((event_revision > 0)),
+    CONSTRAINT application_standard_log_health_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_health_observed_at_check CHECK ((observed_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_health_reason_check CHECK ((reason = ANY (ARRAY['idle'::text, 'delivered'::text, 'retrying'::text, 'delivery_failed'::text, 'queue_fault'::text, 'records_lost'::text, 'source_gap'::text, 'stream_unavailable'::text, 'reporter_exhausted'::text]))),
+    CONSTRAINT application_standard_log_health_sequence_check CHECK ((sequence >= 0)),
+    CONSTRAINT application_standard_log_health_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_log_health_source_instance_id_check CHECK ((source_instance_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_log_health_status_check CHECK ((status = ANY (ARRAY['unknown'::text, 'healthy'::text, 'degraded'::text])))
+);
+
+
+--
+-- Name: application_standard_log_inventories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_inventories (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    inventory jsonb NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_log_inventories_generation_check CHECK ((generation > 0)),
+    CONSTRAINT application_standard_log_inventories_inventory_check CHECK ((jsonb_typeof(inventory) = 'object'::text)),
+    CONSTRAINT application_standard_log_inventories_observed_at_check CHECK ((observed_at > '1970-01-01 00:00:00+00'::timestamp with time zone)),
+    CONSTRAINT application_standard_log_inventories_session_id_check CHECK ((session_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: application_standard_native_incarnations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_native_incarnations (
+    node_id uuid NOT NULL,
+    incarnation uuid NOT NULL,
+    protocol_version smallint NOT NULL,
+    registered_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT application_standard_native_incarnations_incarnation_check CHECK ((incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT application_standard_native_incarnations_protocol_version_check CHECK ((protocol_version = ANY (ARRAY[1, 2, 3]))),
+    CONSTRAINT application_standard_native_incarnations_registered_at_check CHECK ((registered_at > '1970-01-01 00:00:00+00'::timestamp with time zone))
+);
+
+
+--
+-- Name: application_standard_operation_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_operation_targets (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    "position" integer NOT NULL,
+    approved_app jsonb NOT NULL,
+    state text DEFAULT 'queued'::text NOT NULL,
+    desired_revision bigint DEFAULT 0 NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_operation_targets_approved_app_check CHECK ((jsonb_typeof(approved_app) = 'object'::text)),
+    CONSTRAINT application_standard_operation_targets_desired_revision_check CHECK ((desired_revision >= 0)),
+    CONSTRAINT application_standard_operation_targets_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT application_standard_operation_targets_position_check CHECK (("position" >= 0)),
+    CONSTRAINT application_standard_operation_targets_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text, 'skipped'::text, 'rolled_back'::text])))
+);
+
+
+--
+-- Name: application_standard_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_operations (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    approval_hash text NOT NULL,
+    approved_by uuid NOT NULL,
+    batch_size integer NOT NULL,
+    state text DEFAULT 'queued'::text NOT NULL,
+    lease_owner text DEFAULT ''::text NOT NULL,
+    lease_generation bigint DEFAULT 0 NOT NULL,
+    lease_until timestamp with time zone,
+    error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_operations_approval_hash_check CHECK ((approval_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_operations_batch_size_check CHECK (((batch_size >= 1) AND (batch_size <= 100))),
+    CONSTRAINT application_standard_operations_check CHECK (((lease_owner = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT application_standard_operations_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT application_standard_operations_lease_generation_check CHECK ((lease_generation >= 0)),
+    CONSTRAINT application_standard_operations_lease_owner_check CHECK ((octet_length(lease_owner) <= 128)),
+    CONSTRAINT application_standard_operations_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'waiting'::text, 'paused'::text, 'completed'::text, 'failed'::text, 'rolled_back'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: application_standard_publishers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_publishers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    name text NOT NULL,
+    public_key_der bytea NOT NULL,
+    fingerprint text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_publishers_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_publishers_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT application_standard_publishers_public_key_der_check CHECK (((octet_length(public_key_der) >= 64) AND (octet_length(public_key_der) <= 1024)))
+);
+
+
+--
+-- Name: application_standard_review_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_review_plans (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    created_by uuid NOT NULL,
+    request jsonb NOT NULL,
+    approval_inputs jsonb NOT NULL,
+    approval_hash text NOT NULL,
+    applications jsonb NOT NULL,
+    blockers jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_review_plans_applications_check CHECK ((jsonb_typeof(applications) = 'array'::text)),
+    CONSTRAINT application_standard_review_plans_approval_hash_check CHECK ((approval_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_review_plans_approval_inputs_check CHECK ((jsonb_typeof(approval_inputs) = 'object'::text)),
+    CONSTRAINT application_standard_review_plans_blockers_check CHECK ((jsonb_typeof(blockers) = 'array'::text)),
+    CONSTRAINT application_standard_review_plans_check CHECK ((expires_at > created_at)),
+    CONSTRAINT application_standard_review_plans_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
+);
+
+
+--
+-- Name: application_standard_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_versions (
+    org_id uuid NOT NULL,
+    standard_id uuid NOT NULL,
+    version bigint NOT NULL,
+    definition jsonb NOT NULL,
+    definition_hash text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_versions_definition_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND (definition <> '{}'::jsonb) AND (octet_length((definition)::text) <= 131072))),
+    CONSTRAINT application_standard_versions_definition_hash_check CHECK ((definition_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_versions_description_check CHECK ((octet_length(description) <= 512)),
+    CONSTRAINT application_standard_versions_version_check CHECK (((version >= 1) AND (version <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: application_standards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standards (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    slug text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standards_slug_check CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$'::text))
+);
 
 
 --
@@ -18180,6 +23190,71 @@ CREATE SEQUENCE public.automation_definition_versions
 
 
 --
+-- Name: base_image_producer_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_producer_current (
+    storage_key text NOT NULL,
+    producer_id uuid NOT NULL,
+    CONSTRAINT base_image_producer_current_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: base_image_producers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_producers (
+    id uuid NOT NULL,
+    storage_key text NOT NULL,
+    parent_producer_id uuid,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    published_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT base_image_producers_check CHECK ((((input_snapshot -> 'artifact'::text) ->> 'storage_key'::text) = storage_key)),
+    CONSTRAINT base_image_producers_check1 CHECK ((COALESCE((input_snapshot ->> 'parent_producer_id'::text), ''::text) = COALESCE((parent_producer_id)::text, ''::text))),
+    CONSTRAINT base_image_producers_check2 CHECK (((parent_producer_id IS NULL) OR (parent_producer_id <> id))),
+    CONSTRAINT base_image_producers_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT base_image_producers_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT base_image_producers_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: base_image_scan_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_scan_current (
+    storage_key text NOT NULL,
+    scan_id uuid NOT NULL,
+    CONSTRAINT base_image_scan_current_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: base_image_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_scans (
+    id uuid NOT NULL,
+    base_producer_id uuid NOT NULL,
+    storage_key text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    result_snapshot jsonb NOT NULL,
+    scanned_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT base_image_scans_check CHECK (((expires_at > scanned_at) AND (expires_at <= (scanned_at + '00:05:00'::interval)))),
+    CONSTRAINT base_image_scans_check1 CHECK ((((input_snapshot ->> 'base_producer_id'::text) = (base_producer_id)::text) AND (((input_snapshot -> 'artifact'::text) ->> 'storage_key'::text) = storage_key))),
+    CONSTRAINT base_image_scans_check2 CHECK ((((input_snapshot ->> 'status'::text) = ANY (ARRAY['complete'::text, 'failed'::text])) AND ((result_snapshot ->> 'status'::text) = (input_snapshot ->> 'status'::text)))),
+    CONSTRAINT base_image_scans_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT base_image_scans_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT base_image_scans_result_snapshot_check CHECK ((jsonb_typeof(result_snapshot) = 'object'::text)),
+    CONSTRAINT base_image_scans_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
 -- Name: billing_identities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18225,6 +23300,67 @@ CREATE TABLE public.billing_usage_deliveries (
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
     CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: binding_verification_run_steps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.binding_verification_run_steps (
+    run_id uuid NOT NULL,
+    step_index integer NOT NULL,
+    resource_id uuid NOT NULL,
+    resource_kind text NOT NULL,
+    CONSTRAINT binding_verification_run_steps_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['task'::text, 'queue'::text]))),
+    CONSTRAINT binding_verification_run_steps_step_index_check CHECK (((step_index >= 0) AND (step_index < 128)))
+);
+
+
+--
+-- Name: binding_verification_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.binding_verification_runs (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    scope text NOT NULL,
+    status text NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    graph_run_id uuid,
+    CONSTRAINT binding_verification_runs_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:10:00'::interval)))),
+    CONSTRAINT binding_verification_runs_scope_check CHECK ((scope <> ''::text)),
+    CONSTRAINT binding_verification_runs_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT binding_verification_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'passed'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: build_export_publications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.build_export_publications (
+    id uuid NOT NULL,
+    build_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    payload bytea NOT NULL,
+    signature bytea NOT NULL,
+    verified_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT build_export_publications_check CHECK (((expires_at > verified_at) AND (expires_at <= (verified_at + '24:00:00'::interval)))),
+    CONSTRAINT build_export_publications_check1 CHECK ((((((input_snapshot -> 'claims'::text) ->> 'format'::text) = 'gregale.build-export.v1'::text) AND (((input_snapshot -> 'claims'::text) ->> 'build_id'::text) = (build_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'deployment_id'::text) = (deployment_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'app_id'::text) = (app_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'account_id'::text) = (account_id)::text) AND (((input_snapshot -> 'claims'::text) ->> 'source_sha256'::text) ~ '^[a-f0-9]{64}$'::text) AND (((input_snapshot -> 'claims'::text) ->> 'export_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((((input_snapshot -> 'claims'::text) ->> 'export_bytes'::text))::bigint >= 1) AND ((((input_snapshot -> 'claims'::text) ->> 'export_bytes'::text))::bigint <= '17213423616'::bigint)) AND (((input_snapshot -> 'proof'::text) ->> 'publisher_key_sha256'::text) ~ '^[a-f0-9]{64}$'::text) AND (((input_snapshot -> 'proof'::text) ->> 'payload_digest'::text) = ('sha256:'::text || encode(sha256(payload), 'hex'::text))) AND (((input_snapshot -> 'proof'::text) ->> 'signature_digest'::text) = ('sha256:'::text || encode(sha256(signature), 'hex'::text)))) IS TRUE)),
+    CONSTRAINT build_export_publications_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT build_export_publications_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT build_export_publications_payload_check CHECK (((octet_length(payload) >= 1) AND (octet_length(payload) <= 8192))),
+    CONSTRAINT build_export_publications_signature_check CHECK (((octet_length(signature) >= 1) AND (octet_length(signature) <= 80)))
 );
 
 
@@ -18572,6 +23708,8 @@ CREATE TABLE public.compute_nodes (
     recovery_initiated_at timestamp with time zone,
     last_recovery_outcome text,
     overlay_ip inet,
+    vmmd_incarnation uuid,
+    vmmd_admission_protocol smallint DEFAULT 1 NOT NULL,
     service_address_ready_at timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
@@ -18583,6 +23721,7 @@ CREATE TABLE public.compute_nodes (
     CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
     CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
     CONSTRAINT compute_nodes_vcpu_budget_check CHECK ((vcpu_budget > 0)),
+    CONSTRAINT compute_nodes_vmmd_admission_protocol_check CHECK ((vmmd_admission_protocol = ANY (ARRAY[1, 2]))),
     CONSTRAINT compute_nodes_vpcpus_check CHECK ((vpcpus > 0))
 );
 
@@ -18892,6 +24031,21 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_attempt_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_attempt_instances (
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    attempt integer NOT NULL,
+    instance_id uuid NOT NULL,
+    placed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT customer_operation_attempt_instances_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_attempt_instances_generation_check CHECK ((generation > 0))
+);
+
+
+--
 -- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18961,7 +24115,7 @@ CREATE TABLE public.customer_operation_events (
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT customer_operation_events_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT customer_operation_events_data_check CHECK ((jsonb_typeof(data) = 'object'::text)),
-    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
+    CONSTRAINT customer_operation_events_event_type_check CHECK ((event_type = ANY (ARRAY['accepted'::text, 'running'::text, 'progress'::text, 'workflow_progress'::text, 'result_prepared'::text, 'artifact_prepared'::text, 'artifact_attached'::text, 'milestone'::text, 'waiting'::text, 'resumed'::text, 'approval_decided'::text, 'signal_received'::text, 'succeeded'::text, 'failed'::text, 'cancellation_requested'::text, 'cancelled'::text, 'reconciliation_required'::text, 'recovery_requested'::text, 'delivery_changed'::text, 'result_expired'::text]))),
     CONSTRAINT customer_operation_events_sequence_check CHECK ((sequence > 0))
 );
 
@@ -19132,6 +24286,7 @@ CREATE TABLE public.customer_operations (
     execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
     workflow_run_id uuid,
     job_run_id uuid,
+    deadline_at timestamp with time zone,
     CONSTRAINT customer_operation_milestone_count_valid CHECK (((NOT (record ? 'milestone_count'::text)) OR COALESCE(((jsonb_typeof((record -> 'milestone_count'::text)) = 'number'::text) AND ((((record ->> 'milestone_count'::text))::integer >= 0) AND (((record ->> 'milestone_count'::text))::integer <= 64))), false))),
     CONSTRAINT customer_operation_subject_valid CHECK (((NOT (record ? 'subject'::text)) OR COALESCE(((jsonb_typeof((record -> 'subject'::text)) = 'object'::text) AND ((((record -> 'subject'::text) - 'type'::text) - 'id'::text) = '{}'::jsonb) AND (jsonb_typeof(((record -> 'subject'::text) -> 'type'::text)) = 'string'::text) AND (((record -> 'subject'::text) ->> 'type'::text) ~ '^[a-z][a-z0-9-]{0,63}$'::text) AND (jsonb_typeof(((record -> 'subject'::text) -> 'id'::text)) = 'string'::text) AND ((octet_length(((record -> 'subject'::text) ->> 'id'::text)) >= 1) AND (octet_length(((record -> 'subject'::text) ->> 'id'::text)) <= 256)) AND (((record -> 'subject'::text) ->> 'id'::text) !~ '[\x01-\x1f\x7f]'::text)), false))),
     CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
@@ -19145,7 +24300,7 @@ CREATE TABLE public.customer_operations (
     CONSTRAINT customer_operations_execution_family_check CHECK ((num_nonnulls(current_invocation_id, workflow_run_id, job_run_id) = 1)),
     CONSTRAINT customer_operations_job_record_check CHECK (((job_run_id IS NULL) OR (NOT ((record ->> 'job_run_id'::text) IS DISTINCT FROM (job_run_id)::text)))),
     CONSTRAINT customer_operations_record_check CHECK ((jsonb_typeof(record) = 'object'::text)),
-    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
+    CONSTRAINT customer_operations_state_check CHECK ((state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'requires_reconciliation'::text]))),
     CONSTRAINT customer_operations_workflow_record_check CHECK (((workflow_run_id IS NULL) OR (NOT ((record ->> 'workflow_run_id'::text) IS DISTINCT FROM (workflow_run_id)::text))))
 );
 
@@ -19174,6 +24329,11 @@ CREATE TABLE public.project_release_sets (
     ttl_seconds integer NOT NULL,
     expires_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollback_source_release_id uuid,
+    rollback_previous_release_id uuid,
+    deactivation jsonb,
+    CONSTRAINT project_release_deactivation_receipt CHECK (((deactivation IS NULL) OR ((NOT active) AND (jsonb_typeof(deactivation) = 'object'::text) AND (jsonb_typeof((deactivation -> 'id'::text)) = 'string'::text) AND (((deactivation ->> 'id'::text))::uuid IS NOT NULL) AND ((deactivation ->> 'release_id'::text) = (id)::text) AND (jsonb_typeof((deactivation -> 'completed_at'::text)) = 'string'::text) AND (((deactivation ->> 'completed_at'::text))::timestamp with time zone IS NOT NULL) AND (jsonb_typeof((deactivation -> 'fallback_members'::text)) = 'array'::text) AND ((jsonb_array_length((deactivation -> 'fallback_members'::text)) >= 1) AND (jsonb_array_length((deactivation -> 'fallback_members'::text)) <= 100)) AND (deactivation ?& ARRAY['id'::text, 'release_id'::text, 'completed_at'::text, 'fallback_members'::text])))),
+    CONSTRAINT project_release_rollback_pair CHECK ((((rollback_source_release_id IS NULL) AND (rollback_previous_release_id IS NULL)) OR ((rollback_source_release_id IS NOT NULL) AND (rollback_previous_release_id IS NOT NULL) AND (rollback_source_release_id <> rollback_previous_release_id) AND (rollback_source_release_id <> id) AND (rollback_previous_release_id <> id)))),
     CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
     CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
 );
@@ -19223,6 +24383,60 @@ CREATE TABLE public.customer_operation_stream_leases (
     account_id uuid NOT NULL,
     operation_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: customer_operation_webhook_binding_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.customer_operation_webhook_binding_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: customer_operation_webhook_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_webhook_bindings (
+    endpoint_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation_name text NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    event_types text[] DEFAULT '{}'::text[] NOT NULL,
+    version bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT customer_operation_webhook_bindings_event_types_check CHECK (((cardinality(event_types) <= 32) AND (array_position(event_types, NULL::text) IS NULL))),
+    CONSTRAINT customer_operation_webhook_bindings_operation_name_check CHECK ((operation_name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_webhook_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
+    CONSTRAINT customer_operation_webhook_bindings_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: customer_operation_webhook_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_webhook_receipts (
+    endpoint_id uuid NOT NULL,
+    provider_event_id text NOT NULL,
+    body_sha256 bytea NOT NULL,
+    account_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    binding_version bigint NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_webhook_receipts_binding_version_check CHECK ((binding_version > 0)),
+    CONSTRAINT customer_operation_webhook_receipts_body_sha256_check CHECK ((octet_length(body_sha256) = 32)),
+    CONSTRAINT customer_operation_webhook_receipts_check CHECK ((expires_at > accepted_at)),
+    CONSTRAINT customer_operation_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256)))
 );
 
 
@@ -19609,6 +24823,44 @@ CREATE TABLE public.deployment_aliases (
 
 
 --
+-- Name: deployment_artifact_scan_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_artifact_scan_current (
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    scan_id uuid NOT NULL,
+    CONSTRAINT deployment_artifact_scan_current_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_artifact_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_artifact_scans (
+    id uuid NOT NULL,
+    rootfs_producer_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    result_snapshot jsonb NOT NULL,
+    scanned_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    registry_verification_id uuid,
+    CONSTRAINT deployment_artifact_scan_approval_binding CHECK ((((registry_verification_id IS NULL) AND (NOT (input_snapshot ? 'registry_verification_id'::text)) AND (NOT (input_snapshot ? 'registry_input_hash'::text))) OR ((registry_verification_id IS NOT NULL) AND (input_snapshot ? 'registry_verification_id'::text) AND (input_snapshot ? 'registry_input_hash'::text) AND (((input_snapshot ->> 'registry_verification_id'::text) = (registry_verification_id)::text) IS TRUE) AND (((input_snapshot ->> 'registry_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) IS TRUE)))),
+    CONSTRAINT deployment_artifact_scans_check CHECK (((expires_at > scanned_at) AND (expires_at <= (scanned_at + '00:05:00'::interval)))),
+    CONSTRAINT deployment_artifact_scans_check1 CHECK ((((input_snapshot ->> 'rootfs_producer_id'::text) = (rootfs_producer_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'workload_name'::text) = workload_name))),
+    CONSTRAINT deployment_artifact_scans_check2 CHECK ((((input_snapshot ->> 'status'::text) = ANY (ARRAY['complete'::text, 'failed'::text])) AND ((result_snapshot ->> 'status'::text) = (input_snapshot ->> 'status'::text)))),
+    CONSTRAINT deployment_artifact_scans_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_artifact_scans_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_artifact_scans_result_snapshot_check CHECK ((jsonb_typeof(result_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_artifact_scans_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
 -- Name: deployment_audit; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19849,6 +25101,65 @@ CREATE TABLE public.deployment_recovery_lineage (
 
 
 --
+-- Name: deployment_registry_rootfs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_registry_rootfs (
+    id uuid NOT NULL,
+    registry_verification_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_registry_rootfs_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '24:00:00'::interval)))),
+    CONSTRAINT deployment_registry_rootfs_check1 CHECK ((((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'workload_name'::text) = workload_name) AND ((input_snapshot ->> 'registry_verification_id'::text) = (registry_verification_id)::text))),
+    CONSTRAINT deployment_registry_rootfs_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_registry_rootfs_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_registry_rootfs_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_registry_rootfs_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_registry_rootfs_current (
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    artifact_id uuid NOT NULL,
+    CONSTRAINT deployment_registry_rootfs_current_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_registry_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_registry_verifications (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    payload bytea NOT NULL,
+    signature bytea NOT NULL,
+    verified_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_registry_verifications_check CHECK (((expires_at > verified_at) AND (expires_at <= (verified_at + '24:00:00'::interval)))),
+    CONSTRAINT deployment_registry_verifications_check1 CHECK ((((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'app_id'::text) = (app_id)::text) AND ((input_snapshot ->> 'account_id'::text) = (account_id)::text) AND ((input_snapshot ->> 'workload_name'::text) = workload_name))),
+    CONSTRAINT deployment_registry_verifications_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_registry_verifications_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_registry_verifications_payload_check CHECK (((octet_length(payload) >= 1) AND (octet_length(payload) <= 65536))),
+    CONSTRAINT deployment_registry_verifications_signature_check CHECK (((octet_length(signature) >= 1) AND (octet_length(signature) <= 80))),
+    CONSTRAINT deployment_registry_verifications_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
 -- Name: deployment_rollback_operations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -19907,6 +25218,35 @@ CREATE TABLE public.deployment_runtime_environment_owners (
     deployment_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     CONSTRAINT deployment_runtime_environment_owners_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: deployment_runtime_scan_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_scan_current (
+    deployment_id uuid NOT NULL,
+    scan_id uuid NOT NULL
+);
+
+
+--
+-- Name: deployment_runtime_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_runtime_scans (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    scanned_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_runtime_scans_check CHECK (((expires_at > scanned_at) AND (expires_at <= (scanned_at + '00:05:00'::interval)))),
+    CONSTRAINT deployment_runtime_scans_check1 CHECK (((((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'format'::text) = 'gregale.runtime-artifact-input.v1'::text)) IS TRUE)),
+    CONSTRAINT deployment_runtime_scans_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_runtime_scans_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_runtime_scans_input_snapshot_check1 CHECK (((((input_snapshot ->> 'status'::text) = ANY (ARRAY['complete'::text, 'failed'::text])) AND (((input_snapshot -> 'facts'::text) ->> 'version'::text) = '1'::text) AND (((input_snapshot -> 'facts'::text) ->> 'input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND (((input_snapshot -> 'facts'::text) ->> 'sources_hash'::text) ~ '^[a-f0-9]{64}$'::text)) IS TRUE))
 );
 
 
@@ -20264,7 +25604,13 @@ CREATE VIEW public.durable_work_retained_deployment_refs AS
    FROM public.customer_operation_retained_deployment_refs
 UNION
  SELECT workflow_retained_deployment_refs.deployment_id
-   FROM public.workflow_retained_deployment_refs;
+   FROM public.workflow_retained_deployment_refs
+UNION
+ SELECT original.deployment_id
+   FROM ((public.environment_workload_retirements r
+     JOIN public.apps a ON (((a.id = r.app_id) AND (a.status <> 'deleted'::text))))
+     CROSS JOIN LATERAL unnest(r.deployment_ids) original(deployment_id))
+  WHERE (r.phase = ANY (ARRAY['planned'::text, 'retiring'::text, 'retired'::text, 'recovering'::text]));
 
 
 --
@@ -20325,7 +25671,7 @@ CREATE TABLE public.edge_rule_events (
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
     CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
-    CONSTRAINT edge_rule_events_waf_chk CHECK ((((cardinality(waf_rule_ids) <= 32) AND (cardinality(waf_categories) <= 16)) AND ((waf_score >= 0) AND (waf_score <= 10000))))
+    CONSTRAINT edge_rule_events_waf_chk CHECK (((cardinality(waf_rule_ids) <= 32) AND (cardinality(waf_categories) <= 16) AND ((waf_score >= 0) AND (waf_score <= 10000))))
 );
 
 
@@ -20833,42 +26179,6 @@ CREATE TABLE public.snapshot_runtime_config_receipts (
 
 
 --
--- Name: snapshots; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.snapshots (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    fc_version text NOT NULL,
-    mem_bytes bigint NOT NULL,
-    disk_bytes bigint NOT NULL,
-    stale boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    storage_key text DEFAULT ''::text NOT NULL,
-    tier text DEFAULT 'init'::text NOT NULL,
-    stored_bytes bigint DEFAULT 0 NOT NULL,
-    base_image_version text DEFAULT ''::text NOT NULL,
-    delete_pending boolean DEFAULT false NOT NULL,
-    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
-    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
-);
-
-
---
--- Name: COLUMN snapshots.stored_bytes; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.snapshots.stored_bytes IS 'Filesystem allocation of published mem + vmstate artifacts. Zero means a legacy writer; telemetry conservatively falls back to logical bytes.';
-
-
---
--- Name: COLUMN snapshots.base_image_version; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.';
-
-
---
 -- Name: environment_gitops_runtime_targets; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -21112,6 +26422,21 @@ CREATE TABLE public.environment_qualification_snapshot_receipts (
 
 
 --
+-- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_route_budget_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
+);
+
+
+--
 -- Name: environment_workload_graphs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21259,6 +26584,93 @@ CREATE TABLE public.event_execution_coverage (
     lineage_repair_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT event_execution_coverage_check CHECK (((lost_at IS NULL) = (loss_reason = ''::text))),
     CONSTRAINT event_execution_coverage_loss_reason_check CHECK ((loss_reason = ANY (ARRAY[''::text, 'receipt_deleted'::text, 'recipient_deleted'::text, 'invocation_deleted'::text, 'attempt_deleted'::text, 'execution_replaced'::text])))
+);
+
+
+--
+-- Name: event_execution_lineage_cases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_lineage_cases (
+    subscription_id uuid NOT NULL,
+    outbox_id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    root_invocation_id text DEFAULT ''::text NOT NULL,
+    root_created_at timestamp with time zone,
+    status text NOT NULL,
+    reason text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    retry_count bigint DEFAULT 0 NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    diagnostic_id uuid,
+    CONSTRAINT event_execution_lineage_cases_check CHECK ((retain_until > recorded_at)),
+    CONSTRAINT event_execution_lineage_cases_diagnostic_id_check CHECK (((diagnostic_id IS NULL) OR (diagnostic_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT event_execution_lineage_cases_outbox_id_check CHECK ((outbox_id > 0)),
+    CONSTRAINT event_execution_lineage_cases_retry_count_check CHECK ((retry_count >= 0)),
+    CONSTRAINT event_execution_lineage_cases_revision_check CHECK ((revision > 0)),
+    CONSTRAINT event_execution_lineage_cases_status_check CHECK ((status = ANY (ARRAY['unresolved'::text, 'conflict'::text, 'repaired'::text, 'already_associated'::text])))
+);
+
+
+--
+-- Name: event_execution_lineage_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_lineage_retries (
+    subscription_id uuid NOT NULL,
+    outbox_id bigint NOT NULL,
+    request_id uuid NOT NULL,
+    expected_revision bigint NOT NULL,
+    result jsonb NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_execution_lineage_retries_expected_revision_check CHECK ((expected_revision > 0))
+);
+
+
+--
+-- Name: event_execution_lineage_retry_control_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_lineage_retry_control_receipts (
+    subscription_id uuid NOT NULL,
+    job_request_id uuid NOT NULL,
+    command_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    action text NOT NULL,
+    expected_created_at timestamp with time zone NOT NULL,
+    sequence bigint NOT NULL,
+    result jsonb NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_execution_lineage_retry_control_receipts_action_check CHECK ((action = ANY (ARRAY['pause'::text, 'resume'::text, 'cancel'::text]))),
+    CONSTRAINT event_execution_lineage_retry_control_receipts_check CHECK ((retain_until > recorded_at)),
+    CONSTRAINT event_execution_lineage_retry_control_receipts_command_id_check CHECK ((command_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT event_execution_lineage_retry_control_receipts_result_check CHECK ((jsonb_typeof(result) = 'object'::text)),
+    CONSTRAINT event_execution_lineage_retry_control_receipts_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: event_execution_lineage_retry_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_lineage_retry_jobs (
+    subscription_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    state text NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_execution_lineage_retry_jobs_check CHECK ((retain_until > created_at)),
+    CONSTRAINT event_execution_lineage_retry_jobs_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT event_execution_lineage_retry_jobs_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'paused'::text, 'completed'::text, 'cancelled'::text])))
 );
 
 
@@ -21877,6 +27289,26 @@ CREATE TABLE public.event_storage_admission (
 
 
 --
+-- Name: event_subscription_capacity_commands; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_subscription_capacity_commands (
+    subscription_id uuid NOT NULL,
+    command_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    receipt jsonb NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_subscription_capacity_commands_check CHECK ((retain_until > recorded_at)),
+    CONSTRAINT event_subscription_capacity_commands_command_id_check CHECK ((command_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT event_subscription_capacity_commands_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT event_subscription_capacity_commands_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
+);
+
+
+--
 -- Name: event_subscription_circuit_breakers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21906,6 +27338,8 @@ CREATE TABLE public.event_subscription_delivery_controls (
     window_count integer DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     paused_at timestamp with time zone,
+    max_pending_deliveries integer DEFAULT 0 NOT NULL,
+    CONSTRAINT event_subscription_delivery_contro_max_pending_deliveries_check CHECK ((max_pending_deliveries >= 0)),
     CONSTRAINT event_subscription_delivery_controls_rate_per_second_check CHECK (((rate_per_second >= 0) AND (rate_per_second <= 100))),
     CONSTRAINT event_subscription_delivery_controls_window_count_check CHECK ((window_count >= 0))
 );
@@ -22800,6 +28234,60 @@ CREATE TABLE public.inbound_webhook_endpoints (
     CONSTRAINT inbound_webhook_endpoints_name_chk CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text]))),
     CONSTRAINT inbound_webhook_endpoints_token_hash_len_chk CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
+-- Name: instance_application_standard_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_application_standard_admissions (
+    instance_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid,
+    input_snapshot jsonb NOT NULL,
+    captured_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    node_id uuid,
+    native_input_hash text GENERATED ALWAYS AS (public.application_standard_native_input_hash(input_snapshot, node_id)) STORED,
+    CONSTRAINT instance_application_standard_admissions_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: instance_application_standard_boots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_application_standard_boots (
+    token uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    expected_state text NOT NULL,
+    binding jsonb NOT NULL,
+    receipt jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    received_at timestamp with time zone,
+    CONSTRAINT instance_application_standard_boots_binding_check CHECK ((jsonb_typeof(binding) = 'object'::text)),
+    CONSTRAINT instance_application_standard_boots_check CHECK (((receipt IS NULL) = (received_at IS NULL))),
+    CONSTRAINT instance_application_standard_boots_expected_state_check CHECK ((expected_state = ANY (ARRAY['waking'::text, 'cold_booting'::text]))),
+    CONSTRAINT instance_application_standard_boots_receipt_check CHECK (((receipt IS NULL) OR (jsonb_typeof(receipt) = 'object'::text)))
+);
+
+
+--
+-- Name: instance_application_standard_promotions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_application_standard_promotions (
+    token uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    parent_token uuid NOT NULL,
+    binding jsonb NOT NULL,
+    receipt jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    received_at timestamp with time zone,
+    CONSTRAINT instance_application_standard_promotions_binding_check CHECK ((jsonb_typeof(binding) = 'object'::text)),
+    CONSTRAINT instance_application_standard_promotions_check CHECK (((receipt IS NULL) = (received_at IS NULL))),
+    CONSTRAINT instance_application_standard_promotions_check1 CHECK ((token <> parent_token)),
+    CONSTRAINT instance_application_standard_promotions_receipt_check CHECK (((receipt IS NULL) OR (jsonb_typeof(receipt) = 'object'::text)))
 );
 
 
@@ -23982,7 +29470,7 @@ CREATE TABLE public.managed_postgres_bindings (
 CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     source_database_id uuid NOT NULL,
-    reserved_by_operation_id uuid NOT NULL,
+    reserved_by_operation_id uuid,
     backend_id text NOT NULL,
     backend_fingerprint text NOT NULL,
     source_provider_resource_id text NOT NULL,
@@ -23996,6 +29484,7 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     ready_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    reserved_by_cutover_id uuid,
     CONSTRAINT managed_postgres_checkpoint_m_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_checkpoint_maint_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
     CONSTRAINT managed_postgres_checkpoint_maintenan_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -24003,7 +29492,8 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     CONSTRAINT managed_postgres_checkpoint_maintenance_check CHECK ((((state = 'reserved'::text) AND (role_requested_at IS NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_reserved'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_created'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'activation_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NULL)) OR ((state = 'ready'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NOT NULL)))),
     CONSTRAINT managed_postgres_checkpoint_maintenance_database_oid_check CHECK (((database_oid > 0) AND (database_oid <= '4294967295'::bigint))),
     CONSTRAINT managed_postgres_checkpoint_maintenance_owner_oid_check CHECK (((owner_oid > 0) AND (owner_oid <= '4294967295'::bigint))),
-    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text])))
+    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text]))),
+    CONSTRAINT managed_postgres_maintenance_original_owner CHECK (((((reserved_by_operation_id IS NOT NULL))::integer + ((reserved_by_cutover_id IS NOT NULL))::integer) = 1))
 );
 
 
@@ -24139,6 +29629,98 @@ CREATE TABLE public.managed_postgres_cutover_drains (
     CONSTRAINT managed_postgres_cutover_drains_native_generation_check CHECK (((native_generation IS NULL) OR (native_generation <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT managed_postgres_cutover_drains_owner_revision_check CHECK ((owner_revision > 0)),
     CONSTRAINT managed_postgres_cutover_drains_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: managed_postgres_cutover_preflights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_preflights (
+    cutover_id uuid NOT NULL,
+    state text NOT NULL,
+    revision bigint NOT NULL,
+    binding_ids text[] DEFAULT '{}'::text[] NOT NULL,
+    blockers text[] DEFAULT '{}'::text[] NOT NULL,
+    verification_fresh boolean DEFAULT false NOT NULL,
+    source_matches boolean DEFAULT false NOT NULL,
+    target_matches boolean DEFAULT false NOT NULL,
+    bindings_match boolean DEFAULT false NOT NULL,
+    cutover_updated_at timestamp with time zone,
+    checked_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    runtime_drain jsonb,
+    runtime_drain_fingerprint text DEFAULT ''::text NOT NULL,
+    source_sessions jsonb,
+    source_sessions_fingerprint text DEFAULT ''::text NOT NULL,
+    CONSTRAINT managed_postgres_cutover_preflights_check CHECK ((((state = 'pending'::text) AND (checked_at IS NULL) AND (expires_at IS NULL) AND (cutover_updated_at IS NULL) AND (cardinality(blockers) = 0)) OR ((state = 'blocked'::text) AND (checked_at IS NOT NULL) AND (expires_at IS NOT NULL) AND (cutover_updated_at IS NOT NULL) AND (cardinality(blockers) > 0)))),
+    CONSTRAINT managed_postgres_cutover_preflights_check1 CHECK (((state <> 'blocked'::text) OR ('activation_disabled'::text = ANY (blockers)))),
+    CONSTRAINT managed_postgres_cutover_preflights_revision_check CHECK ((revision > 0)),
+    CONSTRAINT managed_postgres_cutover_preflights_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'blocked'::text]))),
+    CONSTRAINT managed_postgres_preflight_pending_runtime CHECK (((state <> 'pending'::text) OR (runtime_drain IS NULL))),
+    CONSTRAINT managed_postgres_preflight_pending_source_sessions CHECK (((state <> 'pending'::text) OR (source_sessions IS NULL))),
+    CONSTRAINT managed_postgres_preflight_runtime_evidence CHECK ((((runtime_drain IS NULL) AND (runtime_drain_fingerprint = ''::text)) OR ((runtime_drain IS NOT NULL) AND (jsonb_typeof(runtime_drain) = 'object'::text) AND (runtime_drain_fingerprint ~ '^[0-9a-f]{64}$'::text)))),
+    CONSTRAINT managed_postgres_preflight_source_sessions CHECK ((((source_sessions IS NULL) AND (source_sessions_fingerprint = ''::text)) OR ((source_sessions IS NOT NULL) AND (jsonb_typeof(source_sessions) = 'object'::text) AND (source_sessions_fingerprint ~ '^[a-f0-9]{64}$'::text))))
+);
+
+
+--
+-- Name: managed_postgres_cutover_source_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_source_fences (
+    cutover_id uuid NOT NULL,
+    owner_token uuid NOT NULL,
+    maintenance_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    source_generation bigint NOT NULL,
+    source_spec jsonb NOT NULL,
+    owner_node_id uuid NOT NULL,
+    owner_revision bigint NOT NULL,
+    admission_fenced_at timestamp with time zone NOT NULL,
+    runtime_fingerprint text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    database_names text[] DEFAULT '{}'::text[] NOT NULL,
+    close_requested_at timestamp with time zone,
+    closure jsonb,
+    observed_at timestamp with time zone,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    remote_terminal_state text,
+    remote_released_at timestamp with time zone,
+    lease_token text,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    catalog_fingerprint text DEFAULT ''::text NOT NULL,
+    catalog_invalidated_at timestamp with time zone,
+    CONSTRAINT managed_postgres_cutover_sour_source_provider_resource_id_check CHECK ((source_provider_resource_id <> ''::text)),
+    CONSTRAINT managed_postgres_cutover_source_f_source_data_resource_id_check CHECK ((source_data_resource_id <> ''::text)),
+    CONSTRAINT managed_postgres_cutover_source_fen_remote_terminal_state_check CHECK ((remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text, 'not_dispatched'::text]))),
+    CONSTRAINT managed_postgres_cutover_source_fence_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fence_catalog_fingerprint_check CHECK (((catalog_fingerprint = ''::text) OR (catalog_fingerprint ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT managed_postgres_cutover_source_fence_runtime_fingerprint_check CHECK ((runtime_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT managed_postgres_cutover_source_fences_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check1 CHECK (((closure IS NULL) = (observed_at IS NULL))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check2 CHECK (((state <> 'closed'::text) OR ((close_requested_at IS NOT NULL) AND (closure IS NOT NULL)))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check3 CHECK (((close_requested_at IS NULL) OR (cardinality(database_names) > 0))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check4 CHECK ((((state = 'released'::text) AND (remote_terminal_state IS NOT NULL) AND (((remote_terminal_state = 'not_dispatched'::text) AND (close_requested_at IS NULL) AND (remote_released_at IS NULL)) OR ((remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text])) AND (close_requested_at IS NOT NULL) AND (remote_released_at IS NOT NULL)))) OR ((state <> 'released'::text) AND (remote_terminal_state IS NULL) AND (remote_released_at IS NULL)))),
+    CONSTRAINT managed_postgres_cutover_source_fences_closure_check CHECK (((closure IS NULL) OR (jsonb_typeof(closure) = 'object'::text))),
+    CONSTRAINT managed_postgres_cutover_source_fences_last_error_code_check CHECK ((last_error_code ~ '^[a-z_]*$'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_owner_revision_check CHECK ((owner_revision > 0)),
+    CONSTRAINT managed_postgres_cutover_source_fences_owner_token_check CHECK ((owner_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_cutover_source_fences_source_generation_check CHECK ((source_generation > 0)),
+    CONSTRAINT managed_postgres_cutover_source_fences_source_spec_check CHECK ((jsonb_typeof(source_spec) = 'object'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'closing'::text, 'closed'::text, 'abandoning'::text, 'released'::text])))
 );
 
 
@@ -24362,13 +29944,13 @@ CREATE TABLE public.managed_postgres_restore_verifications (
     point_in_time timestamp with time zone NOT NULL,
     evidence text NOT NULL,
     verified_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT managed_postgres_restore_verifications_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_restore_verificatio_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verification_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_restore_verifications_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
     CONSTRAINT managed_postgres_restore_verifications_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= verified_at))),
     CONSTRAINT managed_postgres_restore_verifications_evidence_check CHECK (((evidence <> ''::text) AND (length(evidence) <= 1024))),
     CONSTRAINT managed_postgres_restore_verifications_generation_check CHECK ((generation > 0)),
     CONSTRAINT managed_postgres_restore_verifications_point_in_time_check CHECK (isfinite(point_in_time)),
-    CONSTRAINT managed_postgres_restore_verifications_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_restore_verifications_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
     CONSTRAINT managed_postgres_restore_verifications_verified_at_check CHECK (isfinite(verified_at))
 );
@@ -28252,6 +33834,26 @@ CREATE TABLE public.profile_route_alert_state (
 
 
 --
+-- Name: project_binding_verification_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_binding_verification_runs (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    status text NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT project_binding_verification_runs_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:10:00'::interval)))),
+    CONSTRAINT project_binding_verification_runs_environment_slug_check CHECK ((environment_slug <> ''::text)),
+    CONSTRAINT project_binding_verification_runs_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT project_binding_verification_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'passed'::text, 'cancelled'::text])))
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30235,6 +35837,27 @@ CREATE TABLE public.project_environment_workload_specs (
 
 
 --
+-- Name: project_release_stages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_stages (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    manifest jsonb NOT NULL,
+    targets jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    cancelled boolean DEFAULT false NOT NULL,
+    CONSTRAINT project_release_stages_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:30:00'::interval)))),
+    CONSTRAINT project_release_stages_environment_slug_check CHECK ((environment_slug ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT project_release_stages_manifest_check CHECK ((jsonb_typeof(manifest) = 'object'::text)),
+    CONSTRAINT project_release_stages_targets_check CHECK (((jsonb_typeof(targets) = 'object'::text) AND (targets <> '{}'::jsonb)))
+);
+
+
+--
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30263,6 +35886,32 @@ CREATE TABLE public.provisioned_static_egress_ips (
     customer_ip inet NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT provisioned_static_egress_ips_family_check CHECK ((family(customer_ip) = 4))
+);
+
+
+--
+-- Name: queue_binding_canaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.queue_binding_canaries (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    trigger_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    snapshot jsonb NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    cancelled boolean DEFAULT false NOT NULL,
+    completed_deployment_id uuid,
+    completed_attempt integer,
+    completed_generation bigint,
+    CONSTRAINT queue_binding_canaries_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '00:10:00'::interval)))),
+    CONSTRAINT queue_binding_canaries_check1 CHECK ((((completed_deployment_id IS NULL) AND (completed_attempt IS NULL) AND (completed_generation IS NULL)) OR ((completed_deployment_id IS NOT NULL) AND (completed_attempt IS NOT NULL) AND (completed_generation IS NOT NULL)))),
+    CONSTRAINT queue_binding_canaries_completed_attempt_check CHECK ((completed_attempt = 1)),
+    CONSTRAINT queue_binding_canaries_completed_generation_check CHECK ((completed_generation = 0)),
+    CONSTRAINT queue_binding_canaries_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
 );
 
 
@@ -32015,6 +37664,35 @@ COMMENT ON COLUMN public.snapshot_storage_daily.layer_bytes IS 'Σ overlay stagi
 
 
 --
+-- Name: source_build_rootfs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.source_build_rootfs (
+    id uuid NOT NULL,
+    publication_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT source_build_rootfs_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '24:00:00'::interval)))),
+    CONSTRAINT source_build_rootfs_check1 CHECK (((((input_snapshot ->> 'publication_id'::text) = (publication_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'account_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'app_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'publication_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'intent_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'base_producer_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'base_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'artifact_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((input_snapshot ->> 'artifact_bytes'::text))::bigint > 0) AND (((input_snapshot ->> 'content_bytes'::text))::bigint >= 0) AND (COALESCE((input_snapshot ->> 'storage_key'::text), ''::text) <> ''::text) AND (COALESCE((input_snapshot ->> 'rootfs_path'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'guest_init_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'layout_version'::text) = 'faas-app-layer-layout-v1'::text) AND ((((input_snapshot ->> 'kind'::text) = 'source-app-layer'::text) AND ((input_snapshot ->> 'runtime'::text) = ''::text) AND ((input_snapshot ->> 'runner_digest'::text) = ''::text)) OR (((input_snapshot ->> 'kind'::text) = 'function-layer'::text) AND (COALESCE((input_snapshot ->> 'runtime'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'runner_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text)))) IS TRUE)),
+    CONSTRAINT source_build_rootfs_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT source_build_rootfs_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: source_build_rootfs_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.source_build_rootfs_current (
+    deployment_id uuid NOT NULL,
+    artifact_id uuid NOT NULL
+);
+
+
+--
 -- Name: status_incident_updates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33634,6 +39312,14 @@ ALTER TABLE ONLY public.app_api_routes
 
 
 --
+-- Name: app_application_standards app_application_standards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_application_standards
+    ADD CONSTRAINT app_application_standards_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_binding_promotion_revisions app_binding_promotion_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -33687,6 +39373,14 @@ ALTER TABLE ONLY public.app_default_domains
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_pkey PRIMARY KEY (app_id, scope);
 
 
 --
@@ -34082,6 +39776,278 @@ ALTER TABLE ONLY public.app_work_policies
 
 
 --
+-- Name: application_standard_assignments application_standard_assignme_org_id_scope_scope_id_standar_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignme_org_id_scope_scope_id_standar_key UNIQUE (org_id, scope, scope_id, standard_id);
+
+
+--
+-- Name: application_standard_assignments application_standard_assignments_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignments_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_assignments application_standard_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_control_backups application_standard_control_backups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_backups
+    ADD CONSTRAINT application_standard_control_backups_pkey PRIMARY KEY (app_id, field, logical_id);
+
+
+--
+-- Name: application_standard_control_bindings application_standard_control_bindi_app_id_field_physical_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_bindings
+    ADD CONSTRAINT application_standard_control_bindi_app_id_field_physical_id_key UNIQUE (app_id, field, physical_id);
+
+
+--
+-- Name: application_standard_control_bindings application_standard_control_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_bindings
+    ADD CONSTRAINT application_standard_control_bindings_pkey PRIMARY KEY (app_id, field, resource_id);
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_ledger_recoveries application_standard_ledger_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_ledger_recoveries
+    ADD CONSTRAINT application_standard_ledger_recoveries_pkey PRIMARY KEY (approval_hash);
+
+
+--
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_sessio_node_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumer_sessions
+    ADD CONSTRAINT application_standard_log_consumer_sessio_node_id_generation_key UNIQUE (node_id, generation);
+
+
+--
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumer_sessions
+    ADD CONSTRAINT application_standard_log_consumer_sessions_pkey PRIMARY KEY (node_id, session_id);
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumers
+    ADD CONSTRAINT application_standard_log_consumers_pkey PRIMARY KEY (node_id);
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_pkey PRIMARY KEY (app_id, resource_id);
+
+
+--
+-- Name: application_standard_log_destinations application_standard_log_destinations_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_destinations
+    ADD CONSTRAINT application_standard_log_destinations_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_log_destinations application_standard_log_destinations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_destinations
+    ADD CONSTRAINT application_standard_log_destinations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_pkey PRIMARY KEY (app_id, drain_id, node_id);
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: application_standard_native_incarnations application_standard_native_incarnations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_native_incarnations
+    ADD CONSTRAINT application_standard_native_incarnations_pkey PRIMARY KEY (node_id, incarnation);
+
+
+--
+-- Name: application_standard_operation_targets application_standard_operation_target_operation_id_position_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operation_targets
+    ADD CONSTRAINT application_standard_operation_target_operation_id_position_key UNIQUE (operation_id, "position");
+
+
+--
+-- Name: application_standard_operation_targets application_standard_operation_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operation_targets
+    ADD CONSTRAINT application_standard_operation_targets_pkey PRIMARY KEY (operation_id, app_id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_plan_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_plan_id_key UNIQUE (org_id, plan_id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_publishers application_standard_publishers_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_publishers
+    ADD CONSTRAINT application_standard_publishers_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_publishers application_standard_publishers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_publishers
+    ADD CONSTRAINT application_standard_publishers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_plans_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_review_plans
+    ADD CONSTRAINT application_standard_review_plans_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_review_plans
+    ADD CONSTRAINT application_standard_review_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_captures_memory_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_snapshot_captures
+    ADD CONSTRAINT application_standard_snapshot_captures_memory_key_key UNIQUE (memory_key);
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_snapshot_captures
+    ADD CONSTRAINT application_standard_snapshot_captures_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: application_standard_versions application_standard_versions_org_id_standard_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_versions
+    ADD CONSTRAINT application_standard_versions_org_id_standard_id_version_key UNIQUE (org_id, standard_id, version);
+
+
+--
+-- Name: application_standard_versions application_standard_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_versions
+    ADD CONSTRAINT application_standard_versions_pkey PRIMARY KEY (standard_id, version);
+
+
+--
+-- Name: application_standards application_standards_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standards application_standards_org_id_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_org_id_slug_key UNIQUE (org_id, slug);
+
+
+--
+-- Name: application_standards application_standards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: apps apps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34130,6 +40096,54 @@ ALTER TABLE ONLY public.automatic_route_checks
 
 
 --
+-- Name: base_image_producer_current base_image_producer_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producer_current
+    ADD CONSTRAINT base_image_producer_current_pkey PRIMARY KEY (storage_key);
+
+
+--
+-- Name: base_image_producers base_image_producers_id_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producers
+    ADD CONSTRAINT base_image_producers_id_storage_key_key UNIQUE (id, storage_key);
+
+
+--
+-- Name: base_image_producers base_image_producers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producers
+    ADD CONSTRAINT base_image_producers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: base_image_scan_current base_image_scan_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scan_current
+    ADD CONSTRAINT base_image_scan_current_pkey PRIMARY KEY (storage_key);
+
+
+--
+-- Name: base_image_scans base_image_scans_id_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scans
+    ADD CONSTRAINT base_image_scans_id_storage_key_key UNIQUE (id, storage_key);
+
+
+--
+-- Name: base_image_scans base_image_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scans
+    ADD CONSTRAINT base_image_scans_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: billing_identities billing_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34159,6 +40173,38 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_pkey PRIMARY KEY (provider, account_id, window_start);
+
+
+--
+-- Name: binding_verification_run_steps binding_verification_run_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_run_steps
+    ADD CONSTRAINT binding_verification_run_steps_pkey PRIMARY KEY (run_id, step_index);
+
+
+--
+-- Name: binding_verification_run_steps binding_verification_run_steps_resource_kind_resource_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_run_steps
+    ADD CONSTRAINT binding_verification_run_steps_resource_kind_resource_id_key UNIQUE (resource_kind, resource_id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: build_export_publications build_export_publications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.build_export_publications
+    ADD CONSTRAINT build_export_publications_pkey PRIMARY KEY (id);
 
 
 --
@@ -34434,6 +40480,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_attempt_instances customer_operation_attempt_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_attempt_instances
+    ADD CONSTRAINT customer_operation_attempt_instances_pkey PRIMARY KEY (operation_id, generation, attempt);
+
+
+--
 -- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34567,6 +40621,22 @@ ALTER TABLE ONLY public.customer_operation_result_blobs
 
 ALTER TABLE ONLY public.customer_operation_stream_leases
     ADD CONSTRAINT customer_operation_stream_leases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_pkey PRIMARY KEY (endpoint_id);
+
+
+--
+-- Name: customer_operation_webhook_receipts customer_operation_webhook_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_receipts
+    ADD CONSTRAINT customer_operation_webhook_receipts_pkey PRIMARY KEY (endpoint_id, provider_event_id);
 
 
 --
@@ -34738,6 +40808,30 @@ ALTER TABLE ONLY public.deployment_aliases
 
 
 --
+-- Name: deployment_artifact_scan_current deployment_artifact_scan_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scan_current
+    ADD CONSTRAINT deployment_artifact_scan_current_pkey PRIMARY KEY (deployment_id, workload_name);
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_id_deployment_id_workload_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_id_deployment_id_workload_name_key UNIQUE (id, deployment_id, workload_name);
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: deployment_audit deployment_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34810,6 +40904,38 @@ ALTER TABLE ONLY public.deployment_recovery_lineage
 
 
 --
+-- Name: deployment_registry_rootfs_current deployment_registry_rootfs_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs_current
+    ADD CONSTRAINT deployment_registry_rootfs_current_pkey PRIMARY KEY (deployment_id, workload_name);
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_id_deployment_id_workload_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_id_deployment_id_workload_name_key UNIQUE (id, deployment_id, workload_name);
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: deployment_registry_verifications deployment_registry_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_verifications
+    ADD CONSTRAINT deployment_registry_verifications_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -34839,6 +40965,30 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_runtime_environment_owners
     ADD CONSTRAINT deployment_runtime_environment_owners_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_scan_current deployment_runtime_scan_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scan_current
+    ADD CONSTRAINT deployment_runtime_scan_current_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_runtime_scans deployment_runtime_scans_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scans
+    ADD CONSTRAINT deployment_runtime_scans_id_deployment_id_key UNIQUE (id, deployment_id);
+
+
+--
+-- Name: deployment_runtime_scans deployment_runtime_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scans
+    ADD CONSTRAINT deployment_runtime_scans_pkey PRIMARY KEY (id);
 
 
 --
@@ -35402,6 +41552,14 @@ ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
 
 
 --
+-- Name: environment_route_budget_receipts environment_route_budget_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_route_budget_receipts
+    ADD CONSTRAINT environment_route_budget_receipts_pkey PRIMARY KEY (account_id, request_id);
+
+
+--
 -- Name: environment_workload_graphs environment_workload_graphs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -35439,6 +41597,22 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 ALTER TABLE ONLY public.environment_workload_qualification_requests
     ADD CONSTRAINT environment_workload_qualification_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retireme_source_id_resource_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retireme_source_id_resource_generation_key UNIQUE (source_id, resource, generation);
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_pkey PRIMARY KEY (id);
 
 
 --
@@ -35511,6 +41685,46 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 ALTER TABLE ONLY public.event_execution_coverage
     ADD CONSTRAINT event_execution_coverage_pkey PRIMARY KEY (subscription_id);
+
+
+--
+-- Name: event_execution_lineage_cases event_execution_lineage_cases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_cases
+    ADD CONSTRAINT event_execution_lineage_cases_pkey PRIMARY KEY (subscription_id, outbox_id);
+
+
+--
+-- Name: event_execution_lineage_retries event_execution_lineage_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retries
+    ADD CONSTRAINT event_execution_lineage_retries_pkey PRIMARY KEY (subscription_id, outbox_id, request_id);
+
+
+--
+-- Name: event_execution_lineage_retry_control_receipts event_execution_lineage_retry_control_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retry_control_receipts
+    ADD CONSTRAINT event_execution_lineage_retry_control_receipts_pkey PRIMARY KEY (subscription_id, job_request_id, command_id);
+
+
+--
+-- Name: event_execution_lineage_retry_jobs event_execution_lineage_retry_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retry_jobs
+    ADD CONSTRAINT event_execution_lineage_retry_jobs_pkey PRIMARY KEY (subscription_id, request_id);
+
+
+--
+-- Name: event_execution_lineage_retry_control_receipts event_execution_lineage_retry_subscription_id_job_request_i_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retry_control_receipts
+    ADD CONSTRAINT event_execution_lineage_retry_subscription_id_job_request_i_key UNIQUE (subscription_id, job_request_id, sequence);
 
 
 --
@@ -35663,6 +41877,14 @@ ALTER TABLE ONLY public.event_schemas
 
 ALTER TABLE ONLY public.event_storage_admission
     ADD CONSTRAINT event_storage_admission_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: event_subscription_capacity_commands event_subscription_capacity_commands_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_capacity_commands
+    ADD CONSTRAINT event_subscription_capacity_commands_pkey PRIMARY KEY (subscription_id, command_id);
 
 
 --
@@ -36103,6 +42325,38 @@ ALTER TABLE ONLY public.inbound_webhook_endpoints
 
 ALTER TABLE ONLY public.inbound_webhook_endpoints
     ADD CONSTRAINT inbound_webhook_endpoints_token_hash_uniq UNIQUE (token_hash);
+
+
+--
+-- Name: instance_application_standard_admissions instance_application_standard_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_admissions
+    ADD CONSTRAINT instance_application_standard_admissions_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: instance_application_standard_boots instance_application_standard_boots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_boots
+    ADD CONSTRAINT instance_application_standard_boots_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: instance_application_standard_promotions instance_application_standard_promotions_instance_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_promotions
+    ADD CONSTRAINT instance_application_standard_promotions_instance_id_key UNIQUE (instance_id);
+
+
+--
+-- Name: instance_application_standard_promotions instance_application_standard_promotions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_promotions
+    ADD CONSTRAINT instance_application_standard_promotions_pkey PRIMARY KEY (token);
 
 
 --
@@ -36634,6 +42888,30 @@ ALTER TABLE ONLY public.managed_postgres_cutover_drains
 
 
 --
+-- Name: managed_postgres_cutover_preflights managed_postgres_cutover_preflights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_preflights
+    ADD CONSTRAINT managed_postgres_cutover_preflights_pkey PRIMARY KEY (cutover_id);
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_owner_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_owner_token_key UNIQUE (owner_token);
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_pkey PRIMARY KEY (cutover_id);
+
+
+--
 -- Name: managed_postgres_cutovers managed_postgres_cutovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36682,11 +42960,11 @@ ALTER TABLE ONLY public.managed_postgres_restore_proofs
 
 
 --
--- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_backend_id_backend_f_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_veri_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
-    ADD CONSTRAINT managed_postgres_restore_verifications_backend_id_backend_f_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+    ADD CONSTRAINT managed_postgres_restore_veri_backend_id_backend_fingerprin_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
 
 
 --
@@ -38378,6 +44656,14 @@ ALTER TABLE ONLY public.profile_route_alert_state
 
 
 --
+-- Name: project_binding_verification_runs project_binding_verification_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_binding_verification_runs
+    ADD CONSTRAINT project_binding_verification_runs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39418,6 +45704,14 @@ ALTER TABLE ONLY public.project_release_sets
 
 
 --
+-- Name: project_release_stages project_release_stages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: projects projects_account_slug_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39439,6 +45733,14 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.provisioned_static_egress_ips
     ADD CONSTRAINT provisioned_static_egress_ips_pkey PRIMARY KEY (account_id, customer_ip);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_pkey PRIMARY KEY (id);
 
 
 --
@@ -40135,6 +46437,30 @@ ALTER TABLE ONLY public.snapshot_storage_daily
 
 ALTER TABLE ONLY public.snapshots
     ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: source_build_rootfs_current source_build_rootfs_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs_current
+    ADD CONSTRAINT source_build_rootfs_current_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_id_deployment_id_key UNIQUE (id, deployment_id);
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_pkey PRIMARY KEY (id);
 
 
 --
@@ -40964,6 +47290,20 @@ CREATE INDEX api_keys_rotated_from_idx ON public.api_keys USING btree (rotated_f
 
 
 --
+-- Name: app_application_standards_observation_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_application_standards_observation_due ON public.app_application_standards USING btree (observation_checked_at NULLS FIRST, app_id) WHERE ((state = ANY (ARRAY['persisted'::text, 'observed'::text])) AND (persisted_revision = desired_revision));
+
+
+--
+-- Name: app_application_standards_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_application_standards_pending_idx ON public.app_application_standards USING btree (updated_at, app_id) WHERE (state = ANY (ARRAY['pending'::text, 'blocked'::text]));
+
+
+--
 -- Name: app_cpu_policy_node_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41538,6 +47878,69 @@ CREATE UNIQUE INDEX app_webhooks_platform_tenant_target_uniq ON public.app_webho
 
 
 --
+-- Name: application_standard_assignments_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_assignments_scope_idx ON public.application_standard_assignments USING btree (scope, scope_id, org_id) WHERE active;
+
+
+--
+-- Name: application_standard_exception_app_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_exception_app_history ON public.application_standard_exceptions USING btree (org_id, app_id, created_at, id);
+
+
+--
+-- Name: application_standard_expired_enrollments; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_expired_enrollments ON public.app_application_standards USING btree (exception_expires_at, app_id) WHERE ((exception_expires_at IS NOT NULL) AND (state = ANY (ARRAY['persisted'::text, 'observed'::text])));
+
+
+--
+-- Name: application_standard_log_destinations_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_log_destinations_org_idx ON public.application_standard_log_destinations USING btree (org_id, id);
+
+
+--
+-- Name: application_standard_operation_active_assignment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX application_standard_operation_active_assignment_idx ON public.application_standard_operations USING btree (assignment_id) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'waiting'::text, 'paused'::text]));
+
+
+--
+-- Name: application_standard_operation_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_operation_claim_idx ON public.application_standard_operations USING btree (created_at, id) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'waiting'::text]));
+
+
+--
+-- Name: application_standard_publishers_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_publishers_org_idx ON public.application_standard_publishers USING btree (org_id, id);
+
+
+--
+-- Name: application_standard_review_plans_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_review_plans_org_idx ON public.application_standard_review_plans USING btree (org_id, created_at DESC, id);
+
+
+--
+-- Name: application_standard_snapshot_captures_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_snapshot_captures_scope ON public.application_standard_snapshot_captures USING btree (account_id, app_id, deployment_id);
+
+
+--
 -- Name: apps_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41752,6 +48155,41 @@ CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_u
 --
 
 CREATE INDEX billing_usage_deliveries_window_idx ON public.billing_usage_deliveries USING btree (window_start);
+
+
+--
+-- Name: binding_verification_runs_app_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX binding_verification_runs_app_time_idx ON public.binding_verification_runs USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: binding_verification_runs_graph_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX binding_verification_runs_graph_idx ON public.binding_verification_runs USING btree (graph_run_id) WHERE (graph_run_id IS NOT NULL);
+
+
+--
+-- Name: binding_verification_runs_listing_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX binding_verification_runs_listing_idx ON public.binding_verification_runs USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: build_export_publications_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX build_export_publications_latest ON public.build_export_publications USING btree (build_id, verified_at DESC, id DESC);
+
+
+--
+-- Name: build_export_publications_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX build_export_publications_scope ON public.build_export_publications USING btree (account_id, app_id, deployment_id);
 
 
 --
@@ -42280,6 +48718,20 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operation_webhook_bindings_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_webhook_bindings_tenant_idx ON public.customer_operation_webhook_bindings USING btree (account_id, platform_tenant_id);
+
+
+--
+-- Name: customer_operation_webhook_receipts_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_webhook_receipts_expiry_idx ON public.customer_operation_webhook_receipts USING btree (endpoint_id, expires_at);
+
+
+--
 -- Name: customer_operation_workflow_claim_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -42329,6 +48781,13 @@ CREATE INDEX customer_operations_account_subject_history_idx ON public.customer_
 
 
 --
+-- Name: customer_operations_active_deadline_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_active_deadline_idx ON public.customer_operations USING btree (deadline_at, id) WHERE ((deadline_at IS NOT NULL) AND (state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text])));
+
+
+--
 -- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -42339,7 +48798,7 @@ CREATE INDEX customer_operations_definition_retention_idx ON public.customer_ope
 -- Name: customer_operations_pending_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'requires_reconciliation'::text]));
+CREATE INDEX customer_operations_pending_account_idx ON public.customer_operations USING btree (account_id) WHERE (state = ANY (ARRAY['accepted'::text, 'running'::text, 'waiting'::text, 'requires_reconciliation'::text]));
 
 
 --
@@ -42571,6 +49030,20 @@ CREATE INDEX deployment_openapi_docs_app_id_idx ON public.deployment_openapi_doc
 --
 
 CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_openapi_snapshots USING btree (app_id, scope, captured_at DESC);
+
+
+--
+-- Name: deployment_registry_rootfs_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_registry_rootfs_deployment_idx ON public.deployment_registry_rootfs USING btree (deployment_id);
+
+
+--
+-- Name: deployment_registry_verifications_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_registry_verifications_latest ON public.deployment_registry_verifications USING btree (deployment_id, workload_name, verified_at DESC, id DESC);
 
 
 --
@@ -43008,6 +49481,20 @@ CREATE UNIQUE INDEX environment_qualification_reserved_instance_unique_idx ON pu
 
 
 --
+-- Name: environment_workload_retirement_active_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX environment_workload_retirement_active_scope ON public.environment_workload_retirements USING btree (app_id, environment_id) WHERE (phase <> ALL (ARRAY['recovered'::text, 'cancelled'::text]));
+
+
+--
+-- Name: environment_workload_retirements_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_workload_retirements_source ON public.environment_workload_retirements USING btree (source_id, requested_at, id);
+
+
+--
 -- Name: event_delivery_slots_consumer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -43029,6 +49516,48 @@ CREATE INDEX event_execution_coverage_app_idx ON public.event_execution_coverage
 
 
 --
+-- Name: event_execution_lineage_cases_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_lineage_cases_expiry_idx ON public.event_execution_lineage_cases USING btree (retain_until);
+
+
+--
+-- Name: event_execution_lineage_retries_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_lineage_retries_expiry_idx ON public.event_execution_lineage_retries USING btree (retain_until);
+
+
+--
+-- Name: event_execution_lineage_retry_jobs_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_lineage_retry_jobs_expiry_idx ON public.event_execution_lineage_retry_jobs USING btree (retain_until);
+
+
+--
+-- Name: event_execution_lineage_retry_jobs_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_lineage_retry_jobs_health_idx ON public.event_execution_lineage_retry_jobs USING btree (subscription_id, retain_until, updated_at, request_id) WHERE (state = ANY (ARRAY['pending'::text, 'paused'::text]));
+
+
+--
+-- Name: event_execution_lineage_retry_jobs_listing_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_lineage_retry_jobs_listing_idx ON public.event_execution_lineage_retry_jobs USING btree (subscription_id, created_at DESC, request_id DESC);
+
+
+--
+-- Name: event_execution_lineage_retry_jobs_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_lineage_retry_jobs_pending_idx ON public.event_execution_lineage_retry_jobs USING btree (updated_at, subscription_id, request_id) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: event_execution_outcomes_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -43040,6 +49569,13 @@ CREATE INDEX event_execution_outcomes_retention_idx ON public.event_execution_ou
 --
 
 CREATE INDEX event_execution_outcomes_window_idx ON public.event_execution_outcomes USING btree (account_id, app_id, subscription_id, finished_at);
+
+
+--
+-- Name: event_execution_reconciliation_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_reconciliation_pending_idx ON public.event_execution_coverage USING btree (reconciliation_requested_at, subscription_id) WHERE ((reconciliation_requested_at IS NOT NULL) AND (NOT ledger_baseline_known));
 
 
 --
@@ -43358,6 +49894,13 @@ CREATE INDEX event_schemas_source_type_idx ON public.event_schemas USING btree (
 
 
 --
+-- Name: event_subscription_capacity_commands_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_subscription_capacity_commands_expiry ON public.event_subscription_capacity_commands USING btree (retain_until, subscription_id, command_id);
+
+
+--
 -- Name: event_subscription_circuit_breakers_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -43495,6 +50038,13 @@ CREATE INDEX events_subject_at_id_idx ON public.events USING btree (subject, at 
 --
 
 CREATE INDEX events_subject_idx ON public.events USING btree (subject, at DESC);
+
+
+--
+-- Name: events_subject_kind_c_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_subject_kind_c_at_id_idx ON public.events USING btree (subject, kind COLLATE "C", at DESC, id DESC);
 
 
 --
@@ -43831,6 +50381,20 @@ CREATE INDEX inbound_webhook_endpoints_account_idx ON public.inbound_webhook_end
 --
 
 CREATE INDEX inbound_webhook_endpoints_app_created_idx ON public.inbound_webhook_endpoints USING btree (app_id, created_at, id);
+
+
+--
+-- Name: instance_application_standard_boots_instance; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_application_standard_boots_instance ON public.instance_application_standard_boots USING btree (instance_id);
+
+
+--
+-- Name: instance_application_standard_initial_boot_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX instance_application_standard_initial_boot_identity ON public.instance_application_standard_boots USING btree (instance_id);
 
 
 --
@@ -44734,6 +51298,27 @@ CREATE INDEX managed_postgres_cutover_drain_plans_app_idx ON public.managed_post
 --
 
 CREATE INDEX managed_postgres_cutover_drains_pending_idx ON public.managed_postgres_cutover_drains USING btree (owner_node_id, id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: managed_postgres_cutover_preflights_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_preflights_pending ON public.managed_postgres_cutover_preflights USING btree (updated_at, cutover_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: managed_postgres_cutover_source_fence_dataset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_cutover_source_fence_dataset ON public.managed_postgres_cutover_source_fences USING btree (backend_id, backend_fingerprint, source_data_resource_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: managed_postgres_cutover_source_fence_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_source_fence_due ON public.managed_postgres_cutover_source_fences USING btree (retry_at, cutover_id) WHERE (state <> 'released'::text);
 
 
 --
@@ -46018,6 +52603,20 @@ CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_sta
 
 
 --
+-- Name: project_binding_verification_runs_listing_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_binding_verification_runs_listing_idx ON public.project_binding_verification_runs USING btree (account_id, project_id, environment_slug, created_at DESC, id DESC);
+
+
+--
+-- Name: project_binding_verification_runs_project_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_binding_verification_runs_project_time_idx ON public.project_binding_verification_runs USING btree (project_id, created_at DESC);
+
+
+--
 -- Name: project_environment_approvals_id_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -46214,6 +52813,13 @@ CREATE INDEX project_release_sets_history_idx ON public.project_release_sets USI
 
 
 --
+-- Name: project_release_stages_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_release_stages_scope ON public.project_release_stages USING btree (project_id, environment_slug, expires_at);
+
+
+--
 -- Name: projects_install_repo_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -46232,6 +52838,13 @@ CREATE INDEX projects_org_id_idx ON public.projects USING btree (org_id) WHERE (
 --
 
 CREATE INDEX provisioned_static_egress_ips_customer_ip_idx ON public.provisioned_static_egress_ips USING btree (customer_ip);
+
+
+--
+-- Name: queue_binding_canaries_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX queue_binding_canaries_lookup ON public.queue_binding_canaries USING btree (app_id, binding_id, deployment_id, published_at DESC);
 
 
 --
@@ -47002,6 +53615,13 @@ CREATE INDEX snapshot_restore_pressure_leases_node_expiry_idx ON public.snapshot
 --
 
 CREATE INDEX snapshot_storage_daily_account_day_idx ON public.snapshot_storage_daily USING btree (account_id, day DESC);
+
+
+--
+-- Name: snapshots_application_standard_capture_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshots_application_standard_capture_idx ON public.snapshots USING btree (application_standard_capture_token) WHERE (application_standard_capture_token IS NOT NULL);
 
 
 --
@@ -48202,6 +54822,573 @@ CREATE TRIGGER app_webhook_deliveries_capture_dead_letter AFTER UPDATE OF status
 
 
 --
+-- Name: instances application_standard_a_runtime_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_a_runtime_guard BEFORE INSERT OR UPDATE OF app_id, deployment_id, kind, mode, state, netns, host_ip, guest_uid, ram_mb ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_instance_runtime_guard();
+
+
+--
+-- Name: apps application_standard_account_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_account_insert_guard BEFORE INSERT OR DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_account_input_guard();
+
+
+--
+-- Name: apps application_standard_account_update_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_account_update_guard BEFORE UPDATE OF account_id, status ON public.apps FOR EACH ROW WHEN (((old.account_id IS DISTINCT FROM new.account_id) OR ((old.status = 'deleted'::text) <> (new.status = 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_account_input_guard();
+
+
+--
+-- Name: apps application_standard_app_account_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_app_account_identity_guard BEFORE UPDATE OF account_id ON public.apps FOR EACH ROW WHEN ((old.account_id IS DISTINCT FROM new.account_id)) EXECUTE FUNCTION public.application_standard_app_account_identity_guard();
+
+
+--
+-- Name: apps application_standard_app_scope_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_app_scope_insert_guard BEFORE INSERT ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_app_scope_guard();
+
+
+--
+-- Name: apps application_standard_app_scope_update_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_app_scope_update_guard BEFORE UPDATE OF org_id, project_id, status ON public.apps FOR EACH ROW WHEN (((old.org_id IS DISTINCT FROM new.org_id) OR (old.project_id IS DISTINCT FROM new.project_id) OR ((old.status = 'deleted'::text) AND (new.status <> 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_app_scope_guard();
+
+
+--
+-- Name: deployments application_standard_artifact_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_artifact_identity_guard BEFORE UPDATE OF app_id ON public.deployments FOR EACH ROW WHEN ((old.app_id IS DISTINCT FROM new.app_id)) EXECUTE FUNCTION public.application_standard_artifact_identity_guard();
+
+
+--
+-- Name: deployment_artifact_scans application_standard_artifact_scan_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_artifact_scan_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scans FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_artifact_scan_current application_standard_artifact_scan_current_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_artifact_scan_current_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scan_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: application_standard_assignments application_standard_assignment_retention_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_assignment_retention_guard BEFORE DELETE ON public.application_standard_assignments FOR EACH ROW EXECUTE FUNCTION public.application_standard_assignment_retention_guard();
+
+
+--
+-- Name: application_standard_assignments application_standard_assignment_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_assignment_revision_guard BEFORE UPDATE ON public.application_standard_assignments FOR EACH ROW EXECUTE FUNCTION public.application_standard_assignment_revision_guard();
+
+
+--
+-- Name: application_standard_assignments application_standard_assignment_scope_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_assignment_scope_guard BEFORE INSERT OR UPDATE ON public.application_standard_assignments FOR EACH ROW EXECUTE FUNCTION public.application_standard_assignment_scope_guard();
+
+
+--
+-- Name: instances application_standard_b1_boot_receipt_reuse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_b1_boot_receipt_reuse BEFORE INSERT OR UPDATE OF state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_boot_receipt_reuse_guard();
+
+
+--
+-- Name: instances application_standard_b_native_publication; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_b_native_publication BEFORE INSERT OR UPDATE OF node_id, state, netns, host_ip, guest_uid, application_standard_boot_token, application_standard_promotion_token ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_publication_guard();
+
+
+--
+-- Name: application_standard_control_backups application_standard_backup_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_backup_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_control_backups FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard();
+
+
+--
+-- Name: application_standard_control_bindings application_standard_binding_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_binding_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_control_bindings FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard();
+
+
+--
+-- Name: instance_application_standard_boots application_standard_boot_restore_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_boot_restore_guard BEFORE INSERT OR UPDATE ON public.instance_application_standard_boots FOR EACH ROW EXECUTE FUNCTION public.application_standard_boot_restore_guard();
+
+
+--
+-- Name: build_export_publications application_standard_build_export_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_build_export_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.build_export_publications FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: instances application_standard_c_native_residency; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_c_native_residency BEFORE UPDATE OF state, application_standard_boot_token, application_standard_promotion_token ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_residency_guard();
+
+
+--
+-- Name: deployments application_standard_deployment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_deployment_guard BEFORE INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.application_standard_deployment_guard();
+
+
+--
+-- Name: app_log_drains application_standard_drain_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_drain_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard('account_quota');
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_egress_current BEFORE INSERT OR UPDATE ON public.application_standard_egress_observations FOR EACH ROW EXECUTE FUNCTION public.application_standard_egress_guard();
+
+
+--
+-- Name: apps application_standard_enroll_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_enroll_app AFTER INSERT ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_enroll_app();
+
+
+--
+-- Name: app_application_standards application_standard_enrollment_generation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_enrollment_generation_guard BEFORE UPDATE ON public.app_application_standards FOR EACH ROW EXECUTE FUNCTION public.application_standard_enrollment_generation_guard();
+
+
+--
+-- Name: project_environments application_standard_environment_lifetime_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_lifetime_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: project_environment_workload_specs application_standard_environment_workload_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_workload_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: project_environment_workload_heads application_standard_environment_workload_head_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_workload_head_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: project_environment_workload_deployment_specs application_standard_environment_workload_pin_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_environment_workload_pin_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.application_standard_environment_workload_guard();
+
+
+--
+-- Name: application_standard_exceptions application_standard_exception_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_exception_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_exceptions FOR EACH ROW EXECUTE FUNCTION public.application_standard_exception_guard();
+
+
+--
+-- Name: application_standards application_standard_identity_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_identity_immutable BEFORE DELETE OR UPDATE ON public.application_standards FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: instances application_standard_instance_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_instance_input_guard BEFORE INSERT OR DELETE OR UPDATE OF deployment_id, state, terminal_at ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: application_standard_ledger_recoveries application_standard_ledger_recovery_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_ledger_recovery_immutable BEFORE DELETE OR UPDATE ON public.application_standard_ledger_recoveries FOR EACH ROW EXECUTE FUNCTION public.application_standard_ledger_recovery_immutable();
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumer_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_current BEFORE INSERT OR UPDATE ON public.application_standard_log_consumers FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_guard();
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumer_session_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_session_capture AFTER INSERT OR UPDATE ON public.application_standard_log_consumers FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_session_capture();
+
+
+--
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_session_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_session_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_log_consumer_sessions FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_session_guard();
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumer_session_once; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_consumer_session_once BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_log_consumers FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_session_once();
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_delivery_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_delivery_current BEFORE INSERT OR UPDATE ON public.application_standard_log_deliveries FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_delivery_guard();
+
+
+--
+-- Name: application_standard_log_destinations application_standard_log_destination_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR UPDATE ON public.application_standard_log_destinations FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_consumer_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_health_consumer_open BEFORE INSERT OR UPDATE ON public.application_standard_log_health FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_open_guard();
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_health_current BEFORE INSERT OR UPDATE ON public.application_standard_log_health FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_health_guard();
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventory_consumer_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_inventory_consumer_open BEFORE INSERT OR UPDATE ON public.application_standard_log_inventories FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_consumer_open_guard();
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventory_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_inventory_current BEFORE INSERT OR UPDATE ON public.application_standard_log_inventories FOR EACH ROW EXECUTE FUNCTION public.application_standard_log_inventory_guard();
+
+
+--
+-- Name: instance_application_standard_boots application_standard_native_boot_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_boot_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instance_application_standard_boots FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_boot_guard();
+
+
+--
+-- Name: compute_nodes application_standard_native_incarnation_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_incarnation_capture AFTER INSERT OR UPDATE OF vmmd_incarnation, vmmd_admission_protocol ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_incarnation_capture();
+
+
+--
+-- Name: application_standard_native_incarnations application_standard_native_incarnation_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_incarnation_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_native_incarnations FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_incarnation_guard();
+
+
+--
+-- Name: compute_nodes application_standard_native_incarnation_once; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_incarnation_once BEFORE INSERT OR UPDATE OF vmmd_incarnation, vmmd_admission_protocol ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_incarnation_once();
+
+
+--
+-- Name: instance_application_standard_promotions application_standard_native_promotion_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_native_promotion_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instance_application_standard_promotions FOR EACH ROW EXECUTE FUNCTION public.application_standard_native_promotion_guard();
+
+
+--
+-- Name: deployments application_standard_observation_deployment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_deployment_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_child_guard();
+
+
+--
+-- Name: instances application_standard_observation_instance_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_instance_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_child_guard();
+
+
+--
+-- Name: compute_nodes application_standard_observation_membership_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_membership_guard BEFORE INSERT OR DELETE OR UPDATE OF role ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_membership_guard();
+
+
+--
+-- Name: snapshots application_standard_observation_snapshot_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_observation_snapshot_guard BEFORE INSERT OR DELETE OR UPDATE ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.application_standard_observation_child_guard();
+
+
+--
+-- Name: application_standard_operations application_standard_operation_intent_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_operation_intent_immutable BEFORE DELETE OR UPDATE ON public.application_standard_operations FOR EACH ROW EXECUTE FUNCTION public.application_standard_operation_intent_immutable();
+
+
+--
+-- Name: apps application_standard_pending_scalar_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_pending_scalar_guard BEFORE UPDATE OF require_signed, security_policy, egress_allowlist, egress_ports ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_pending_scalar_guard();
+
+
+--
+-- Name: application_standard_publishers application_standard_publisher_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_publisher_immutable BEFORE DELETE OR UPDATE ON public.application_standard_publishers FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: apps application_standard_reenroll_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_reenroll_app AFTER UPDATE OF org_id, project_id, status ON public.apps FOR EACH ROW WHEN (((old.org_id IS DISTINCT FROM new.org_id) OR (old.project_id IS DISTINCT FROM new.project_id) OR ((old.status = 'deleted'::text) AND (new.status <> 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_enroll_app();
+
+
+--
+-- Name: deployment_registry_verifications application_standard_registry_artifact_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_registry_artifact_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_verifications FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_registry_rootfs application_standard_registry_rootfs_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_registry_rootfs_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_registry_rootfs_current application_standard_registry_rootfs_current_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_registry_rootfs_current_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: instances application_standard_restore_publication_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_restore_publication_guard BEFORE UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_restore_publication_guard();
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_review_immutable BEFORE DELETE OR UPDATE ON public.application_standard_review_plans FOR EACH ROW EXECUTE FUNCTION public.application_standard_review_immutable();
+
+
+--
+-- Name: instances application_standard_runtime_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_runtime_capture AFTER INSERT ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_instance_runtime_capture();
+
+
+--
+-- Name: instance_application_standard_admissions application_standard_runtime_capture_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_runtime_capture_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.instance_application_standard_admissions FOR EACH ROW EXECUTE FUNCTION public.application_standard_runtime_capture_immutable();
+
+
+--
+-- Name: deployment_runtime_scans application_standard_runtime_scan_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_runtime_scan_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scans FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_runtime_scan_current application_standard_runtime_scan_current_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_runtime_scan_current_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scan_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: apps application_standard_scalar_control_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_scalar_control_guard BEFORE UPDATE OF require_signed, security_policy, egress_allowlist, egress_ports ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_scalar_control_guard();
+
+
+--
+-- Name: deployment_sidecar_layers application_standard_sidecar_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_sidecar_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: app_trusted_signers application_standard_signer_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_signer_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard();
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_capture_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_snapshot_capture_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_snapshot_captures FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_capture_guard();
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_namespace_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_snapshot_namespace_guard BEFORE INSERT ON public.application_standard_snapshot_captures FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_namespace_guard();
+
+
+--
+-- Name: snapshots application_standard_snapshot_publication_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_snapshot_publication_guard BEFORE INSERT OR UPDATE ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_publication_guard();
+
+
+--
+-- Name: instance_application_standard_boots application_standard_snapshot_resume_boot_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_snapshot_resume_boot_guard BEFORE INSERT OR UPDATE OF receipt ON public.instance_application_standard_boots FOR EACH ROW EXECUTE FUNCTION public.application_standard_snapshot_resume_boot_guard();
+
+
+--
+-- Name: source_build_rootfs application_standard_source_rootfs_child; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_source_rootfs_child BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: source_build_rootfs_current application_standard_source_rootfs_current_child; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_source_rootfs_current_child BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: application_standard_operation_targets application_standard_target_intent_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_target_intent_immutable BEFORE DELETE OR UPDATE ON public.application_standard_operation_targets FOR EACH ROW EXECUTE FUNCTION public.application_standard_target_intent_immutable();
+
+
+--
+-- Name: application_standard_versions application_standard_version_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_version_immutable BEFORE DELETE OR UPDATE ON public.application_standard_versions FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: app_log_drains application_standard_w_pending_drain_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_w_pending_drain_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_pending_child_guard('log_destinations');
+
+
+--
+-- Name: app_trusted_signers application_standard_w_pending_signer_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_w_pending_signer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_pending_child_guard('trusted_publishers');
+
+
+--
+-- Name: app_log_drains application_standard_y_drain_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_y_drain_identity_guard BEFORE UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_managed_control_identity_guard('log_destinations', 'id');
+
+
+--
+-- Name: app_trusted_signers application_standard_y_signer_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_y_signer_identity_guard BEFORE UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_managed_control_identity_guard('trusted_publishers', 'signer_name');
+
+
+--
+-- Name: app_log_drains application_standard_z_drain_projection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_z_drain_projection_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_drain_projection_guard();
+
+
+--
+-- Name: app_trusted_signers application_standard_z_signer_projection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_z_signer_projection_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_signer_projection_guard();
+
+
+--
 -- Name: apps apps_assign_service_address_index_insert; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -48321,6 +55508,20 @@ CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.a
 
 
 --
+-- Name: deployment_artifact_scan_current artifact_scan_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER artifact_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scan_current FOR EACH ROW EXECUTE FUNCTION public.deployment_artifact_scan_current_guard();
+
+
+--
+-- Name: deployment_artifact_scans artifact_scan_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER artifact_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scans FOR EACH ROW EXECUTE FUNCTION public.deployment_artifact_scan_guard();
+
+
+--
 -- Name: deployment_openapi_docs automatic_route_check_capture_changed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -48332,6 +55533,34 @@ CREATE TRIGGER automatic_route_check_capture_changed AFTER INSERT OR DELETE OR U
 --
 
 CREATE TRIGGER automatic_route_check_intent_changed AFTER INSERT OR UPDATE ON public.saved_route_requirements FOR EACH ROW EXECUTE FUNCTION public.automatic_route_check_intent_changed();
+
+
+--
+-- Name: base_image_producer_current base_producer_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_producer_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_producer_current FOR EACH ROW EXECUTE FUNCTION public.base_image_producer_current_guard();
+
+
+--
+-- Name: base_image_producers base_producer_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_producer_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_producers FOR EACH ROW EXECUTE FUNCTION public.base_image_producer_guard();
+
+
+--
+-- Name: base_image_scan_current base_scan_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_scan_current FOR EACH ROW EXECUTE FUNCTION public.base_image_scan_current_guard();
+
+
+--
+-- Name: base_image_scans base_scan_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_scans FOR EACH ROW EXECUTE FUNCTION public.base_image_scan_guard();
 
 
 --
@@ -48475,6 +55704,13 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 
 
 --
+-- Name: queue_binding_canaries binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.queue_binding_canaries FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
+
+
+--
 -- Name: queue_bindings binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -48485,7 +55721,7 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 -- Name: trigger_consumer_health binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.trigger_consumer_health FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_poll_at,last_success_at,last_error_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.trigger_consumer_health FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_error_at');
 
 
 --
@@ -48517,6 +55753,13 @@ CREATE TRIGGER binding_release_traffic BEFORE INSERT OR UPDATE OF traffic_percen
 
 
 --
+-- Name: build_export_publications build_export_publication_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER build_export_publication_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.build_export_publications FOR EACH ROW EXECUTE FUNCTION public.build_export_publication_guard();
+
+
+--
 -- Name: instances capture_environment_qualification_execution; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -48528,6 +55771,34 @@ CREATE TRIGGER capture_environment_qualification_execution AFTER INSERT ON publi
 --
 
 CREATE TRIGGER capture_instance_capacity BEFORE INSERT OR UPDATE OF capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_instance_capacity();
+
+
+--
+-- Name: project_release_sets checked_binding_release_graph_members; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER checked_binding_release_graph_members AFTER INSERT ON public.project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_checked_binding_release_graph();
+
+
+--
+-- Name: project_release_sets checked_project_deactivation_commit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER checked_project_deactivation_commit AFTER UPDATE ON public.project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_checked_project_deactivation();
+
+
+--
+-- Name: project_release_sets checked_project_rollback_commit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER checked_project_rollback_commit AFTER INSERT ON public.project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_checked_project_rollback();
+
+
+--
+-- Name: project_release_sets checked_project_rollback_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER checked_project_rollback_identity BEFORE UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.validate_checked_project_rollback();
 
 
 --
@@ -48993,6 +56264,13 @@ CREATE TRIGGER customer_operation_subject_immutable BEFORE UPDATE OF record ON p
 
 
 --
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_routing_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.customer_operation_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_customer_operation_webhook_routing();
+
+
+--
 -- Name: data_upstreams data_upstreams_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -49081,6 +56359,13 @@ CREATE TRIGGER deployment_production_lifecycle_insert_guard AFTER INSERT ON publ
 --
 
 CREATE TRIGGER deployment_recovery_lineage_capture AFTER INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.capture_deployment_recovery_lineage();
+
+
+--
+-- Name: deployment_registry_verifications deployment_registry_verification_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_registry_verification_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_verifications FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_verification_guard();
 
 
 --
@@ -49798,6 +57083,13 @@ CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR
 
 
 --
+-- Name: environment_workload_retirements guard_environment_workload_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_retirement BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_retirements FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_retirement();
+
+
+--
 -- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -50092,6 +57384,13 @@ CREATE TRIGGER managed_postgres_binding_owner_guard BEFORE INSERT OR UPDATE OF a
 
 
 --
+-- Name: project_environment_clone_postgres_write_fences managed_postgres_clone_sql_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_clone_sql_owner BEFORE INSERT OR UPDATE OF state, backend_id, backend_fingerprint, source_data_resource_id ON public.project_environment_clone_postgres_write_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_owner();
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_cutover_binding_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -50110,6 +57409,13 @@ CREATE TRIGGER managed_postgres_cutover_database_guard BEFORE DELETE OR UPDATE O
 --
 
 CREATE TRIGGER managed_postgres_cutover_drain_guard BEFORE UPDATE ON public.managed_postgres_cutover_drains FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_cutover_drain();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_sql_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_cutover_sql_owner BEFORE INSERT OR UPDATE OF state, backend_id, backend_fingerprint, source_data_resource_id ON public.managed_postgres_cutover_source_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_owner();
 
 
 --
@@ -50197,10 +57503,38 @@ CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON 
 
 
 --
+-- Name: managed_postgres_cutovers managed_postgres_source_fence_cancellation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_source_fence_cancellation BEFORE UPDATE ON public.managed_postgres_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_cancellation();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_source_fence_evidence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_source_fence_evidence BEFORE DELETE OR UPDATE ON public.managed_postgres_cutover_source_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_evidence();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_source_fence_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_source_fence_truncate BEFORE TRUNCATE ON public.managed_postgres_cutover_source_fences FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_source_fence_evidence();
+
+
+--
 -- Name: managed_postgres_usage_imports managed_postgres_usage_import_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_usage_imports FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_usage_import();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_writer_catalog_baseline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_writer_catalog_baseline BEFORE INSERT OR UPDATE ON public.managed_postgres_cutover_source_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_writer_catalog_baseline();
 
 
 --
@@ -51093,6 +58427,13 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 
 
 --
+-- Name: project_release_sets project_deactivation_receipt_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_deactivation_receipt_identity BEFORE INSERT OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_project_deactivation_receipt();
+
+
+--
 -- Name: project_environment_workload_heads project_environment_workload_head_changed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -51139,6 +58480,13 @@ CREATE TRIGGER queue_binding_environment_scope_guard BEFORE INSERT OR UPDATE ON 
 --
 
 CREATE TRIGGER queue_binding_retirement_guard BEFORE DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_queue_binding_retirement();
+
+
+--
+-- Name: invocations queue_canary_invocation_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_canary_invocation_revision AFTER UPDATE OF state, attempts, replay_generation, received_at, completed_at, headers, queue_binding_id, deployment_scope, deadline_at, account_id, app_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.capture_queue_canary_invocation_revision();
 
 
 --
@@ -51261,6 +58609,20 @@ CREATE TRIGGER realtime_worker_health_transition AFTER UPDATE ON public.managed_
 
 
 --
+-- Name: deployment_registry_rootfs_current registry_rootfs_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER registry_rootfs_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_rootfs_current_guard();
+
+
+--
+-- Name: deployment_registry_rootfs registry_rootfs_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER registry_rootfs_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_rootfs_guard();
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -51356,6 +58718,20 @@ CREATE TRIGGER runtime_environment_owners_configuration_fence BEFORE INSERT OR D
 --
 
 CREATE TRIGGER runtime_release_qualification_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.runtime_release_qualifications FOR EACH ROW EXECUTE FUNCTION public.guard_runtime_release_qualification();
+
+
+--
+-- Name: deployment_runtime_scan_current runtime_scan_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scan_current FOR EACH ROW EXECUTE FUNCTION public.deployment_runtime_scan_current_guard();
+
+
+--
+-- Name: deployment_runtime_scans runtime_scan_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_runtime_scans FOR EACH ROW EXECUTE FUNCTION public.deployment_runtime_scan_guard();
 
 
 --
@@ -51695,6 +59071,20 @@ CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status O
 
 
 --
+-- Name: source_build_rootfs_current source_build_rootfs_current_private; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER source_build_rootfs_current_private BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.source_build_rootfs_current_guard();
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_private; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER source_build_rootfs_private BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.source_build_rootfs_guard();
+
+
+--
 -- Name: event_subscriptions start_event_execution_coverage; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -51930,6 +59320,55 @@ CREATE TRIGGER zz_environment_gitops_guard_queue_consumer BEFORE INSERT OR DELET
 --
 
 CREATE TRIGGER zz_environment_secret_reference_shadow BEFORE INSERT OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_reference_shadow();
+
+
+--
+-- Name: deployments zz_retired_workload_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_retired_workload_execution();
+
+
+--
+-- Name: instances zz_retired_workload_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_retired_workload_execution();
+
+
+--
+-- Name: invocations zz_retired_workload_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_retired_workload_execution();
+
+
+--
+-- Name: job_runs zz_retired_workload_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT ON public.job_runs FOR EACH ROW EXECUTE FUNCTION public.guard_retired_workload_execution();
+
+
+--
+-- Name: job_tasks zz_retired_workload_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.guard_retired_workload_execution();
+
+
+--
+-- Name: trigger_records zz_retired_workload_execution; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_retired_workload_execution BEFORE INSERT OR UPDATE ON public.trigger_records FOR EACH ROW EXECUTE FUNCTION public.guard_retired_workload_execution();
+
+
+--
+-- Name: environment_git_sources zz_workload_retirement_source_lifecycle; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_workload_retirement_source_lifecycle BEFORE DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_workload_retirement_source_lifecycle();
 
 
 --
@@ -52341,6 +59780,22 @@ ALTER TABLE ONLY public.app_api_routes
 
 
 --
+-- Name: app_application_standards app_application_standards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_application_standards
+    ADD CONSTRAINT app_application_standards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_application_standards app_application_standards_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_application_standards
+    ADD CONSTRAINT app_application_standards_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_binding_promotion_revisions app_binding_promotion_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52418,6 +59873,38 @@ ALTER TABLE ONLY public.app_egress_policy_node_status
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_route_budgets app_environment_route_budgets_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_route_budgets
+    ADD CONSTRAINT app_environment_route_budgets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --
@@ -53157,6 +60644,294 @@ ALTER TABLE ONLY public.app_work_policies
 
 
 --
+-- Name: application_standard_assignments application_standard_assignme_org_id_standard_id_admission_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignme_org_id_standard_id_admission_fkey FOREIGN KEY (org_id, standard_id, admission_version) REFERENCES public.application_standard_versions(org_id, standard_id, version) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_assignments application_standard_assignments_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignments_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_control_backups application_standard_control_backups_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_backups
+    ADD CONSTRAINT application_standard_control_backups_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_control_bindings application_standard_control_bindings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_bindings
+    ADD CONSTRAINT application_standard_control_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_egress_observations application_standard_egress_observations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_egress_observations
+    ADD CONSTRAINT application_standard_egress_observations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_exceptions application_standard_exceptions_org_id_standard_id_version_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_exceptions
+    ADD CONSTRAINT application_standard_exceptions_org_id_standard_id_version_fkey FOREIGN KEY (org_id, standard_id, version) REFERENCES public.application_standard_versions(org_id, standard_id, version);
+
+
+--
+-- Name: application_standard_log_consumer_sessions application_standard_log_consumer_sessions_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumer_sessions
+    ADD CONSTRAINT application_standard_log_consumer_sessions_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_consumers application_standard_log_consumers_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_consumers
+    ADD CONSTRAINT application_standard_log_consumers_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_deliveries application_standard_log_deliveries_resource_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_deliveries
+    ADD CONSTRAINT application_standard_log_deliveries_resource_id_fkey FOREIGN KEY (resource_id) REFERENCES public.application_standard_log_destinations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_destinations application_standard_log_destinations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_destinations
+    ADD CONSTRAINT application_standard_log_destinations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.app_log_drains(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_health application_standard_log_health_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_health
+    ADD CONSTRAINT application_standard_log_health_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_inventories application_standard_log_inventories_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_inventories
+    ADD CONSTRAINT application_standard_log_inventories_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_native_incarnations application_standard_native_incarnations_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_native_incarnations
+    ADD CONSTRAINT application_standard_native_incarnations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_operation_targets application_standard_operation_targets_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operation_targets
+    ADD CONSTRAINT application_standard_operation_targets_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.application_standard_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_assignment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_assignment_id_fkey FOREIGN KEY (org_id, assignment_id) REFERENCES public.application_standard_assignments(org_id, id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_plan_id_fkey FOREIGN KEY (org_id, plan_id) REFERENCES public.application_standard_review_plans(org_id, id);
+
+
+--
+-- Name: application_standard_publishers application_standard_publishers_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_publishers
+    ADD CONSTRAINT application_standard_publishers_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_plans_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_review_plans
+    ADD CONSTRAINT application_standard_review_plans_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_captures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_snapshot_captures
+    ADD CONSTRAINT application_standard_snapshot_captures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_captures_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_snapshot_captures
+    ADD CONSTRAINT application_standard_snapshot_captures_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_snapshot_captures application_standard_snapshot_captures_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_snapshot_captures
+    ADD CONSTRAINT application_standard_snapshot_captures_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_versions application_standard_versions_org_id_standard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_versions
+    ADD CONSTRAINT application_standard_versions_org_id_standard_id_fkey FOREIGN KEY (org_id, standard_id) REFERENCES public.application_standards(org_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standards application_standards_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: apps apps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53237,6 +61012,38 @@ ALTER TABLE ONLY public.automatic_route_checks
 
 
 --
+-- Name: base_image_producer_current base_image_producer_current_producer_id_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producer_current
+    ADD CONSTRAINT base_image_producer_current_producer_id_storage_key_fkey FOREIGN KEY (producer_id, storage_key) REFERENCES public.base_image_producers(id, storage_key);
+
+
+--
+-- Name: base_image_producers base_image_producers_parent_producer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producers
+    ADD CONSTRAINT base_image_producers_parent_producer_id_fkey FOREIGN KEY (parent_producer_id) REFERENCES public.base_image_producers(id);
+
+
+--
+-- Name: base_image_scan_current base_image_scan_current_scan_id_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scan_current
+    ADD CONSTRAINT base_image_scan_current_scan_id_storage_key_fkey FOREIGN KEY (scan_id, storage_key) REFERENCES public.base_image_scans(id, storage_key);
+
+
+--
+-- Name: base_image_scans base_image_scans_base_producer_id_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scans
+    ADD CONSTRAINT base_image_scans_base_producer_id_storage_key_fkey FOREIGN KEY (base_producer_id, storage_key) REFERENCES public.base_image_producers(id, storage_key);
+
+
+--
 -- Name: billing_identities billing_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53258,6 +61065,62 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: binding_verification_run_steps binding_verification_run_steps_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_run_steps
+    ADD CONSTRAINT binding_verification_run_steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.binding_verification_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_graph_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_graph_run_id_fkey FOREIGN KEY (graph_run_id) REFERENCES public.project_binding_verification_runs(id);
+
+
+--
+-- Name: build_export_publications build_export_publications_build_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.build_export_publications
+    ADD CONSTRAINT build_export_publications_build_id_fkey FOREIGN KEY (build_id) REFERENCES public.builds(id) ON DELETE CASCADE;
+
+
+--
+-- Name: build_export_publications build_export_publications_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.build_export_publications
+    ADD CONSTRAINT build_export_publications_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -53573,6 +61436,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_attempt_instances customer_operation_attempt_instanc_operation_id_generation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_attempt_instances
+    ADD CONSTRAINT customer_operation_attempt_instanc_operation_id_generation_fkey FOREIGN KEY (operation_id, generation) REFERENCES public.customer_operation_executions(operation_id, generation) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53746,6 +61617,46 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 ALTER TABLE ONLY public.customer_operation_stream_leases
     ADD CONSTRAINT customer_operation_stream_leases_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_bindings customer_operation_webhook_bindings_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_bindings
+    ADD CONSTRAINT customer_operation_webhook_bindings_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_webhook_receipts customer_operation_webhook_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_webhook_receipts
+    ADD CONSTRAINT customer_operation_webhook_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
 
 
 --
@@ -54037,6 +61948,46 @@ ALTER TABLE ONLY public.deployment_aliases
 
 
 --
+-- Name: deployment_artifact_scan_current deployment_artifact_scan_curr_scan_id_deployment_id_worklo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scan_current
+    ADD CONSTRAINT deployment_artifact_scan_curr_scan_id_deployment_id_worklo_fkey FOREIGN KEY (scan_id, deployment_id, workload_name) REFERENCES public.deployment_artifact_scans(id, deployment_id, workload_name) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scan_current deployment_artifact_scan_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scan_current
+    ADD CONSTRAINT deployment_artifact_scan_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_registry_verification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_registry_verification_id_fkey FOREIGN KEY (registry_verification_id) REFERENCES public.deployment_registry_verifications(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_rootfs_producer_id_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_rootfs_producer_id_deployment_id_fkey FOREIGN KEY (rootfs_producer_id, deployment_id, workload_name) REFERENCES public.deployment_registry_rootfs(id, deployment_id, workload_name) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_dependency_gates deployment_dependency_gates_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -54133,6 +62084,46 @@ ALTER TABLE ONLY public.deployment_recovery_lineage
 
 
 --
+-- Name: deployment_registry_rootfs_current deployment_registry_rootfs_cu_artifact_id_deployment_id_wo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs_current
+    ADD CONSTRAINT deployment_registry_rootfs_cu_artifact_id_deployment_id_wo_fkey FOREIGN KEY (artifact_id, deployment_id, workload_name) REFERENCES public.deployment_registry_rootfs(id, deployment_id, workload_name) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs_current deployment_registry_rootfs_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs_current
+    ADD CONSTRAINT deployment_registry_rootfs_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_registry_verification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_registry_verification_id_fkey FOREIGN KEY (registry_verification_id) REFERENCES public.deployment_registry_verifications(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_verifications deployment_registry_verifications_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_verifications
+    ADD CONSTRAINT deployment_registry_verifications_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -54194,6 +62185,30 @@ ALTER TABLE ONLY public.deployment_route_policy_snapshots
 
 ALTER TABLE ONLY public.deployment_runtime_environment_owners
     ADD CONSTRAINT deployment_runtime_environment_owners_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_scan_current deployment_runtime_scan_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scan_current
+    ADD CONSTRAINT deployment_runtime_scan_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_scan_current deployment_runtime_scan_current_scan_id_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scan_current
+    ADD CONSTRAINT deployment_runtime_scan_current_scan_id_deployment_id_fkey FOREIGN KEY (scan_id, deployment_id) REFERENCES public.deployment_runtime_scans(id, deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_runtime_scans deployment_runtime_scans_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_runtime_scans
+    ADD CONSTRAINT deployment_runtime_scans_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -54853,6 +62868,22 @@ ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
 
 
 --
+-- Name: environment_route_budget_receipts environment_route_budget_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_route_budget_receipts
+    ADD CONSTRAINT environment_route_budget_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_route_budget_receipts environment_route_budget_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_route_budget_receipts
+    ADD CONSTRAINT environment_route_budget_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: environment_workload_graphs environment_workload_graphs_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -54898,6 +62929,78 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 
 ALTER TABLE ONLY public.environment_workload_qualification_requests
     ADD CONSTRAINT environment_workload_qualification_requests_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_recovery_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_recovery_revision_id_fkey FOREIGN KEY (recovery_revision_id) REFERENCES public.environment_desired_revisions(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_revision_id_fkey FOREIGN KEY (revision_id) REFERENCES public.environment_desired_revisions(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_route_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_route_deployment_id_fkey FOREIGN KEY (route_deployment_id) REFERENCES public.deployments(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_workload_retirements environment_workload_retirements_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_workload_retirements
+    ADD CONSTRAINT environment_workload_retirements_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
 
 
 --
@@ -54970,6 +63073,38 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 ALTER TABLE ONLY public.event_execution_coverage
     ADD CONSTRAINT event_execution_coverage_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_lineage_cases event_execution_lineage_cases_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_cases
+    ADD CONSTRAINT event_execution_lineage_cases_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.event_execution_coverage(subscription_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_lineage_retries event_execution_lineage_retries_subscription_id_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retries
+    ADD CONSTRAINT event_execution_lineage_retries_subscription_id_outbox_id_fkey FOREIGN KEY (subscription_id, outbox_id) REFERENCES public.event_execution_lineage_cases(subscription_id, outbox_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_lineage_retry_jobs event_execution_lineage_retry_jobs_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retry_jobs
+    ADD CONSTRAINT event_execution_lineage_retry_jobs_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.event_execution_coverage(subscription_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_lineage_retry_control_receipts event_execution_lineage_retry_subscription_id_job_request__fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_lineage_retry_control_receipts
+    ADD CONSTRAINT event_execution_lineage_retry_subscription_id_job_request__fkey FOREIGN KEY (subscription_id, job_request_id) REFERENCES public.event_execution_lineage_retry_jobs(subscription_id, request_id) ON DELETE CASCADE;
 
 
 --
@@ -55138,6 +63273,30 @@ ALTER TABLE ONLY public.event_schemas
 
 ALTER TABLE ONLY public.event_storage_admission
     ADD CONSTRAINT event_storage_admission_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_capacity_commands event_subscription_capacity_commands_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_capacity_commands
+    ADD CONSTRAINT event_subscription_capacity_commands_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_capacity_commands event_subscription_capacity_commands_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_capacity_commands
+    ADD CONSTRAINT event_subscription_capacity_commands_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_capacity_commands event_subscription_capacity_commands_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_capacity_commands
+    ADD CONSTRAINT event_subscription_capacity_commands_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE;
 
 
 --
@@ -55589,6 +63748,38 @@ ALTER TABLE ONLY public.inbound_webhook_endpoints
 
 
 --
+-- Name: instance_application_standard_admissions instance_application_standard_admissions_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_admissions
+    ADD CONSTRAINT instance_application_standard_admissions_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_application_standard_boots instance_application_standard_boots_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_boots
+    ADD CONSTRAINT instance_application_standard_boots_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_application_standard_promotions instance_application_standard_promotions_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_promotions
+    ADD CONSTRAINT instance_application_standard_promotions_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_application_standard_promotions instance_application_standard_promotions_parent_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_promotions
+    ADD CONSTRAINT instance_application_standard_promotions_parent_token_fkey FOREIGN KEY (parent_token) REFERENCES public.instance_application_standard_boots(token) ON DELETE CASCADE;
+
+
+--
 -- Name: instance_billing_intervals instance_billing_intervals_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -55610,6 +63801,22 @@ ALTER TABLE ONLY public.instance_runtime_config_receipts
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: instances instances_application_standard_boot_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instances
+    ADD CONSTRAINT instances_application_standard_boot_token_fkey FOREIGN KEY (application_standard_boot_token) REFERENCES public.instance_application_standard_boots(token);
+
+
+--
+-- Name: instances instances_application_standard_promotion_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instances
+    ADD CONSTRAINT instances_application_standard_promotion_token_fkey FOREIGN KEY (application_standard_promotion_token) REFERENCES public.instance_application_standard_promotions(token);
 
 
 --
@@ -56221,6 +64428,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 
 --
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_mainten_reserved_by_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_mainten_reserved_by_cutover_id_fkey FOREIGN KEY (reserved_by_cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56274,6 +64489,38 @@ ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
 
 ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
     ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.managed_postgres_cutover_drain_plans(id);
+
+
+--
+-- Name: managed_postgres_cutover_preflights managed_postgres_cutover_preflights_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_preflights
+    ADD CONSTRAINT managed_postgres_cutover_preflights_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_maintenance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_maintenance_id_fkey FOREIGN KEY (maintenance_id) REFERENCES public.managed_postgres_checkpoint_maintenance(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
 
 
 --
@@ -56365,6 +64612,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_proofs
 
 
 --
+-- Name: managed_postgres_databases managed_postgres_restore_source_database_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_databases
+    ADD CONSTRAINT managed_postgres_restore_source_database_fk FOREIGN KEY (restore_source_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
 -- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56378,14 +64633,6 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
-
-
---
--- Name: managed_postgres_databases managed_postgres_restore_source_database_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.managed_postgres_databases
-    ADD CONSTRAINT managed_postgres_restore_source_database_fk FOREIGN KEY (restore_source_database_id) REFERENCES public.managed_postgres_databases(id);
 
 
 --
@@ -58357,6 +66604,22 @@ ALTER TABLE ONLY public.profile_route_alert_state
 
 
 --
+-- Name: project_binding_verification_runs project_binding_verification_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_binding_verification_runs
+    ADD CONSTRAINT project_binding_verification_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_binding_verification_runs project_binding_verification_runs_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_binding_verification_runs
+    ADD CONSTRAINT project_binding_verification_runs_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59757,6 +68020,46 @@ ALTER TABLE ONLY public.project_release_sets
 
 
 --
+-- Name: project_release_sets project_release_sets_rollback_previous_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_sets
+    ADD CONSTRAINT project_release_sets_rollback_previous_release_id_fkey FOREIGN KEY (rollback_previous_release_id) REFERENCES public.project_release_sets(id);
+
+
+--
+-- Name: project_release_sets project_release_sets_rollback_source_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_sets
+    ADD CONSTRAINT project_release_sets_rollback_source_release_id_fkey FOREIGN KEY (rollback_source_release_id) REFERENCES public.project_release_sets(id);
+
+
+--
+-- Name: project_release_stages project_release_stages_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_release_stages project_release_stages_project_id_environment_slug_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_project_id_environment_slug_fkey FOREIGN KEY (project_id, environment_slug) REFERENCES public.project_environments(project_id, slug);
+
+
+--
+-- Name: project_release_stages project_release_stages_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
 -- Name: projects projects_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59770,6 +68073,54 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.projects
     ADD CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.queue_bindings(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_completed_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_completed_deployment_id_fkey FOREIGN KEY (completed_deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_id_fkey FOREIGN KEY (id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --
@@ -60645,11 +68996,51 @@ ALTER TABLE ONLY public.snapshot_runtime_config_receipts
 
 
 --
+-- Name: snapshots snapshots_application_standard_capture_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshots
+    ADD CONSTRAINT snapshots_application_standard_capture_token_fkey FOREIGN KEY (application_standard_capture_token) REFERENCES public.application_standard_snapshot_captures(token) ON DELETE CASCADE;
+
+
+--
 -- Name: snapshots snapshots_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.snapshots
     ADD CONSTRAINT snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: source_build_rootfs_current source_build_rootfs_current_artifact_id_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs_current
+    ADD CONSTRAINT source_build_rootfs_current_artifact_id_deployment_id_fkey FOREIGN KEY (artifact_id, deployment_id) REFERENCES public.source_build_rootfs(id, deployment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_build_rootfs_current source_build_rootfs_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs_current
+    ADD CONSTRAINT source_build_rootfs_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_build_rootfs source_build_rootfs_publication_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_build_rootfs
+    ADD CONSTRAINT source_build_rootfs_publication_id_fkey FOREIGN KEY (publication_id) REFERENCES public.build_export_publications(id) ON DELETE CASCADE;
 
 
 --
@@ -61246,201 +69637,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
-
---
--- Name: app_environment_route_budgets; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.app_environment_route_budgets (
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    scope text NOT NULL,
-    project_id uuid,
-    environment_id uuid,
-    inherit boolean NOT NULL,
-    enabled boolean NOT NULL,
-    revision bigint NOT NULL,
-    routes jsonb NOT NULL,
-    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT app_environment_route_budgets_check CHECK ((((scope = 'default'::text) AND (environment_id IS NULL) AND (project_id IS NULL)) OR ((scope <> 'default'::text) AND (environment_id IS NOT NULL) AND (project_id IS NOT NULL)))),
-    CONSTRAINT app_environment_route_budgets_check1 CHECK (((NOT inherit) OR ((NOT enabled) AND (routes = '[]'::jsonb)))),
-    CONSTRAINT app_environment_route_budgets_revision_check CHECK (((revision > 0) AND (revision <= '9007199254740991'::bigint))),
-    CONSTRAINT app_environment_route_budgets_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20)))
-);
-
-
---
--- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.environment_route_budget_receipts (
-    account_id uuid NOT NULL,
-    request_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    request_hash text NOT NULL,
-    response jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
-);
-
-
---
--- Name: app_environment_route_budgets app_environment_route_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_environment_route_budgets
-    ADD CONSTRAINT app_environment_route_budgets_pkey PRIMARY KEY (app_id, scope);
-
-
---
--- Name: environment_route_budget_receipts environment_route_budget_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_route_budget_receipts
-    ADD CONSTRAINT environment_route_budget_receipts_pkey PRIMARY KEY (account_id, request_id);
-
-
---
--- Name: app_environment_route_budgets app_environment_route_budgets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_environment_route_budgets
-    ADD CONSTRAINT app_environment_route_budgets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: app_environment_route_budgets app_environment_route_budgets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_environment_route_budgets
-    ADD CONSTRAINT app_environment_route_budgets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: app_environment_route_budgets app_environment_route_budgets_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_environment_route_budgets
-    ADD CONSTRAINT app_environment_route_budgets_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
-
-
---
--- Name: app_environment_route_budgets app_environment_route_budgets_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.app_environment_route_budgets
-    ADD CONSTRAINT app_environment_route_budgets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
-
-
---
--- Name: environment_route_budget_receipts environment_route_budget_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_route_budget_receipts
-    ADD CONSTRAINT environment_route_budget_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: environment_route_budget_receipts environment_route_budget_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.environment_route_budget_receipts
-    ADD CONSTRAINT environment_route_budget_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-CREATE INDEX event_execution_reconciliation_pending_idx ON public.event_execution_coverage(reconciliation_requested_at,subscription_id) WHERE reconciliation_requested_at IS NOT NULL AND NOT ledger_baseline_known;
-
-CREATE TABLE IF NOT EXISTS event_execution_lineage_cases (
- subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
- outbox_id bigint NOT NULL CHECK(outbox_id>0), account_id uuid NOT NULL, app_id uuid NOT NULL,
- diagnostic_id uuid CHECK(diagnostic_id IS NULL OR diagnostic_id<>'00000000-0000-0000-0000-000000000000'::uuid),
- accepted_at timestamptz NOT NULL, root_invocation_id text NOT NULL DEFAULT '', root_created_at timestamptz,
- status text NOT NULL CHECK(status IN ('unresolved','conflict','repaired','already_associated')),
- reason text NOT NULL, revision bigint NOT NULL DEFAULT 1 CHECK(revision>0), retry_count bigint NOT NULL DEFAULT 0 CHECK(retry_count>=0),
- recorded_at timestamptz NOT NULL, retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
- PRIMARY KEY(subscription_id,outbox_id)
-);
-CREATE INDEX IF NOT EXISTS event_execution_lineage_cases_expiry_idx ON event_execution_lineage_cases(retain_until);
-CREATE TABLE IF NOT EXISTS event_execution_lineage_retries (
- subscription_id uuid NOT NULL, outbox_id bigint NOT NULL, request_id uuid NOT NULL,
- expected_revision bigint NOT NULL CHECK(expected_revision>0), result jsonb NOT NULL,
- retain_until timestamptz NOT NULL,
- PRIMARY KEY(subscription_id,outbox_id,request_id),
- FOREIGN KEY(subscription_id,outbox_id) REFERENCES event_execution_lineage_cases(subscription_id,outbox_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS event_execution_lineage_retries_expiry_idx ON event_execution_lineage_retries(retain_until);
-
-CREATE TABLE IF NOT EXISTS event_execution_lineage_retry_jobs (
- subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
- request_id uuid NOT NULL, account_id uuid NOT NULL, app_id uuid NOT NULL,
- state text NOT NULL CHECK(state IN ('pending','paused','completed','cancelled')),
- snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
- created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
- retain_until timestamptz NOT NULL CHECK(retain_until>created_at),
- PRIMARY KEY(subscription_id,request_id)
-);
-CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_pending_idx ON event_execution_lineage_retry_jobs(updated_at,subscription_id,request_id) WHERE state='pending';
-CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_expiry_idx ON event_execution_lineage_retry_jobs(retain_until);
-
-CREATE INDEX event_execution_lineage_retry_jobs_listing_idx ON public.event_execution_lineage_retry_jobs USING btree (subscription_id, created_at DESC, request_id DESC);
-
-CREATE TABLE event_execution_lineage_retry_control_receipts (
- subscription_id uuid NOT NULL,
- job_request_id uuid NOT NULL,
- command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),
- account_id uuid NOT NULL, app_id uuid NOT NULL,
- action text NOT NULL CHECK(action IN ('pause','resume','cancel')),
- expected_created_at timestamptz NOT NULL,
- sequence bigint NOT NULL CHECK(sequence>0),
- result jsonb NOT NULL CHECK(jsonb_typeof(result)='object'),
- recorded_at timestamptz NOT NULL,
- retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
- PRIMARY KEY(subscription_id,job_request_id,command_id),
- UNIQUE(subscription_id,job_request_id,sequence),
- FOREIGN KEY(subscription_id,job_request_id) REFERENCES event_execution_lineage_retry_jobs(subscription_id,request_id) ON DELETE CASCADE
-);
-CREATE INDEX event_execution_lineage_retry_jobs_health_idx
- ON event_execution_lineage_retry_jobs(subscription_id,retain_until,updated_at,request_id)
- WHERE state IN ('pending','paused');
-
-ALTER TABLE public.event_subscription_delivery_controls ADD COLUMN max_pending_deliveries integer NOT NULL DEFAULT 0 CHECK (max_pending_deliveries >= 0);
-CREATE OR REPLACE FUNCTION guard_event_delivery_replay() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
- consumer_count bigint; app_count bigint; account_count bigint; scope text; consumer_limit integer;
-BEGIN
- IF NEW.state NOT IN ('pending','dispatching') THEN RETURN NEW; END IF;
- IF TG_OP = 'UPDATE' AND OLD.state IN ('pending','dispatching') THEN RETURN NEW; END IF;
- SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.id;
- IF NOT FOUND AND NEW.replayed_from_invocation_id IS NOT NULL THEN
-  SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.replayed_from_invocation_id;
- END IF;
- IF slot.invocation_id IS NULL THEN RETURN NEW; END IF;
- SELECT * INTO STRICT caps FROM event_delivery_capacity WHERE account_id=slot.account_id FOR UPDATE;
- SELECT count(*), count(*) FILTER (WHERE s.app_id=slot.app_id),
-   count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
- INTO account_count, app_count, consumer_count
- FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
- WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
- SELECT CASE WHEN c.max_pending_deliveries>0 THEN least(c.max_pending_deliveries,caps.consumer_limit) ELSE caps.consumer_limit END INTO consumer_limit
- FROM event_subscription_delivery_controls c WHERE c.account_id=slot.account_id AND c.app_id=slot.app_id AND c.subscription_id::text=slot.subscription_id;
- consumer_limit := coalesce(consumer_limit,caps.consumer_limit);
- scope := CASE WHEN consumer_count>=consumer_limit THEN 'consumer'
-   WHEN app_count>=caps.app_limit THEN 'app' WHEN account_count>=caps.account_limit THEN 'account' END;
- IF scope IS NOT NULL THEN
-  RAISE EXCEPTION 'event delivery capacity exhausted: %',scope USING ERRCODE='23514', CONSTRAINT='event_delivery_capacity', DETAIL=scope;
- END IF;
- INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
- RETURN NEW;
-END $$;
-
-CREATE TABLE public.event_subscription_capacity_commands (
- subscription_id uuid NOT NULL REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE,
- command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),
- account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
- app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
- request jsonb NOT NULL CHECK(jsonb_typeof(request)='object'),
- receipt jsonb NOT NULL CHECK(jsonb_typeof(receipt)='object'),
- recorded_at timestamptz NOT NULL,
- retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
- PRIMARY KEY(subscription_id,command_id)
-);
-CREATE INDEX event_subscription_capacity_commands_expiry ON public.event_subscription_capacity_commands(retain_until,subscription_id,command_id);

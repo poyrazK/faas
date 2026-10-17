@@ -358,3 +358,60 @@ func TestOperationMilestoneSourceBundle(t *testing.T) {
 		}
 	}
 }
+
+// ADR-1194: approval steps name their approver in the source manifest.
+func TestOperationManifestApprovals(t *testing.T) {
+	yamlSource := "workflows:\n  - name: refund-chain\n    steps:\n      - name: validate\n        path: /validate\n      - name: review\n        wait_for_callback: true\n        timeout: 1h\n        depends_on: [validate]\n      - name: finish\n        path: /finish\n        depends_on: [review]\n" +
+		"operations:\n  - name: refund\n    workflow: refund-chain\n    method: POST\n    path: /refunds\n    owner: platform_tenant\n    input_schema: in.json\n    output_schema: out.json\n    progress_stages: [validate, review, finish]\n    approvals:\n      - step: review\n        approver: customer\n"
+	m, err := ParseBytes([]byte(yamlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResolveOperations("refunds", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`{"type":"object"}`), nil }); err != nil {
+		t.Fatal(err)
+	}
+	got := m.ResolvedOperations[0].Approvals
+	if len(got) != 1 || got[0] != (api.OperationApprovalSpec{Step: "review", Approver: api.OperationApproverCustomer}) {
+		t.Fatalf("approvals lost: %+v", got)
+	}
+	tomlSource := "[[operations]]\nname = 'refund'\nmethod = 'POST'\npath = '/refunds'\nowner = 'platform_tenant'\ninput_schema = 'in.json'\noutput_schema = 'out.json'\nprogress_stages = ['validate']\n[[operations.approvals]]\nstep = 'review'\napprover = 'account'\n"
+	tm, err := ParseTOMLBytes([]byte(tomlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec := tm.Operations[0].specification(); len(spec.Approvals) != 1 || spec.Approvals[0].Approver != api.OperationApproverAccount {
+		t.Fatalf("toml approvals lost: %+v", spec.Approvals)
+	}
+}
+
+// ADR-1196: definition limits are declared beside the contract they bound.
+func TestOperationManifestLimits(t *testing.T) {
+	yamlSource := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: in.json\n    output_schema: out.json\n    progress_stages: [generating]\n    limits:\n      deadline_seconds: 3600\n      max_attempts: 3\n      max_execution_seconds: 300\n"
+	m, err := ParseBytes([]byte(yamlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResolveOperations("exports", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`{"type":"object"}`), nil }); err != nil {
+		t.Fatal(err)
+	}
+	want := api.OperationLimits{DeadlineSeconds: 3600, MaxAttempts: 3, MaxExecutionSeconds: 300}
+	if got := m.ResolvedOperations[0].Limits; got == nil || *got != want {
+		t.Fatalf("limits lost: %+v", got)
+	}
+	tomlSource := "[[operations]]\nname = 'export'\nmethod = 'POST'\npath = '/exports'\nowner = 'platform_tenant'\ninput_schema = 'in.json'\noutput_schema = 'out.json'\nprogress_stages = ['generating']\n[operations.limits]\ndeadline_seconds = 3600\nmax_attempts = 3\nmax_execution_seconds = 300\n"
+	tm, err := ParseTOMLBytes([]byte(tomlSource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tm.Operations[0].specification().Limits; got == nil || *got != want {
+		t.Fatalf("toml limits lost: %+v", got)
+	}
+	over := "operations:\n  - name: export\n    method: POST\n    path: /exports\n    owner: platform_tenant\n    input_schema: in.json\n    output_schema: out.json\n    progress_stages: [generating]\n    limits:\n      max_attempts: 100\n"
+	bad, err := ParseBytes([]byte(over))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.ResolveOperations("exports", api.PlanPro, func(string, int) ([]byte, error) { return []byte(`{"type":"object"}`), nil }); err == nil {
+		t.Fatal("limits beyond the plan resolved")
+	}
+}

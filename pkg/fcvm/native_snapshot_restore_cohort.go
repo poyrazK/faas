@@ -29,7 +29,7 @@ func (c nativeSnapshotRestoreCohort) validate(completed nativeQualificationCaptu
 	}
 	initial := completed
 	initial.CompletedAt, initial.Info, initial.Backing = c.Intent.Capture.CompletedAt, SnapshotInfo{}, BackingIdentity{}
-	if initial != c.Intent.Capture {
+	if !initial.Equal(c.Intent.Capture) {
 		return errors.New("native snapshot restore: completion belongs to another original capture")
 	}
 	var stored int64

@@ -1,0 +1,44 @@
+# The account dashboard sums app_class*:gateway_request_duration_seconds_*:increase5m
+# over 6h and 24h windows instead of scanning the raw per-instance gateway
+# series, which took 17 s over 24h on production-us (hunt #10). These cases
+# pin that the rollup sums to the raw increase across gateway instances and
+# keeps the class and le labels the panel groups on. Rules run every 5m here,
+# as they do in production; queries sit off that grid so range boundaries do
+# not decide which evaluations are counted.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 5m
+
+tests:
+  - interval: 15s
+    name: "5m rollups sum the raw increase across gateway instances"
+    input_series:
+      # app-1 serves 1 rps (2xx) on gw-1, 2 rps (2xx) on gw-2, 0.2 rps (5xx) on gw-1 for 4h.
+      - series: 'gateway_request_duration_seconds_count{app="app-1",class="2xx",instance="gw-1",job="gatewayd-internal",node="n1",node_id="1"}'
+        values: '0+15x960'
+      - series: 'gateway_request_duration_seconds_count{app="app-1",class="2xx",instance="gw-2",job="gatewayd-internal",node="n2",node_id="2"}'
+        values: '0+30x960'
+      - series: 'gateway_request_duration_seconds_count{app="app-1",class="5xx",instance="gw-1",job="gatewayd-internal",node="n1",node_id="1"}'
+        values: '0+3x960'
+      # 80% of gw-1's 2xx requests finish within 100 ms.
+      - series: 'gateway_request_duration_seconds_bucket{app="app-1",class="2xx",le="0.1",instance="gw-1",job="gatewayd-internal",node="n1",node_id="1"}'
+        values: '0+12x960'
+      - series: 'gateway_request_duration_seconds_bucket{app="app-1",class="2xx",le="+Inf",instance="gw-1",job="gatewayd-internal",node="n1",node_id="1"}'
+        values: '0+15x960'
+    promql_expr_test:
+      - expr: 'sum by (app, class) (sum_over_time(app_class:gateway_request_duration_seconds_count:increase5m[1h]))'
+        eval_time: 4h2m
+        exp_samples:
+          - labels: '{app="app-1",class="2xx"}'
+            value: 10800
+          - labels: '{app="app-1",class="5xx"}'
+            value: 720
+      - expr: 'sum by (app, le) (sum_over_time(app_class_le:gateway_request_duration_seconds_bucket:increase5m{class="2xx"}[1h]))'
+        eval_time: 4h2m
+        exp_samples:
+          - labels: '{app="app-1",le="0.1"}'
+            value: 2880
+          - labels: '{app="app-1",le="+Inf"}'
+            value: 3600

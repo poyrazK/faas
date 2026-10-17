@@ -158,25 +158,99 @@ func TestSchedFlushSink_EmptyBufferSkipsReport(t *testing.T) {
 	}
 }
 
-// TestSchedFlushSink_ClearsBufferAndSurfacesError (issue #168) — flush
-// error surfaces to the caller; buffer is drained up front so a retry
-// doesn't double-count.
-func TestSchedFlushSink_ClearsBufferAndSurfacesError(t *testing.T) {
+// adr: 1344
+// TestSchedFlushSink_RetriesFailedReport pins ADR-1344 §5 rule 5: a flush
+// error still surfaces to the caller, but the touches it carried are kept
+// and merged with newer ones, so activity seen during a store outage reaches
+// schedd once it recovers.
+func TestSchedFlushSink_RetriesFailedReport(t *testing.T) {
 	rep := &fakeReporter{err: errors.New("schedd down")}
 	s := newSchedFlushSink(newSingleClientResolver(rep), nil, testLogger())
 
-	s.Touch("i-1", time.Now())
+	t0 := time.Now()
+	s.Touch("i-1", t0)
+	s.Touch("i-1", t0)
 	if err := s.Flush(context.Background()); err == nil {
 		t.Fatal("expected report error to surface")
 	}
+	s.Touch("i-1", t0.Add(time.Second))
+
+	rep.mu.Lock()
+	rep.err = nil
+	rep.mu.Unlock()
 	if err := s.Flush(context.Background()); err != nil {
-		t.Fatalf("second Flush: %v", err)
+		t.Fatalf("Flush after recovery: %v", err)
 	}
 	rep.mu.Lock()
 	defer rep.mu.Unlock()
-	if rep.calls != 1 {
-		t.Errorf("ReportActivity calls = %d, want 1 (buffer cleared after first)", rep.calls)
+	if rep.calls != 2 || len(rep.last) != 1 {
+		t.Fatalf("calls=%d last=%+v, want 2 calls and one merged touch", rep.calls, rep.last)
 	}
+	got := rep.last[0]
+	if got.InstanceID != "i-1" || !got.LastRequest.Equal(t0.Add(time.Second)) || got.RequestDelta != 3 {
+		t.Fatalf("merged touch = %+v, want i-1 at t0+1s with delta 3", got)
+	}
+	if _, ok := s.Get("i-1"); ok {
+		t.Fatal("delivered touch still buffered")
+	}
+}
+
+// adr: 1344
+// TestSchedFlushSink_RetriesUnresolvedInstance: a touch whose owning schedd
+// cannot be resolved (store unreachable) is retried, while an instance the
+// store reports gone is still dropped.
+func TestSchedFlushSink_RetriesUnresolvedInstance(t *testing.T) {
+	rep := &fakeReporter{}
+	resolver := &erroringResolver{fakeResolver: newSingleClientResolver(rep), err: errors.New("postgres unavailable")}
+	s := newSchedFlushSink(resolver, nil, testLogger())
+
+	s.Touch("i-1", time.Now())
+	_ = s.Flush(context.Background())
+	if _, ok := s.Get("i-1"); !ok {
+		t.Fatal("touch dropped when its owner could not be resolved")
+	}
+
+	resolver.err = nil
+	resolver.cli = nil // the instance no longer exists
+	if err := s.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if _, ok := s.Get("i-1"); ok {
+		t.Fatal("touch for a vanished instance kept for retry")
+	}
+}
+
+// adr: 1344
+// TestSchedFlushSink_RetryRetentionIsBounded: a failed touch older than
+// lastSeenRetryRetention is not retried.
+func TestSchedFlushSink_RetryRetentionIsBounded(t *testing.T) {
+	rep := &fakeReporter{err: errors.New("schedd down")}
+	s := newSchedFlushSink(newSingleClientResolver(rep), nil, testLogger())
+	now := time.Now()
+	s.nowFunc = func() time.Time { return now }
+
+	s.Touch("old", now.Add(-lastSeenRetryRetention-time.Second))
+	s.Touch("recent", now.Add(-time.Minute))
+	_ = s.Flush(context.Background())
+	if _, ok := s.Get("old"); ok {
+		t.Fatal("touch older than the retention was kept for retry")
+	}
+	if _, ok := s.Get("recent"); !ok {
+		t.Fatal("recent touch was not kept for retry")
+	}
+}
+
+// erroringResolver fails every resolution while err is set.
+type erroringResolver struct {
+	*fakeResolver
+	err error
+}
+
+func (r *erroringResolver) ScheddForInstance(ctx context.Context, instanceID string) (scheddgrpc.ScheddClient, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.fakeResolver.ScheddForInstance(ctx, instanceID)
 }
 
 func TestSchedFlushSink_GetForget(t *testing.T) {

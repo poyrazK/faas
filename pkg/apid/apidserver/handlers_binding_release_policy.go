@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -41,14 +42,18 @@ func (s *server) getBindingReleasePolicy(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, p)
 }
 func (s *server) putBindingReleasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	s.putBindingReleasePolicyWithStorage(w, r, acct, false)
+	s.putBindingReleasePolicyWithRequirements(w, r, acct, "base")
 }
 
 func (s *server) putObjectStorageBindingReleasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	s.putBindingReleasePolicyWithStorage(w, r, acct, true)
+	s.putBindingReleasePolicyWithRequirements(w, r, acct, "storage")
 }
 
-func (s *server) putBindingReleasePolicyWithStorage(w http.ResponseWriter, r *http.Request, acct state.Account, storageRoute bool) {
+func (s *server) putQueueBindingReleasePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.putBindingReleasePolicyWithRequirements(w, r, acct, "queues")
+}
+
+func (s *server) putBindingReleasePolicyWithRequirements(w http.ResponseWriter, r *http.Request, acct state.Account, route string) {
 	var request api.SetBindingReleasePolicyRequest
 	if err := decodeJSONSized(r, &request, api.RoutePolicyRequestMaxBytes); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid binding release policy request"))
@@ -58,24 +63,18 @@ func (s *server) putBindingReleasePolicyWithStorage(w http.ResponseWriter, r *ht
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	if storageRoute != (request.ObjectStorageRequirements != nil) {
-		api.WriteProblem(w, api.ErrValidation("use release-policy-with-object-storage with explicit object_storage_requirements (an empty object clears them)"))
-		return
-	}
 	app, store, scope, ok := s.bindingReleasePolicyTarget(w, r, acct)
 	if !ok {
 		return
 	}
-	if !storageRoute {
-		current, err := store.GetBindingReleasePolicy(r.Context(), acct.ID, app.ID, scope)
-		if err != nil {
-			s.bindingReleasePolicyError(w, err)
-			return
-		}
-		if len(current.ObjectStorageRequirements) > 0 {
-			api.WriteProblem(w, api.ErrValidation("this policy has object-storage requirements; use release-policy-with-object-storage to retain or explicitly clear them").WithHint("In the CLI, include --object-storage-require PREFIX=MODE for every retained requirement, or --clear-object-storage-requirements to explicitly remove them."))
-			return
-		}
+	current, err := store.GetBindingReleasePolicy(r.Context(), acct.ID, app.ID, scope)
+	if err != nil {
+		s.bindingReleasePolicyError(w, err)
+		return
+	}
+	if err := bindings.ValidateReleasePolicyRoute(request, current, route); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()).WithHint("Retain every requirement with --queue-require NAME=consumer_readiness and --object-storage-require PREFIX=MODE, or explicitly clear the corresponding requirements."))
+		return
 	}
 	p, err := store.SetBindingReleasePolicy(r.Context(), acct.ID, app.ID, scope, request)
 	if err != nil {
@@ -83,7 +82,7 @@ func (s *server) putBindingReleasePolicyWithStorage(w http.ResponseWriter, r *ht
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(r.Context(), "bindings.release_policy_updated", &acct.ID, map[string]any{"app_id": app.ID, "scope": scope, "mode": p.Mode, "revision": p.Revision, "reason": p.Reason, "object_storage_requirements": p.ObjectStorageRequirements})
+		s.audit.Emit(r.Context(), "bindings.release_policy_updated", &acct.ID, map[string]any{"app_id": app.ID, "scope": scope, "mode": p.Mode, "revision": p.Revision, "reason": p.Reason, "object_storage_requirements": p.ObjectStorageRequirements, "queue_requirements": p.QueueRequirements})
 	}
 	writeJSON(w, http.StatusOK, p)
 }

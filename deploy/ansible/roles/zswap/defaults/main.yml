@@ -1,0 +1,19 @@
+---
+# zswap — memory-only compressed swap for frozen VMs (ADR-906 decision 6,
+# ADR-1151). Off by default: turn it on per compute host. vmmd lets a VM
+# swap only while it is frozen, and only when this role's setup is in place.
+faas_zswap_enabled: false
+# zswap needs a swap device for its slots. With writeback disabled for
+# tenant memory and swap closed to every other slice, nothing is ever
+# written to it. Its size caps the UNCOMPRESSED bytes zswap can hold.
+faas_zswap_swapfile: /var/lib/faas/zswap/swapfile
+faas_zswap_swapfile_size_mb: 16384
+# lz4 favours fast decompression, i.e. fast thaws; idle Node pages measured
+# 6-7x with it (ADR-906).
+faas_zswap_compressor: lz4
+# Host-wide ceiling on the compressed pool, in percent of RAM.
+faas_zswap_max_pool_percent: 25
+# The compressed bytes tenant VMs may hold (faas-tenant.slice
+# MemoryZSwapMax). When it is full a frozen VM keeps its memory resident and
+# memory pressure parks it instead.
+faas_zswap_tenant_max: 8G

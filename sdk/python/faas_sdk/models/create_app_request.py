@@ -23,6 +23,7 @@ from ..models.create_app_request_execution_mode import (
     CreateAppRequestExecutionMode,
     check_create_app_request_execution_mode,
 )
+from ..models.create_app_request_pause import CreateAppRequestPause, check_create_app_request_pause
 from ..models.create_app_request_restart_policy import (
     CreateAppRequestRestartPolicy,
     check_create_app_request_restart_policy,
@@ -57,8 +58,8 @@ T = TypeVar("T", bound="CreateAppRequest")
 
 @_attrs_define
 class CreateAppRequest:
-    """App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout,
-    and optional manifest.
+    """App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB,
+    max concurrency, idle timeout, and optional manifest.
 
     """
 
@@ -112,10 +113,16 @@ class CreateAppRequest:
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
     """Restart behavior for the workload. Omitted uses the execution-mode default."""
     after_restore: AfterRestoreHook | Unset = UNSET
-    """Optional loopback callback that must succeed after snapshot restore before the instance becomes ready."""
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready."""
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
+    pause: CreateAppRequestPause | Unset = UNSET
+    """When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes
+    it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the
+    default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution
+    modes accept only never."""
     startup_deadline_s: int | Unset = UNSET
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     stop_grace_period_s: int | Unset = UNSET
@@ -296,6 +303,10 @@ class CreateAppRequest:
         if not isinstance(self.before_checkpoint, Unset):
             before_checkpoint = self.before_checkpoint.to_dict()
 
+        pause: str | Unset = UNSET
+        if not isinstance(self.pause, Unset):
+            pause = self.pause
+
         startup_deadline_s = self.startup_deadline_s
 
         stop_grace_period_s = self.stop_grace_period_s
@@ -438,6 +449,8 @@ class CreateAppRequest:
             field_dict["after_restore"] = after_restore
         if before_checkpoint is not UNSET:
             field_dict["before_checkpoint"] = before_checkpoint
+        if pause is not UNSET:
+            field_dict["pause"] = pause
         if startup_deadline_s is not UNSET:
             field_dict["startup_deadline_s"] = startup_deadline_s
         if stop_grace_period_s is not UNSET:
@@ -641,6 +654,13 @@ class CreateAppRequest:
         else:
             before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
 
+        _pause = d.pop("pause", UNSET)
+        pause: CreateAppRequestPause | Unset
+        if isinstance(_pause, Unset):
+            pause = UNSET
+        else:
+            pause = check_create_app_request_pause(_pause)
+
         startup_deadline_s = d.pop("startup_deadline_s", UNSET)
 
         stop_grace_period_s = d.pop("stop_grace_period_s", UNSET)
@@ -785,6 +805,7 @@ class CreateAppRequest:
             restart_policy=restart_policy,
             after_restore=after_restore,
             before_checkpoint=before_checkpoint,
+            pause=pause,
             startup_deadline_s=startup_deadline_s,
             stop_grace_period_s=stop_grace_period_s,
             stop_signal=stop_signal,

@@ -63,6 +63,14 @@ test-managed-operation-native: ## Run native Firecracker managed workflow recove
 test-managed-postgres-native: ## Run strict deployed PostgreSQL SQL, rotation and snapshot acceptance
 	@GO="$(GO)" sh scripts/test-managed-postgres-native.sh
 
+.PHONY: test-object-storage-native
+test-object-storage-native: ## Run strict shipped storage starter rotation, snapshot and cold-boot acceptance
+	@GO="$(GO)" sh scripts/test-object-storage-native.sh
+
+.PHONY: test-queue-bindings-native
+test-queue-bindings-native: ## Run strict shipped queue worker completion, recovery and release acceptance
+	@GO="$(GO)" sh scripts/test-queue-bindings-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
@@ -728,7 +736,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -1078,7 +1086,7 @@ sqlc-generate: sqlc ## (re)generate every SQLC package from its queries and sche
 sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be regenerated
 	@set -e; tmp=$$(mktemp -d); \
 	  trap 'rm -rf "$$tmp"' EXIT; \
-	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
+	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/db" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents" "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
 	  for realtime_package in realtimettl realtimebulk; do \
 	    mkdir -p "$$tmp/pkg/state/$$realtime_package"; \
@@ -1086,15 +1094,16 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  done; \
 	  cp pkg/state/*queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/binding_verification_run_queries.sql pkg/state/project_binding_verification_run_queries.sql pkg/state/queue_binding_canary_queries.sql pkg/state/project_release_staging_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/db/migration_recovery_queries.sql "$$tmp/pkg/db/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
 	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
 	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
-	  mkdir -p "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1353,6 +1362,13 @@ data-api-check: ## Runtime and typed application client unit checks
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
 
+.PHONY: data-api-load-check data-api-load-verify
+data-api-load-check: ## Portable Data API load verifier bounds, evidence and failure contracts
+	@node --test tests/data-api/load/*.test.mjs
+
+data-api-load-verify: ## Concurrent REST/RPC and recovery checks on a disposable local PostgreSQL fixture
+	@bash scripts/test-data-api-load.sh
+
 data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
 	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
 
@@ -1580,3 +1596,7 @@ check-operation-sdk-schema:
 .PHONY: check-durable-entity-sdk-contract
 check-durable-entity-sdk-contract:
 	python3 scripts/gen-durable-entity-contract.py --check
+
+.PHONY: check-binding-runner-sync
+check-binding-runner-sync:
+	python3 scripts/sync_binding_runner.py --check

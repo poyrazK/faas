@@ -1,0 +1,11 @@
+{
+  "name": "gregale-postgres-pool-rotation",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.10.0"},
+  "scripts": {"start": "node server.mjs"},
+  "dependencies": {
+    "@gregale/sdk-node": "file:../../sdk/node",
+    "pg": "8.16.3"
+  }
+}

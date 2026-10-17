@@ -110,6 +110,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"customer_operation_milestones":             CloneSchemaOperational,
 		"customer_operation_events":                 CloneSchemaOperational,
 		"customer_operation_delivery_retries":       CloneSchemaOperational,
+		"customer_operation_attempt_instances":      CloneSchemaOperational,
+		"customer_operation_webhook_bindings":       CloneSchemaConfiguration,
+		"customer_operation_webhook_receipts":       CloneSchemaOperational,
 		"customer_operation_executions":             CloneSchemaOperational,
 		"customer_operation_idempotency":            CloneSchemaOperational,
 		"customer_operation_job_executions":         CloneSchemaOperational,
@@ -169,6 +172,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
+
+		"project_release_sets": CloneSchemaConfiguration,
+
+		// Evidence and expiring execution plans belong to the source environment.
+		"binding_verification_runs":         CloneSchemaOperational,
+		"binding_verification_run_steps":    CloneSchemaOperational,
+		"project_binding_verification_runs": CloneSchemaOperational,
+		"project_release_stages":            CloneSchemaOperational,
+		"queue_binding_canaries":            CloneSchemaOperational,
 	}
 	for _, policy := range policies {
 		if kind, ok := wanted[policy.TableName]; ok {

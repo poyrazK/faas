@@ -281,3 +281,21 @@ limits and recorded execution pressure; historical gaps and replay assumptions a
 explicit. See [historical evaluation](docs/automation-authoring.md#historical-recovery-policy-evaluation).
 
 Recovery policy evaluation now includes separately timed `later_eligibility` checks for unreviewed failures. The bounded background observer runs even without a recovery policy, checking retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and expire for qualification after 15 minutes. These observations do not change historical preparation totals or authorize retries; missing or stale evidence remains unknown. See [ADR-1026](docs/adr/1026-workflow-failure-eligibility-observer.md).
+
+See [reviewed verification creation helpers](docs/adr/1362-reviewed-verification-creation-helpers.md) for recoverable SDK receipt creation.
+
+See [bounded verification status read retries](docs/adr/1363-bounded-verification-status-read-retries.md) for resilient durable observation.
+
+See [verification run discovery](docs/adr/1364-verification-run-discovery.md) for paginated receipt listings and recovery by retained identity.
+
+See [verification qualification waiting](docs/adr/1365-verification-qualification-waiting.md) for bounded completion after probes succeed.
+
+See [verification write reconciliation](docs/adr/1366-verification-write-reconciliation.md) for recovery after lost admission or completion responses.
+
+See [binding CLI progress](docs/adr/1367-binding-cli-progress.md) for live verification events and retained recovery context.
+
+See [verification creation reconciliation](docs/adr/1368-verification-creation-reconciliation.md) for bounded recovery of the original UUID after an uncertain creation response.
+
+PostgreSQL credential rotation can use the driver-independent SDK
+[pool runtime bindings](docs/postgres-pool-runtime.md), with validated adoption and
+transaction leases. See the [Node pg.Pool example](examples/postgres-pool-rotation/README.md).

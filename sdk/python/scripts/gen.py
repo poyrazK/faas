@@ -123,6 +123,14 @@ def pre_normalize_spec(spec: Path) -> Path:
         if schema is not None:
             for keyword in ("oneOf", "anyOf", "not"):
                 schema.pop(keyword, None)
+    # 0.29 rejects boolean enums and otherwise drops the entire preflight DTO.
+    # Preserve its boolean wire type; the canonical spec and server still
+    # require false while customer activation is disabled (ADR-1333).
+    preflight = fixed["components"]["schemas"]["ManagedPostgresCutoverPreflight"]
+    activation = preflight["properties"]["activation_allowed"]
+    if activation.get("enum") != [False]:
+        raise ValueError("Preflight activation gate generator adaptation needs review")
+    activation.pop("enum")
     # The pinned generator discards object properties when a oneOf contains
     # only required-field constraints, producing body: Any instead of the
     # existing typed request model. Keep its wire shape in generated clients;
@@ -155,6 +163,11 @@ def pre_normalize_spec(spec: Path) -> Path:
 
 
 WRAPPER_MODULES = (
+    "_binding_qualification.py",
+    "_binding_creation.py",
+    "_binding_runner.py",
+    "_binding_runner_diagnostics.py",
+
     "realtime_workers.py",
     "realtime_activity.py",
     "realtime_presence.py",
@@ -191,6 +204,7 @@ WRAPPER_MODULES = (
     "release_context.py",
     "dev_bridge.py",
     "webhook.py",
+    "auth.py",
     "pre_auth_target.py",
     "ai_gateway.py",
     "issues.py",
@@ -199,6 +213,12 @@ WRAPPER_MODULES = (
     "operations_runtime.py",
     "job_operations_runtime.py",
     "object_storage_runtime.py",
+    "_binding_client_runtime.py",
+    "postgres_pool_runtime.py",
+    "async_postgres_pool_runtime.py",
+    "_async_binding_client_runtime.py",
+    "async_object_storage_runtime.py",
+    "async_secret_reload_runtime.py",
     "secret_reload_runtime.py",
     "queue_consumer.py",
     "operations.py",
@@ -1283,6 +1303,30 @@ from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recov
 __all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
 from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+
+from ._binding_runner import (
+    BindingVerificationRecoveryError, BindingVerificationProgress,
+    run_binding_verification, run_project_binding_verification,
+    arun_binding_verification, arun_project_binding_verification,
+)
+__all__ += (
+    "BindingVerificationRecoveryError", "BindingVerificationProgress",
+    "run_binding_verification", "run_project_binding_verification",
+    "arun_binding_verification", "arun_project_binding_verification",
+)
+from ._binding_creation import (
+    BindingVerificationCreationError,
+    create_binding_verification_from_review,
+    reconcile_binding_verification_creation,
+    create_project_binding_verification_from_review,
+    reconcile_project_binding_verification_creation,
+    acreate_binding_verification_from_review,
+    areconcile_binding_verification_creation,
+    acreate_project_binding_verification_from_review,
+    areconcile_project_binding_verification_creation,
+)
+__all__ += ('BindingVerificationCreationError', 'create_binding_verification_from_review', 'reconcile_binding_verification_creation', 'create_project_binding_verification_from_review', 'reconcile_project_binding_verification_creation', 'acreate_binding_verification_from_review', 'areconcile_binding_verification_creation', 'acreate_project_binding_verification_from_review', 'areconcile_project_binding_verification_creation')
+
 from .event_consumer_delivery_context import (EventConsumerDeliveryContext, EventConsumerDeliveryContextUnavailableError,
                                               event_consumer_delivery_context_from_headers)
 __all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")

@@ -18,7 +18,12 @@ T = TypeVar("T", bound="InboundWebhookReceiptResponse")
 
 @_attrs_define
 class InboundWebhookReceiptResponse:
-    """Returned only after the verified event has a committed durable invocation row."""
+    """Returned only after the verified event has a committed durable invocation
+    row or, for an operation-bound endpoint, a committed operation and event
+    receipt; receipt_id is then the operation ID. ignored means a verified
+    event outside the operation binding's event_types created no work.
+
+    """
 
     receipt_id: UUID
     status: InboundWebhookReceiptResponseStatus

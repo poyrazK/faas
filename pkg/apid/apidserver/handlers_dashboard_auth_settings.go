@@ -62,7 +62,37 @@ func (s *server) dashboardAuthSettings(w http.ResponseWriter, r *http.Request) {
 		redirectDashboardAuth(w, r, app.Slug, "unchanged", "")
 		return
 	}
+	if set["AUTH_SSO"] == "1" && !s.ensureDashboardSAMLKey(w, r, acct, app, set) {
+		return
+	}
 	s.applyDashboardAuthSecrets(w, r, acct, app, set, unset, "settings")
+}
+
+// ensureDashboardSAMLKey adds the SAML signing key the first time SSO is
+// turned on, as `gregale auth config --sso on` does. An existing key is
+// kept, so identity providers keep trusting the app.
+func (s *server) ensureDashboardSAMLKey(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, set map[string]string) bool {
+	resp := s.forwardDashboardJSON(r, acct, http.MethodGet, "/v1/apps/"+url.PathEscape(app.Slug)+"/secrets", api.DefaultEnvScope, "", nil, s.listSecrets)
+	if !dashboardMutationSucceeded(w, resp) {
+		return false
+	}
+	var list api.AppSecretListResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil {
+		renderProblem(w, s.log, err)
+		return false
+	}
+	for _, secret := range list.Secrets {
+		if secret.Key == authsettings.SAMLKeySecret {
+			return true
+		}
+	}
+	key, err := authsettings.NewSAMLKey()
+	if err != nil {
+		renderProblem(w, s.log, err)
+		return false
+	}
+	set[authsettings.SAMLKeySecret] = key
+	return true
 }
 
 // authSettingsChange reads only the fields the form sent: the page omits
@@ -91,7 +121,10 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 		}
 		change.PasswordRequire = &classes
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA} {
+	if err := hostedPageChange(form, &change); err != nil {
+		return change, err
+	}
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "passkeys": &change.Passkeys, "sso": &change.SSO} {
 		if !form.Has(name) {
 			continue
 		}
@@ -103,6 +136,39 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 		*target = &on
 	}
 	return change, nil
+}
+
+// hostedPageChange reads branding, CAPTCHA, SMS, email delivery and
+// activity retention. The page sends each of CAPTCHA, SMS and email with all
+// of its values, because their secrets are write-only.
+func hostedPageChange(form url.Values, change *authsettings.Change) error {
+	for name, target := range map[string]**string{"brand_name": &change.UIName, "brand_color": &change.UIColor, "brand_logo_url": &change.UILogoURL} {
+		if form.Has(name) {
+			value := strings.TrimSpace(form.Get(name))
+			*target = &value
+		}
+	}
+	if form.Has("captcha_provider") {
+		change.Captcha = &authsettings.Captcha{Provider: form.Get("captcha_provider"), SiteKey: strings.TrimSpace(form.Get("captcha_site_key")), Secret: strings.TrimSpace(form.Get("captcha_secret"))}
+	}
+	if form.Has("sms_provider") {
+		change.SMS = &authsettings.SMS{Provider: form.Get("sms_provider"), Account: strings.TrimSpace(form.Get("sms_account")), Sender: strings.TrimSpace(form.Get("sms_sender")), Secret: strings.TrimSpace(form.Get("sms_secret"))}
+	}
+	if form.Has("email_provider") {
+		change.Email = &authsettings.Email{Provider: form.Get("email_provider"), From: strings.TrimSpace(form.Get("email_from")), APIKey: strings.TrimSpace(form.Get("email_api_key"))}
+	}
+	if form.Has("activity_retention_days") {
+		days := 0
+		if value := form.Get("activity_retention_days"); value != "" {
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return errors.New("activity retention must be a number of days")
+			}
+			days = n
+		}
+		change.ActivityRetentionDays = &days
+	}
+	return nil
 }
 
 func (s *server) dashboardAuthProviderEnable(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +240,7 @@ func (s *server) applyDashboardAuthSecrets(w http.ResponseWriter, r *http.Reques
 	}
 	for _, key := range unset {
 		resp := s.forwardDashboardJSON(r, acct, http.MethodDelete, base+url.PathEscape(key), api.DefaultEnvScope, key, nil, s.deleteSecret)
-		if resp.Code != http.StatusNotFound && !dashboardMutationSucceeded(w, resp) {
+		if !secretAlreadyAbsent(resp) && !dashboardMutationSucceeded(w, resp) {
 			return
 		}
 	}
@@ -185,11 +251,27 @@ func (s *server) applyDashboardAuthSecrets(w http.ResponseWriter, r *http.Reques
 	restart.SetPathValue("slug", app.Slug)
 	resp := httptest.NewRecorder()
 	s.restartApp(resp, restart, acct)
+	if resp.Code == http.StatusConflict {
+		// A restart already running may have read the configuration before
+		// this change; the page asks the owner to restart once it finishes.
+		redirectDashboardAuth(w, r, app.Slug, changed+"-restart-pending", "")
+		return
+	}
 	if resp.Code < http.StatusOK || resp.Code >= http.StatusMultipleChoices {
 		redirectDashboardAuth(w, r, app.Slug, "", "Saved, but the restart failed. Restart the app to apply the change.")
 		return
 	}
 	redirectDashboardAuth(w, r, app.Slug, changed, "")
+}
+
+// secretAlreadyAbsent reports a removal of a secret the app does not have,
+// which the secrets API answers with 400 secret_not_found.
+func secretAlreadyAbsent(resp *httptest.ResponseRecorder) bool {
+	if resp.Code == http.StatusNotFound {
+		return true
+	}
+	var problem api.Problem
+	return resp.Code == http.StatusBadRequest && json.Unmarshal(resp.Body.Bytes(), &problem) == nil && problem.Code == api.CodeSecretNotFound
 }
 
 func redirectDashboardAuth(w http.ResponseWriter, r *http.Request, slug, changed, message string) {
