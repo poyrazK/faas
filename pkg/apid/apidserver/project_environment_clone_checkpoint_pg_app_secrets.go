@@ -28,9 +28,9 @@ func sealCheckpointPgAppSecret(member state.ProjectEnvironmentCloneCheckpointPgA
 		setSecretRecipient == nil || mfaIdentities == nil || hostHMACKey == nil {
 		return out, errCloneCheckpointUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	identities := mfaIdentities()
-	key := hostHMACKey()
+	key := hostHMACKeyBytes()
 	matched := false
 	for _, identity := range identities {
 		if identity != nil && identity.Recipient().String() == in.KeyID {

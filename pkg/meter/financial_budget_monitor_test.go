@@ -24,7 +24,7 @@ func TestFinancialBudgetDeliveryRestart(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanPro, DeliveryMode: "live", Price: financial.Price{Version: "budget-test-v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
+	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanPro, DeliveryMode: "live", Price: financial.Price{Version: "budget-test-v1", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
 	if _, err := store.PutFinancialPriceSnapshot(ctx, price); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestFinancialBudgetDeliveryRestart(t *testing.T) {
 	if err := store.RecordFinancialSamplingWindow(ctx, at, true, false); err != nil {
 		t.Fatal(err)
 	}
-	spec := financial.BudgetSpec{Name: "Monthly compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, NotifyMillicents: []int64{80}, Mode: "monitored", Action: "notify", ResumeRule: "next_period", Enabled: true}
+	spec := financial.BudgetSpec{Name: "Monthly compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, NotifyMillicents: []int64{80}, Mode: "monitored", Action: "notify", ResumeRule: "next_period", Enabled: true}
 	p, err := store.CreateFinancialBudget(ctx, a.ID, uuid.NewString(), "editor", spec)
 	if err != nil {
 		t.Fatal(err)

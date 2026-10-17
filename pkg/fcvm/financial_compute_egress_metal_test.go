@@ -142,7 +142,7 @@ func (f *financialNativeFixture) activateEgress() {
 		}
 	}
 	month := financial.ComputeMonth(time.Now())
-	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-account-egress", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", MillicentsPerUnit: 1, UnitQuantity: 1024 * 1024, IncludedQuantity: api.FinancialEgressCreditBytes}})
+	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-account-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", MillicentsPerUnit: 1, UnitQuantity: 1024 * 1024, IncludedQuantity: api.FinancialEgressCreditBytes}})
 	if err != nil {
 		f.t.Fatal(err)
 	}

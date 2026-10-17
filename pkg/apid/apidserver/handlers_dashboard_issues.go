@@ -24,6 +24,15 @@ const dashboardIssueAction = "issue_action"
 const dashboardIssueCookie = "faas_csrf_issue_action"
 
 type dashboardIssuesData struct {
+	TrackerLinks         *dashboard.IssueTrackerLinksView
+	Teams                []api.IssueTeam
+	TeamFilter           string
+	SavedViews           *dashboard.IssueSavedViewsView
+	SavedViewKey         string
+	ReleaseComparison    *dashboard.IssueReleaseComparisonView
+	BaselineDeployment   string
+	CandidateDeployment  string
+	BulkActionSaved      bool
 	SplitPreviewCanApply bool
 	SplitRuleSaved       bool
 	SplitUndo            *dashboardIssueSplitUndo
@@ -39,6 +48,7 @@ type dashboardIssuesData struct {
 	AssigneeFilter       string
 	SortFilter           string
 	MinCustomersFilter   string
+	TagFilter            string
 	OwnerLabels          map[string]string
 	CSRF                 string
 	ReplayCSRF           string
@@ -49,6 +59,15 @@ type dashboardIssuesData struct {
 	ReplayTargets        map[string][]dashboardIssueReplayTarget
 	Since                string
 	EventCursor          string
+	FrequencyAvailable   bool
+	FrequencyPolicy      api.IssueFrequencyAlertPolicy
+	FrequencySaved       bool
+	FrequencyMaxRules    int
+	FrequencyMaxEvents   int
+	FrequencyMinWindow   int
+	FrequencyMaxWindow   int
+	FrequencyMinCooldown int
+	FrequencyMaxCooldown int
 	ImpactAlertPolicy    api.IssueImpactAlertPolicy
 	ImpactAlertSaved     bool
 	OwnershipRulesJSON   string
@@ -86,6 +105,10 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	data := dashboardIssuesData{AppSlug: slug, CurrentAccountID: acct.ID}
+	if !s.resolveDashboardSavedView(w, r, app, &data) {
+		return
+	}
+	data.BulkActionSaved = r.URL.Query().Get("bulk_action") == "updated"
 	data.SplitRuleSaved = r.URL.Query().Get("split_rule") == "updated"
 	data.ImpactAlertSaved = r.URL.Query().Get("impact_alert") == "updated"
 	data.OwnershipRulesSaved = r.URL.Query().Get("ownership_rules") == "updated"
@@ -101,6 +124,21 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 	if err != nil {
 		writeIssueError(w, err)
 		return
+	}
+	if frequency, ok := s.store.(state.IssueFrequencyAlertStore); ok {
+		data.FrequencyAvailable = true
+		data.FrequencySaved = r.URL.Query().Get("frequency_alert") == "updated"
+		data.FrequencyMaxRules = api.IssueFrequencyAlertMaxRules
+		data.FrequencyMaxEvents = api.IssueFrequencyAlertMaxEvents
+		data.FrequencyMinWindow = api.IssueFrequencyAlertMinWindowSeconds
+		data.FrequencyMaxWindow = api.IssueFrequencyAlertMaxWindowSeconds
+		data.FrequencyMinCooldown = api.IssueFrequencyAlertMinCooldownSeconds
+		data.FrequencyMaxCooldown = api.IssueFrequencyAlertMaxCooldownSeconds
+		data.FrequencyPolicy, err = frequency.GetIssueFrequencyAlertPolicy(r.Context(), app.ID, app.AccountID)
+		if err != nil {
+			writeIssueError(w, err)
+			return
+		}
 	}
 	ownershipRules, err := st.GetIssueOwnershipRules(r.Context(), app.ID)
 	if err != nil {
@@ -128,7 +166,24 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 	if !populateIssueDashboardList(w, r, app, st, &data) || !populateIssueDashboardDetail(w, r, app, acct, st, &data) {
 		return
 	}
+	if !s.populateDashboardTrackerLinks(w, r, app, &data) {
+		return
+	}
+	if !s.populateDashboardSavedViews(w, r, app, &data) {
+		return
+	}
+	if st, ok := s.store.(state.IssueTeamStore); ok {
+		teams, err := st.ListIssueTeams(r.Context(), app.ID, app.AccountID)
+		if err != nil {
+			writeIssueError(w, err)
+			return
+		}
+		data.Teams = teams.Items
+	}
 	s.populateIssueDashboardChoices(r.Context(), app, acct, &data)
+	if !s.populateIssueReleaseComparison(w, r, acct, app, &data) {
+		return
+	}
 	populateIssueDashboardOwnerLabels(&data)
 	s.populateIssueDashboardReplay(r.Context(), app, acct, r, &data)
 	count, _ := s.store.CountDeployedApps(r.Context(), acct.ID)
@@ -274,6 +329,8 @@ func populateIssueDashboardList(w http.ResponseWriter, r *http.Request, app stat
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return false
 	}
+	data.TeamFilter = filter.TeamID
+	data.TagFilter = filter.Tag
 	data.StateFilter = filter.State
 	data.EnvironmentFilter = filter.Environment
 	data.AssigneeFilter = r.URL.Query().Get("assignee")
@@ -385,6 +442,16 @@ func populateIssueDashboardOwnerLabels(data *dashboardIssuesData) {
 	}
 	data.OwnerLabels = make(map[string]string, len(data.Items))
 	for _, issue := range data.Items {
+		if issue.AssigneeTeamID != "" {
+			label := "Team " + issue.AssigneeTeamID
+			for _, team := range data.Teams {
+				if team.ID == issue.AssigneeTeamID {
+					label = "Team " + team.Name
+				}
+			}
+			data.OwnerLabels[issue.ID] = label
+			continue
+		}
 		if issue.AssigneeAccountID == "" {
 			data.OwnerLabels[issue.ID] = "Unassigned"
 			continue
@@ -464,7 +531,7 @@ func decodeDashboardIssueAction(r *http.Request) (api.IssueActionRequest, error)
 	if err := r.ParseForm(); err != nil {
 		return api.IssueActionRequest{}, fmt.Errorf("invalid issue form: %w", err)
 	}
-	in := api.IssueActionRequest{Action: r.FormValue("action"), AssigneeAccountID: r.FormValue("assignee_account_id"), FixedDeploymentID: r.FormValue("fixed_deployment_id"), TargetIssueID: r.FormValue("target_issue_id"), MemberIssueID: r.FormValue("member_issue_id")}
+	in := api.IssueActionRequest{Action: r.FormValue("action"), AssigneeAccountID: r.FormValue("assignee_account_id"), AssigneeTeamID: r.FormValue("assignee_team_id"), FixedDeploymentID: r.FormValue("fixed_deployment_id"), TargetIssueID: r.FormValue("target_issue_id"), MemberIssueID: r.FormValue("member_issue_id")}
 	if raw := r.FormValue("ignored_until"); raw != "" {
 		v, err := time.Parse(time.RFC3339, raw)
 		if err != nil {

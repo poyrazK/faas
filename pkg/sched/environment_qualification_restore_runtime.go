@@ -115,7 +115,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 		return err
 	}
 	wakeID := uuid.NewString()
-	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: wakeID, RAMMB: app.RAMMB,
 	})
 	if err != nil {

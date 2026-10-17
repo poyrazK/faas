@@ -1,4 +1,4 @@
-// adr: 1362 — immutable job claims bind funding to one physical attempt.
+// adr: 1641 — immutable job claims bind funding to one physical attempt.
 package state
 
 import (

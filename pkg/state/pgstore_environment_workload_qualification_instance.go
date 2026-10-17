@@ -48,6 +48,9 @@ func (s *PgStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Con
 	if !qualificationLeaseMatches(current, claimed, time.Now()) || current.ReservedInstanceID == "" {
 		return EnvironmentWorkloadQualificationAdmission{}, ErrConflict
 	}
+	if err := checkNodeAdmissionDB(ctx, tx, placement.NodeID); err != nil {
+		return EnvironmentWorkloadQualificationAdmission{}, err
+	}
 	q := sqlc.New()
 	// Match ordinary admission's node -> account reservation order after the
 	// reviewed source/app authority locks, including an idempotent retry.

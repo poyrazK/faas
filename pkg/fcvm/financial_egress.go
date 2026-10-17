@@ -1,4 +1,4 @@
-// adr: 1363 — polling selects a refill; the kernel quota is the authority.
+// adr: 1642 — polling selects a refill; the kernel quota is the authority.
 package fcvm
 
 import (

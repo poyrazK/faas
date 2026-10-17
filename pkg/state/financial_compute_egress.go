@@ -1,4 +1,4 @@
-// adr: 1363 — byte and compute candidates commit atomically under account lock.
+// adr: 1642 — byte and compute candidates commit atomically under account lock.
 package state
 
 import (
@@ -32,7 +32,7 @@ func computeEgressTerms(prices []FinancialPriceSnapshot, month, now time.Time, b
 		if p.Meter != "egress" || !row.PeriodStart.Equal(month) {
 			continue
 		}
-		if p.Version == "" || p.Currency != "EUR" || p.Unit != "interface_bytes" || p.UnitQuantity <= 0 || p.MillicentsPerUnit < 0 || p.IncludedQuantity < 0 || p.IncludedQuantity > api.FinancialComputeQuantityMax {
+		if p.Version == "" || p.Currency != financial.BillingCurrency || p.Unit != "interface_bytes" || p.UnitQuantity <= 0 || p.MillicentsPerUnit < 0 || p.IncludedQuantity < 0 || p.IncludedQuantity > api.FinancialComputeQuantityMax {
 			return b, financial.ErrComputeUnavailable
 		}
 		if b.Initialized {

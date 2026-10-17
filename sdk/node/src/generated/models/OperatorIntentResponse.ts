@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperatorParkExecutionResponse } from './OperatorParkExecutionResponse.js';
+import type { OperatorRestartExecutionResponse } from './OperatorRestartExecutionResponse.js';
 /**
  * Wire shape for GET /v1/admin/operator-intents/{id}
  * (admin scope + FAAS_ADMIN_EMAILS allowlist; NO MFA —
@@ -11,9 +13,15 @@
  *
  */
 export type OperatorIntentResponse = {
+  /**
+   * Durable recovery generation committed by a successful force_cold_boot intent. Retries retain the original value.
+   */
+  cold_boot_generation?: number;
+  park_execution?: OperatorParkExecutionResponse;
+  restart_execution?: OperatorRestartExecutionResponse;
   intent_id: string;
   kind: 'force_park' | 'force_cold_boot' | 'force_restart' | 'node_drain' | 'node_force_drain' | 'node_activate';
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'outcome_unknown';
   /**
    * Instance UUID (force_park or force_restart), deployment UUID (force_cold_boot), or compute-node UUID (node lifecycle intents).
    */
@@ -44,7 +52,7 @@ export type OperatorIntentResponse = {
    */
   finished_at?: string;
   /**
-   * Bounded dispatch error message (1 KB cap) on failed status.
+   * Bounded dispatch error message (1 KB cap) on failed or outcome_unknown status.
    */
   error?: string;
   /**

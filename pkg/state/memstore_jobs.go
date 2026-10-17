@@ -1663,12 +1663,17 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	return m.syncOperationJobLocked(runID)
 }
 
-func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
+func (m *MemStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(instanceState); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(instanceState) {
+		if err := m.checkNodeAdmissionLocked(ctx, computeNodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return Instance{}, ErrNotFound

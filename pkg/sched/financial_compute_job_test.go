@@ -29,7 +29,7 @@ func (*financialJobVMM) WaitJobExit(context.Context, JobExitSpec) (JobExitResult
 	return JobExitResult{}, errors.New("denied job must not wait for an exit")
 }
 
-// adr: 1362 — a refusal to fund a boot preserves the queued task and retry
+// adr: 1641 — a refusal to fund a boot preserves the queued task and retry
 // count, but uncertain native cleanup retains the original physical claim.
 func TestFinancialComputeJobBudgetDeferral(t *testing.T) {
 	for _, failedDestroy := range []bool{false, true} {
@@ -59,7 +59,7 @@ func TestFinancialComputeJobBudgetDeferral(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			p, err := store.CreateFinancialBudget(t.Context(), account.ID, uuid.NewString(), "test", financial.BudgetSpec{Name: "job cap", Scope: financial.BudgetScope{Kind: "job", ID: job.ID}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 0, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
+			p, err := store.CreateFinancialBudget(t.Context(), account.ID, uuid.NewString(), "test", financial.BudgetSpec{Name: "job cap", Scope: financial.BudgetScope{Kind: "job", ID: job.ID}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 0, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}

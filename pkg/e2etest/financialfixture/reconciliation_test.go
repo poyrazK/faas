@@ -67,8 +67,8 @@ func seedReplay(t *testing.T) replayFixture {
 	start := time.Now().UTC().Add(-api.MeterUsageFinalAfter - 5*time.Hour).Truncate(24 * time.Hour)
 	month := financial.ComputeMonth(start)
 	for _, price := range []financial.Price{
-		{Version: "acceptance-compute", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour},
-		{Version: "acceptance-egress", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: gib, MillicentsPerUnit: 2000, IncludedQuantity: gib},
+		{Version: "acceptance-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour},
+		{Version: "acceptance-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: gib, MillicentsPerUnit: 2000, IncludedQuantity: gib},
 	} {
 		if _, err := s.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: a.Plan, DeliveryMode: "live", Price: price}); err != nil {
 			t.Fatal(err)
@@ -125,7 +125,7 @@ func seedReplay(t *testing.T) replayFixture {
 	if _, err = pool.Exec(ctx, `INSERT INTO financial_compute_account_books(account_id,period_start,period_end,payload) VALUES($1,$2,$3,$4)`, a.ID, month, month.AddDate(0, 1, 0), payload); err != nil {
 		t.Fatal(err)
 	}
-	spec := financial.BudgetSpec{Name: "restored acceptance policy", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 20000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "restored acceptance policy", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 20000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	data, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)

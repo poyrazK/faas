@@ -16,7 +16,7 @@ func newEgressFixture(t *testing.T, store computeTestStore, computeGrant, byteGr
 	t.Helper()
 	f := newAccountComputeFixture(t, store, computeGrant, limit, false)
 	month := financial.ComputeMonth(time.Now())
-	_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: month, DeliveryMode: "live", Price: financial.Price{Version: "egress-first", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: byteGrant}})
+	_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: month, DeliveryMode: "live", Price: financial.Price{Version: "egress-first", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: byteGrant}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestFinancialEgressFunding(t *testing.T) {
 			t.Run("higher_price_cannot_reprice_funded_bytes", func(t *testing.T) {
 				f := newEgressFixture(t, store, 1000000, 0, 100)
 				month := financial.ComputeMonth(time.Now())
-				_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: time.Now().UTC().Truncate(time.Minute), DeliveryMode: "live", Price: financial.Price{Version: "egress-price-increase", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 2}})
+				_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: time.Now().UTC().Truncate(time.Minute), DeliveryMode: "live", Price: financial.Price{Version: "egress-price-increase", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 2}})
 				if !errors.Is(err, financial.ErrComputeUnavailable) {
 					t.Fatalf("above-ceiling price accepted: %v", err)
 				}
@@ -181,7 +181,7 @@ func TestFinancialEgressGrantUpgradeCannotReissueEarlierInvoiceFunding(t *testin
 				t.Fatal(err)
 			}
 			month := financial.ComputeMonth(time.Now())
-			_, err = store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: time.Now().UTC().Truncate(time.Minute), Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "egress-grant-upgrade", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: api.FinancialEgressCreditBytes}})
+			_, err = store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: time.Now().UTC().Truncate(time.Minute), Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "egress-grant-upgrade", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: api.FinancialEgressCreditBytes}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +208,7 @@ func TestFinancialEgressRejectsAllowanceBelowFundedPeriod(t *testing.T) {
 			}
 			f := newEgressFixture(t, store, 1000000, api.FinancialEgressCreditBytes, 100)
 			month := financial.ComputeMonth(time.Now())
-			_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "egress-grant-downgrade", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: 0}})
+			_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "egress-grant-downgrade", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: 0}})
 			if !errors.Is(err, financial.ErrComputeUnavailable) {
 				t.Fatalf("allowance downgrade invalidated outstanding credit: %v", err)
 			}
@@ -252,7 +252,7 @@ func TestFinancialEgressFundingPinsLowestRecordedGrant(t *testing.T) {
 			f := newAccountComputeFixture(t, store, 1000000, 0, false)
 			month := financial.ComputeMonth(time.Now())
 			for i, g := range []int64{api.FinancialEgressCreditBytes, api.FinancialEgressCreditBytes / 2} {
-				_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: []string{"historical-larger", "current-smaller"}[i], Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: g}})
+				_, err := store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: []string{"historical-larger", "current-smaller"}[i], Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1024 * 1024, MillicentsPerUnit: 1, IncludedQuantity: g}})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -151,7 +151,7 @@ the live incarnation. Restart an older binary with a new incarnation: its legacy
 financial registration must fail the persisted proof constraint before opening
 admission. Restore the current binary and verify recovery preserves both books.
 
-## Independent job release checks (ADR-1362)
+## Independent job release checks (ADR-1641)
 
 Exercise batch, recurring and image-run tasks, including flexible scheduling,
 held-start jobs, interactive attach windows, cancellation and retry. Use the
@@ -175,7 +175,7 @@ funded ceiling, while ordinary unbudgeted attempts retain their normal billing.
 Verify account allowance is consumed only once across app/job price allocations.
 
 Mixed-version acceptance must also check `job_compute_incarnation`. An account-
-capable owner from ADR-1361 lacks this new proof. Queue writes may succeed, but
+capable owner from ADR-1640 lacks this new proof. Queue writes may succeed, but
 legacy claims selecting that owner must fail before boot. A downgraded owner on
 an already attested node must fail registration before admission opens. Include
 legacy definition, retry and bulk-copy writers in the database boundary check.
@@ -186,7 +186,7 @@ container can run PostgreSQL conformance and compile these fixtures; it cannot
 close any native execution gate.
 
 
-## Shared account compute and egress candidate (ADR-1363)
+## Shared account compute and egress candidate (ADR-1642)
 
 Use account `net_usage`, meters `[compute, egress]`, strict
 `suspend_workloads`, zero drain and empty alert thresholds. All app, worker,
@@ -263,7 +263,7 @@ durable settlement of that generation. API balance readback must fit the shared
 paid limit. These are single-host scenarios; physical two-host partitions and
 contention remain separate release checks.
 
-The ADR-1364 response checks compare complete multi-frame HTTP payloads with
+The ADR-1643 response checks compare complete multi-frame HTTP payloads with
 canonical root veth RX and the real lease's issued credits. The same funded
 Firecracker guest is exercised through the production RPC handler in v1,
 per-request v2 and persistent v2 modes, with four concurrent requests per mode.

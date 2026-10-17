@@ -111,7 +111,7 @@ SELECT EXISTS(SELECT 1 FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND
 SELECT COALESCE(sum(CASE WHEN p.price IS NULL OR (p.price->>'unit_quantity')::numeric<=0 THEN 0 ELSE
  ceil(e.quantity::numeric*(p.price->>'millicents_per_unit')::numeric/(p.price->>'unit_quantity')::numeric)
  + CASE WHEN (p.price->>'millicents_per_unit')::numeric>0 THEN 1 ELSE 0 END END),0)::text AS amount,
- COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='EUR'
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='USD'
  OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0),false)::boolean AS incomplete
 FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
  ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=sqlc.arg(period_start)::timestamptz
@@ -133,7 +133,7 @@ SELECT payload FROM financial_compute_leases WHERE account_id=sqlc.arg(account_i
 -- same quantity allowance. Missing or above-ceiling contracts fail closed.
 -- name: FinancialComputeAccountBaseline :one
 SELECT COALESCE(sum(e.quantity::numeric),0)::text AS quantity,
- COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='EUR'
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='USD'
  OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0
  OR (p.price->>'millicents_per_unit')::numeric<0
  OR (p.price->>'millicents_per_unit')::numeric*sqlc.arg(upper_quantity)::bigint::numeric > sqlc.arg(upper_rate)::bigint::numeric*(p.price->>'unit_quantity')::numeric),false)::boolean AS incomplete

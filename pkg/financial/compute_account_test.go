@@ -17,7 +17,7 @@ func TestComputeAccountBoundAcrossPriceVersions(t *testing.T) {
 		var quantity, grant int64
 		for _, version := range []string{"free", "old", "new"} {
 			q := rng.Int64N(1000000)
-			p := Price{Version: version, Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 3600, MillicentsPerUnit: rng.Int64N(1001), IncludedQuantity: rng.Int64N(1000000)}
+			p := Price{Version: version, Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 3600, MillicentsPerUnit: rng.Int64N(1001), IncludedQuantity: rng.Int64N(1000000)}
 			prices = append(prices, p)
 			quantity += q
 			grant = max(grant, p.IncludedQuantity)

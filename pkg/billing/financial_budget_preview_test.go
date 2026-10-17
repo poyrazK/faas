@@ -38,7 +38,7 @@ func TestFinancialBudgetPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	price := state.FinancialPriceSnapshot{AccountID: account.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), Plan: api.PlanPro, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "pro-v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}}
+	price := state.FinancialPriceSnapshot{AccountID: account.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), Plan: api.PlanPro, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "pro-v1", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}}
 	if _, err := store.PutFinancialPriceSnapshot(t.Context(), price); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestFinancialBudgetPreview(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	spec := financial.BudgetSpec{Name: "cost guard", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, NotifyMillicents: []int64{80}, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "cost guard", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, NotifyMillicents: []int64{80}, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: true}
 	before, err := store.FinancialEvidenceHead(t.Context(), account.ID, start, price.PeriodEnd)
 	if err != nil {
 		t.Fatal(err)

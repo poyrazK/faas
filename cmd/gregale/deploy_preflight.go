@@ -15,17 +15,18 @@ import (
 // uploads source. It deliberately contains no environment values, credentials,
 // source contents, or local absolute paths.
 type deployPreflightSummary struct {
-	Slug              string
-	Source            string
-	LocalChanges      string
-	Environment       string
-	BuildPlan         *api.BuildPlan
-	RuntimeResolution string
-	SimpleAppPlan     *simpleapp.Plan
-	ResourceProfile   string
-	ResourceBehavior  string
-	ExecutionMode     string
-	Release           string
+	QueueCanaryBindings []string
+	Slug                string
+	Source              string
+	LocalChanges        string
+	Environment         string
+	BuildPlan           *api.BuildPlan
+	RuntimeResolution   string
+	SimpleAppPlan       *simpleapp.Plan
+	ResourceProfile     string
+	ResourceBehavior    string
+	ExecutionMode       string
+	Release             string
 	// Healthcheck is the resolved --healthcheck-path / --healthcheck-grpc
 	// override, when one was given.
 	Healthcheck *api.DeploymentHealthcheck
@@ -136,6 +137,9 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 		w = osStderr
 	}
 	_, _ = fmt.Fprintln(w, "Deployment plan:")
+	if len(summary.QueueCanaryBindings) > 0 {
+		_, _ = fmt.Fprintf(w, "  queue canary:  %s (this deployment; no publication)\n", strings.Join(summary.QueueCanaryBindings, ", "))
+	}
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "app:", summary.Slug)
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "source:", summary.Source)
 	if summary.LocalChanges != "" {
@@ -155,7 +159,7 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	if summary.BuildPlan != nil && summary.BuildPlan.Handler != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "handler:", summary.BuildPlan.Handler)
 	}
-	if listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck); listener != "" {
+	if listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck); listener != "" && !servesNoHTTP(deployPreflightExecutionMode(summary)) {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "listener:", listener)
 	}
 	if resources := deployPreflightResources(summary); resources != "" {
@@ -238,19 +242,32 @@ func deployPreflightListenerWith(build *api.BuildPlan, simple *simpleapp.Plan, h
 	return fmt.Sprintf(":%d · health GET %s", port, health)
 }
 
+// deployPreflightExecutionMode is the declared mode, falling back to the
+// simple-app plan's.
+func deployPreflightExecutionMode(summary deployPreflightSummary) string {
+	if execution := strings.TrimSpace(summary.ExecutionMode); execution != "" {
+		return execution
+	}
+	if summary.SimpleAppPlan != nil {
+		return summary.SimpleAppPlan.ExecutionMode
+	}
+	return ""
+}
+
+// servesNoHTTP reports the modes whose process never answers requests:
+// a worker runs continuously and a job runs to completion (H10-137).
+func servesNoHTTP(executionMode string) bool {
+	return executionMode == api.ExecutionModeWorker || executionMode == api.ExecutionModeJob
+}
+
 func deployPreflightResources(summary deployPreflightSummary) string {
 	if resources := strings.TrimSpace(summary.ResourceBehavior); resources != "" {
 		return resources
 	}
 	profile := strings.TrimSpace(summary.ResourceProfile)
-	execution := strings.TrimSpace(summary.ExecutionMode)
-	if summary.SimpleAppPlan != nil {
-		if profile == "" {
-			profile = summary.SimpleAppPlan.ResourceProfile
-		}
-		if execution == "" {
-			execution = summary.SimpleAppPlan.ExecutionMode
-		}
+	execution := deployPreflightExecutionMode(summary)
+	if summary.SimpleAppPlan != nil && profile == "" {
+		profile = summary.SimpleAppPlan.ResourceProfile
 	}
 	if profile == "" {
 		profile = "plan-default"

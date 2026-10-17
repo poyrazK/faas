@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.event_circuit_breaker_response import EventCircuitBreakerResponse
     from ..models.event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
     from ..models.event_subscription_capacity_command_receipt import EventSubscriptionCapacityCommandReceipt
+    from ..models.event_subscription_rate_limit import EventSubscriptionRateLimit
 
 
 T = TypeVar("T", bound="EventSubscriptionDeliveryControl")
@@ -38,6 +39,9 @@ class EventSubscriptionDeliveryControl:
     pending_recipients: int
     processing_recipients: int
     oldest_age_seconds: float
+    rate_limit: EventSubscriptionRateLimit | Unset = UNSET
+    """Projected token-bucket capacity at observed_at. Read-only metadata reserves no tokens. Missing rate_limit on
+    older responses means unknown."""
     capacity_command_budget: EventSubscriptionCapacityCommandBudget | Unset = UNSET
     """Complete scoped advisory observation of all unexpired successful capacity-command receipts. Neither reserves
     receipt slots nor modifies retention. Known unchanged-input command repeats remain available when full; commands
@@ -72,6 +76,10 @@ class EventSubscriptionDeliveryControl:
         processing_recipients = self.processing_recipients
 
         oldest_age_seconds = self.oldest_age_seconds
+
+        rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rate_limit, Unset):
+            rate_limit = self.rate_limit.to_dict()
 
         capacity_command_budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.capacity_command_budget, Unset):
@@ -109,6 +117,8 @@ class EventSubscriptionDeliveryControl:
                 "oldest_age_seconds": oldest_age_seconds,
             }
         )
+        if rate_limit is not UNSET:
+            field_dict["rate_limit"] = rate_limit
         if capacity_command_budget is not UNSET:
             field_dict["capacity_command_budget"] = capacity_command_budget
         if capacity_command_receipt is not UNSET:
@@ -127,6 +137,7 @@ class EventSubscriptionDeliveryControl:
         from ..models.event_circuit_breaker_response import EventCircuitBreakerResponse
         from ..models.event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
         from ..models.event_subscription_capacity_command_receipt import EventSubscriptionCapacityCommandReceipt
+        from ..models.event_subscription_rate_limit import EventSubscriptionRateLimit
 
         d = dict(src_dict)
         max_pending_deliveries = d.pop("max_pending_deliveries")
@@ -148,6 +159,13 @@ class EventSubscriptionDeliveryControl:
         processing_recipients = d.pop("processing_recipients")
 
         oldest_age_seconds = d.pop("oldest_age_seconds")
+
+        _rate_limit = d.pop("rate_limit", UNSET)
+        rate_limit: EventSubscriptionRateLimit | Unset
+        if isinstance(_rate_limit, Unset):
+            rate_limit = UNSET
+        else:
+            rate_limit = EventSubscriptionRateLimit.from_dict(_rate_limit)
 
         _capacity_command_budget = d.pop("capacity_command_budget", UNSET)
         capacity_command_budget: EventSubscriptionCapacityCommandBudget | Unset
@@ -195,6 +213,7 @@ class EventSubscriptionDeliveryControl:
             pending_recipients=pending_recipients,
             processing_recipients=processing_recipients,
             oldest_age_seconds=oldest_age_seconds,
+            rate_limit=rate_limit,
             capacity_command_budget=capacity_command_budget,
             capacity_command_receipt=capacity_command_receipt,
             circuit_breaker=circuit_breaker,

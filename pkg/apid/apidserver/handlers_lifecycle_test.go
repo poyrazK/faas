@@ -527,3 +527,34 @@ func TestStateManifestForUpdate_PreservesProjectMetadataAndUpdatesPorts(t *testi
 		t.Fatalf("project metadata was not preserved: %+v", *updated)
 	}
 }
+
+// adr: 1342 — function_concurrency round-trips and stays within the plan's
+// per-VM concurrency bound.
+func TestAppFunctionConcurrencyRoundTripAndBound(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "multiplexed", FunctionConcurrency: 8}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.FunctionConcurrency != 8 || out.Manifest.FunctionConcurrency != 8 {
+		t.Fatalf("response function_concurrency = %d / %d, want 8", out.FunctionConcurrency, out.Manifest.FunctionConcurrency)
+	}
+	over := api.PlanPro.ConcurrencyPerVMBound() + 1
+	rec = e.Do(t, "PATCH", "/v1/apps/multiplexed", api.UpdateAppRequest{FunctionConcurrency: &over}, nil)
+	apidserver.AssertProblem(t, rec, 400, api.CodeValidation)
+	reset := 0
+	if rec = e.Do(t, "PATCH", "/v1/apps/multiplexed", api.UpdateAppRequest{FunctionConcurrency: &reset}, nil); rec.Code != 200 {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body)
+	}
+	stored, err := (*e.Store()).AppBySlug(t.Context(), "multiplexed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Manifest.FunctionConcurrency != 0 {
+		t.Fatalf("stored function_concurrency = %d after reset, want 0", stored.Manifest.FunctionConcurrency)
+	}
+}

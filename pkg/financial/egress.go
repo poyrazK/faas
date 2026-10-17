@@ -1,4 +1,4 @@
-// adr: 1363 — one paid account ceiling covers compute and interface egress.
+// adr: 1642 — one paid account ceiling covers compute and interface egress.
 package financial
 
 import "math/big"
@@ -35,7 +35,7 @@ type EgressBalance struct {
 }
 
 func EgressContractFits(p Price, b EgressBook) bool {
-	if p.Version == "" || p.Meter != "egress" || p.Currency != "EUR" || p.Unit != "interface_bytes" || p.UnitQuantity <= 0 || p.MillicentsPerUnit < 0 || b.RateQuantity <= 0 || b.RateMillicents < 0 {
+	if p.Version == "" || p.Meter != "egress" || p.Currency != BillingCurrency || p.Unit != "interface_bytes" || p.UnitQuantity <= 0 || p.MillicentsPerUnit < 0 || b.RateQuantity <= 0 || b.RateMillicents < 0 {
 		return false
 	}
 	actual := new(big.Int).Mul(big.NewInt(p.MillicentsPerUnit), big.NewInt(b.RateQuantity))

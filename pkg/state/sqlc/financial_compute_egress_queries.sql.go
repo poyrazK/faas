@@ -13,7 +13,7 @@ import (
 
 const financialEgressBaseline = `-- name: FinancialEgressBaseline :one
 SELECT COALESCE(sum(e.quantity::numeric),0)::text AS quantity,
- COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='egress' OR p.price->>'currency'!='EUR'
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='egress' OR p.price->>'currency'!='USD'
  OR p.price->>'unit'!='interface_bytes' OR (p.price->>'unit_quantity')::numeric<=0
  OR (p.price->>'millicents_per_unit')::numeric<0
  OR (p.price->>'millicents_per_unit')::numeric*$1::bigint::numeric > $2::bigint::numeric*(p.price->>'unit_quantity')::numeric),false)::boolean AS incomplete

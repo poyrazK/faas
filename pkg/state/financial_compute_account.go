@@ -1,4 +1,4 @@
-// adr: 1361 — account and app authority is atomic.
+// adr: 1640 — account and app authority is atomic.
 package state
 
 import (
@@ -200,5 +200,5 @@ func computeAllowance(prices []FinancialPriceSnapshot, month, now time.Time) (in
 // Account allowance cannot be initialized from the billing fallback rate: a
 // missing historical contract must remain an explicit coverage failure.
 func computeAccountContractFits(p financial.Price) bool {
-	return p.Version != "" && p.Meter == "compute" && p.Currency == "EUR" && p.Unit == "mb_seconds" && p.UnitQuantity > 0 && p.MillicentsPerUnit >= 0 && computeRateFits(p, financial.ComputeLease{RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour})
+	return p.Version != "" && p.Meter == "compute" && p.Currency == financial.BillingCurrency && p.Unit == "mb_seconds" && p.UnitQuantity > 0 && p.MillicentsPerUnit >= 0 && computeRateFits(p, financial.ComputeLease{RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour})
 }

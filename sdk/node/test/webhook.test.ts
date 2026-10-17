@@ -115,3 +115,12 @@ test('rejects empty secrets and negative tolerance', () => {
   assert.throws(() => verifyWebhook(secret, headers(), body, { timestampToleranceMs: -1 }), errorCode('invalid_options'));
   assert.throws(() => verifyWebhook(secret, headers(), 'body' as unknown as Uint8Array), errorCode('invalid_body'));
 });
+
+test('tracker sync notification events can be selected independently', () => {
+  const subscription: CreateAppWebhookRequest = {
+    ...workflowFinishedSubscription,
+    event_filter: ['issue.tracker_sync.attention', 'issue.tracker_sync.recovered'],
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(subscription)).event_filter,
+    ['issue.tracker_sync.attention', 'issue.tracker_sync.recovered']);
+});

@@ -85,7 +85,7 @@ const financialComputeJobBaseline = `-- name: FinancialComputeJobBaseline :one
 SELECT COALESCE(sum(CASE WHEN p.price IS NULL OR (p.price->>'unit_quantity')::numeric<=0 THEN 0 ELSE
  ceil(e.quantity::numeric*(p.price->>'millicents_per_unit')::numeric/(p.price->>'unit_quantity')::numeric)
  + CASE WHEN (p.price->>'millicents_per_unit')::numeric>0 THEN 1 ELSE 0 END END),0)::text AS amount,
- COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='EUR'
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='USD'
  OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0),false)::boolean AS incomplete
 FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
  ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=$1::timestamptz

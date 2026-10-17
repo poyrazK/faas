@@ -88,18 +88,25 @@ func TestLoadManagedPostgresRegistersNeonDriver(t *testing.T) {
 	}
 }
 
+// adr: 1350 — storage is pooled per account and compute units are a monthly
+// ceiling until managed PostgreSQL is invoiced.
 func TestManagedPostgresUsageCeilingsFollowPlanStorage(t *testing.T) {
-	limits, ok := api.ManagedPostgresLimitsFor(api.PlanHobby)
-	if !ok {
-		t.Fatal("hobby plan missing")
+	month := int64(31 * 24 * time.Hour / time.Second)
+	for _, plan := range api.Plans {
+		limits, ok := api.ManagedPostgresLimitsFor(plan)
+		if !ok {
+			t.Fatalf("%s plan missing", plan)
+		}
+		got := apidserver.ManagedPostgresUsageCeilings(limits)
+		want := managedpostgres.UsageCeilings{
+			MaxMonthlyStorageByteSeconds: limits.StorageLimitBytes * month,
+			MaxMonthlyComputeUnitSeconds: limits.MonthlyComputeUnitSeconds,
+		}
+		if got != want {
+			t.Fatalf("%s ceiling = %+v, want the pooled %+v", plan, got, want)
+		}
 	}
-	got := apidserver.ManagedPostgresUsageCeilings(limits)
-	want := limits.StorageLimitBytes * int64(limits.DatabasesMax) * int64(31*24*time.Hour/time.Second)
-	if got.MaxMonthlyStorageByteSeconds != want {
-		t.Fatalf("storage ceiling = %d, want %d", got.MaxMonthlyStorageByteSeconds, want)
-	}
-	free, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
-	if got := apidserver.ManagedPostgresUsageCeilings(free); got != (managedpostgres.UsageCeilings{}) {
-		t.Fatalf("free ceiling = %+v, want zero", got)
+	if got := apidserver.ManagedPostgresUsageCeilings(api.ManagedPostgresPlanLimits{}); got != (managedpostgres.UsageCeilings{}) {
+		t.Fatalf("no-database ceiling = %+v, want zero", got)
 	}
 }

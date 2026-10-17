@@ -1,8 +1,9 @@
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 -- ADR-566: observation and outbox insertion commit together. A policy revision
 -- is the alert generation; edits re-evaluate existing monthly spending.
-CREATE TABLE financial_budget_evaluations (
+CREATE TABLE IF NOT EXISTS financial_budget_evaluations (
   account_id uuid NOT NULL,
   policy_id uuid NOT NULL,
   revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
@@ -14,7 +15,7 @@ CREATE TABLE financial_budget_evaluations (
   FOREIGN KEY (account_id, policy_id, revision) REFERENCES financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE
 );
 
-CREATE TABLE financial_budget_alerts (
+CREATE TABLE IF NOT EXISTS financial_budget_alerts (
   id uuid PRIMARY KEY,
   account_id uuid NOT NULL,
   policy_id uuid NOT NULL,
@@ -31,7 +32,7 @@ CREATE TABLE financial_budget_alerts (
   UNIQUE (account_id, policy_id, revision, period_start, threshold_millicents),
   FOREIGN KEY (account_id, policy_id, revision) REFERENCES financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE
 );
-CREATE INDEX financial_budget_alert_due_idx ON financial_budget_alerts(next_attempt_at, id) WHERE state != 'delivered';
+CREATE INDEX IF NOT EXISTS financial_budget_alert_due_idx ON financial_budget_alerts(next_attempt_at, id) WHERE state != 'delivered';
 -- +goose StatementEnd
 
 -- +goose Down

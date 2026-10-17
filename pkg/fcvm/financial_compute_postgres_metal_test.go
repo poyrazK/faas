@@ -90,11 +90,11 @@ func TestMetalFinancialComputePostgresAccountContention(t *testing.T) {
 	}
 	month := financial.ComputeMonth(time.Now())
 	grant := int64(api.BillableRAMMB(128)) * int64((api.FinancialComputeLeaseDuration+api.FinancialComputeTeardownReserve)/time.Second)
-	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: f.app.AccountID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-account", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
+	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: f.app.AccountID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-account", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := financial.BudgetSpec{Name: "native account compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "native account compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	f.policy, err = f.store.CreateFinancialBudget(f.ctx, f.app.AccountID, uuid.NewString(), "native-acceptance", spec)
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +376,7 @@ func (f *financialNativeFixture) activate() {
 	if maximum >= 2*minimum {
 		f.t.Fatal("fixture cannot fund exactly one rounded grant")
 	}
-	spec := financial.BudgetSpec{Name: "native compute acceptance", Scope: financial.BudgetScope{Kind: "app", ID: f.app.ID}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: maximum, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "native compute acceptance", Scope: financial.BudgetScope{Kind: "app", ID: f.app.ID}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: maximum, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	var err error
 	f.policy, err = f.store.CreateFinancialBudget(f.ctx, f.app.AccountID, uuid.NewString(), "native-acceptance", spec)
 	if err != nil {
@@ -435,7 +435,7 @@ func (f *financialNativeFixture) assertSettled(owner *financialNativeOwner, orig
 			f.t.Fatalf("funded billing window: %d %v", seconds, err)
 		}
 		cost, err := financial.CostMeter(f.app.AccountID, at, at.Add(time.Minute), financial.Price{
-			Version: "native-pinned", Meter: "compute", Currency: "EUR", Unit: "mb_seconds",
+			Version: "native-pinned", Meter: "compute", Currency: "USD", Unit: "mb_seconds",
 			UnitQuantity: final.RateQuantity, MillicentsPerUnit: final.RateMillicents,
 		}, []financial.Evidence{{AccountID: f.app.AccountID, SourceID: at.String(), Meter: "compute",
 			Quantity: int64(final.BillableMB) * seconds, Start: at, End: at.Add(time.Minute),

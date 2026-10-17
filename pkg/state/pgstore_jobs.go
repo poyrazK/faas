@@ -1817,6 +1817,11 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
 		return Instance{}, fmt.Errorf("state: lock exclusive owner for job run %s: %w", runID, err)
 	}
+	if IsLive(instanceState) {
+		if err := checkNodeAdmissionDB(ctx, tx, computeNodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 
 	var accountID, planName string
 	var runParallelism int

@@ -62,7 +62,7 @@ egress rate ceiling; incompatible pricing changes must wait for a new period. Eg
 pins its lowest recorded allowance; increases benefit funding in a new month.
 Provider events are held if pricing, allowances or sampled quantities exceed
 the funded contract.
-See [shared egress funding](adr/1363-account-strict-egress.md). A monitored preview budget can be exceeded during
+See [shared egress funding](adr/1642-account-strict-egress.md). A monitored preview budget can be exceeded during
 evidence ingestion, scheduler sweeps, the configured drain interval, and bounded
 VM teardown. Broad scopes leave production spending explicitly continuing.
 
@@ -103,7 +103,7 @@ raw provider/receipt vectors. These are implementation and execution gates;
 the required remote HTTP payload evidence, the full workload matrix and performance still block
 promotion. No physical two-host execution has been performed locally.
 
-ADR-1364 adds public forwarding through the native-recovery owner's funded
+ADR-1643 adds public forwarding through the native-recovery owner's funded
 interface for HTTP, Upgrade, TCP and UDP, with captured-interface checks and
 separate authorized private bridges. The full-daemon report now requires v1/v2
 streamed payload measurements, quota exhaustion without the DB, private

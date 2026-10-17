@@ -73,6 +73,17 @@ type JobWakeResult struct {
 // template cache for them. The 350ms cold-boot budget is the same
 // as app cold-boot; the wake latency is what customers pay.
 func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex int) (JobWakeResult, error) {
+	for range api.NodeAdmissionPlacementAttempts {
+		result, err := e.wakeJobOnce(ctx, accountID, runID, taskIndex)
+		if !errors.Is(err, state.ErrNodeAdmissionStale) {
+			return result, err
+		}
+		ctx = context.WithValue(ctx, freshNodePlacementKey{}, true)
+	}
+	return JobWakeResult{}, api.ErrCapacity("The node fleet changed during job placement; retry dispatch")
+}
+
+func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskIndex int) (JobWakeResult, error) {
 	if accountID == "" || runID == "" {
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob: empty accountID/runID")
 	}
@@ -260,7 +271,7 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	//
 	//    On any create-instance failure, release the lease + ledger slot. The
 	//    task has not been claimed yet, so it remains queued for the next tick.
-	if _, err := e.store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
+	if _, err := e.store.CreateAndClaimJobInstance(nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}

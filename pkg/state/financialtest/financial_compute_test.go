@@ -348,7 +348,7 @@ func computeReservationSuite(t *testing.T, store computeTestStore) {
 		t.Fatalf("own hold not released: %v", err)
 	}
 	month := financial.ComputeMonth(final.StartedAt)
-	_, err = store.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: final.StartedAt.Truncate(time.Minute), DeliveryMode: "live", Price: financial.Price{Version: "strict-higher-price", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: 2 * api.OverageMillicentsPerGBHour}})
+	_, err = store.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: final.StartedAt.Truncate(time.Minute), DeliveryMode: "live", Price: financial.Price{Version: "strict-higher-price", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: 2 * api.OverageMillicentsPerGBHour}})
 	if err != nil {
 		t.Fatal(err)
 	}

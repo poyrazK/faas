@@ -354,15 +354,14 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	if e.warmAffinity != nil {
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{
+	placementRequest := Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
 		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint,
-	})
-	if err != nil {
-		return err
 	}
 	wakeID := uuid.NewString()
-	ins, err := e.store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, placement.NodeID, wakeID, instanceModeForApp(app))
+	ins, placement, _, err := e.createWithNodePlacement(ctx, placementRequest, false, func(admitCtx context.Context, p Placement) (state.Instance, error) {
+		return e.store.CreateInstanceWithMode(admitCtx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, p.NodeID, wakeID, instanceModeForApp(app))
+	})
 	if err != nil {
 		// ADR-193: a warm-pool fill must never outrank a customer wake for
 		// node RAM. A durable refusal returns the typed capacity Problem so

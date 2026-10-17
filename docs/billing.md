@@ -18,7 +18,7 @@ A spend cap is a hard ceiling on the overage an account is billed in a UTC
 calendar month. The included GB-RAM-hours are not counted against it.
 
 ```bash
-gregale overage-cap 500      # cap overage at EUR 5.00 this month
+gregale overage-cap 500      # cap overage at $5.00 this month
 gregale overage-cap --clear  # remove the cap
 ```
 
@@ -142,7 +142,7 @@ For example, this spec would select previews while production continues:
 {
   "name": "Preview spending",
   "scope": {"kind": "account"},
-  "currency": "EUR",
+  "currency": "USD",
   "meters": ["compute"],
   "basis": "net_usage",
   "limit_millicents": 1000000,
@@ -155,7 +155,7 @@ For example, this spec would select previews while production continues:
 }
 ```
 
-The limit above is EUR 10.00. Available scopes are account, project,
+The limit above is $10.00. Available scopes are account, project,
 environment, application, and job; resource scopes use their stable UUID.
 Preview identity comes from Gregale's persisted preview metadata. Environment
 membership uses the deployment’s retained runtime environment identity. Historical costs retain
@@ -183,7 +183,7 @@ compute controls.
 The console's Usage page creates account or app compute notification policies,
 shows monitoring health and threshold delivery state, and enables or disables
 notification policies at their current revision. Other scopes and existing
-policy specifications remain accessible through the API and CLI. EUR text is
+policy specifications remain accessible through the API and CLI. USD text is
 parsed to exact millicents. Disabled drafts do not stop usage or send alerts.
 
 ```bash
@@ -237,7 +237,7 @@ For example, save this specification to `budget.json` and run
 {
   "name": "Monthly compute",
   "scope": {"kind": "account"},
-  "currency": "EUR",
+  "currency": "USD",
   "meters": ["compute"],
   "basis": "net_usage",
   "limit_millicents": 1000000,
@@ -250,7 +250,7 @@ For example, save this specification to `budget.json` and run
 }
 ```
 
-This sends spending alerts to the account email at EUR 8 and EUR 10 of known
+This sends spending alerts to the account email at USD 8 and USD 10 of known
 recorded compute usage. The limit is always a notification threshold too, with
 identical amounts deduplicated. All existing account/project/environment/app/job
 scopes and the supported compute/interface-egress meters are accepted by the
@@ -445,7 +445,7 @@ best-effort view rather than a frozen snapshot; `has_more: false` means the
 provider reported no further page at that time. Repeat backfill later to find
 newly surfaced or recently created documents.
 
-Imports require EUR totals and tax, a supported invoice state, and an explicit
+Imports require USD totals and tax, a supported invoice state, and an explicit
 billing period. Rows without enough information are counted as skipped rather
 than assigned guessed dates or amounts. Imported invoices have an explicit
 unknown historical Gregale plan because provider history does not reliably
@@ -551,3 +551,13 @@ including replay after policy deletion. This bounds supported customer compute
 charges, rather than promising a ceiling on host cost or the complete invoice.
 See the [decision](adr/20261017-strict-app-compute-reservations.md) and
 [native acceptance procedure](runbooks/financial-strict-compute-acceptance.md).
+
+### Currency and retained funding
+
+New budgets and strict funding use USD, matching ADR-1430. Historical EUR
+invoices, price snapshots and budget revisions are retained without conversion.
+A period containing incompatible historical contracts cannot activate strict
+funding. The forward-only USD funding migration refuses pre-release books or
+enabled non-USD policies; those require explicit operator repair rather than
+reinterpreting retained balances. Apply the complete reviewed migration set
+before enabling the matching daemon graph.

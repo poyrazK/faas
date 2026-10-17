@@ -63,7 +63,7 @@ func (s *server) createManagedExecutionWorkflow(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrValidation("managed workflow plan exceeds the maximum encoded size"))
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient and identity are required for managed workflows"))
 		return

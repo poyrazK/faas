@@ -29,7 +29,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
-	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
@@ -5690,6 +5689,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// or alter the headers — strictly observability.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
+	// ADR-1505: the commit is armed once a monetized request is about to be
+	// forwarded; at exit it completes or aborts the response.
+	rec.usage = &usageCommitHolder{rec: rec}
+	r = r.WithContext(withUsageCommitHolder(r.Context(), rec.usage))
+	defer abortUnrecordedResponse(rec.usage, rec)
 	// Semantic request span. The public listener already creates an inbound
 	// otelhttp span, but gatewayd-internal also serves the handler directly in
 	// split-node and test paths. This child gives the routing, wake, and
@@ -6010,11 +6014,16 @@ haveApp:
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
 	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
-	// Consumer-attributed traffic always carries a bounded billing route so
-	// rate cards can weight routes (ADR-952); consumer auth ran above.
-	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
+	// Consumer- and tenant-surface-attributed traffic always carries a
+	// bounded billing route so rate cards can weight routes (ADR-952,
+	// ADR-1310); consumer and surface attribution ran above. A JWT rule can
+	// attribute a tenant only after edge rewrites, so with tenant JWT
+	// resolution armed the original path's label waits as a candidate.
+	auth := authenticatedFrom(r.Context())
+	billingAttributed := auth.ConsumerID != "" || auth.PlatformTenantSurfaceID != ""
+	jwtTenantPossible := !billingAttributed && h.platformTenantExternalRefResolver != nil
 	routeCarrier := ObservedRouteCarrierFrom(r.Context())
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || billingAttributed || jwtTenantPossible || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -6026,8 +6035,10 @@ haveApp:
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
-		if consumerAttributed {
+		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
+		} else if jwtTenantPossible {
+			r = withBillingRouteCandidate(r, preLabel)
 		}
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
@@ -6193,6 +6204,7 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	r = h.admitJWTTenantBillingRoute(r, app.ID)
 	// Public-auth configuration is validated before either auth gate. This
 	// keeps an empty or unknown mode from being masked by a 401 and ensures
 	// no malformed configuration can reach wake admission or proxying.
@@ -7512,6 +7524,7 @@ haveApp:
 		// without re-deriving from Connection/Upgrade.
 		r.Header.Set("x-faas-upgrade", "true")
 		platformWakeTrace.markProxyStarted(time.Now())
+		h.armUsageCommit(r, target)
 		h.rawByNode(target).ServeHTTP(w, r)
 		// Per-request accounting still fires for the raw path
 		// (issue #676 / ADR-080): the upgrade request is one
@@ -7529,6 +7542,7 @@ haveApp:
 		h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 		return
 	}
+	h.armUsageCommit(r, target)
 	if h.proxyByNode != nil {
 		platformWakeTrace.markProxyStarted(time.Now())
 		// Issue #98 / ADR-028: Target.NodeID is the compute_node.id;
@@ -7847,36 +7861,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				uaFamily, referrerHost, country = h.requestTelemetryDimensions(r)
 				guestEvidence, _ = guestExecutionEvidenceFromContext(r.Context())
 			}
-			var consumerID string
-			if identity, ok := authmw.ConsumerFromContext(r); ok {
-				// Consumer IDs are UUIDs in the control-plane store. Keep
-				// malformed/legacy context stamps out of the nullable DB
-				// column rather than turning telemetry into a request failure.
-				if parsed, err := uuid.Parse(identity.ID); err == nil {
-					consumerID = parsed.String()
-				}
-			}
+			attr := requestUsageAttribution(r)
+			consumerID, platformTenantID := attr.ConsumerID, attr.PlatformTenantID
+			platformTenantSurfaceID, platformTenantJWTAuthorizationRuleID := attr.PlatformTenantSurfaceID, attr.PlatformTenantJWTAuthorizationRuleID
 			requestTraceID := ""
 			if h.requestTelemetry != nil {
 				requestTraceID = traceIDForTelemetry(r.Context())
-			}
-			platformTenantID := authenticatedFrom(r.Context()).PlatformTenantID
-			platformTenantSurfaceID := authenticatedFrom(r.Context()).PlatformTenantSurfaceID
-			platformTenantJWTAuthorizationRuleID := authenticatedFrom(r.Context()).PlatformTenantJWTAuthorizationRuleID
-			if parsed, err := uuid.Parse(platformTenantID); err == nil && (consumerID != "" || platformTenantSurfaceID != "" || platformTenantJWTAuthorizationRuleID != "") {
-				platformTenantID = parsed.String()
-			} else {
-				platformTenantID = ""
-			}
-			if parsed, err := uuid.Parse(platformTenantSurfaceID); err == nil && consumerID == "" && platformTenantID != "" {
-				platformTenantSurfaceID = parsed.String()
-			} else {
-				platformTenantSurfaceID = ""
-			}
-			if parsed, err := uuid.Parse(platformTenantJWTAuthorizationRuleID); err == nil && consumerID == "" && platformTenantSurfaceID == "" && platformTenantID != "" {
-				platformTenantJWTAuthorizationRuleID = parsed.String()
-			} else {
-				platformTenantJWTAuthorizationRuleID = ""
 			}
 			if h.requestTelemetry != nil && requestTraceID == "" {
 				// Keep the legacy request-id fallback for deployments where the
@@ -7922,73 +7912,19 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
-			if r.Context().Value(suppressFinancialUsageKey{}) == true {
+			if commit := usageCommitFrom(r.Context()); commit != nil {
+				// ADR-1505: the response's completion already waited for (or
+				// is aborted by) this event; never append it twice.
+				row.EventID = commit.eventID
+				_ = commit.commit(status, commit.writtenBytes())
+				row.UsageOutboxed = true
+			} else if r.Context().Value(suppressFinancialUsageKey{}) == true {
 				// Rejected admissions remain visible in request telemetry but
 				// cannot become billable via either the outbox or debugger fallback.
 				row.UsageOutboxed = true
 			} else if h.usageOutbox != nil {
-				errorCount := int64(0)
-				if status >= 400 {
-					errorCount = 1
-				}
-				billableUnits := int64(1)
-				if platformFailure {
-					billableUnits = 0
-				}
-				usageEvent := usageoutbox.Event{
-					EventID: row.EventID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(),
-					ConsumerID: row.ConsumerID, PlatformTenantID: row.PlatformTenantID,
-					PlatformTenantSurfaceID:              row.PlatformTenantSurfaceID,
-					PlatformTenantJWTAuthorizationRuleID: row.PlatformTenantJWTAuthorizationRuleID,
-					WindowStart:                          row.ReceivedAt.UTC().Truncate(time.Minute),
-					RequestCount:                         1, ErrorCount: errorCount, BillableUnits: billableUnits,
-				}
-				if row.ConsumerID != "" {
-					usageEvent.BillingRoute = billingRouteFrom(r)
-				}
-				if h.requestAuditEnabled || h.apiDiscoveryEnabled {
-					usageEvent.DiscoveredRoute = auditRouteFrom(r)
-					if usageEvent.DiscoveredRoute == otherRouteLabel {
-						usageEvent.DiscoveredRoute = ""
-					}
-					if usageEvent.DiscoveredRoute != "" {
-						usageEvent.DiscoveredAtUnixMs = row.ReceivedAt.UTC().UnixMilli()
-					}
-				}
-				if h.requestAuditEnabled {
-					auditRoute := auditRouteFrom(r)
-					if auditRoute == "" {
-						auditRoute = otherRouteLabel
-					}
-					auditMethod := r.Method
-					if auditMethod == "" || len(auditMethod) > 16 {
-						auditMethod = "OTHER"
-					}
-					latencyMS := row.LatencyMS
-					if latencyMS > 86_400_000 {
-						latencyMS = 86_400_000
-					}
-					deploymentID := target.DeploymentID
-					if _, err := uuid.Parse(deploymentID); err != nil {
-						deploymentID = ""
-					}
-					commitSHA := target.CommitSHA
-					if len(commitSHA) > 64 {
-						commitSHA = ""
-					}
-					auditRequestID := requestID
-					if len(auditRequestID) > 128 {
-						auditRequestID = ""
-					}
-					usageEvent.Audit = &usageoutbox.AuditEvidence{
-						RouteTemplate: auditRoute, Method: auditMethod,
-						HTTPStatus: status, LatencyMS: latencyMS,
-						TraceID:      traceIDForTelemetry(r.Context()),
-						DeploymentID: deploymentID, CommitSHA: commitSHA,
-						OccurredAt: row.ReceivedAt.UTC(), RequestID: auditRequestID,
-						SourceIP: auditSourceIPFrom(r),
-					}
-				}
+				usageEvent := h.usageEvent(r, usageEventInput{eventID: row.EventID, accountID: row.AccountID, appID: row.AppID,
+					attr: attr, status: status, at: row.ReceivedAt, latencyMS: row.LatencyMS, requestID: requestID, target: target})
 				if unattributedUsage(usageEvent) {
 					// ADR-234 amendment: an anonymous request with no tenant,
 					// audit, or discovery evidence only bumped the
@@ -8516,6 +8452,10 @@ type statusRecorder struct {
 	// body. It is concurrency-safe because detached v2 goroutines consume it
 	// after (or while) the source response is being written.
 	mirrorSourceCapture *mirrorSourceCapture
+
+	// usage holds a monetized request's usage commit (ADR-1505): the bytes
+	// that complete the response wait until its usage is durable.
+	usage *usageCommitHolder
 }
 
 // Unwrap lets http.ResponseController reach the underlying server writer for
@@ -8577,11 +8517,42 @@ func (s *statusRecorder) WriteHeader(code int) {
 			applyHeaderOp(s.Header(), op)
 		}
 		s.Header().Del(preAuthTargetHeader)
+		s.noteUsageLength(code)
 	}
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
+	if code == http.StatusSwitchingProtocols && !s.commitUsage(s.Bytes) {
+		// ADR-1505: an upgrade completes the request; without durable
+		// usage the client gets a refusal instead of a session.
+		s.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// noteUsageLength records, for an armed usage commit, how many body bytes
+// complete the response.
+func (s *statusRecorder) noteUsageLength(code int) {
+	commit := s.usage.armed()
+	if commit == nil || (code < http.StatusOK && code != http.StatusSwitchingProtocols) {
+		return
+	}
+	method := ""
+	if s.request != nil {
+		method = s.request.Method
+	}
+	commit.noteDeclaredLength(method, code, s.Header())
+}
+
+// commitUsage makes an armed usage commit durable. It reports false when the
+// response must not complete: its usage is billable and was not recorded.
+func (s *statusRecorder) commitUsage(responseBytes int64) bool {
+	commit := s.usage.armed()
+	if commit == nil {
+		return true
+	}
+	return commit.commit(s.status, responseBytes) == nil || !commit.mustAbort()
 }
 
 const preAuthTargetHeader = "X-Gregale-Abuse-Target"
@@ -8628,6 +8599,10 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.wroteHeader = true
 		s.mirrorSourceCapture.writeHeader(http.StatusOK)
 		s.capturePreAuthTargetHeader()
+		s.noteUsageLength(http.StatusOK)
+	}
+	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, int64(len(b))) && !s.commitUsage(s.Bytes+int64(len(b))) {
+		return 0, errUsageNotDurable
 	}
 
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.
@@ -8658,6 +8633,9 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 func (s *statusRecorder) Flush() {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
+	}
+	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage(s.Bytes) {
+		return
 	}
 	if s.flusher == nil {
 		// gRPC messages must reach the client while its request stream remains
@@ -8729,6 +8707,9 @@ func flushEveryWrite(contentType string) bool {
 // to the wire. Called from maybeFlush (periodic triggers), Flush
 // (explicit upstream call), and finalFlush (residual capture).
 func (s *statusRecorder) doFlush() {
+	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage(s.Bytes) {
+		return
+	}
 	if s.firstFlush && s.writeDeadline > 0 {
 		// Install the per-flush write deadline on the very first
 		// flush. http.ResponseController is the post-Go-1.20 way

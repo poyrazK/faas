@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1362 — separate job/run account FKs do not prove shared ownership.
+// adr: 1641 — separate job/run account FKs do not prove shared ownership.
 // Legacy writers cannot evade the job owner's cap using another account's run.
 func TestFinancialComputeJobForeignRunOwner(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)

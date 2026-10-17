@@ -168,10 +168,13 @@ export class SecretReloadCoordinator {
     return this.#initial;
   }
 
-  /** Manual refresh and SIGHUP share the same queue, including startup. */
-  reload(): Promise<string> {
+  /** Manual refresh and SIGHUP share the same queue, including startup.
+   * A caller signal bounds one refresh, including queueing and ACK transport.
+   * Cancellation after admission disables acquisition and fences late publication. */
+  reload(signal?: AbortSignal): Promise<string> {
     if (!this.#started || this.#stopped) return Promise.reject(new SecretReloadError('Secret reload is not running'));
-    return this.#enqueue(false);
+    if (signal?.aborted) return Promise.reject(cancelled());
+    return this.#enqueue(false, signal);
   }
 
   /** Terminal shutdown. Detaches only this coordinator's handler and disables
@@ -201,9 +204,10 @@ export class SecretReloadCoordinator {
     return success;
   }
 
-  #enqueue(initial: boolean): Promise<string> {
+  #enqueue(initial: boolean, callerSignal?: AbortSignal): Promise<string> {
     const result = this.#pending.then(async () => {
-      const signal = this.#shutdown.signal;
+      const signal = callerSignal ? AbortSignal.any([this.#shutdown.signal, callerSignal]) : this.#shutdown.signal;
+      if (callerSignal?.aborted) throw cancelled();
       try {
         checkSignal(signal);
         if (!this.#disable()) throw new SecretReloadError('Secret consumers could not be disabled');
@@ -216,7 +220,7 @@ export class SecretReloadCoordinator {
       }
     });
     this.#pending = result.then(() => {}, () => {});
-    return result;
+    return callerSignal ? abortable(() => result, callerSignal) : result;
   }
 
   async #snapshot(signal: AbortSignal, allowPending = false): Promise<SecretSnapshot> {

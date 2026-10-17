@@ -24,7 +24,7 @@ authoritative preview identity, warm/cold admission guards, retained command VM
 ownership and per-target scheduler teardown acknowledgements. Publication and
 native lifecycle acceptance remain required. A local strict app compute candidate
 now implements [reservations and funded billing](20261017-strict-app-compute-reservations.md);
-the [account compute extension](1361-account-strict-compute.md) shares one
+the [account compute extension](1640-account-strict-compute.md) shares one
 quantity allowance and paid ceiling across all apps, with independent jobs fenced.
 Other strict scopes and stopping actions remain future work. See [release scope](../financial-controls-implementation.md).
 

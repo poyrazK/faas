@@ -1,4 +1,4 @@
-// adr: 1363 — provider delivery cannot outrun the funded meter contract.
+// adr: 1642 — provider delivery cannot outrun the funded meter contract.
 package meter
 
 import (
@@ -19,7 +19,7 @@ func (p *Pusher) checkFundedEgressDelivery(ctx context.Context, acct state.Accou
 	} // Such adapters cannot activate strict funding.
 	// This read-only projection also retains books after policy deletion. No
 	// synthetic customer intent is persisted and no money is minted here.
-	scope := state.FinancialBudget{AccountID: acct.ID, Spec: financial.BudgetSpec{Name: "funded egress delivery audit", Currency: "EUR", ResumeRule: "manual", Scope: financial.BudgetScope{Kind: "account"}, Basis: "net_usage", Mode: "strict", Action: "suspend_workloads", Meters: []string{"compute", "egress"}}}
+	scope := state.FinancialBudget{AccountID: acct.ID, Spec: financial.BudgetSpec{Name: "funded egress delivery audit", Currency: financial.BillingCurrency, ResumeRule: "manual", Scope: financial.BudgetScope{Kind: "account"}, Basis: "net_usage", Mode: "strict", Action: "suspend_workloads", Meters: []string{"compute", "egress"}}}
 	balance, err := authority.FinancialComputeBalance(ctx, scope, window.Hour)
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (p *Pusher) checkFundedEgressDelivery(ctx context.Context, acct state.Accou
 			ceiling.RateQuantity = rate.UnitQuantity
 		}
 	}
-	configured := financial.Price{Version: "provider-delivery", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: policy.UnitQuantity, MillicentsPerUnit: policy.MillicentsPerUnit}
+	configured := financial.Price{Version: "provider-delivery", Meter: "egress", Currency: financial.BillingCurrency, Unit: "interface_bytes", UnitQuantity: policy.UnitQuantity, MillicentsPerUnit: policy.MillicentsPerUnit}
 	if !financial.EgressContractFits(configured, ceiling) {
 		return errors.Join(financial.ErrComputeUnavailable, errors.New("provider egress rate exceeds funded period ceiling"))
 	}

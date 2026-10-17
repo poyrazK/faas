@@ -1,7 +1,7 @@
 {
   "name": "Monthly compute and network egress",
   "scope": { "kind": "account" },
-  "currency": "EUR",
+  "currency": "USD",
   "meters": ["compute", "egress"],
   "basis": "net_usage",
   "limit_millicents": 1000000,

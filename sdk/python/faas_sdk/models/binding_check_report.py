@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.binding_inventory_issue import BindingInventoryIssue
     from ..models.binding_runtime_deployment import BindingRuntimeDeployment
     from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+    from ..models.queue_release_requirements import QueueReleaseRequirements
 
 
 T = TypeVar("T", bound="BindingCheckReport")
@@ -43,6 +44,10 @@ class BindingCheckReport:
     issues: list[BindingInventoryIssue]
     blockers: list[BindingCheckFinding]
     warnings: list[BindingCheckFinding]
+    queue_requirements: QueueReleaseRequirements | Unset = UNSET
+    """Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
+    requires one enabled push consumer with a healthy poll no older than thirty seconds; connectivity coverage
+    remains partial."""
     object_storage_requirements: ObjectStorageReleaseRequirements | Unset = UNSET
     """Managed environment prefix to required canary mode in the selected scope. Prefixes match
     ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require
@@ -97,6 +102,10 @@ class BindingCheckReport:
             warnings_item = warnings_item_data.to_dict()
             warnings.append(warnings_item)
 
+        queue_requirements: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue_requirements, Unset):
+            queue_requirements = self.queue_requirements.to_dict()
+
         object_storage_requirements: dict[str, Any] | Unset = UNSET
         if not isinstance(self.object_storage_requirements, Unset):
             object_storage_requirements = self.object_storage_requirements.to_dict()
@@ -127,6 +136,8 @@ class BindingCheckReport:
                 "warnings": warnings,
             }
         )
+        if queue_requirements is not UNSET:
+            field_dict["queue_requirements"] = queue_requirements
         if object_storage_requirements is not UNSET:
             field_dict["object_storage_requirements"] = object_storage_requirements
         if expected_deployment_id is not UNSET:
@@ -143,6 +154,7 @@ class BindingCheckReport:
         from ..models.binding_inventory_issue import BindingInventoryIssue
         from ..models.binding_runtime_deployment import BindingRuntimeDeployment
         from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+        from ..models.queue_release_requirements import QueueReleaseRequirements
 
         d = dict(src_dict)
         app = d.pop("app")
@@ -198,6 +210,13 @@ class BindingCheckReport:
 
             warnings.append(warnings_item)
 
+        _queue_requirements = d.pop("queue_requirements", UNSET)
+        queue_requirements: QueueReleaseRequirements | Unset
+        if isinstance(_queue_requirements, Unset):
+            queue_requirements = UNSET
+        else:
+            queue_requirements = QueueReleaseRequirements.from_dict(_queue_requirements)
+
         _object_storage_requirements = d.pop("object_storage_requirements", UNSET)
         object_storage_requirements: ObjectStorageReleaseRequirements | Unset
         if isinstance(_object_storage_requirements, Unset):
@@ -229,6 +248,7 @@ class BindingCheckReport:
             issues=issues,
             blockers=blockers,
             warnings=warnings,
+            queue_requirements=queue_requirements,
             object_storage_requirements=object_storage_requirements,
             expected_deployment_id=expected_deployment_id,
             require_application_ack=require_application_ack,

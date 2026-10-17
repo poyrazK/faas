@@ -79,7 +79,7 @@ func newAccountComputeFixture(t *testing.T, store computeTestStore, grant, limit
 func (f accountComputeFixture) price(t *testing.T, grant int64, version string) {
 	t.Helper()
 	month := financial.ComputeMonth(time.Now())
-	_, err := f.store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: month, DeliveryMode: "live", Price: financial.Price{Version: version, Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
+	_, err := f.store.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: f.account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Plan: api.PlanHobby, EffectiveFrom: month, DeliveryMode: "live", Price: financial.Price{Version: version, Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
 	if err != nil {
 		t.Fatal(err)
 	}

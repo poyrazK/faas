@@ -18,7 +18,7 @@ SELECT (SELECT retained_from<=since.at FROM financial_evidence_coverage WHERE si
 
 -- name: FinancialEgressBaseline :one
 SELECT COALESCE(sum(e.quantity::numeric),0)::text AS quantity,
- COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='egress' OR p.price->>'currency'!='EUR'
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='egress' OR p.price->>'currency'!='USD'
  OR p.price->>'unit'!='interface_bytes' OR (p.price->>'unit_quantity')::numeric<=0
  OR (p.price->>'millicents_per_unit')::numeric<0
  OR (p.price->>'millicents_per_unit')::numeric*sqlc.arg(upper_quantity)::bigint::numeric > sqlc.arg(upper_rate)::bigint::numeric*(p.price->>'unit_quantity')::numeric),false)::boolean AS incomplete

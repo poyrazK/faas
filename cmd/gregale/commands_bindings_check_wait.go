@@ -66,6 +66,18 @@ func bindingCheckCanProgress(report bindingcheck.Report, inventory api.AppBindin
 		switch blocker.Code {
 		case "runtime_updating", "runtime_stale", "rotation_pending", "application_ack_stale", "application_ack_candidate_unobserved":
 			continue
+		case "queue_consumer_stale", "queue_consumer_unobserved":
+			pending := false
+			for _, item := range inventory.Bindings {
+				if item.Type == api.BindingTypeQueue && item.Binding == blocker.Binding && item.Scope == blocker.Scope &&
+					report.QueueRequirements[item.Binding] == api.QueueEvidenceConsumerReadiness && item.QueueEnvironment != nil &&
+					api.QueueBindingInScope(item, report.Scope) && item.State == "enabled" && item.Access == "push" && item.ConsumerState == "active" {
+					pending = true
+				}
+			}
+			if !pending {
+				return false
+			}
 		case "verification_unknown", "object_storage_operations_missing", "object_storage_operations_incomplete", "refresh_incomplete", "application_adoption_unknown":
 			pending := false
 			for _, item := range inventory.Bindings {

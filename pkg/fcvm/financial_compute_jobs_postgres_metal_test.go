@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1362 — different workload kinds must contend at the real native owner
+// adr: 1641 — different workload kinds must contend at the real native owner
 // boundary. The loser cannot allocate a journal, slot, network or guest.
 func TestMetalFinancialComputePostgresAppJobContention(t *testing.T) {
 	f := newFinancialNativeFixture(t)
@@ -160,11 +160,11 @@ func (f *financialNativeFixture) activateJobAccount(grant, limit int64) {
 		}
 	}
 	month := financial.ComputeMonth(time.Now())
-	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-job-account", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
+	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-job-account", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.policy, err = f.store.CreateFinancialBudget(f.ctx, a.ID, uuid.NewString(), "native-acceptance", financial.BudgetSpec{Name: "native account job compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: limit, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
+	f.policy, err = f.store.CreateFinancialBudget(f.ctx, a.ID, uuid.NewString(), "native-acceptance", financial.BudgetSpec{Name: "native account job compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: limit, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func (f *financialNativeFixture) activateJobAccount(grant, limit int64) {
 		if cfg.JobID == "" {
 			continue
 		}
-		_, err = f.store.CreateFinancialBudget(f.ctx, a.ID, uuid.NewString(), "native-acceptance", financial.BudgetSpec{Name: "native job gross compute", Scope: financial.BudgetScope{Kind: "job", ID: cfg.JobID}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
+		_, err = f.store.CreateFinancialBudget(f.ctx, a.ID, uuid.NewString(), "native-acceptance", financial.BudgetSpec{Name: "native job gross compute", Scope: financial.BudgetScope{Kind: "job", ID: cfg.JobID}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
 		if err != nil {
 			f.t.Fatal(err)
 		}

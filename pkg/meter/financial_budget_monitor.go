@@ -114,7 +114,7 @@ func financialBudgetAlertMail(a state.FinancialBudgetAlertDelivery, recipient st
 	if !a.Evaluation.CoverageComplete {
 		coverage = "Usage coverage is partial; additional costs may be missing."
 	}
-	amount := func(n int64) string { return fmt.Sprintf("EUR %d.%05d", n/100000, n%100000) }
+	amount := func(n int64) string { return fmt.Sprintf("%s %d.%05d", a.Spec.Currency, n/100000, n%100000) }
 	effect := "This is a spending notification. Workloads continue running."
 	if financial.PreviewStopping(a.Spec) {
 		effect = "This policy stops matching previews at its recorded compute limit. Production can continue. Metering, drain and teardown delays can exceed the budget. Check budget runtime for actual stopping status; this email is not a teardown acknowledgement."

@@ -104,7 +104,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}

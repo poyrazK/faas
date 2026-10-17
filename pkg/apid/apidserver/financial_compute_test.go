@@ -23,7 +23,7 @@ func TestFinancialComputeActivationAndBalances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := financial.BudgetSpec{Name: "Strict app compute", Scope: financial.BudgetScope{Kind: "app", ID: app.ID}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "Strict app compute", Scope: financial.BudgetScope{Kind: "app", ID: app.ID}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	rec := e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "strict-owner-unavailable"})
 	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "financial_compute_not_ready") {
 		t.Fatalf("unsupported owner activated: %d %s", rec.Code, rec.Body)

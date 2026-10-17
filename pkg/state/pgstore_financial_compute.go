@@ -472,7 +472,7 @@ func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
 }
 
 func computeBaselineAmount(quantity int64, p financial.Price) (int64, error) {
-	if p.Meter != "compute" || p.Currency != "EUR" || p.Unit != "mb_seconds" || p.UnitQuantity <= 0 || p.MillicentsPerUnit < 0 {
+	if p.Meter != "compute" || p.Currency != financial.BillingCurrency || p.Unit != "mb_seconds" || p.UnitQuantity <= 0 || p.MillicentsPerUnit < 0 {
 		return 0, financial.ErrComputeUnavailable
 	}
 	n := new(big.Int).Mul(big.NewInt(quantity), big.NewInt(p.MillicentsPerUnit))

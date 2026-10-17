@@ -8,7 +8,7 @@ test('strict compute reads retain exact funding and unconfirmed retirement', asy
   const start = '2026-10-01T00:00:00Z';
   const compute = { initialized: true, app_id: id, period_start: start, period_end: '2026-11-01T00:00:00Z', committed_millicents: 9007199254740000, reserved_millicents: 991, remaining_millicents: 0, unconfirmed_leases: 1, held: true, observed_at: '2026-10-17T10:00:00Z' };
   try {
-    globalThis.fetch = async () => Response.json({ id, account_id: id, revision: 2, created_at: start, updated_at: start, spec: { name: 'App compute', scope: { kind: 'app', id }, currency: 'EUR', meters: ['compute'], basis: 'gross_usage', limit_millicents: Number.MAX_SAFE_INTEGER, notify_millicents: [], mode: 'strict', action: 'suspend_workloads', drain_seconds: 0, resume_rule: 'manual', enabled: true }, status: 'active', enforcement_ready: true, notification_ready: false, reasons: ['conservative_compute_commitments'], runtime: { compute, alerts: [] } });
+    globalThis.fetch = async () => Response.json({ id, account_id: id, revision: 2, created_at: start, updated_at: start, spec: { name: 'App compute', scope: { kind: 'app', id }, currency: 'USD', meters: ['compute'], basis: 'gross_usage', limit_millicents: Number.MAX_SAFE_INTEGER, notify_millicents: [], mode: 'strict', action: 'suspend_workloads', drain_seconds: 0, resume_rule: 'manual', enabled: true }, status: 'active', enforcement_ready: true, notification_ready: false, reasons: ['conservative_compute_commitments'], runtime: { compute, alerts: [] } });
     const budget = await BillingService.getFinancialBudget({ id });
     assert.deepEqual(budget.runtime?.compute, compute);
     assert.equal(budget.notification_ready, false);

@@ -30,7 +30,7 @@ func seedBudgetPreview(t *testing.T, s *state.MemStore) (state.Account, state.Ap
 
 func crossPreviewBudget(t *testing.T, s *state.MemStore, account string, now time.Time, drain int) state.FinancialBudget {
 	t.Helper()
-	spec := financial.BudgetSpec{Name: "Preview compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 100, Mode: "monitored", Action: "stop_previews", ResumeRule: "manual", DrainSeconds: drain, Enabled: true}
+	spec := financial.BudgetSpec{Name: "Preview compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 100, Mode: "monitored", Action: "stop_previews", ResumeRule: "manual", DrainSeconds: drain, Enabled: true}
 	p, err := s.CreateFinancialBudget(t.Context(), account, uuid.NewString(), "editor", spec)
 	if err != nil {
 		t.Fatal(err)

@@ -77,8 +77,8 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 	account := accountIDFromKey(t, t.Context(), pool, key)
 	month := financial.ComputeMonth(time.Now())
 	for _, p := range []financial.Price{
-		{Version: "native-system-compute", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour},
-		{Version: "native-system-egress", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: 2000, IncludedQuantity: 1 << 30},
+		{Version: "native-system-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour},
+		{Version: "native-system-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: 2000, IncludedQuantity: 1 << 30},
 	} {
 		if _, err := s.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: account, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: p}); err != nil {
 			t.Fatal(err)
@@ -91,7 +91,7 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		eg, egErr := s.FinancialEgressReady(t.Context(), account)
 		return err == nil && egErr == nil && ok && eg
 	})
-	spec := financial.BudgetSpec{Name: "native shared account cap", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 20000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "native shared account cap", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 20000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	raw, status := doReq(t, h, key, http.MethodPost, "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": uuid.NewString()})
 	var budget api.FinancialBudgetResponse
 	if status != http.StatusCreated || json.Unmarshal(raw, &budget) != nil || !budget.EnforcementReady {

@@ -15,7 +15,7 @@ The pair fixture registers real native owners but prepares price/allowance and
 sampling rows directly. API activation is covered by the full-daemon lane.
 
 The full-daemon report also requires canonical response-byte evidence for
-`ForwardHTTPStream` (ADR-1364). On the real funded guest it exercises v1,
+`ForwardHTTPStream` (ADR-1643). On the real funded guest it exercises v1,
 per-request v2 and persistent v2 handlers, including four concurrent streamed
 responses per mode. Those mode checks use an in-process production RPC server
 and a live-identity adapter; the actual VMMD daemon then serves the database
@@ -164,7 +164,7 @@ Before promotion, close these remaining gates:
 1. Execute the required single-host `ForwardHTTPStream` checks and all 14
    cross-host gateway transport phases with the exact immutable bundle. Extend
    full daemon/API/scheduler admission, registered node-certificate validation
-   and sidecar process lifecycle coverage across hosts as well. The ADR-1364
+   and sidecar process lifecycle coverage across hosts as well. The ADR-1643
    candidate routes native-recovery public bridges through the canonical funded
    interface; legacy owners cannot attest strict readiness. Positive ARP
    counters, source inspection and compilation cannot substitute for measured

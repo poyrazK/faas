@@ -73,7 +73,7 @@ func TestFinancialBudgetPreviewStopMetal(t *testing.T) {
 	}
 	request("budget-preview", http.StatusOK)
 	request("budget-production", http.StatusOK)
-	p, err := s.CreateFinancialBudget(ctx, account, uuid.NewString(), "native-acceptance", financial.BudgetSpec{Name: "Previews", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", Mode: "monitored", Action: "stop_previews", ResumeRule: "manual", Enabled: true})
+	p, err := s.CreateFinancialBudget(ctx, account, uuid.NewString(), "native-acceptance", financial.BudgetSpec{Name: "Previews", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", Mode: "monitored", Action: "stop_previews", ResumeRule: "manual", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

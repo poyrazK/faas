@@ -17,7 +17,7 @@ func TestFinancialBudgetResponseStaleMonitoring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.CreateFinancialBudget(t.Context(), a.ID, uuid.NewString(), "editor", financial.BudgetSpec{Name: "Usage", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, Mode: "monitored", Action: "notify", ResumeRule: "next_period", Enabled: true})
+	p, err := s.CreateFinancialBudget(t.Context(), a.ID, uuid.NewString(), "editor", financial.BudgetSpec{Name: "Usage", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, Mode: "monitored", Action: "notify", ResumeRule: "next_period", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,8 +58,8 @@ T = TypeVar("T", bound="CreateAppRequest")
 
 @_attrs_define
 class CreateAppRequest:
-    """App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout,
-    and optional manifest.
+    """App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB,
+    max concurrency, idle timeout, and optional manifest.
 
     """
 
@@ -108,6 +108,9 @@ class CreateAppRequest:
     request_timeout_s: int | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
     ceiling is 30 seconds."""
+    function_concurrency: int | Unset = UNSET
+    """Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request
+    per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."""
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
@@ -287,6 +290,8 @@ class CreateAppRequest:
 
         request_timeout_s = self.request_timeout_s
 
+        function_concurrency = self.function_concurrency
+
         execution_mode: str | Unset = UNSET
         if not isinstance(self.execution_mode, Unset):
             execution_mode = self.execution_mode
@@ -441,6 +446,8 @@ class CreateAppRequest:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if execution_mode is not UNSET:
             field_dict["execution_mode"] = execution_mode
         if restart_policy is not UNSET:
@@ -626,6 +633,8 @@ class CreateAppRequest:
 
         request_timeout_s = d.pop("request_timeout_s", UNSET)
 
+        function_concurrency = d.pop("function_concurrency", UNSET)
+
         _execution_mode = d.pop("execution_mode", UNSET)
         execution_mode: CreateAppRequestExecutionMode | Unset
         if isinstance(_execution_mode, Unset):
@@ -801,6 +810,7 @@ class CreateAppRequest:
             max_concurrency=max_concurrency,
             idle_timeout_s=idle_timeout_s,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             execution_mode=execution_mode,
             restart_policy=restart_policy,
             after_restore=after_restore,

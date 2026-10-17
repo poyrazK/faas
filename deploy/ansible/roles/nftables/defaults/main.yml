@@ -25,7 +25,7 @@
 # for the per-host bridge).
 tenant_bridge: br-tenants
 # Match native_process_recovery=true VMMD releases. Requires nftables 1.1.3+
-# and Linux 6.13+ for the public bridge socket generation guard (ADR-1364).
+# and Linux 6.13+ for the public bridge socket generation guard (ADR-1643).
 faas_public_forwarding: false
 bridge_cidr: 10.100.0.1/16
 public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
@@ -81,6 +81,9 @@ faas_control_plane_allowed_ports:
 # The manifest sets faas_edge_peer_cidrs to the compute nodes' addresses.
 faas_edge_peer_cidrs: []
 faas_edge_peer_gateway_port: 8080
+# The edge's Cloudflare Tunnel connector exposes its metrics here; the control
+# plane scrapes it per node (gatewayd_public_edge_service).
+faas_edge_connector_metrics_port: 20241
 
 # Raw TCP app listeners are opt-in and fail closed. When enabled, only the
 # explicitly listed client CIDRs can reach the reserved public range.

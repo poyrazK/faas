@@ -12,7 +12,10 @@ export type FinancialBudgetSpec = {
    */
   name: string;
   scope: FinancialBudgetScope;
-  currency: 'EUR';
+  /**
+   * New writes require USD; EUR is retained only for historical policy responses.
+   */
+  currency: 'USD' | 'EUR';
   /**
    * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only.
    */

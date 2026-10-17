@@ -8,7 +8,7 @@ import type { FinancialBudgetSpec } from '../src/generated/models/FinancialBudge
 test('active budget reads retain notification readiness, unknown cost and delivery retries', async () => {
   const originalFetch = globalThis.fetch;
   const id = '6dc4f678-5766-4a06-a061-845c2b133fdd';
-  const spec: FinancialBudgetSpec = { name: 'Compute', scope: { kind: 'account' }, currency: 'EUR', meters: ['compute'], basis: 'net_usage', limit_millicents: 1000000, notify_millicents: [800000], mode: 'monitored', action: 'notify', drain_seconds: 0, resume_rule: 'next_period', enabled: true };
+  const spec: FinancialBudgetSpec = { name: 'Compute', scope: { kind: 'account' }, currency: 'USD', meters: ['compute'], basis: 'net_usage', limit_millicents: 1000000, notify_millicents: [800000], mode: 'monitored', action: 'notify', drain_seconds: 0, resume_rule: 'next_period', enabled: true };
   const evaluation = { period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', as_of: '2026-10-16T10:00:00Z', evaluated_at: '2026-10-16T10:01:00Z', evidence_through_id: 0, coverage_complete: false, fresh: false, reasons: ['cost_evaluation_unavailable'] };
   try {
     globalThis.fetch = async () => Response.json({ id, account_id: id, revision: 1, spec, created_at: evaluation.period_start, updated_at: evaluation.period_start, status: 'active', enforcement_ready: false, notification_ready: true, reasons: ['notification_only_workloads_continue'], runtime: { evaluation, alerts: [{ id, policy_revision: 1, threshold_millicents: 800000, evaluation: { ...evaluation, known_millicents: 800000 }, state: 'retrying', attempts: 2, next_attempt_at: evaluation.evaluated_at, last_error: 'mail_delivery_failed' }] } });
@@ -26,7 +26,7 @@ test('financial reads preserve month, authentication, exact money and source gap
   const originalFetch = globalThis.fetch;
   const originalBase = OpenAPI.BASE;
   const originalToken = OpenAPI.TOKEN;
-  const period = { period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', as_of: '2026-10-02T00:00:00Z', currency: 'EUR', meters: [], missing_bill_components: ['tax'] };
+  const period = { period_start: '2026-10-01T00:00:00Z', period_end: '2026-11-01T00:00:00Z', as_of: '2026-10-02T00:00:00Z', currency: 'USD', meters: [], missing_bill_components: ['tax'] };
   try {
     OpenAPI.BASE = 'https://api.example.com';
     OpenAPI.TOKEN = 'financial-reader';
@@ -59,7 +59,7 @@ test('financial reads preserve month, authentication, exact money and source gap
 
 test('budget previews preserve proposed actions and unavailable enforcement', async () => {
   const originalFetch = globalThis.fetch;
-  const spec: FinancialBudgetSpec = { name: 'Preview guard', scope: { kind: 'account' }, currency: 'EUR', meters: ['compute'], basis: 'net_usage', limit_millicents: 10001, notify_millicents: [8000], mode: 'monitored', action: 'stop_previews', drain_seconds: 30, resume_rule: 'manual', enabled: true };
+  const spec: FinancialBudgetSpec = { name: 'Preview guard', scope: { kind: 'account' }, currency: 'USD', meters: ['compute'], basis: 'net_usage', limit_millicents: 10001, notify_millicents: [8000], mode: 'monitored', action: 'stop_previews', drain_seconds: 30, resume_rule: 'manual', enabled: true };
   try {
     globalThis.fetch = async (input, options) => {
       assert.equal(new URL(String(input)).pathname, '/v1/billing/budgets/preview');
@@ -81,7 +81,7 @@ test('budget policy clients preserve revision preconditions, retries, history an
   const originalFetch = globalThis.fetch;
   const originalBase = OpenAPI.BASE;
   const id = '6dc4f678-5766-4a06-a061-845c2b133fdd';
-  const spec: FinancialBudgetSpec = { name: 'Draft', scope: { kind: 'account' }, currency: 'EUR', meters: ['compute'], basis: 'net_usage', limit_millicents: 1000001, notify_millicents: [], mode: 'monitored', action: 'stop_previews', drain_seconds: 30, resume_rule: 'manual', enabled: false };
+  const spec: FinancialBudgetSpec = { name: 'Draft', scope: { kind: 'account' }, currency: 'USD', meters: ['compute'], basis: 'net_usage', limit_millicents: 1000001, notify_millicents: [], mode: 'monitored', action: 'stop_previews', drain_seconds: 30, resume_rule: 'manual', enabled: false };
   const policy = { id, account_id: id, revision: 7, spec, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-02T00:00:00Z', status: 'draft', enforcement_ready: false, reasons: ['enforcement_integration_pending'] };
   let calls = 0;
   try {

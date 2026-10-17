@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1362 — task claims, funding and native retirement have separate owners.
+// adr: 1641 — task claims, funding and native retirement have separate owners.
 func TestFinancialComputeJobs(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {

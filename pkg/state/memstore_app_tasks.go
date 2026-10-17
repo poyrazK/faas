@@ -40,6 +40,9 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createAppTaskLocked(resolved)
+}
+func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, error) {
 	m.ensureAppTasksLocked()
 
 	app, ok := m.apps[resolved.AppID]

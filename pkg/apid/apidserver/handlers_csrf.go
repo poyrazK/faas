@@ -27,6 +27,7 @@ var csrfActions = map[string]struct{}{
 	"mfa_disable_email_confirm": {},
 	csrfActionSetPassword:       {},
 	githubConnectAction:         {},
+	githubBindAction:            {},
 }
 
 // issueCSRFToken mints the double-submit token used by browser mutations.
@@ -43,10 +44,20 @@ func (s *server) issueCSRFToken(w http.ResponseWriter, r *http.Request, acct sta
 
 	var tok string
 	var err error
-	if action == githubConnectAction {
+	switch action {
+	case githubConnectAction:
 		// Connect verifies its own named cookie, not the generic faas_csrf.
 		tok, err = issueConnectGithubToken(s, w, acct.ID)
-	} else {
+	case githubBindAction:
+		tok, err = middleware.IssueForAuthenticatedNamed(s.sessions, action, acct.ID, githubBindCSRFCookie)
+		if err == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name: githubBindCSRFCookie, Value: tok, Path: "/", HttpOnly: true,
+				Secure: s.domain != "", SameSite: http.SameSiteLaxMode,
+				MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
+			})
+		}
+	default:
 		tok, err = middleware.IssueForAuthenticated(s.sessions, action, acct.ID)
 	}
 	if err != nil {
@@ -54,7 +65,7 @@ func (s *server) issueCSRFToken(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not issue CSRF token"))
 		return
 	}
-	if action != githubConnectAction {
+	if action != githubConnectAction && action != githubBindAction {
 		setDashboardCSRFCookie(w, s, tok)
 	}
 	writeJSON(w, http.StatusOK, api.CSRFTokenResponse{CSRFToken: tok})

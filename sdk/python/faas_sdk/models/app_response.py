@@ -93,6 +93,9 @@ class AppResponse:
     """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
     measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See
     ADR-037."""
+    service_binding_fingerprint: str | Unset = UNSET
+    """Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic
+    precondition for a reviewed service-only update."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
     service routing. Available on every plan."""
@@ -107,6 +110,10 @@ class AppResponse:
     idle_timeout_s: int | None | Unset = UNSET
     request_timeout_s: int | Unset = UNSET
     """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
+    function_concurrency: int | Unset = UNSET
+    """Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker;
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
+    deploy."""
     deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
     """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
     the app lifecycle status and does not assert that a historical artifact is safe to restore."""
@@ -290,6 +297,8 @@ class AppResponse:
 
         autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
 
+        service_binding_fingerprint = self.service_binding_fingerprint
+
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
@@ -313,6 +322,8 @@ class AppResponse:
             idle_timeout_s = self.idle_timeout_s
 
         request_timeout_s = self.request_timeout_s
+
+        function_concurrency = self.function_concurrency
 
         deployment_availability: str | Unset = UNSET
         if not isinstance(self.deployment_availability, Unset):
@@ -537,6 +548,8 @@ class AppResponse:
                 "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
             }
         )
+        if service_binding_fingerprint is not UNSET:
+            field_dict["service_binding_fingerprint"] = service_binding_fingerprint
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if workload_class is not UNSET:
@@ -549,6 +562,8 @@ class AppResponse:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if deployment_availability is not UNSET:
             field_dict["deployment_availability"] = deployment_availability
         if deleted_at is not UNSET:
@@ -697,6 +712,8 @@ class AppResponse:
 
         autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
 
+        service_binding_fingerprint = d.pop("service_binding_fingerprint", UNSET)
+
         _visibility = d.pop("visibility", UNSET)
         visibility: AppResponseVisibility | Unset
         if isinstance(_visibility, Unset):
@@ -735,6 +752,8 @@ class AppResponse:
         idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
 
         request_timeout_s = d.pop("request_timeout_s", UNSET)
+
+        function_concurrency = d.pop("function_concurrency", UNSET)
 
         _deployment_availability = d.pop("deployment_availability", UNSET)
         deployment_availability: AppResponseDeploymentAvailability | Unset
@@ -1076,12 +1095,14 @@ class AppResponse:
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            service_binding_fingerprint=service_binding_fingerprint,
             visibility=visibility,
             workload_class=workload_class,
             runtime=runtime,
             resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             deployment_availability=deployment_availability,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,

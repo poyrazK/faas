@@ -54,8 +54,8 @@ func TestPushPendingFundedEgressDelivery(t *testing.T) {
 				grant = api.FinancialEgressCreditBytes
 			}
 			for _, price := range []financial.Price{
-				{Version: "funded-compute", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 1000000},
-				{Version: "funded-egress", Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: 2000, IncludedQuantity: grant},
+				{Version: "funded-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 1000000},
+				{Version: "funded-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: 1 << 30, MillicentsPerUnit: 2000, IncludedQuantity: grant},
 			} {
 				_, err := store.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{AccountID: acct.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: price})
 				if err != nil {
@@ -67,7 +67,7 @@ func TestPushPendingFundedEgressDelivery(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			budget, err := store.CreateFinancialBudget(ctx, acct.ID, uuid.NewString(), "test", financial.BudgetSpec{Name: "funded delivery", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 1000, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
+			budget, err := store.CreateFinancialBudget(ctx, acct.ID, uuid.NewString(), "test", financial.BudgetSpec{Name: "funded delivery", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 1000, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}

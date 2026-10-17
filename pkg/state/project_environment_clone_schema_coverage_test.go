@@ -18,38 +18,91 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		"workflow_initial_recovery_reviews":       CloneSchemaOperational,
-		"profile_deployment_policies":             CloneSchemaConfiguration,
-		"profile_investigations":                  CloneSchemaOperational,
-		"profile_deployment_checks":               CloneSchemaOperational,
-		"profile_route_alert_state":               CloneSchemaOperational,
-		"profile_canary_checks":                   CloneSchemaOperational,
-		"profile_periodic_monitors":               CloneSchemaOperational,
-		"app_binding_release_policies":            CloneSchemaConfiguration,
-		"app_binding_release_policy_history":      CloneSchemaConfiguration,
-		"alert_rollback_actions":                  CloneSchemaOperational,
-		"alert_historical_rollback_claims":        CloneSchemaOperational,
-		"deployment_recovery_lineage":             CloneSchemaOperational,
-		"deployment_rollback_operations":          CloneSchemaOperational,
-		"deployment_dependency_gates":             CloneSchemaOperational,
-		"app_environment_secret_refs":             CloneSchemaConfiguration,
-		"app_environment_secret_ref_suppressions": CloneSchemaConfiguration,
-		"app_environment_workload_intents":        CloneSchemaConfiguration,
-		"environment_git_sources":                 CloneSchemaConfiguration,
-		"environment_external_field_owners":       CloneSchemaConfiguration,
-		"environment_desired_revisions":           CloneSchemaConfiguration,
-		"environment_managed_fields":              CloneSchemaConfiguration,
-		"environment_management_overrides":        CloneSchemaConfiguration,
-		"environment_workload_graphs":             CloneSchemaConfiguration,
-		"deployment_route_policy_snapshots":       CloneSchemaConfiguration,
-		"instance_runtime_config_receipts":        CloneSchemaOperational,
-		"snapshot_runtime_config_receipts":        CloneSchemaOperational,
-		"financial_budget_policies":               CloneSchemaConfiguration,
-		"financial_budget_revisions":              CloneSchemaConfiguration,
-		"financial_usage_evidence":                CloneSchemaIdentity,
-		"financial_price_snapshots":               CloneSchemaIdentity,
-		"financial_evidence_coverage":             CloneSchemaOperational,
-		"financial_sampling_windows":              CloneSchemaOperational,
+		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
+		"hosting_sites":                                 CloneSchemaConfiguration,
+		"hosting_domains":                               CloneSchemaConfiguration,
+		"hosting_retention_policies":                    CloneSchemaConfiguration,
+		"hosting_releases":                              CloneSchemaData,
+		"hosting_automation_credentials":                CloneSchemaIdentity,
+		"hosting_oidc_trusts":                           CloneSchemaIdentity,
+		"hosting_domain_claims":                         CloneSchemaIdentity,
+		"hosting_ci_runs":                               CloneSchemaOperational,
+		"hosting_previews":                              CloneSchemaOperational,
+		"hosting_promotion_events":                      CloneSchemaOperational,
+		"hosting_route_publications":                    CloneSchemaOperational,
+		"app_issue_lifecycle_alert_policies":            CloneSchemaConfiguration,
+		"issue_lifecycle_alert_receipts":                CloneSchemaOperational,
+		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,
+		"workflow_automation_live_baseline_retirements": CloneSchemaOperational,
+		"workflow_automation_live_suites":               CloneSchemaOperational,
+		"workflow_automation_live_verifications":        CloneSchemaOperational,
+
+		"app_issue_frequency_alert_policies":       CloneSchemaConfiguration,
+		"issue_application_escalation_policies":    CloneSchemaConfiguration,
+		"issue_application_reminder_policies":      CloneSchemaConfiguration,
+		"issue_application_reminders":              CloneSchemaOperational,
+		"issue_application_slack_policies":         CloneSchemaConfiguration,
+		"issue_application_triage":                 CloneSchemaOperational,
+		"issue_application_triage_activity":        CloneSchemaOperational,
+		"issue_frequency_alert_receipts":           CloneSchemaOperational,
+		"issue_slack_action_messages":              CloneSchemaOperational,
+		"issue_slack_identities":                   CloneSchemaIdentity,
+		"issue_slack_installations":                CloneSchemaConfiguration,
+		"issue_slack_interaction_policies":         CloneSchemaConfiguration,
+		"issue_slack_link_challenges":              CloneSchemaOperational,
+		"issue_slack_oauth_flows":                  CloneSchemaOperational,
+		"issue_slack_routing_policies":             CloneSchemaConfiguration,
+		"issue_team_slack_deliveries":              CloneSchemaOperational,
+		"issue_team_slack_destinations":            CloneSchemaConfiguration,
+		"issue_team_slack_threads":                 CloneSchemaOperational,
+		"issue_tracker_auto_sync":                  CloneSchemaConfiguration,
+		"issue_tracker_callback_diagnostics":       CloneSchemaOperational,
+		"issue_tracker_callbacks":                  CloneSchemaOperational,
+		"issue_tracker_inbound_guards":             CloneSchemaOperational,
+		"issue_tracker_linear_connections":         CloneSchemaConfiguration,
+		"issue_tracker_linear_oauth_flows":         CloneSchemaOperational,
+		"issue_tracker_source_guards":              CloneSchemaOperational,
+		"issue_tracker_sync_escalation_policies":   CloneSchemaConfiguration,
+		"issue_tracker_sync_history":               CloneSchemaOperational,
+		"issue_tracker_sync_incidents":             CloneSchemaOperational,
+		"issue_tracker_sync_notification_policies": CloneSchemaConfiguration,
+		"issue_tracker_sync_notifications":         CloneSchemaOperational,
+		"issue_tracker_sync_reminder_policies":     CloneSchemaConfiguration,
+		"issue_tracker_sync_triage":                CloneSchemaOperational,
+		"issue_tracker_sync_triage_activity":       CloneSchemaOperational,
+		"native_issue_ticket_receipts":             CloneSchemaOperational,
+		"workflow_initial_recovery_reviews":        CloneSchemaOperational,
+		"profile_deployment_policies":              CloneSchemaConfiguration,
+		"profile_investigations":                   CloneSchemaOperational,
+		"profile_deployment_checks":                CloneSchemaOperational,
+		"profile_route_alert_state":                CloneSchemaOperational,
+		"profile_canary_checks":                    CloneSchemaOperational,
+		"profile_periodic_monitors":                CloneSchemaOperational,
+		"app_binding_release_policies":             CloneSchemaConfiguration,
+		"app_binding_release_policy_history":       CloneSchemaConfiguration,
+		"alert_rollback_actions":                   CloneSchemaOperational,
+		"alert_historical_rollback_claims":         CloneSchemaOperational,
+		"deployment_recovery_lineage":              CloneSchemaOperational,
+		"deployment_rollback_operations":           CloneSchemaOperational,
+		"deployment_dependency_gates":              CloneSchemaOperational,
+		"app_environment_secret_refs":              CloneSchemaConfiguration,
+		"app_environment_secret_ref_suppressions":  CloneSchemaConfiguration,
+		"app_environment_workload_intents":         CloneSchemaConfiguration,
+		"environment_git_sources":                  CloneSchemaConfiguration,
+		"environment_external_field_owners":        CloneSchemaConfiguration,
+		"environment_desired_revisions":            CloneSchemaConfiguration,
+		"environment_managed_fields":               CloneSchemaConfiguration,
+		"environment_management_overrides":         CloneSchemaConfiguration,
+		"environment_workload_graphs":              CloneSchemaConfiguration,
+		"deployment_route_policy_snapshots":        CloneSchemaConfiguration,
+		"instance_runtime_config_receipts":         CloneSchemaOperational,
+		"snapshot_runtime_config_receipts":         CloneSchemaOperational,
+		"financial_budget_policies":                CloneSchemaConfiguration,
+		"financial_budget_revisions":               CloneSchemaConfiguration,
+		"financial_usage_evidence":                 CloneSchemaIdentity,
+		"financial_price_snapshots":                CloneSchemaIdentity,
+		"financial_evidence_coverage":              CloneSchemaOperational,
+		"financial_sampling_windows":               CloneSchemaOperational,
 
 		"object_bucket_encryption":                           CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            CloneSchemaConfiguration,
@@ -172,6 +225,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
+
+		"project_release_sets": CloneSchemaConfiguration,
+
+		// Evidence and expiring execution plans belong to the source environment.
+		"binding_verification_runs":         CloneSchemaOperational,
+		"binding_verification_run_steps":    CloneSchemaOperational,
+		"project_binding_verification_runs": CloneSchemaOperational,
+		"project_release_stages":            CloneSchemaOperational,
+		"queue_binding_canaries":            CloneSchemaOperational,
 	}
 	for _, policy := range policies {
 		if kind, ok := wanted[policy.TableName]; ok {
@@ -208,6 +270,32 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	fresh, err := ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil || fresh[0].Kind == "changed" || fresh[0].Columns[0] == "changed" {
 		t.Fatalf("caller changed capture registry: %v", err)
+	}
+}
+
+func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
+	// adr: 202610171453 — known schema does not qualify hosting configuration or artifact cloning.
+	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := cloneSchemaCoverage(policies)
+	if err != nil || !report.Known {
+		t.Fatal("registered schema must be known", report, err)
+	}
+	wanted := map[string]string{
+		"hosting_sites":              "isolated_strategy_unavailable",
+		"hosting_domains":            "isolated_strategy_unavailable",
+		"hosting_retention_policies": "isolated_strategy_unavailable",
+		"hosting_releases":           "isolated_data_strategy_unavailable",
+	}
+	for _, blocker := range report.Blockers {
+		if wanted[blocker.Table] == blocker.Code {
+			delete(wanted, blocker.Table)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatal("hosting copy strategies became implicitly available", wanted)
 	}
 }
 

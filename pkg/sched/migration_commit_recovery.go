@@ -9,6 +9,9 @@ import (
 )
 
 func (h *MigrationHarness) resolveMigrationCommit(ctx context.Context, id, from, lease string, spec AppSpec) (state.MigrationCommitResolution, error) {
+	if spec.migrationAdmissionID != "" {
+		return h.resolveMigrationAdmission(ctx, id, from, lease, spec)
+	}
 	resolver, ok := h.store.(state.MigrationCommitRecoveryStore)
 	if !ok {
 		return state.MigrationCommitRetained, state.ErrMigrationCommitUnresolved
