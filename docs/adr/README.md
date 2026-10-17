@@ -1,5 +1,63 @@
 # Architecture Decision Records
 
+- [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
+
+- [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
+
+- [Bounded Node acknowledgment intent recovery passes](20261017171806-bounded-node-intent-recovery.md)
+
+- [Bounded Python acknowledgment intent recovery passes](20261017170311-bounded-python-intent-recovery.md)
+
+- [Shared Node and Python preparation monitoring](20261017165449-shared-preparation-monitoring.md)
+
+- [Prometheus exposition for Python preparation metrics](20261017164707-python-preparation-prometheus.md)
+
+- [Bounded Python preparation metrics](20261017164105-python-preparation-metrics.md)
+
+- [Python preparation lifecycle telemetry](20261017161548-python-preparation-lifecycle-telemetry.md)
+
+- [Python processing recovery inspection](20261017155904-python-processing-recovery-inspection.md)
+
+- [Coordinated Python event preparation](20261017154707-coordinated-python-event-preparation.md)
+
+- [Python consumer processing leases](20261017152929-python-consumer-processing-leases.md)
+
+- [Python recovery alert checkpoints](20261017145402-python-recovery-alert-checkpoints.md)
+
+- [Python sustained acknowledgment recovery alerts](20261017144446-python-sustained-acknowledgment-recovery-alerts.md)
+
+- [Python acknowledgment recovery health](20261017143147-python-acknowledgment-recovery-health.md)
+
+- [Python durable retry and dead-letter intents](20261017142209-python-durable-negative-acknowledgments.md)
+
+- [Python durable acknowledgment intents](20261017140016-python-durable-acknowledgment-intents.md)
+
+- [Python async event acknowledgment worker](20261017131506-python-async-event-acknowledgment-worker.md)
+
+- [Opt-in Node preparation monitoring](20261017125950-node-preparation-monitoring.md)
+
+- [Node preparation Prometheus exposition](20261017124511-node-preparation-prometheus.md)
+
+- [Bounded Node preparation metrics](20261017122416-node-preparation-metrics.md)
+
+- [Node preparation lifecycle telemetry](20261017121310-node-preparation-lifecycle-telemetry.md)
+
+- [Node processing recovery inspection](20261017115623-node-processing-recovery-inspection.md)
+
+- [Coordinated Node event preparation](20261017114800-coordinated-node-event-preparation.md)
+
+- [Node consumer processing leases](20261017114009-node-consumer-processing-leases.md)
+
+- [Restart-safe Node recovery alert checkpoints](20261017112428-node-recovery-alert-checkpoints.md)
+
+- [Node sustained acknowledgment recovery alerts](20261017111119-node-acknowledgment-recovery-watch.md)
+
+- [Node acknowledgment intent recovery health](20261017110351-node-acknowledgment-intent-health.md)
+
+- [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
+
+- [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
+
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
 separate files here. This directory holds ADRs made *after* the spec.
@@ -85,6 +143,14 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1286 | [Dashboard workflow diagnosis and recovery](1286-dashboard-workflow-diagnosis-and-recovery.md) | accepted | Scoped diagnostics and attempt inspection, recovery previews, confirmed idempotent continuation and cancellation |
 | 1285 | [Guided automation dashboard](1285-guided-automation-dashboard.md) | accepted | App-owner starter, validation, simulation, checked publishing, and run inspection flow |
 | 1540 | [Function cancellation completion and trusted lifecycle context](1540-function-cancellation-cleanup-and-lifecycle-context.md) | accepted | Shared slots remain occupied through cleanup; Node abort signals, Python cancellation events and socket-derived function lifecycle context support bounded database work |
+| 1571 | [Negotiated Node post-response execution completion](1571-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1572 | [Acknowledged function VM execution lifetime](1572-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1573 | [Automatic PostgreSQL ownership in Node functions](1573-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1574 | [Recover Node resources after warm capture](1574-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1575 | [Recover a function migration source after rollback](1575-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1576 | [Admit function migration capture and source recovery](1576-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1577 | [Restore and publish a measured function migration destination](1577-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1578 | [Reconstruct measured function handoffs at scheduler startup](1578-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
 | 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
 | 1385 | [Refresh authorization for retained WebSocket channels](1385-retained-channel-authorization-refresh.md) | accepted for implementation; deployed qualification pending | Share SSE's bounded channel grants with WebSocket history and buffered delivery; remove denied subscriptions and reconnect after callback outages |
 | 1332 | [Bind retained realtime to the verified login session](1332-session-bound-retained-realtime.md) | accepted for implementation; deployed qualification pending | Verified session/expiry handoff, periodic WebSocket JWT checks and session-aware Auth channel callbacks |
@@ -1364,11 +1430,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
-| 1571 | [Negotiated Node post-response execution completion](1571-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1572 | [Acknowledged function VM execution lifetime](1572-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1573 | [Automatic PostgreSQL ownership in Node functions](1573-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1574 | [Recover Node resources after warm capture](1574-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1575 | [Recover a function migration source after rollback](1575-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1576 | [Admit function migration capture and source recovery](1576-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1577 | [Restore and publish a measured function migration destination](1577-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1578 | [Reconstruct measured function handoffs at scheduler startup](1578-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+- [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
+

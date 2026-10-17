@@ -3652,6 +3652,104 @@ keeps the saved notification time separate from current observation clocks. Rati
 alerts list the expired numerator only. See
 [investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).
 
+### Deferred event acknowledgment worker
+
+`eventAcknowledgmentWorkerFromHeaders(app, headers, originalBody, accountId, appId)`
+reconstructs a worker from an authenticated delivery or its protected durable job.
+`run(pool, handler, { signal })` renews the platform lease while the transactional
+consumer receipt and business writes commit, then completes with the exact saved
+JSON. `completeReceipt` recovers an uncertain commit/completion without invoking
+business code. Explicit `retry` / `deadLetter` decisions check for an existing
+receipt first. The application owns durable job storage and exclusive ownership.
+See [usage, cancellation and recovery](../../docs/event-acknowledgment-node-worker.md)
+and the [durable-job integration](../../examples/event-acknowledgment-node/README.md).
+
+`runDurable` commits a completion intent with the receipt and business writes.
+`saveCompletionIntent` stages a saved receipt without business code;
+`saveRetryIntent` / `saveDeadLetterIntent` persist explicit negative decisions.
+Install `eventAcknowledgmentIntentSchema` explicitly in the application database,
+and run `recoverNextEventAcknowledgmentIntent` from a durable recovery host.
+Recovery sends only the saved callback; inspect its returned `state` / `lastCode`.
+`listEventAcknowledgmentIntents` provides bounded metadata without tokens or results.
+See [transaction, recovery and retention details](../../docs/event-acknowledgment-node-intents.md).
+
+`getEventAcknowledgmentIntentHealth(pool, accountId, appId, { scanLimit, stallAfterMs, signal })`
+reads one owner-scoped database snapshot for pending/unconfirmed backlog, due work,
+live/expired claims, stalled recovery and oldest overdue age. Export `complete`,
+`truncated` and `coverage` with the counts; incomplete scans cannot establish
+healthy recovery. The helper reads metadata only and claims no work. See
+[options, coverage and cancellation](../../docs/event-acknowledgment-intent-health.md#node-summary).
+
+`watchEventAcknowledgmentIntentHealth(pool, accountId, appId, options, notify)`
+adds sustained `due_backlog` / `stalled_recovery` alerts with opt-in thresholds.
+Firing and resolution require multiple fresh, complete observations; failed,
+incomplete or stale evidence becomes `unknown` / `confirmation_lost`. Polls and
+local callbacks run sequentially, and cancellation never resolves an incident.
+State is in memory; notification transport and durable identity stay application-owned.
+See [watch options, callback errors and cooperative deadlines](../../docs/event-acknowledgment-intent-health.md#node-watch).
+
+`watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, accountId, appId, options)`
+adds opt-in restart recovery with stable incident IDs and a bounded notification
+outbox. Persist `progress.checkpoint` in `onProgress` before delivering
+`checkpoint.pending`; acknowledge exact incident/sequence pairs with
+`acknowledgeEventAcknowledgmentIntentAlerts`. Resume validates owner/policy and
+requires fresh confirmation while retaining unresolved incident identity.
+See [checkpoint validation, replay and shutdown](../../docs/event-acknowledgment-node-checkpoints.md).
+
+`claimEventConsumerProcessing(pool, input, durationMs, { signal })` provides an
+opaque local preparation lease with `completed`, `renew` and `complete`. Install
+`eventConsumerProcessingSchema` explicitly beside the inbox. Worker
+`runWithProcessingLease` / `runDurableWithProcessingLease` compose the same local
+fence with platform acknowledgment and optional atomic intent staging. Stop local
+renewal before the short final transaction. See [takeover, failure and lease boundaries](../../docs/event-consumer-processing-node.md).
+
+`worker.runPreparedDurable(pool, prepare, handler, { preparationTimeoutMs,
+processingLeaseMs, signal })` coordinates both local and platform lease renewal
+during side-effect-free preparation. Existing receipts skip both callbacks. Local
+renewal stops and joins before the fenced business-write/receipt/intent commit;
+platform renewal continues through it. The preparation timeout is required and
+does not bound the final transaction; supply a parent deadline and driver timeouts.
+See [coordinated preparation and recovery](../../docs/event-acknowledgment-node-preparation.md).
+
+`inspectEventConsumerProcessing(pool, input, { signal })` reads one original
+consumer acceptance's local receipt/claim metadata. It reports completed, active,
+expired, absent or conflict evidence plus database observation/expiry times and
+rounded-down remaining lease milliseconds. It selects no token or response body,
+makes no mutation and grants no processing ownership or acknowledgment proof.
+See [snapshot boundaries and explicit recovery](../../docs/event-consumer-processing-inspection.md).
+
+Prepared operations accept optional `onEvent(event)` for bounded phase, duration,
+renewal-failure and commit-outcome telemetry. Events exclude identities, tokens,
+payloads, prepared data, results and raw errors. Use a passive synchronous adapter;
+throws and accidental async rejections are ignored without changing processing
+outcomes. See [event ordering and observer limits](../../docs/event-acknowledgment-node-telemetry.md).
+
+`EventAcknowledgmentPreparationMetrics` supplies a bound `record` observer for
+`onEvent` and immutable `snapshot()` counters/histograms. Labels and duration
+buckets are fixed, memory stays bounded, and saturation is explicit. Counts are
+process-local observations; duplicate records count again and callback delivery
+remains separate. No exporter dependency is installed. See [counting and exporter semantics](../../docs/event-acknowledgment-node-metrics.md).
+
+`formatEventAcknowledgmentPreparationMetrics(metrics.snapshot(), { prefix? })`
+renders cumulative Prometheus text 0.0.4 with fixed labels, durations in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` on an application-owned
+scrape path. No registry, listener or network publication is added. See the
+[metric names and private scrape example](../../docs/event-acknowledgment-node-prometheus.md).
+
+The application-owned [shared Node/Python monitoring pack](../../examples/event-acknowledgment-monitoring/README.md)
+includes opt-in Prometheus recording/alert rules, a Grafana dashboard and recovery
+runbook. Tune sample guards and thresholds for your worker workload and install
+it through your own monitoring deployment process.
+
+`recoverEventAcknowledgmentIntents(pool, accountId, appId, { maxAttempts?,
+concurrency?, signal?, claimDurationMs?, backoffMs?, callbackOptions? })` runs one
+finite saved-callback recovery pass. Admissions/concurrency are bounded, existing
+transaction fences remain authoritative and all worker promises join. Frozen
+`.result` progress accompanies ordinary failure, AbortError and uncertain-COMMIT
+exceptions. The host schedules later passes and owns pool/client lifetime. See
+[budgets, pool release and recovery progress](../../docs/event-acknowledgment-node-recovery-pass.md).
+
 ## Issue source maps
 
 Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept

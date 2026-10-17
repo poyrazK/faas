@@ -1,0 +1,17 @@
+# Opt-in Node or SDK-neutral worker-host example; merge into your configuration.
+# Loopback works only when Prometheus shares the worker's network namespace.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - preparation.rules.yml
+
+scrape_configs:
+  - job_name: gregale-event-preparation
+    metrics_path: /metrics
+    honor_labels: false
+    static_configs:
+      - targets: ['127.0.0.1:9464']
+        labels:
+          gregale_event_preparation: 'true'
