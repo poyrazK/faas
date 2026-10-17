@@ -74,6 +74,8 @@ class OutboundIntegrationOffer:
     """Whether each settled app call writes one metadata line to the app's log drains (ADR-1340)."""
     ai_allow_unmetered: bool | Unset = UNSET
     """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1370)."""
+    ai_auto_prompt_cache: bool | Unset = UNSET
+    """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1420)."""
     ai_user_daily_token_limit: int | None | Unset = UNSET
     """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET
@@ -140,6 +142,8 @@ class OutboundIntegrationOffer:
 
         ai_allow_unmetered = self.ai_allow_unmetered
 
+        ai_auto_prompt_cache = self.ai_auto_prompt_cache
+
         ai_user_daily_token_limit: int | None | Unset
         if isinstance(self.ai_user_daily_token_limit, Unset):
             ai_user_daily_token_limit = UNSET
@@ -188,6 +192,8 @@ class OutboundIntegrationOffer:
             field_dict["ai_log_export"] = ai_log_export
         if ai_allow_unmetered is not UNSET:
             field_dict["ai_allow_unmetered"] = ai_allow_unmetered
+        if ai_auto_prompt_cache is not UNSET:
+            field_dict["ai_auto_prompt_cache"] = ai_auto_prompt_cache
         if ai_user_daily_token_limit is not UNSET:
             field_dict["ai_user_daily_token_limit"] = ai_user_daily_token_limit
         if ai_user_daily_cost_limit_millicents is not UNSET:
@@ -283,6 +289,8 @@ class OutboundIntegrationOffer:
 
         ai_allow_unmetered = d.pop("ai_allow_unmetered", UNSET)
 
+        ai_auto_prompt_cache = d.pop("ai_auto_prompt_cache", UNSET)
+
         def _parse_ai_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -325,6 +333,7 @@ class OutboundIntegrationOffer:
             ai_content_policy=ai_content_policy,
             ai_log_export=ai_log_export,
             ai_allow_unmetered=ai_allow_unmetered,
+            ai_auto_prompt_cache=ai_auto_prompt_cache,
             ai_user_daily_token_limit=ai_user_daily_token_limit,
             ai_user_daily_cost_limit_millicents=ai_user_daily_cost_limit_millicents,
         )

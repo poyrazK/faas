@@ -57,7 +57,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
 		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
-		LogExport: req.LogExport, AllowUnmetered: req.AllowUnmetered,
+		LogExport: req.LogExport, AllowUnmetered: req.AllowUnmetered, AutoPromptCache: req.AutoPromptCache,
 	})
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }

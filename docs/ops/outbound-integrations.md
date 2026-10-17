@@ -589,6 +589,51 @@ call:
 
 Larger bodies stream exactly as before, without these features.
 
+## AI automatic prompt caching
+
+`gregale ai policy <id> --prompt-cache on` (or `auto_prompt_cache` in the AI
+policy) lets the gateway add prompt-cache breakpoints to Claude requests that
+carry none (ADR-1420). It covers:
+
+- the Anthropic Messages API;
+- Vertex AI's Anthropic endpoints;
+- Bedrock InvokeModel and Converse for Claude models;
+- OpenAI-format routes to any of these.
+
+A request that sets its own `cache_control`, or `cachePoint` on Converse, is
+left as it is.
+
+The gateway adds at most two breakpoints, both with the default five-minute
+lifetime:
+
+- **Prefix:** at the end of the system prompt, or of the tool list when there
+  is no system prompt. It is added when the prefix is at least about 1,024
+  tokens (4 KiB). The same tools and system prompt for the same model must
+  have been seen on the integration in the last five minutes, or the call
+  must name `X-Gregale-AI-Session`. A prompt sent once is never marked.
+- **Conversation:** at the last eligible block of the last message, when the
+  request carries earlier turns or names `X-Gregale-AI-Session`, and the
+  whole prompt is at least about 1,024 tokens. The next turn reads the
+  conversation from the cache. Thinking blocks are never marked.
+
+The response names what was added in `X-Gregale-AI-Prompt-Cache:
+prefix,conversation`, and `outbound_ai_prompt_cache_marks_total` counts the
+marks.
+
+**Costs:**
+
+- A cache write costs 1.25 times the input price and a read 0.1 times or less.
+  Usage reports cached and cache-write tokens and prices them from the price
+  list.
+- A conversation that stops after one more turn, or a prefix seen twice and
+  never again, pays the write premium once without a read.
+- Each outboundd process tracks repeated prefixes on its own, so with several
+  replicas a prefix may need one more call per replica before it is marked.
+
+OpenAI and Gemini cache prompts without markers, so the setting changes
+nothing for them. A marked body is re-encoded as JSON: key order changes, the
+content does not.
+
 ## AI fallback routes
 
 A route is an ordered list of one to five managed AI integrations of one

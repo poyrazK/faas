@@ -156,8 +156,11 @@ type IntegrationConfig struct {
 	AIDailyTokenLimit              int64         `toml:"ai_daily_token_limit"`
 	// AIAllowUnmetered lets through writes the gateway cannot meter
 	// (ADR-1370).
-	AIAllowUnmetered bool  `toml:"ai_allow_unmetered"`
-	Enabled          *bool `toml:"enabled"`
+	AIAllowUnmetered bool `toml:"ai_allow_unmetered"`
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// (ADR-1420).
+	AIAutoPromptCache bool  `toml:"ai_auto_prompt_cache"`
+	Enabled           *bool `toml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -287,6 +290,7 @@ func (c *Config) Policies(getenv func(string) string) ([]configuredIntegration, 
 			policy.DailyAITokenLimit = &limit
 		}
 		policy.AIAllowUnmetered = raw.AIAllowUnmetered
+		policy.AIAutoPromptCache = raw.AIAutoPromptCache
 		policy.AllowedMethods = raw.AllowedMethods
 		policy.AllowedPathPrefixes = raw.AllowedPathPrefixes
 		if err := policy.Validate(); err != nil {

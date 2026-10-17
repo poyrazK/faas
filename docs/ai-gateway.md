@@ -45,6 +45,10 @@ account during the preview; contact support to have it turned on for yours.
 - **Batches.** OpenAI, Azure OpenAI and Anthropic batch jobs are capped before
   they are created and settled at the batch price when they finish.
 - **Key pools.** Extra provider keys with per-key cooldown after a 429.
+- **Automatic prompt caching.** For Claude on Anthropic, Vertex and Bedrock,
+  the gateway marks repeated system prompts and tool lists and continuing
+  conversations for the provider's cache, so repeated input is billed at the
+  cache-read price.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
@@ -102,6 +106,7 @@ gregale ai content-policy <id> --response-email redact --response-secrets block 
 gregale ai content-policy <id> --moderation block --moderation-kind classifier \
   --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
 gregale ai policy <id> --log-export on                  # to the app's log drains
+gregale ai policy <id> --prompt-cache on                # cache repeated Claude prompts
 gregale ai routes set <route-id> --target <a> --target <b> --strategy weighted --weights 70,30
 gregale ai routes set <route-id> --target <a> --target <b> --strategy cost --max-ttfb-ms 1500
 gregale ai routes canary <route-id> --position 2 --percent 10

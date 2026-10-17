@@ -808,6 +808,7 @@ var cliCommands = []cliCommand{
 				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
 				{Name: "log-export", Short: "send each app call's metadata to the app's log drains", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "allow-unmetered", Short: "let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "prompt-cache", Short: "add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
 			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},

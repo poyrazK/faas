@@ -125,6 +125,9 @@ type Integration struct {
 	// AIAllowUnmetered lets through writes the gateway can neither meter
 	// nor knows to be free; otherwise they are refused (ADR-1370).
 	AIAllowUnmetered bool
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// that carry none (ADR-1420).
+	AIAutoPromptCache bool
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
@@ -244,6 +247,9 @@ func (i Integration) Validate() error {
 	}
 	if i.AIAllowUnmetered && i.AIProvider == "" {
 		return fmt.Errorf("%w: allowing unmetered AI calls requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AIAutoPromptCache && i.AIProvider == "" {
+		return fmt.Errorf("%w: automatic prompt caching requires an AI provider", ErrInvalidIntegration)
 	}
 	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
 		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)

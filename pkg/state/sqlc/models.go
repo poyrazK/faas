@@ -7018,6 +7018,7 @@ type OutboundIntegration struct {
 	AiResponseSecret               string
 	AiResponseBlockedTerms         string
 	AiResponseModeration           string
+	AiAutoPromptCache              bool
 }
 
 type OutboundIntegrationApp struct {

@@ -75,6 +75,9 @@ type OutboundIntegrationOffer struct {
 	// AIAllowUnmetered lets through writes the gateway cannot meter, outside
 	// the caps (ADR-1370).
 	AIAllowUnmetered bool `json:"ai_allow_unmetered"`
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// that carry none (ADR-1420).
+	AIAutoPromptCache bool `json:"ai_auto_prompt_cache"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -135,6 +138,10 @@ type PutOutboundAIPolicyRequest struct {
 	// knows to be free, such as realtime client secrets, vector stores or
 	// fine-tuning jobs. Their spend is outside the caps (ADR-1370).
 	AllowUnmetered bool `json:"allow_unmetered,omitempty"`
+	// AutoPromptCache adds prompt-cache breakpoints to Claude requests that
+	// carry none: after a repeated system prompt or tool list, and after the
+	// last message of a continuing conversation (ADR-1420).
+	AutoPromptCache bool `json:"auto_prompt_cache,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
@@ -143,7 +150,8 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
 		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
 		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
-		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "")
+		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "") &&
+		(!r.AutoPromptCache || r.AIProvider != "")
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is

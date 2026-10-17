@@ -63,6 +63,7 @@ const integrationPolicySQL = `
 	       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
 	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
 	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
+	       integration.ai_auto_prompt_cache,
 	       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
 	       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation,
 	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
@@ -127,7 +128,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var policyUpdatedAt time.Time
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
-	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport, aiAllowUnmetered bool
+	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport, aiAllowUnmetered, aiAutoPromptCache bool
 	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	var tagLimitTags []string
@@ -141,6 +142,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms,
 			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
 			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered,
+			&aiAutoPromptCache,
 			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
 			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
 			&tagLimitTags, &tagLimitCosts)
@@ -272,6 +274,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		AIContentPolicy:   contentPolicy,
 		AILogExport:       aiLogExport,
 		AIAllowUnmetered:  aiAllowUnmetered,
+		AIAutoPromptCache: aiAutoPromptCache,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}

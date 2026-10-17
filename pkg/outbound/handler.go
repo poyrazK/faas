@@ -75,6 +75,9 @@ type Handler struct {
 	// aiContainers charges each code-interpreter container once per
 	// session window (ADR-1380).
 	aiContainers aiContainerSessions
+	// promptPrefixes remembers repeated prompt prefixes for automatic
+	// prompt caching (ADR-1420).
+	promptPrefixes promptPrefixes
 	// routeRandom replaces the routing draw in tests (ADR-1390).
 	routeRandom func(int) int
 }
@@ -359,6 +362,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
 		return
+	}
+	if marks := h.applyPromptCache(r, integration, aiPlan, aiReq); len(marks) > 0 {
+		// ADR-1420: the breakpoints the gateway added for the provider's cache.
+		w.Header().Set(AIPromptCacheHeader, strings.Join(marks, ","))
+		for _, mark := range marks {
+			h.Metrics.ObserveAIPromptCacheMark(metricIntegrationID, mark)
+		}
 	}
 	// ADR-1360: a batch creation is admitted at the batch's estimate.
 	var batch *AIBatch

@@ -50,6 +50,9 @@ type OutboundIntegrationOffer struct {
 	// AIAllowUnmetered lets through writes the gateway cannot meter
 	// (ADR-1370).
 	AIAllowUnmetered bool
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// (ADR-1420).
+	AIAutoPromptCache bool
 	// AILogExport sends settled app calls to the app's log drains
 	// (ADR-1340).
 	AILogExport bool
@@ -126,6 +129,9 @@ type OutboundAIPolicy struct {
 	// AllowUnmetered lets through writes the gateway cannot meter; it
 	// requires a provider (ADR-1370).
 	AllowUnmetered bool
+	// AutoPromptCache adds prompt-cache breakpoints to Claude requests; it
+	// requires a provider (ADR-1420).
+	AutoPromptCache bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
@@ -133,7 +139,8 @@ func (p OutboundAIPolicy) valid() bool {
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
 		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
-		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "")
+		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "") &&
+		(!p.AutoPromptCache || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

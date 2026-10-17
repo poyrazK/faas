@@ -30,7 +30,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		       ai_daily_cost_limit_millicents = $5, ai_monthly_cost_limit_millicents = $6,
 		       ai_request_log_enabled = $7, ai_user_daily_token_limit = $8,
 		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, ai_log_export = $11,
-		       ai_allow_unmetered = $12,
+		       ai_allow_unmetered = $12, ai_auto_prompt_cache = $13,
 		       -- ADR-997: turning AI handling off also clears the content policy,
 		       -- its moderation check (ADR-1340) and its response checks (ADR-1400).
 		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
@@ -55,7 +55,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Provider, policy.DailyTokenLimit,
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
 		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport,
-		policy.AllowUnmetered)
+		policy.AllowUnmetered, policy.AutoPromptCache)
 	if err != nil {
 		return mapErr(err)
 	}

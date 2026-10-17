@@ -8211,6 +8211,7 @@
     "columns": [
       "account_id",
       "ai_allow_unmetered",
+      "ai_auto_prompt_cache",
       "ai_content_blocked_terms",
       "ai_content_email",
       "ai_content_iban",

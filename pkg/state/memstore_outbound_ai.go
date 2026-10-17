@@ -36,6 +36,7 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	offer.AIRequestLogContent = policy.RequestLogContent
 	offer.AILogExport = policy.LogExport
 	offer.AIAllowUnmetered = policy.AllowUnmetered
+	offer.AIAutoPromptCache = policy.AutoPromptCache
 	if policy.Provider == "" {
 		offer.AIContentPolicy = api.OutboundAIContentPolicy{}
 	}

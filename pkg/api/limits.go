@@ -965,7 +965,12 @@ const (
 	OutboundAITagsPerDay       = 1_000
 	OutboundAITagLimitsMax     = 20
 	OutboundAITagUsagePageMax  = 1_000
-	OutboundAIUserIDMaxBytes   = 64
+	// Automatic prompt caching (ADR-1420): the estimated prompt or prefix
+	// tokens below which no breakpoint is added, and the cache lifetime a
+	// repeated prefix must recur within.
+	OutboundAIPromptCacheMinTokens       = 1_024
+	OutboundAIPromptCacheLifetimeSeconds = 300
+	OutboundAIUserIDMaxBytes             = 64
 	// Opt-in content capture (ADR-996): the bytes kept of each logged
 	// call's request and response body, the captures per integration and
 	// UTC day, and how long they stay.

@@ -69,6 +69,10 @@ export type OutboundIntegrationOffer = {
    */
   ai_allow_unmetered?: boolean;
   /**
+   * Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1420).
+   */
+  ai_auto_prompt_cache?: boolean;
+  /**
    * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_token_limit?: number | null;

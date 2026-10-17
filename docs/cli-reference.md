@@ -2156,7 +2156,7 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] [--log-export <on|off>] [--allow-unmetered <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2170,6 +2170,7 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
 | `--log-export <on|off>` | send each app call&#39;s metadata to the app&#39;s log drains | one of `on` · `off` |
 | `--allow-unmetered <on|off>` | let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps | one of `on` · `off` |
+| `--prompt-cache <on|off>` | add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation | one of `on` · `off` |
 
 ### ai content-policy
 

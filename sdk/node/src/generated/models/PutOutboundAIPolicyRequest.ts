@@ -27,6 +27,10 @@ export type PutOutboundAIPolicyRequest = {
    */
   allow_unmetered?: boolean;
   /**
+   * Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that carry none: after a system prompt or tool list seen again within five minutes, and after the last message of a conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1420). Requires ai_provider.
+   */
+  auto_prompt_cache?: boolean;
+  /**
    * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_token_limit?: number | null;
