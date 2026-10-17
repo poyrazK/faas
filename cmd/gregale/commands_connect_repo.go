@@ -37,7 +37,7 @@ import (
 // shape so dashboards / automation can compose the verb).
 func cmdConnectRepo(args []string) int {
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale connect repo <owner>/<name>", "connect")
+		PrintUsage(os.Stderr, "usage: gregale connect repo [--json] <owner>/<name>", "connect")
 		return 1
 	}
 	repo := args[0]

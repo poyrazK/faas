@@ -11,6 +11,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -145,13 +146,32 @@ func TestCmdConnect_RepoRoutesToCmdConnectRepoEndToEnd(t *testing.T) {
 }
 
 // TestCmdConnect_RepoUnknownServiceErrors ensures the dispatcher's
-// unknown-service error mentions both options ("github" + "repo
-// <owner>/<name>"), so the customer gets actionable help text.
+// unknown-service error message mentions BOTH options ("github" +
+// "repo <owner>/<name>") AND the shape annotation, so the customer
+// gets actionable help text. Captures stderr (captureStderr) so a
+// regression that drops the "repo" mention or the shape annotation
+// from the PrintFail format string at commands2.go:2134 fails this
+// test rather than passing silently with exit code 1.
 func TestCmdConnect_RepoUnknownServiceErrors(t *testing.T) {
 	_ = withRecorder(t)
 	t.Setenv("FAAS_API", "https://api.example.test")
+	stderr, restore := captureStderr(t)
+	defer restore()
+
 	if code := cmdConnect([]string{"gitlab"}); code != 1 {
 		t.Errorf("cmdConnect gitlab = %d, want 1", code)
+	}
+	msg := stderr.String()
+	for _, want := range []string{
+		"unknown service",
+		"gitlab",
+		svcGithub,
+		svcRepo,
+		"<owner>/<name>", // shape annotation so the customer knows repo takes a positional
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("stderr missing %q\n--- stderr ---\n%s", want, msg)
+		}
 	}
 }
 
