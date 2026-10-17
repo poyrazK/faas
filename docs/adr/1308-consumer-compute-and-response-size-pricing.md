@@ -1,0 +1,26 @@
+# ADR-1308: Consumer compute and response-size pricing
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** App consumer rate cards can price billable requests' compute time or response size instead of their count.
+  - **Units.** A card's `unit` is `request` (the default), `compute_second` or `response_megabyte` (1,000,000 bytes).
+  - **Measurement.** The gateway measures each billable consumer request when it commits the request's usage (ADR-1505):
+    - **Compute time.** The execution time the runtime reports in its evidence header. Without one, it is the time from forwarding the request to the guest until the commit, which excludes wake and cold start.
+    - **Response size.** The size of the response body: its declared length when the completing bytes are written, or the bytes written when the handler exits for chunked responses.
+    - **Where it goes.** Both values travel in the usage event and its gRPC message. The receiver adds them to the consumer's usage minute (`compute_ms`, `response_bytes`). Anonymous and unbillable requests carry neither.
+  - **Delivery.** A receipt flag acknowledges stored values, so a gateway keeps such an event until an apid that records them takes it, as with discovery and audit evidence.
+  - **Pricing.** For minutes a compute or response-size card prices, the minute's units are its summed compute time in seconds or response size in megabytes, rounded to the nearest whole unit with halves up. Statements, quotes, allowances, tiers, plans, spend caps (ADR-1306) and exports all use those units.
+  - **Validation.**
+    - Route weights apply to request cards only.
+    - Compute and response-size cards cannot be backdated.
+    - A card that changes a price history's unit must start at 00:00 UTC on the 1st, so one month's allowance and tiers never count two kinds of unit.
+- **Why:** API businesses whose costs follow compute (inference, rendering) or egress (files, media) want to charge that way. Counting requests over- or under-charges when request cost varies.
+- **Consequences:**
+  - **Rounding per minute.** A consumer's minute can be off by half a unit either way: the sub-unit rest of each minute is not carried over. Rounding a minute only grows as late usage arrives, which keeps finalized revisions consistent and needs no calendar-month statements.
+  - **Edge limits stay in requests.** Plan rate limits and monthly caps enforced at the gateway (ADR-953) still count requests, because the gateway decides before a request has run.
+  - **Scope.** Platform tenant cards (ADR-975, ADR-1307) still price requests only.
+  - **Rollout.** apid must be upgraded before gateways. Older apids return no receipt flag, so new gateways hold measured events until the upgrade.
+- **Rejected alternatives:**
+  - Allocating whole units from cumulative month totals is exact over a month. But late usage can move a unit into an earlier minute and lower a later one, which the statement revision rules (ADR-949) reject as regressed usage.
+  - Millisecond and byte units would need prices below one millicent per unit for typical rates, which integer millicents cannot express.
+  - Rounding each minute up over-charges small consumers by up to a whole unit per active minute.

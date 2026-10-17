@@ -95,6 +95,7 @@ func finishObservationRelease(t *testing.T, s state.Store, a state.App, d state.
 	return task
 }
 
+// adr: 20261017122043000 — Read-only prime handoff evidence and independent collection health.
 func TestSnapshotPrimeObservationStoreContract(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {

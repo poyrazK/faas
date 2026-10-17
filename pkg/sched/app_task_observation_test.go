@@ -67,6 +67,7 @@ func expectTaskCohort(t *testing.T, s state.Store, at time.Time, kind int, class
 	}
 }
 
+// adr: 20261017141024523 — Bounded task evidence, freshness and coordinator progress.
 func TestAppTaskObservationLifecycleContract(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		for k, kind := range []state.AppTaskKind{state.AppTaskKindRelease, state.AppTaskKindManual} {

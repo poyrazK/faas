@@ -123,6 +123,7 @@ func TestPlanEmptyEnvironmentRequiresPruneAndPreservesOtherManagers(t *testing.T
 	}
 	d := definition()
 	d.Workloads = map[string]api.EnvironmentWorkload{}
+	d.WorkloadPruningPolicy = "retain"
 	empty, err := Compile(d)
 	if err != nil {
 		t.Fatal(err)
@@ -147,9 +148,12 @@ func TestPlanEmptyEnvironmentRequiresPruneAndPreservesOtherManagers(t *testing.T
 		for _, change := range plan.Changes {
 			switch change.Resource {
 			case "workload/api":
-				want := "remove_candidate"
-				if prune {
-					want = "remove"
+				want := "keep"
+				if change.Path == "presence" {
+					want = "remove_candidate"
+					if prune {
+						want = "remove"
+					}
 				}
 				if change.Action != want {
 					t.Fatalf("owned field removal: %+v", change)

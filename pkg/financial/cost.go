@@ -77,7 +77,7 @@ type MeterCost struct {
 // with fractional prices. Ordering by stable attribution makes replay invariant.
 func CostMeter(accountID string, start, end time.Time, price Price, entries []Evidence) (MeterCost, error) {
 	out := MeterCost{Price: price, AllocationMethod: "quantity_share_largest_remainder_v1", Allocations: []Allocation{}}
-	if accountID == "" || !start.Before(end) || price.Version == "" || price.Meter == "" || price.Currency != "EUR" || price.Unit == "" || price.UnitQuantity <= 0 || price.MillicentsPerUnit < 0 || price.IncludedQuantity < 0 {
+	if accountID == "" || !start.Before(end) || price.Version == "" || price.Meter == "" || price.Currency != BillingCurrency || price.Unit == "" || price.UnitQuantity <= 0 || price.MillicentsPerUnit < 0 || price.IncludedQuantity < 0 {
 		return out, ErrInvalid
 	}
 	quantities := map[Attribution]*big.Int{}

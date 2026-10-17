@@ -23,6 +23,8 @@ type commandObservationReaderFunc func(context.Context, string, string) ([]state
 func (f commandObservationReaderFunc) CommandCronObservations(ctx context.Context, owner, local string) ([]state.CommandCronObservation, error) {
 	return f(ctx, owner, local)
 }
+
+// adr: 20261017150710907 — Read-only schedule evidence and committed admission outcomes.
 func TestCommandCronMetricsFreshnessAndIndependentRead(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 	m := newCommandCronMetrics(reg)

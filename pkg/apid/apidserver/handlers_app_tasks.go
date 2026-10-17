@@ -141,6 +141,10 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 	}
 	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
 	if pinErr != nil {
+		var problem *api.Problem
+		if errors.As(pinErr, &problem) {
+			return state.AppTask{}, problem
+		}
 		return state.AppTask{}, api.ErrInternal("could not capture binding verification metadata")
 	}
 	if (resolved.VerificationDeploymentID != "" || len(resolved.Command) > 0 && (resolved.Command[0] == api.AppTaskOutboundBindingProbeCommand || resolved.Command[0] == api.AppTaskObjectStorageWriteProbeCommand)) && pin == nil {

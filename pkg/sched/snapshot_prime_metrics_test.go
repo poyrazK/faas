@@ -45,6 +45,7 @@ func primeGauges(t *testing.T, reg *prometheus.Registry) map[string]float64 {
 	return out
 }
 
+// adr: 20261017122043000 — Read-only prime handoff evidence and independent collection health.
 func TestSnapshotPrimeMetricsFreshnessAndUnknownHistory(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 	m := newSnapshotPrimeMetrics(reg)

@@ -1,7 +1,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -82,48 +84,47 @@ func (s *server) createPlatformTenantStatement(w http.ResponseWriter, r *http.Re
 		tenantStatementPeriodProblem(w)
 		return
 	}
-	start, end := req.PeriodStart.UTC(), req.PeriodEnd.UTC()
-	plan, err := store.PlanPlatformTenantStatement(r.Context(), acct.ID, tenant.ID, start, end)
+	statement, created, err := s.draftPlatformTenantStatement(r.Context(), acct, tenant.ID, store, req.PeriodStart.UTC(), req.PeriodEnd.UTC())
 	if err != nil {
-		writeTenantStatementQuoteError(w, err)
+		api.WriteProblem(w, tenantStatementProblem(err))
 		return
 	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, platformTenantStatementResponse(statement))
+}
+
+// draftPlatformTenantStatement snapshots the period's tenant-attributed
+// usage (ADR-238). Unchanged usage replays the latest revision (created is
+// false). The handler and billing runs (ADR-1503) share it.
+func (s *server) draftPlatformTenantStatement(ctx context.Context, acct state.Account, tenantID string,
+	store state.PlatformTenantStatementStore, start, end time.Time) (state.PlatformTenantStatement, bool, error) {
+	plan, err := store.PlanPlatformTenantStatement(ctx, acct.ID, tenantID, start, end)
+	if err != nil {
+		return state.PlatformTenantStatement{}, false, err
+	}
 	if len(plan.UsageDelta) == 0 && plan.HasLatest {
-		writeJSON(w, http.StatusOK, platformTenantStatementResponse(plan.Latest))
-		return
+		return plan.Latest, false, nil
 	}
 	revision, priorStatus := 1, state.APIConsumerUsageStatementStatus("")
 	if plan.HasLatest {
 		revision, priorStatus = plan.Latest.Revision+1, plan.Latest.Status
 	}
-	input, err := s.quotePlatformTenantStatement(r, acct.ID, tenant.ID, start, end, revision, priorStatus, plan.UsageDelta)
+	input, err := s.quotePlatformTenantStatement(ctx, acct.ID, tenantID, start, end, revision, priorStatus, plan.UsageDelta)
 	if err != nil {
-		writeTenantStatementQuoteError(w, err)
-		return
+		return state.PlatformTenantStatement{}, false, err
 	}
-	s.persistPlatformTenantStatement(w, r, acct, tenant, store, input)
+	statement, created, err := store.CreatePlatformTenantStatement(ctx, input)
+	if err != nil || !created {
+		return statement, false, err
+	}
+	s.audit.Emit(ctx, "platform_tenant_statement.created", &acct.ID, map[string]any{"tenant_id": tenantID, "statement_id": statement.ID, "revision": statement.Revision})
+	return statement, true, nil
 }
 
-func (s *server) persistPlatformTenantStatement(w http.ResponseWriter, r *http.Request, acct state.Account,
-	tenant state.PlatformTenant, store state.PlatformTenantStatementStore, input state.PlatformTenantStatementInput) {
-	statement, created, err := store.CreatePlatformTenantStatement(r.Context(), input)
-	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Statement revision conflict", "statement state changed; reload the period and retry"))
-		return
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not create platform tenant statement"))
-		return
-	}
-	if created {
-		s.audit.Emit(r.Context(), "platform_tenant_statement.created", &acct.ID, map[string]any{"tenant_id": tenant.ID, "statement_id": statement.ID, "revision": statement.Revision})
-		writeJSON(w, http.StatusCreated, platformTenantStatementResponse(statement))
-		return
-	}
-	writeJSON(w, http.StatusOK, platformTenantStatementResponse(statement))
-}
-
-func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenantID string, start, end time.Time,
+func (s *server) quotePlatformTenantStatement(ctx context.Context, accountID, tenantID string, start, end time.Time,
 	revision int, priorStatus state.APIConsumerUsageStatementStatus,
 	usageDelta []state.APIConsumerUsageBucket) (state.PlatformTenantStatementInput, error) {
 	cardsStore, ok := s.store.(state.APIConsumerRateCardStore)
@@ -135,18 +136,18 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 	if !ok {
 		return state.PlatformTenantStatementInput{}, state.ErrNotFound
 	}
-	tenantCards, err := tenantCardsStore.ListPlatformTenantRateCards(r.Context(), accountID, tenantID)
+	tenantCards, err := tenantCardsStore.ListPlatformTenantRateCards(ctx, accountID, tenantID)
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
 	if billing.TenantMonthlyPricing(tenantCards, start, end) {
-		return s.quotePlatformTenantMonth(r, accountID, tenantID, start, end, revision, priorStatus, usageDelta, tenantCards)
+		return s.quotePlatformTenantMonth(ctx, accountID, tenantID, start, end, revision, priorStatus, usageDelta, tenantCards)
 	}
 	for _, bucket := range usageDelta {
 		if _, loaded := cards[bucket.AppID]; loaded {
 			continue
 		}
-		appCards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, bucket.AppID)
+		appCards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, accountID, bucket.AppID)
 		if err != nil {
 			return state.PlatformTenantStatementInput{}, err
 		}
@@ -158,7 +159,7 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 
 // quotePlatformTenantMonth re-prices a whole month for tenant allowances
 // and tiers (ADR-975) and bills the difference from finalized revisions.
-func (s *server) quotePlatformTenantMonth(r *http.Request, accountID, tenantID string, start, end time.Time,
+func (s *server) quotePlatformTenantMonth(ctx context.Context, accountID, tenantID string, start, end time.Time,
 	revision int, priorStatus state.APIConsumerUsageStatementStatus, usageDelta []state.APIConsumerUsageBucket,
 	tenantCards []state.PlatformTenantRateCard) (state.PlatformTenantStatementInput, error) {
 	statements, okStatements := s.store.(state.PlatformTenantStatementStore)
@@ -169,11 +170,11 @@ func (s *server) quotePlatformTenantMonth(r *http.Request, accountID, tenantID s
 	if !billing.IsCalendarMonth(start, end) {
 		return state.PlatformTenantStatementInput{}, billing.ErrTenantMonthPeriodRequired
 	}
-	monthUsage, err := statements.ListPlatformTenantUsageMinutes(r.Context(), accountID, tenantID, start, end)
+	monthUsage, err := statements.ListPlatformTenantUsageMinutes(ctx, accountID, tenantID, start, end)
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
-	previous, err := statements.ListPlatformTenantStatements(r.Context(), accountID, tenantID, start, end)
+	previous, err := statements.ListPlatformTenantStatements(ctx, accountID, tenantID, start, end)
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
@@ -182,39 +183,101 @@ func (s *server) quotePlatformTenantMonth(r *http.Request, accountID, tenantID s
 		if _, loaded := cards[bucket.AppID]; loaded {
 			continue
 		}
-		if cards[bucket.AppID], err = cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), accountID, bucket.AppID); err != nil {
+		if cards[bucket.AppID], err = cardsStore.ListAPIConsumerRateCardsForApp(ctx, accountID, bucket.AppID); err != nil {
 			return state.PlatformTenantStatementInput{}, err
 		}
 	}
-	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, time.Now().UTC(), revision, priorStatus,
-		usageDelta, monthUsage, cards, tenantCards, previous)
+	routes, err := s.tenantRouteUsage(ctx, accountID, tenantID, tenantCards, monthUsage, start, end)
+	if err != nil {
+		return state.PlatformTenantStatementInput{}, err
+	}
+	now := time.Now().UTC()
+	in, err := billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, now, revision, priorStatus,
+		usageDelta, monthUsage, cards, tenantCards, previous, routes)
+	if !errors.Is(err, billing.ErrTenantChargeDecreased) {
+		return in, err
+	}
+	// Late usage moved a volume month into a cheaper step: keep the step
+	// finalized revisions billed (ADR-1312).
+	locked := billing.LockedTenantVolumeSteps(tenantCards, previous, start, end)
+	if len(locked) == 0 {
+		return in, err
+	}
+	return billing.BuildPlatformTenantMonthStatement(accountID, tenantID, start, end, now, revision, priorStatus,
+		usageDelta, monthUsage, cards, tenantCards, previous, routes, billing.QuoteOptions{VolumeSteps: locked})
 }
 
-func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {
+// tenantRouteUsage loads each subject's route counts when a tenant card
+// weights routes: consumers' (ADR-1307), and surfaces' and JWT rules'
+// (ADR-1310).
+func (s *server) tenantRouteUsage(ctx context.Context, accountID, tenantID string, tenantCards []state.PlatformTenantRateCard,
+	monthUsage []state.APIConsumerUsageBucket, start, end time.Time) (billing.TenantRouteUsage, error) {
+	weighted := false
+	for _, card := range tenantCards {
+		weighted = weighted || len(card.RouteWeights) > 0
+	}
+	routeStore, ok := s.store.(state.ConsumerRouteUsageStore)
+	if !weighted || !ok {
+		return nil, nil
+	}
+	routes := billing.TenantRouteUsage{}
+	sources := false
+	for _, bucket := range monthUsage {
+		sources = sources || bucket.SurfaceID != "" || bucket.JWTAuthorizationRuleID != ""
+		key := billing.TenantRouteKey(bucket.AppID, bucket.ConsumerKey)
+		if _, loaded := routes[key]; loaded || bucket.ConsumerKey == "" {
+			continue
+		}
+		rows, err := routeStore.ListAPIConsumerRouteUsage(ctx, accountID, bucket.AppID, bucket.ConsumerKey, start, end)
+		if err != nil {
+			return nil, fmt.Errorf("list tenant route usage: %w", err)
+		}
+		routes[key] = rows
+	}
+	sourceStore, ok := s.store.(state.PlatformTenantSourceRouteUsageStore)
+	if !sources || !ok {
+		return routes, nil
+	}
+	rows, err := sourceStore.ListPlatformTenantSourceRouteUsage(ctx, accountID, tenantID, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("list tenant source route usage: %w", err)
+	}
+	for _, row := range rows {
+		key := billing.TenantSourceRouteKey(row.AppID, row.SourceKind, row.SourceID)
+		routes[key] = append(routes[key], state.APIConsumerRouteUsageBucket{WindowStart: row.WindowStart, Route: row.Route, BillableUnits: row.BillableUnits})
+	}
+	return routes, nil
+}
+
+// tenantStatementProblem explains why a tenant statement could not be
+// drafted. Billing runs record its detail as the item's reason.
+func tenantStatementProblem(err error) *api.Problem {
 	switch {
 	case errors.Is(err, billing.ErrMixedTenantCurrency):
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Mixed statement currencies", "all priced app usage in one tenant statement must use the same currency"))
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Mixed statement currencies", "all priced app usage in one tenant statement must use the same currency")
 	case errors.Is(err, billing.ErrNoNewTenantUsage):
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"No tenant usage", "the requested period has no billable tenant-attributed usage"))
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"No tenant usage", "the requested period has no billable tenant-attributed usage")
 	case errors.Is(err, billing.ErrAPIConsumerAllowanceInTenantStatement):
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements"))
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements")
 	case errors.Is(err, billing.ErrTenantMonthPeriodRequired):
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Calendar month required", "a platform tenant rate card with a monthly allowance or tiers prices this period, so the statement must cover exactly one UTC calendar month"))
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Calendar month required", "a platform tenant rate card with a monthly allowance or tiers prices this period, so the statement must cover exactly one UTC calendar month")
 	case errors.Is(err, billing.ErrTenantMonthOverlap):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Month already partly billed", "a finalized statement for another period covers minutes of this month; bill this tenant by calendar month once a monthly allowance or tiers apply"))
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Month already partly billed", "a finalized statement for another period covers minutes of this month; bill this tenant by calendar month once a monthly allowance or tiers apply")
 	case errors.Is(err, billing.ErrTenantChargeDecreased):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Charge would decrease", "re-pricing the month would bill less than its finalized revisions; Gregale never issues credits"))
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Charge would decrease", "re-pricing the month would bill less than its finalized revisions; Gregale never issues credits")
 	case errors.Is(err, billing.ErrTenantUsageRegressed):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Usage coverage conflict", "current usage is below an earlier immutable statement snapshot"))
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage coverage conflict", "current usage is below an earlier immutable statement snapshot")
+	case errors.Is(err, state.ErrConflict):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Statement revision conflict", "statement state changed; reload the period and retry")
 	default:
-		api.WriteProblem(w, api.ErrInternal("could not price platform tenant usage"))
+		return api.ErrInternal("could not price platform tenant usage")
 	}
 }
 
@@ -263,24 +326,35 @@ func (s *server) finalizePlatformTenantStatement(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	statement, changed, err := store.FinalizePlatformTenantStatement(r.Context(), acct.ID, tenant.ID, r.PathValue("statement_id"))
+	statement, err := s.finalizeTenantStatement(r.Context(), acct, tenant.ID, store, r.PathValue("statement_id"))
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "no such platform tenant statement")
 		return
 	}
-	if errors.Is(err, state.ErrConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Statement cannot be finalized", "all usage must be priced in one currency before finalization"))
-		return
-	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not finalize platform tenant statement"))
+		api.WriteProblem(w, tenantStatementFinalizeProblem(err))
 		return
-	}
-	if changed {
-		s.audit.Emit(r.Context(), "platform_tenant_statement.finalized", &acct.ID, map[string]any{"tenant_id": tenant.ID, "statement_id": statement.ID, "revision": statement.Revision})
 	}
 	writeJSON(w, http.StatusOK, platformTenantStatementResponse(statement))
+}
+
+// finalizeTenantStatement freezes a tenant statement and audits the first
+// finalization. The handler and billing runs (ADR-1503) share it.
+func (s *server) finalizeTenantStatement(ctx context.Context, acct state.Account, tenantID string,
+	store state.PlatformTenantStatementStore, statementID string) (state.PlatformTenantStatement, error) {
+	statement, changed, err := store.FinalizePlatformTenantStatement(ctx, acct.ID, tenantID, statementID)
+	if err == nil && changed {
+		s.audit.Emit(ctx, "platform_tenant_statement.finalized", &acct.ID, map[string]any{"tenant_id": tenantID, "statement_id": statement.ID, "revision": statement.Revision})
+	}
+	return statement, err
+}
+
+func tenantStatementFinalizeProblem(err error) *api.Problem {
+	if errors.Is(err, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Statement cannot be finalized", "all usage must be priced in one currency before finalization")
+	}
+	return api.ErrInternal("could not finalize platform tenant statement")
 }
 
 func (s *server) claimPlatformTenantStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {

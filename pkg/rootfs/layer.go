@@ -111,6 +111,7 @@ func ApplyLayerWithOverlayWhiteouts(dst string, tr *tar.Reader) error {
 type layerApplyOptions struct {
 	resolver               Resolver
 	preserveWhiteouts      bool
+	opaqueRoot             *bool
 	skipRuntimeMountpoints bool
 	// budget is shared by every layer of one build; nil means unbounded.
 	// Customer image builds (Build, BuildFullRootfs) always pass one.
@@ -190,7 +191,8 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		if !strings.Contains(archiveName, "..") {
 			// codeql[go/path-injection] false-positive: resolveEntryPath rejects
 			// absolute names, then clamps every ancestor symlink inside dst.
-			target, err := resolveEntryPath(dst, archiveName)
+			replaceWhiteouts := opts.preserveWhiteouts && (supportedOverlayEntry(hdr.Typeflag) || opaque || strings.HasPrefix(filepath.Base(archiveName), whiteoutPrefix))
+			target, err := resolveLayerEntryPath(dst, archiveName, replaceWhiteouts)
 			if err != nil {
 				return err
 			}
@@ -201,6 +203,9 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 				if opts.preserveWhiteouts {
 					if err := applyOverlayOpaque(filepath.Dir(target)); err != nil {
 						return fmt.Errorf("rootfs: opaque whiteout %s: %w", filepath.Dir(target), err)
+					}
+					if opts.opaqueRoot != nil && filepath.Clean(filepath.Dir(target)) == filepath.Clean(dst) {
+						*opts.opaqueRoot = true
 					}
 				} else {
 					// Opaque dir: drop everything currently under its parent.
@@ -216,7 +221,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 					return fmt.Errorf("rootfs: invalid empty whiteout %q", hdr.Name)
 				}
 				if opts.preserveWhiteouts {
-					if err := applyOverlayWhiteout(filepath.Dir(target), victimName, target); err != nil {
+					if err := applyOverlayWhiteout(filepath.Dir(target), victimName); err != nil {
 						return fmt.Errorf("rootfs: whiteout %s: %w", victimName, err)
 					}
 				} else {
@@ -228,13 +233,9 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 				continue
 			}
 
-			if opts.preserveWhiteouts {
-				// A later layer recreating a previously whiteouted path
-				// must remove the sibling marker; otherwise overlayfs would
-				// continue hiding the new upper entry.
-				marker := filepath.Join(filepath.Dir(target), whiteoutPrefix+filepath.Base(target))
-				if err := os.RemoveAll(marker); err != nil {
-					return fmt.Errorf("rootfs: clear replacement whiteout %s: %w", marker, err)
+			if opts.preserveWhiteouts && supportedOverlayEntry(hdr.Typeflag) {
+				if err := replaceOverlayWhiteout(target, hdr.Typeflag == tar.TypeDir); err != nil {
+					return fmt.Errorf("rootfs: replace whiteout: %w", err)
 				}
 			}
 			if err := applyEntryWithBudget(dst, target, hdr, tr, opts.resolver, opts.budget); err != nil {
@@ -273,9 +274,17 @@ func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {
 // /tmp, so retaining image-owned entries at those paths is both unnecessary
 // and unsafe when one of them is mounted in the staging namespace.
 func applyLayerGzForApp(dst string, r io.Reader, budget *extractionBudget) error {
+	return applyLayerGzForBuild(dst, r, false, nil, budget)
+}
+
+// A sidecar consumes all OCI layers and is an independent read-only root.
+// Main app layers retain deletions against the shared base. Both exclude the
+// pseudo-filesystem content that guest-init owns.
+func applyLayerGzForBuild(dst string, r io.Reader, independentRoot bool, opaqueRoot *bool, budget *extractionBudget) error {
 	return applyLayerGz(dst, r, layerApplyOptions{
-		preserveWhiteouts:      true,
+		preserveWhiteouts:      !independentRoot,
 		skipRuntimeMountpoints: true,
+		opaqueRoot:             opaqueRoot,
 		budget:                 budget,
 	})
 }
@@ -286,26 +295,46 @@ func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
 		return fmt.Errorf("rootfs: gzip: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
-	if err := applyLayer(dst, tar.NewReader(zr), opts); err != nil {
+	var uncompressed io.Reader = zr
+	if verifier, ok := r.(layerUncompressedVerifier); ok {
+		uncompressed = verifier.VerifyingUncompressedReader(zr)
+	}
+	if err := applyLayer(dst, tar.NewReader(uncompressed), opts); err != nil {
 		return err
 	}
-	return drainLayer(zr, r)
+	return drainLayer(uncompressed, r)
 }
 
 // drainLayer reads the rest of a layer after its tar end-of-archive marker.
 // A registry blob reader checks the blob digest only when it reaches EOF, so
 // stopping at the tar trailer would apply a layer whose bytes were never
-// verified. Reading the gzip stream to its end also checks the gzip CRC.
-// Bytes after the final gzip member are tolerated, as before, but still read
-// so they count toward the digest.
-func drainLayer(zr *gzip.Reader, r io.Reader) error {
-	if _, err := io.Copy(io.Discard, zr); err != nil && !errors.Is(err, gzip.ErrHeader) {
+// verified. Reading the gzip stream to its end also checks the gzip CRC and
+// finishes any uncompressed-digest verification before mkfs or verified
+// consumption. Bytes after the final gzip member are tolerated, as before, but
+// still read so they count toward the digest.
+func drainLayer(uncompressed, r io.Reader) error {
+	if _, err := io.Copy(io.Discard, uncompressed); err != nil && !errors.Is(err, gzip.ErrHeader) {
 		return fmt.Errorf("rootfs: read layer: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, r); err != nil {
 		return fmt.Errorf("rootfs: read layer: %w", err)
 	}
 	return nil
+}
+
+type layerUncompressedVerifier interface {
+	VerifyingUncompressedReader(io.Reader) io.Reader
+}
+type forwardedLayerVerifier struct {
+	io.Reader
+	layerUncompressedVerifier
+}
+
+func forwardLayerVerification(reader, source io.Reader) io.Reader {
+	if verifier, ok := source.(layerUncompressedVerifier); ok {
+		return forwardedLayerVerifier{reader, verifier}
+	}
+	return reader
 }
 
 const (
@@ -647,6 +676,10 @@ const maxSymlinkHops = 40
 // not write through it. Every ANCESTOR component is resolved and clamped
 // inside root by resolveWithin.
 func resolveEntryPath(root, name string) (string, error) {
+	return resolveLayerEntryPath(root, name, false)
+}
+
+func resolveLayerEntryPath(root, name string, replaceWhiteouts bool) (string, error) {
 	// Gate 1 (syntactic): reject absolute names and ".." traversal.
 	if _, err := safeJoin(root, name); err != nil {
 		return "", err
@@ -656,7 +689,7 @@ func resolveEntryPath(root, name string) (string, error) {
 		return root, nil
 	}
 	// Gate 2 (on-disk): resolve the parent, clamping ancestor symlinks.
-	parent, err := resolveWithin(root, filepath.Dir(clean))
+	parent, err := resolveWithinPath(root, filepath.Dir(clean), false, nil, replaceWhiteouts)
 	if err != nil {
 		return "", fmt.Errorf("rootfs: entry %q: %w", name, err)
 	}
@@ -700,14 +733,14 @@ func resolveLinkSource(root, linkname string) (string, error) {
 // access. If staging ever becomes shared or concurrently written, this must
 // move to openat2(RESOLVE_IN_ROOT).
 func resolveWithin(root, rel string) (string, error) {
-	return resolveWithinPath(root, rel, false, nil)
+	return resolveWithinPath(root, rel, false, nil, false)
 }
 
 // Launch checks require existing components, so missing/../app and file/../app
 // cannot pass. stopAt lets those read-only checks defer guest-provided mounts
 // before inspecting image contents that will be hidden at launch. Extraction
 // always passes nil and may create missing components.
-func resolveWithinPath(root, rel string, existing bool, stopAt func(string) bool) (string, error) {
+func resolveWithinPath(root, rel string, existing bool, stopAt func(string) bool, replaceWhiteouts bool) (string, error) {
 	cur := root
 	// Remaining components to consume, innermost-first.
 	todo := splitPath(rel)
@@ -729,6 +762,11 @@ func resolveWithinPath(root, rel string, existing bool, stopAt func(string) bool
 		next := filepath.Join(cur, comp)
 		if stopAt != nil && stopAt(next) {
 			return next, nil
+		}
+		if replaceWhiteouts {
+			if err := replaceOverlayWhiteout(next, true); err != nil {
+				return "", err
+			}
 		}
 		fi, err := os.Lstat(next)
 		if err != nil {
@@ -792,4 +830,8 @@ func clearDir(dir string) error {
 		}
 	}
 	return nil
+}
+
+func supportedOverlayEntry(kind byte) bool {
+	return kind == tar.TypeReg || kind == tar.TypeDir || kind == tar.TypeSymlink || kind == tar.TypeLink
 }

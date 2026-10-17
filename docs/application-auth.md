@@ -42,9 +42,58 @@ Verify the tokens wherever they are used:
   then write row-level security policies (see below).
 - **Edge JWT rules:** `gregale edge-rules create --app APP --kind jwt
   --match-host HOST --jwt-auth shop-auth` requires a valid token on a route.
+- **Your own backend:** the Go and Python SDKs (see below).
 
 Sign-out and bans end refresh immediately. A token already issued stays valid
 for edge-only checks until it expires, at most 600 seconds later.
+
+### In your backend
+
+The Go and Python SDKs check a token's ES256 signature against the Auth app's
+published keys, its issuer (`https://<auth-host>/auth/v1`), its audience
+(`authenticated`) and its expiry, allowing 60 seconds of clock skew. They cache
+the keys for five minutes and refetch at most every 30 seconds when a token
+names an unknown key, so key rotation needs no restart and a parked Auth app is
+not woken by verification. Like edge rules, a verified token stays valid until
+it expires; `Authorize` asks the Auth app, which also checks that the session
+is still active.
+
+Go (`github.com/poyrazK/faas/sdk/go/auth`, standard library only):
+
+```go
+client, err := auth.New("https://shop-auth.gregale.app")
+if err != nil {
+	return err
+}
+// 401 without a valid token, 503 when the keys cannot be fetched.
+mux.Handle("/api/docs/", client.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.FromContext(r.Context()) // claims.Subject is the user ID
+	token, _ := auth.BearerToken(r)
+	ok, err := client.Authorize(r.Context(), token, "read", auth.Resource(orgID, "doc", docID))
+	// ...
+})))
+```
+
+Python (`pip install 'faas_sdk[auth]'`), here as a FastAPI dependency:
+
+```python
+from fastapi import Header, HTTPException
+from faas_sdk.auth import AuthClient, AuthUnavailableError, InvalidTokenError, NoTokenError, bearer_token, resource
+
+auth = AuthClient("https://shop-auth.gregale.app")
+
+async def current_user(authorization: str | None = Header(None)):
+    try:
+        return await auth.verify_async(bearer_token(authorization))
+    except (NoTokenError, InvalidTokenError):
+        raise HTTPException(401)
+    except AuthUnavailableError:
+        raise HTTPException(503)
+
+# allowed = await auth.authorize_async(token, "read", resource(org_id, "doc", doc_id))
+```
+
+`verify` and `authorize` are the synchronous forms for Flask or Django.
 
 ## Your data
 
@@ -62,8 +111,8 @@ assumed a role named `postgres`.
 
 `gregale auth config shop-auth` shows the running app's settings. Add flags to
 change them; the app restarts to apply the change. The dashboard's Auth page
-(`/dashboard/apps/shop-auth/auth`) shows and edits the same settings and
-providers.
+(`/dashboard/apps/shop-auth/auth`) shows and edits the same settings,
+providers and email delivery, and rotates signing keys.
 
 ```sh
 gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit
@@ -82,11 +131,20 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
 | `--authz FILE` | Replace custom roles and policies (see Organizations and roles). |
+| `--events on\|off` | Publish user lifecycle events to your event bus (see Lifecycle events). |
+| `--passkeys on\|off`, `--passkey-rp-id DOMAIN` | Passkey sign-in (see Passkeys). |
+| `--brand-name`, `--brand-color`, `--brand-logo-url` | The hosted pages' name, accent colour and logo (see Hosted pages); `none` removes one. |
+| `--captcha turnstile\|hcaptcha\|off`, `--captcha-site-key`, `--captcha-secret-stdin` | A CAPTCHA on sign-up, sign-in and password reset (see CAPTCHA). |
+| `--activity-retention DAYS\|forever` | How long sign-in activity is kept (see Manage users). |
+| `--sms PROVIDER\|off`, `--sms-account`, `--sms-sender`, `--sms-secret-stdin` | Phone sign-in by text message (see Phone sign-in). |
+| `--sso on\|off` | Organization single sign-on with SAML (see Organization single sign-on). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
 values that are public anyway or harmless: URLs, enabled providers, password
-rules, whether MFA and email are on, and the signing key IDs.
+rules, whether MFA, passkeys and CAPTCHA are on, the email provider and
+sender (never its API key), the branding, the activity retention and the
+signing key IDs.
 
 ### Sign-in providers
 
@@ -105,12 +163,86 @@ also points `gitlab`, `azure` or `workos` at a self-hosted server or tenant.
 Enabling replaces the provider's credentials; disabling removes them. The
 hosted sign-in page shows a button for each enabled provider.
 
+### Passkeys
+
+```sh
+gregale auth config shop-auth --passkeys on
+```
+
+Users sign in with a fingerprint, face or device PIN instead of a password. The
+hosted sign-in page gains **Sign in with a passkey**, and after a password
+sign-in or sign-up it offers to add one to users who have none. Passkeys are
+discoverable, so users don't type an email address. In your own pages, use
+`auth.signInWithPasskey()` and `auth.passkeys.register()`, `list()`, `rename()`
+and `remove()` from `@gregale/auth`.
+
+A passkey belongs to one domain. By default that is the Auth app's host, so
+passkeys work on the hosted pages. If the Auth app is on a custom domain under
+your site's domain (`auth.example.com` for `shop.example.com`), share the parent
+domain so both use the same passkeys:
+
+```sh
+gregale auth config shop-auth --passkey-rp-id example.com
+```
+
+Only HTTPS origins on that domain may use them: the Auth app, your site URL and
+your redirect URLs that are on it.
+
+### Phone sign-in
+
+Users can sign in with a code texted to their phone, sent through your own SMS
+account; Gregale sells no messages. Supported: `twilio` (Programmable
+Messaging), `twilio_verify`, `messagebird`, `textlocal` and `vonage`.
+
+```sh
+printf '%s' "$TWILIO_AUTH_TOKEN" | gregale auth config shop-auth --sms twilio --sms-account "$TWILIO_ACCOUNT_SID" --sms-sender "$TWILIO_MESSAGING_SERVICE_SID" --sms-secret-stdin
+```
+
+| Provider | `--sms-account` | `--sms-sender` | `--sms-secret-stdin` |
+| --- | --- | --- | --- |
+| `twilio` | Account SID | Messaging service SID or phone number | Auth token |
+| `twilio_verify` | Account SID | Verify service SID | Auth token |
+| `messagebird` | — | Originator | Access key |
+| `textlocal` | — | Sender | API key |
+| `vonage` | API key | From number or name | API secret |
+
+The hosted sign-in page gains **Sign in with a phone number**
+(`/ui/phone`): it texts a code, a new number signs up unless sign-up is
+closed, and the code signs the user in. The message reads "Your <name> code is
+123456" with the hosted pages' display name; set `GOTRUE_SMS_TEMPLATE` as an
+app secret to change it. In your own pages, use
+`auth.signInWithPhone({ phone })` and `auth.verifyPhone({ phone, code })` from
+`@gregale/auth`. Numbers need their country code (`+447700900123`).
+
+Anyone can make the Auth app text any number, which costs you money and
+attracts SMS pumping fraud. Turn on CAPTCHA with phone sign-in: it protects
+sending a code. GoTrue also sends at most 30 messages an hour per running
+instance and one code a minute per number. Codes last five minutes; set
+`GOTRUE_SMS_OTP_EXP` (seconds) to change that. `--sms off` turns phone sign-in off and
+removes the provider's credentials; changing provider removes the previous
+one's.
+
+### CAPTCHA
+
+```sh
+printf '%s' "$TURNSTILE_SECRET" | gregale auth config shop-auth --captcha turnstile --captcha-site-key "$TURNSTILE_SITE_KEY" --captcha-secret-stdin
+```
+
+GoTrue then requires a CAPTCHA token on sign-up, password, magic-link and
+phone sign-in, password reset and passkey sign-in. The hosted pages render the
+provider's widget (Cloudflare Turnstile or hCaptcha) and allow its origin, and
+only its origin, in their content security policy. In your own pages, pass the
+widget's token as `captchaToken` to `signUp`, `signInWithPassword`,
+`signInWithMagicLink`, `resetPasswordForEmail` and `signInWithPasskey`.
+`--captcha off` removes the keys. Changing CAPTCHA always takes all three
+values.
+
 ### Other GoTrue settings
 
-Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*` and
-`GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as app secrets. Any other
-`GOTRUE_*` secret stops startup, because Gregale owns that setting. The hosted
-pages do not render a CAPTCHA, so enabling one blocks sign-up there.
+Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*`,
+`GOTRUE_PASSKEY_*` and `GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as
+app secrets. Any other `GOTRUE_*` secret stops startup, because Gregale owns
+that setting.
 
 ## Rotate signing keys
 
@@ -130,6 +262,11 @@ key sign and waits again. The step-by-step commands are `keys create` (standby)
 and `keys activate KEY_ID`. The previous key keeps verifying the tokens it
 signed, which expire within 600 seconds, so revoke it afterwards. Revoking a
 key that signs, or is being made the signer, is refused.
+
+The dashboard's Auth page lists the keys with their state. **Add a standby
+key**, wait until it shows as verifying (the page follows the restart), choose
+**Make it sign**, then **Revoke** the previous key ten minutes later. The page
+offers each step only when the running app is ready for it.
 
 To cut off a leaked key, rotate and revoke the old key at once. Its tokens stop
 verifying as soon as the Auth app restarts, and in Gregale's gateway, Data API
@@ -180,6 +317,39 @@ No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
 organization can hold 500 pending invitations.
 
+## Organization single sign-on
+
+Let your business customers sign in through their company's identity
+provider (Okta, Microsoft Entra ID, Google Workspace or any SAML 2.0 provider)
+and join their organization automatically:
+
+```sh
+gregale auth config shop-auth --sso on
+printf '%s' "$ADMIN_KEY" | gregale auth sso add shop-auth --metadata-url https://acme.okta.com/app/abc/sso/saml/metadata --domains acme.com --org acme --role member --admin-key-stdin
+```
+
+`--sso on` creates the app's SAML signing key once and keeps it, even when
+SSO is turned off, so identity providers keep trusting the app. `sso add`
+prints what to register with the identity provider: the entity ID
+(`https://<auth-host>/auth/v1/sso/saml/metadata`, which also serves the
+metadata) and the ACS URL (`https://<auth-host>/auth/v1/sso/saml/acs`). Use
+`--metadata-file` for metadata XML instead of a URL.
+
+Users whose email address is in one of `--domains` sign in at
+`/ui/sso` (the hosted sign-in page links to it) or with
+`auth.signInWithSSO({ domain })` from `@gregale/auth`, which returns the
+identity provider's URL to navigate to. With `--org`, they join that
+organization with `--role` (default `member`, never `owner`) the first time
+they sign in, and the provider's existing users join when you link it.
+`gregale auth sso list`, `update` (`--org none` unlinks; members stay) and
+`remove` manage providers. Identity providers live in your database, like
+your users.
+
+An SSO user is a separate account from a password or OAuth account with the
+same address. Because an identity provider vouches only for its own domains,
+an SSO user can accept an organization invitation only for an address in one
+of its provider's domains.
+
 ## Authorize anywhere with one function
 
 Name resources `org/<organization id>/<kind>/<name>`. `gregale_auth.authorize`
@@ -217,10 +387,22 @@ development. Links and codes are never logged.
 ## Hosted pages
 
 Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The
-pages handle sign-in (password, magic link, enabled OAuth providers), sign-up,
+pages handle sign-in (password, magic link, enabled OAuth providers, passkeys,
+phone and organization SSO when they are on), sign-up,
 password reset and invitations, then return to `redirect_to` with the session
 in the URL fragment. Only your site URL and paths under `--redirect-urls` are
-accepted as targets. Read the session with `@gregale/auth`:
+accepted as targets.
+
+Brand them with your name, accent colour and logo:
+
+```sh
+gregale auth config shop-auth --brand-name Shop --brand-color '#4f46e5' --brand-logo-url https://cdn.example.com/logo.svg
+```
+
+The name also appears in emails and passkey prompts. The logo loads from its
+HTTPS URL; the pages allow that URL's origin for images and nothing else.
+
+Read the session with `@gregale/auth`:
 
 ```ts
 import { createAuthClient } from '@gregale/auth'
@@ -261,8 +443,26 @@ gregale realtime create shop --auth shop-auth --allowed-origin https://shop.exam
 
 Name channels `org:<org id>:<kind>:<name>`, for example `org:…:room:lobby`, and
 add a policy such as `{"action": "realtime:read", "resource": "room", "permission": "org:read"}`.
-Subscriptions are checked when they start. A ban, deletion or global sign-out
-stops new subscriptions; an open connection keeps its grant until it closes.
+Retained WebSocket and SSE channel grants have a 30-second lifetime. A ban,
+deletion, global sign-out or membership change is enforced when that check next
+runs. Expired grants block further channel output until the check succeeds.
+Idle WebSocket cleanup also includes the history poll interval and callback
+deadline. A definitive denial removes the subscription; a callback outage ends
+the connection so the client can reconnect. Already delivered data cannot be
+recalled. Active subscriptions can keep the Auth app awake through these checks.
+
+The callback checks the token's specific `session_id`, its user and the channel
+policy. Signing out one session revokes its retained channels on their next
+refresh even if another device remains signed in. Retained WebSockets and SSE
+also reverify their JWTs; tokens must include `exp`, and clients reconnect with a
+refreshed token after expiry. Signing-key changes follow the existing JWKS cache
+contract. Principal access controls remain available for explicit revocation.
+Legacy management subscriptions, inbox/direct-message session authorization and
+subscription tickets keep their existing access-control contracts.
+
+Existing Auth apps need a redeploy from the updated template for session-specific
+checks. Deploy the realtime daemon first, update the Auth app, then reconnect
+clients; the updated Auth callback rejects callers that omit the session ID.
 Do not set connect, message or disconnect callback paths on this endpoint; its
 callback URL is the Auth app.
 
@@ -279,6 +479,38 @@ checks `workflow:start` on `org/<org id>/workflow/<name>` and publishes an
 and `data.input`. Subscribe your workflow to that event type from the Auth
 app's source (`app.<auth app id>`). Repeating a start with the same
 `idempotency_key` returns the original receipt.
+
+## Lifecycle events
+
+Turn on lifecycle events to react to users in a workflow or event worker, for
+example to send a welcome email after confirmation or to clean up after a
+deletion:
+
+```sh
+gregale auth config shop-auth --events on
+```
+
+The Auth app then publishes these events from its source (`app.<auth app id>`):
+
+| Type | When | `data` besides `user_id` |
+| --- | --- | --- |
+| `auth.user.created` | A user signs up, is invited, imported or created | `provider`, `anonymous` |
+| `auth.user.confirmed` | A user confirms their email address or phone number | `channel` (`email` or `phone`) |
+| `auth.user.signed_in` | A new session starts (password, magic link, OAuth, sign-up) | `session_id`, `aal` |
+| `auth.user.banned` | A ban starts | `until` |
+| `auth.user.unbanned` | A ban is lifted | |
+| `auth.user.deleted` | A user is deleted | |
+
+Events carry the user ID and these facts only, never an address, a phone number or metadata,
+because Gregale stores published events. Look the user up in your own
+`auth.users` table when you need more. Triggers record each change in the same
+transaction, and the Auth app publishes after the request that caused it, so
+publishing never wakes a parked app or keeps your database awake. Delivery is
+at least once: each event's key is unique, and failures are retried with
+backoff for up to three days. Events count towards your plan's event limits
+like any other. `--events on` mints the same `events:publish`-only key that
+`--workflows` uses, if the app has none. `--events off` stops recording and
+drops undelivered events.
 
 ## Manage users and import them
 
@@ -298,6 +530,30 @@ them (a ban also ends their sessions), and delete them, and browse
 organizations with their members and pending invitations. Deleting the last
 owner of an organization that has other members is refused; organizations
 whose only member was the deleted user are removed with them.
+
+The **Activity** tab lists GoTrue's audit log newest first: sign-ins,
+sign-ups, password resets and changes, and administrator actions such as bans
+and deletions, which are reported against the affected user. A user's panel
+shows their ten most recent entries. Search for an event such as `login`, or
+part of an email address. From a terminal:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
+```
+
+GoTrue v2.197.0 does not record client IP addresses in this log. **Export CSV**
+on the Activity tab downloads up to 10,000 entries matching the search; the file
+is built in your browser from the Auth app's responses.
+
+GoTrue never prunes this log, so it grows in your database. Keep it for a
+number of days instead:
+
+```sh
+gregale auth config shop-auth --activity-retention 90
+```
+
+The Auth app deletes older entries in batches after requests, at most every six
+hours, so pruning never wakes it or your database.
 
 `gregale auth admin-key list shop-auth` shows key IDs and
 `gregale auth admin-key revoke shop-auth ID` removes one. Both restart the Auth

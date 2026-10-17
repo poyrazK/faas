@@ -204,3 +204,22 @@ WHERE d.datname <> sqlc.arg(maintenance_database)::text AND NOT EXISTS (
  SELECT 1 FROM gregale_checkpoint.connection_fence_databases f
  WHERE f.owner_token=sqlc.arg(owner_token)::uuid AND f.database_oid=d.oid
 );
+
+-- Read the complete bounded catalog, including the authenticated maintenance
+-- database. A changing digest is drift; an unchanged digest is not a DDL fence.
+-- name: CheckpointWriterCatalog :many
+SELECT oid,datdba AS owner_oid,datname::text AS database_name,datallowconn,datistemplate,datconnlimit
+FROM pg_catalog.pg_database ORDER BY oid LIMIT sqlc.arg(max_databases)::integer;
+
+-- Backend types hidden by SQL privileges are unknown, never silently idle.
+-- The observer itself is the only session excluded. Server housekeeping is
+-- distinguished from logical/background writers; provider evidence must still
+-- prevent future dispatch and cover alternate endpoints/admin APIs.
+-- name: CheckpointWriterActivity :one
+SELECT count(*) FILTER (WHERE backend_type='client backend')::bigint AS client_sessions,
+ count(*) FILTER (WHERE backend_type IN ('autovacuum worker','parallel worker'))::bigint AS background_workers,
+ count(*) FILTER (WHERE backend_type IN ('logical replication worker','walsender','walreceiver'))::bigint AS replication_workers,
+ count(*) FILTER (WHERE backend_type IS NULL OR backend_type NOT IN (
+  'client backend','autovacuum worker','parallel worker','logical replication worker','walsender','walreceiver',
+  'autovacuum launcher','background writer','checkpointer','walwriter','archiver','logical replication launcher'))::bigint AS unknown_backends
+FROM pg_catalog.pg_stat_activity WHERE pid<>pg_backend_pid();

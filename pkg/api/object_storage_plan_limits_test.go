@@ -12,9 +12,21 @@ func TestObjectStoragePlanLimitsZeroChangesNothing(t *testing.T) {
 	if got := (ObjectStoragePlanLimits{}).Allowance(); got != (ObjectStorageAllowance{}) {
 		t.Fatalf("zero plan allowance = %+v, want none", got)
 	}
-	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
-		if MustLimitsFor(plan).ObjectStorage != (ObjectStoragePlanLimits{}) {
-			t.Fatalf("%s object-storage limits are set; ADR-1320 ships the mechanism with every plan at zero", plan)
+}
+
+// adr: 1350 — plans include stored bytes from the October 2026 COGS report;
+// Free also stops at its allowance.
+func TestObjectStoragePlanLimitsFollowCOGSReport(t *testing.T) {
+	const gib = int64(1 << 30)
+	want := map[Plan]ObjectStoragePlanLimits{
+		PlanFree:  {MaxAccountBytes: gib, IncludedBytes: gib},
+		PlanHobby: {IncludedBytes: 10 * gib},
+		PlanPro:   {IncludedBytes: 50 * gib},
+		PlanScale: {IncludedBytes: 200 * gib},
+	}
+	for plan, limits := range want {
+		if got := MustLimitsFor(plan).ObjectStorage; got != limits {
+			t.Fatalf("%s object-storage limits = %+v, want %+v", plan, got, limits)
 		}
 	}
 }

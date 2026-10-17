@@ -1,0 +1,157 @@
+{{define "automation-live-progress"}}{{with .Data.LiveProgress}}
+<div id="automation-live-progress" data-url="{{.URL}}" data-interval-ms="{{.IntervalMS}}" data-timeout-ms="{{.TimeoutMS}}" data-max-requests="{{.MaxRequests}}">
+<p data-live-progress-status role="status" aria-live="polite">Automatic updates observe this run and check its assertions when execution finishes.</p>
+<button data-live-progress-resume type="button" hidden>Resume automatic updates</button>
+<noscript><p>Use Check live results to refresh this run.</p></noscript>
+</div>
+<script nonce="{{$.Nonce}}">
+(() => {
+  const panel = document.getElementById('automation-live-progress');
+  let result = document.getElementById('automation-live-result');
+  if (!panel || !result) return;
+  const form = result.closest('form');
+  const status = panel.querySelector('[data-live-progress-status]');
+  const resume = panel.querySelector('[data-live-progress-resume]');
+  const runID = result.dataset.liveRun;
+  const endpoint = new URL(panel.dataset.url, location.href);
+  const interval = Number(panel.dataset.intervalMs);
+  const timeout = Number(panel.dataset.timeoutMs);
+  const limit = Number(panel.dataset.maxRequests);
+  if (!form || endpoint.origin !== location.origin || ![interval, timeout, limit].every(n => Number.isSafeInteger(n) && n > 0)) return;
+  const terminal = state => ['succeeded', 'failed', 'dead'].includes(state);
+  const visible = () => document.visibilityState === 'visible';
+  let dirty = result.dataset.liveEditorChanged === 'true';
+  let active = false, busy = false, generation = 0, remaining = limit, timer = null, controller = null;
+
+  function notice() {
+    result.querySelector('[data-live-outdated]').hidden = !(dirty || result.dataset.liveOutdated === 'true');
+  }
+  function stop(message) {
+    active = false;
+    generation++;
+    clearTimeout(timer);
+    controller?.abort();
+    status.textContent = message;
+    resume.hidden = false;
+  }
+  function schedule(delay) {
+    clearTimeout(timer);
+    if (active && visible()) timer = setTimeout(tick, delay);
+  }
+  function showState() {
+    const descriptions = {pending: 'Queued for execution.', running: 'Running.', awaiting_event: 'Waiting for a timer, event, or callback.'};
+    status.textContent = descriptions[result.dataset.liveState] || 'Execution finished. Checking live assertions.';
+  }
+  async function request(method, epoch) {
+    if (remaining <= 0) throw new Error('Automatic updates reached their request limit. Resume updates or check results manually.');
+    remaining--;
+    const abort = new AbortController();
+    controller = abort;
+    const deadline = setTimeout(() => abort.abort(), timeout);
+    try {
+      const options = {method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: abort.signal, headers: {Accept: 'text/html'}};
+      if (method === 'POST') {
+        const csrf = form.querySelector('input[name=csrf_token]')?.value;
+        if (!csrf) throw new Error('Reload the page before checking live results.');
+        options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        options.body = new URLSearchParams({csrf_token: csrf});
+      }
+      const response = await fetch(endpoint.href, options);
+      if (response.status === 401 || response.status === 403) throw new Error('Automatic updates stopped because authentication or permission is required. Reopen the automation after signing in.');
+      if (!response.ok) throw new Error('Automatic updates could not refresh this run. Resume updates or check results manually.');
+      if (!response.headers.get('content-type')?.startsWith('text/html')) throw new Error('Automatic updates received an invalid result. Reopen the automation.');
+      const html = await response.text();
+      if (epoch !== generation || !active || !visible()) return false;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const nodes = doc.querySelectorAll('#automation-live-result');
+      const next = nodes[0];
+      if (nodes.length !== 1 || next.dataset.liveRun !== runID ||
+          !['pending', 'running', 'awaiting_event', 'succeeded', 'failed', 'dead'].includes(next.dataset.liveState) ||
+          !['true', 'false'].includes(next.dataset.liveCurrent) || !['true', 'false'].includes(next.dataset.liveOutdated) ||
+          !next.querySelector('[data-live-outdated]')) throw new Error('Automatic updates received an invalid result. Reopen the automation.');
+      result.replaceWith(document.importNode(next, true));
+      result = document.getElementById('automation-live-result');
+      notice();
+      return true;
+    } finally {
+      clearTimeout(deadline);
+      if (controller === abort) controller = null;
+    }
+  }
+  async function tick() {
+    if (!active || !visible() || busy) return;
+    busy = true;
+    const epoch = generation;
+    try {
+      if (!await request('GET', epoch)) return;
+      showState();
+      if (terminal(result.dataset.liveState) && result.dataset.liveCurrent !== 'true') {
+        if (!await request('POST', epoch)) return;
+        if (terminal(result.dataset.liveState) && result.dataset.liveCurrent !== 'true') {
+          throw new Error('The run changed while its assertions were checked. Resume updates to inspect it again.');
+        }
+      }
+      if (terminal(result.dataset.liveState) && result.dataset.liveCurrent === 'true') {
+        stop('Execution and assertion checks finished. Automatic updates stopped.');
+      } else {
+        showState();
+      }
+    } catch (error) {
+      if (epoch === generation && active && visible()) {
+        stop(error.name === 'AbortError' ? 'Automatic updates timed out. Resume updates or check results manually.' : error.message);
+      }
+    } finally {
+      busy = false;
+      if (active && visible()) schedule(epoch === generation ? interval : 0);
+    }
+  }
+  function begin() {
+    generation++;
+    clearTimeout(timer);
+    controller?.abort();
+    active = true;
+    remaining = limit;
+    resume.hidden = true;
+    showState();
+    schedule(0);
+  }
+  form.addEventListener('input', changed);
+  form.addEventListener('change', changed);
+  function changed(event) {
+    const target = event.target;
+    if (target.closest('#automation-test-editor') || target.matches('textarea, input[name=editor_mode], [id^=report-], [id^=webhook-]')) {
+      dirty = true;
+      notice();
+    }
+  }
+  form.addEventListener('submit', event => {
+    if (event.submitter?.matches('[data-live-manual]')) {
+      event.preventDefault();
+      begin();
+    } else {
+      stop('Automatic updates stopped while leaving this page.');
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!active) return;
+    generation++;
+    clearTimeout(timer);
+    controller?.abort();
+    if (visible()) {
+      showState();
+      schedule(0);
+    } else {
+      status.textContent = 'Automatic updates paused while this page is hidden.';
+    }
+  });
+  window.addEventListener('pagehide', () => stop('Automatic updates stopped after leaving this page.'));
+  resume.addEventListener('click', begin);
+  notice();
+  if (terminal(result.dataset.liveState) && result.dataset.liveCurrent === 'true') {
+    stop('Execution and assertion checks finished. Automatic updates stopped.');
+  } else {
+    begin();
+  }
+})();
+</script>
+{{end}}{{end}}

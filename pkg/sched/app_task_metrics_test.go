@@ -44,6 +44,7 @@ func taskGauges(t *testing.T, reg *prometheus.Registry) map[string]float64 {
 	return out
 }
 
+// adr: 20261017141024523 — Bounded task evidence, freshness and coordinator progress.
 func TestAppTaskMetricsFreshnessAndIntegrity(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 	m := NewAppTaskMetrics(reg, false, 0)

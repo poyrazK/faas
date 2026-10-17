@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -19,21 +18,19 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/authsettings"
 )
 
-// Each ES256 key is its own sealed secret, AUTH_JWT_KEY_<ID>. The newest
-// AUTH_JWT_SIGNER_<ID> (its value is the activation's Unix time) names the
-// key that signs; the others only verify. App secrets are write-only, so the
-// CLI reads key state from secret names and from the running app's public
-// /settings/v1, and never needs a private key back.
+// Key naming is shared with the dashboard in pkg/authsettings: the newest
+// AUTH_JWT_SIGNER_<ID> names the key that signs; the others only verify.
 const (
-	authSigningKeyPrefix = "AUTH_JWT_KEY_"
-	authSignerPrefix     = "AUTH_JWT_SIGNER_"
+	authSigningKeyPrefix = authsettings.SigningKeyPrefix
+	authSignerPrefix     = authsettings.SignerPrefix
 )
 
 var (
-	authSigningKeyName = regexp.MustCompile(`^AUTH_JWT_KEY_[0-9A-F]{8}$`)
-	authSignerName     = regexp.MustCompile(`^AUTH_JWT_SIGNER_[0-9A-F]{8}$`)
+	authSigningKeyName = authsettings.SigningKeyName
+	authSignerName     = authsettings.SignerName
 	// authKeyChangePoll is how often a key command re-reads the restarted
 	// app; tests shorten it.
 	authKeyChangePoll = 3 * time.Second
@@ -41,7 +38,7 @@ var (
 
 const authKeysUsage = "usage: gregale auth keys <list|create|activate|revoke|rotate> NAME [ID]"
 
-func authKeyKID(id string) string { return "gregale-" + strings.ToLower(id) }
+func authKeyKID(id string) string { return authsettings.KeyKID(id) }
 
 func cmdAuthKeys(args []string) int {
 	if len(args) == 0 {
@@ -367,8 +364,39 @@ type authPublicSettings struct {
 		TOTP bool `json:"totp"`
 	} `json:"mfa"`
 	Email struct {
-		Configured bool `json:"configured"`
+		Configured bool   `json:"configured"`
+		Provider   string `json:"provider"`
+		From       string `json:"from"`
 	} `json:"email"`
+	Events struct {
+		Lifecycle bool `json:"lifecycle"`
+	} `json:"events"`
+	Passkeys struct {
+		Enabled bool     `json:"enabled"`
+		RPID    string   `json:"rp_id"`
+		Origins []string `json:"origins"`
+	} `json:"passkeys"`
+	Branding struct {
+		Name    string  `json:"name"`
+		Color   *string `json:"color"`
+		LogoURL *string `json:"logo_url"`
+	} `json:"branding"`
+	Captcha *struct {
+		Provider string `json:"provider"`
+		SiteKey  string `json:"site_key"`
+	} `json:"captcha"`
+	Activity struct {
+		RetentionDays *int `json:"retention_days"`
+	} `json:"activity"`
+	Phone struct {
+		Enabled  bool   `json:"enabled"`
+		Provider string `json:"provider"`
+	} `json:"phone"`
+	SSO struct {
+		Enabled  bool   `json:"enabled"`
+		EntityID string `json:"entity_id"`
+		ACSURL   string `json:"acs_url"`
+	} `json:"sso"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

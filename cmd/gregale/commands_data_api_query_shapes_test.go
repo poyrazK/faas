@@ -22,6 +22,7 @@ func TestDataAPIDiagnosticsQueryShapesAggregateAndRejectUntrustedValues(t *testi
 		record["query_shape"] = shape
 		record["schema_fingerprint"] = strings.Repeat("a", 64)
 		record["raw_url"] = "private-filter-value"
+		record["timings"] = map[string]any{"upstream": map[string]any{"duration_ms": i, "complete": true}}
 		raw, _ := json.Marshal(record)
 		collector.observe(string(raw))
 	}
@@ -36,6 +37,9 @@ func TestDataAPIDiagnosticsQueryShapesAggregateAndRejectUntrustedValues(t *testi
 	}
 	if *report.QueryShapes[0].Stats.LatencyMS.P95 != 30 {
 		t.Fatal("wrong per-shape percentiles")
+	}
+	if *report.QueryShapes[0].Stats.Timings.ByPhase["upstream"].LatencyMS.P95 != 3 || report.Operations[0].Stats.Timings.ObservedRequests != 3 {
+		t.Fatal("phase timings missing from operation/shape stats")
 	}
 	raw, _ = json.Marshal(report)
 	if strings.Contains(string(raw), "private-filter-value") {

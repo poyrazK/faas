@@ -11,6 +11,15 @@ import (
 )
 
 func cmdProjectsEnvironmentReleaseSets(args []string) int {
+	if len(args) > 0 && args[0] == "verification-runs" {
+		return cmdProjectsVerificationRuns(args[1:])
+	}
+	if len(args) > 0 && (args[0] == "stage" || args[0] == "stage-status" || args[0] == "cancel-stage") {
+		return cmdProjectsReleaseStage(args)
+	}
+	if len(args) > 0 && (args[0] == "prepare" || args[0] == "verify" || args[0] == "activate" || args[0] == "prepare-rollback" || args[0] == "rollback" || args[0] == "prepare-deactivation" || args[0] == "deactivate") {
+		return cmdProjectsCheckedRelease(args)
+	}
 	flags, positional := splitArgsForFlags(args, "all")
 	fs := newFlagSet("projects-environments-release-sets", flag.ContinueOnError)
 	before := fs.String("before", "", "opaque cursor from a previous page")

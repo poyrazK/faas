@@ -28,6 +28,35 @@ Versions `00001` through `00590` are the frozen legacy namespace. They remain
 contiguous and strict. Never add another five-digit migration or a
 `reserve_slot` file; ADR-142 supersedes ADR-041 for all new work.
 
+Three already-applied application-standard migrations were issued with invalid
+seconds in their timestamp names: `20261001000061001`, `20261001000071001`, and
+`20261001000081001`. Their ledger IDs, filenames and SQL remain immutable.
+`issued_timestamp_test.go` freezes the exact three filenames and SHA-256 contents;
+any content change or new invalid timestamp fails validation. This compatibility
+set must not be extended to new migrations. Continue using the generator and
+valid UTC timestamps for every new file.
+
+Two already-applied source-rootfs migrations were issued with round millisecond
+IDs: `20261003210400000` and `20261003212646000`. The migration-version hygiene
+gate preserves only their exact filenames and SHA-256 contents, read from the
+PR head commit. Renaming them or changing their SQL invalidates that exception;
+their versions still undergo the open-PR collision check. This is a frozen
+compatibility set. New migrations must use the generator.
+
+For a non-public migration target, the runner scopes five frozen
+application-standard function declarations and their composite argument types
+to the current schema. It uses a per-run read-only filesystem view; embedded
+SQL bytes, source fingerprints, and public-schema execution remain unchanged.
+New declarations should use the migration target's search path.
+
+The replay gate exercises the exact frozen filename/content manifest in
+`application_standard_recovery_sources.json` through explicit ledger recovery
+on a private PostgreSQL 16 database. Recovery verifies the complete canonical
+schema, enrollment, snapshot catalog, logging sessions and native incarnation
+backfills, binds approval to the current ledger, and records an
+immutable receipt. Every added file outside that manifest still replays through
+Goose against its existing effects. CI also runs the recovery refusal tests.
+
 ## Authoring contract
 
 - Prefer additive expand migrations. Backfill separately, deploy compatible
@@ -38,5 +67,19 @@ contiguous and strict. Never add another five-digit migration or a
   Timestamp IDs remove coordination for independent migrations; they do not
   turn incompatible DDL into compatible DDL.
 - Regenerate `schema.sql` and sqlc output when the schema shape changes.
+
+`schema-dump` also writes `schema.sql.migrations.sha256`, binding the canonical
+schema snapshot to the exact embedded SQL source bytes. Regenerate the snapshot
+and this digest after every new migration, including a data-only migration.
+The application-standard ledger recovery command refuses a stale binding; normal
+daemon migration behavior remains unchanged. Its explicit review/apply workflow
+is documented in [the recovery runbook](../docs/runbooks/application-standard-ledger-recovery.md).
+
+GitHub pull-request CI tests the merged ref. When the base branch adds a
+migration after this snapshot was generated, that ref can contain a larger SQL
+inventory with the previous source digest. The canonical binding and ledger
+recovery tests then refuse it. Merge the updated base and run `schema-dump`
+against a fresh PostgreSQL database to regenerate both files from the complete
+merged inventory. Preserve the source binding checks and frozen SQL bytes.
 
 See ADR-142 for the cutover and runtime safety rules.

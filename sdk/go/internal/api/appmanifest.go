@@ -74,6 +74,9 @@ type AppManifest struct {
 	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort routing to the same healthy instance.
 	SessionAffinity bool `json:"session_affinity,omitempty"`
+	// ServiceBindingTransport selects the injected service URL scheme. Empty
+	// preserves the legacy HTTP behavior.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// User is the unix user to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
 	// SecretReloadSignal opts this workload into live secret projection refresh.
@@ -88,8 +91,11 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
-	Profiling        *ProfilingConfig      `json:"profiling,omitempty"`
-	Tracing          *TracingConfig        `json:"tracing,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never. Empty selects the default.
+	Pause     string           `json:"pause,omitempty"`
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
+	Tracing   *TracingConfig   `json:"tracing,omitempty"`
 	// StartupDeadlineS is the time-to-ready bound. Zero uses the plan default.
 	StartupDeadlineS int `json:"startup_deadline_s,omitempty"`
 	// MaxRetries is the consecutive restart-attempt bound. Zero uses the plan

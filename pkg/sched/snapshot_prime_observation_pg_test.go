@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 20261017122043000 — Read-only prime handoff evidence and independent collection health.
 func TestSnapshotPrimeObservationUnknownAndHeldPostgres(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	s := state.NewPgStore(pool)

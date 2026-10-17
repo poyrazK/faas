@@ -5,7 +5,12 @@ import { OPERATION_WORKFLOW_BLOCKER_ACTOR_BYTES, OPERATION_SUBJECT_ID_BYTES } fr
 import { parseFrame } from './sse.js';
 import type { OperationWorkflowStep } from './generated/models/OperationWorkflowStep.js';
 
-export type OperationState = 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+export type OperationState = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+/** ADR-1194: why a waiting operation holds no execution, and until when. */
+export interface OperationWaitingState { kind: 'timer' | 'approval' | 'event'; step: string; since: string; until?: string; approver?: 'account' | 'customer'; event?: string }
+/** ADR-1196: bounds fixed onto an accepted Operation, and what it has used. */
+export interface OperationLimits { deadline_seconds?: number; max_attempts?: number; max_execution_seconds?: number }
+export interface OperationUsage { execution_ms: number; attempts: number }
 export interface OperationProgress { stage: string; completed: number; total: number; attempt: number; updated_at: string }
 export interface OperationDelivery { state: string; delivery_id?: string; attempts: number; last_error?: string; next_attempt_at?: string }
 export interface OperationArtifact { id: string; name: string; uri: string; size_bytes: number; sha256: string; expires_at?: string }
@@ -58,7 +63,7 @@ export interface Operation<T = unknown> {
   subject?: OperationSubject;
   id: string; name: string; generation: number; state: OperationState;
   progress?: OperationProgress; result?: T; artifacts?: OperationArtifact[]; completion_delivery: OperationDelivery;
-  cancellation_requested: boolean; failure_code?: string; latest_sequence: number;
+  cancellation_requested: boolean; failure_code?: string; waiting?: OperationWaitingState; limits?: OperationLimits; deadline_at?: string; usage?: OperationUsage; latest_sequence: number;
   created_at: string; updated_at: string; expires_at: string;
 }
 export interface OperationTenantIdentity { account_id: string; platform_tenant_id: string }
@@ -165,7 +170,7 @@ export class GregaleOperationClient {
     if (!UUID.test(options.appID) || !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(options.scope)) throw new Error('Explicit app and environment required');
     if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 100)) throw new Error('Invalid operation page size');
     if (options.name !== undefined && !/^[a-z][a-z0-9-]{0,63}$/.test(options.name)) throw new Error('Invalid operation name');
-    if (options.state !== undefined && !['accepted', 'running', 'succeeded', 'failed', 'cancelled', 'requires_reconciliation'].includes(options.state)) throw new Error('Invalid operation state');
+    if (options.state !== undefined && !['accepted', 'running', 'waiting', 'succeeded', 'failed', 'cancelled', 'requires_reconciliation'].includes(options.state)) throw new Error('Invalid operation state');
     if (options.cursor !== undefined && (!options.cursor || options.cursor.length > 512)) throw new Error('Invalid operation page cursor');
     if (options.subjectType !== undefined || options.subjectID !== undefined) {
       if (options.subjectType === undefined || !/^[a-z][a-z0-9-]{0,63}$/.test(options.subjectType) || options.subjectID === undefined || !options.subjectID || new TextEncoder().encode(options.subjectID).length > OPERATION_SUBJECT_ID_BYTES || /[\x00-\x1f\x7f]/.test(options.subjectID) || /[\uD800-\uDFFF]/u.test(options.subjectID)) throw new Error('Valid paired business reference required');
@@ -445,6 +450,13 @@ export class GregaleOperationClient {
   cancel<T = unknown>(id: string, generation: number, signal?: AbortSignal): Promise<Operation<T>> {
     if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
     return this.request(operationPath(id) + '/cancel', 'POST', { expected_generation: generation }, undefined, signal);
+  }
+  /** ADR-1194: decide an approval this customer owns on a waiting operation. */
+  decideApproval<T = unknown>(id: string, step: string, generation: number, decision: 'approved' | 'rejected', comment?: string, signal?: AbortSignal): Promise<Operation<T>> {
+    if (!Number.isSafeInteger(generation) || generation < 1) throw new Error('Current operation generation required');
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(step)) throw new Error('Invalid approval step');
+    if (comment !== undefined && new TextEncoder().encode(comment).length > 1024) throw new Error('Approval comment exceeds 1 KiB');
+    return this.request(operationPath(id) + '/approvals/' + encodeURIComponent(step), 'POST', { expected_generation: generation, decision, ...(comment === undefined ? {} : { comment }) }, undefined, signal);
   }
   events(id: string, after = 0, signal?: AbortSignal): Promise<OperationEvents> {
     if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid operation cursor');

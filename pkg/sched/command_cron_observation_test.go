@@ -49,6 +49,8 @@ func commandObservation(t *testing.T, s state.Store, now time.Time, owner, local
 	}
 	return got
 }
+
+// adr: 20261017150710907 — Read-only schedule evidence and committed admission outcomes.
 func TestCommandCronObservationPolicyAndTiming(t *testing.T) {
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	base := state.CommandCronObservation{Schedule: "* * * * *", Timezone: "UTC", CreatedAt: now.Add(-2 * time.Minute), Enabled: true, AccountActive: true, LiveDeployment: true, TimingValid: true, PolicyValid: true, BindingValid: true}

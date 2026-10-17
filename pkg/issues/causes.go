@@ -26,7 +26,7 @@ func normalizeCauses(in *api.IssueEvent, sanitize func(string, int) string) erro
 		c.Frames = append([]api.IssueFrame(nil), c.Frames...)
 		for j := range c.Frames {
 			f := &c.Frames[j]
-			if f.Line < 0 || !utf8.ValidString(f.File) || !utf8.ValidString(f.Function) {
+			if f.Line < 0 || f.Column < 0 || f.Column > api.IssueFrameCoordinateMax || !utf8.ValidString(f.File) || !utf8.ValidString(f.Function) {
 				return errors.New("invalid cause stack frame")
 			}
 			f.File = sanitize(f.File, api.IssueMaxFrameBytes)

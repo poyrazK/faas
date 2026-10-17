@@ -22,6 +22,8 @@ class CreateConsumerKeyRequest:
 
     name: str
     scopes: list[CreateConsumerKeyRequestScopesItem]
+    """read allows GET, write and admin allow every method; billing lets the consumer read its own billing
+    (ADR-1506) and grants no app access."""
     expires_at: datetime.datetime | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

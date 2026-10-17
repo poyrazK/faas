@@ -2,26 +2,26 @@ name: S3 multipart integrity
 
 on:
   pull_request:
+    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
+    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
+    # pull request; ci.yml runs this suite nightly and in the release gate.
     paths:
       - 'pkg/objectchecksum/**'
       - 'pkg/objectstorage/**'
       - 'pkg/apid/object/**'
       - 'pkg/s3gateway/**'
       - 'pkg/state/*multipart*'
-      - 'pkg/state/queries.sql'
-      - 'pkg/state/sqlc/**'
-      - 'pkg/api/limits.go'
-      - 'migrations/**'
-      - 'schema.sql'
-      - 'go.mod'
-      - 'go.sum'
       - '.github/workflows/s3-multipart-integrity.yml'
+  # Nightly and release gate: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
   group: s3-multipart-integrity-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 

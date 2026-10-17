@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 20261017141024523 — Bounded task evidence, freshness and coordinator progress.
 func TestAppTaskObservationPostgresAdmissionAndInvalidTiming(t *testing.T) {
 	for _, mode := range []string{"admission_held", "infinite_created", "infinite_lease", "infinite_retry", "future_started", "deleted_active"} {
 		t.Run(mode, func(t *testing.T) {

@@ -87,6 +87,8 @@ type fakeBackend struct {
 	// mu lock held by an asserting test goroutine.
 	pickCalls            atomic.Int32
 	lastAdmitCorrelation wire.CorrelationFields
+	// lastAdmitPreferred is the wake hint the last Admit carried (ADR-1151).
+	lastAdmitPreferred string
 }
 
 type declaredRouteMatcherStub struct {
@@ -224,6 +226,7 @@ func (b *fakeBackend) Admit(ctx context.Context, _, deploymentID, scope, trigger
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
+	b.lastAdmitPreferred = sched.PreferredInstanceFromContext(ctx)
 	b.lastAdmitDeployment = deploymentID
 	b.lastAdmitScope = scope
 	b.lastAdmitTrigger = trigger

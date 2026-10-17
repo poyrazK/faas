@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "dab232fceb50668cde86b242cf719781e98a536d909a884943cd30fa6240ce0f",
+      "revision": "7e60a5a85a19973a99a4e4c847156ee2945f1b55193fe0475c3b19d44cbcb3f0",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "5334be39e551fe84d6ef11898ae53e6dfb4cb2ca8c797fd116d15c522d0a258d",
+        "revision": "6ce3a6c728a16fd1aa14a6d1d6a1913fafe10c5d6e930855c36d2e9dd8886a26",
         "files": [
           "faas.rules.yml"
         ],
@@ -454,6 +454,19 @@
             }
           },
           {
+            "id": "8bf66c2d1813969e5efa06fe2189bfb74bc30c78764361ca760265705e7c5dd0",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_5m",
+            "rule_name": "app_class:gateway_request_duration_seconds_count:increase5m",
+            "definition": {
+              "expression_hash": "44304b0ab57d2d9e3a2767d382b5545130350276ee4b1b14ca0a05720b85b6d2",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "a0afcd697ccd9fde77466d5479878dfead125b298f910962bfa5465d169d38f8"
+            }
+          },
+          {
             "id": "8f0de6d81d7dc4cd990d83f09708aec52c09b6339fd7dddeaed251c6e194a406",
             "file_name": "faas.rules.yml",
             "group_name": "faas_billing",
@@ -555,6 +568,32 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "9fe3be00523ddebe55a176763af8b1175dffde4b442aac29e6e09b5f6f7299b9"
+            }
+          },
+          {
+            "id": "b1f350df4943a9df7ecfdd7ffeb26d9201df8084c8cf1822448a44ff3faecc08",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_1h",
+            "rule_name": "app_class_le:gateway_request_duration_seconds_bucket:increase1h",
+            "definition": {
+              "expression_hash": "2ad0ec5e397860dd9681a8d7824ee3efdb4df01463a003c9813f3d456e8ffe08",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "662b1d0efd19019f4175b1c3d758e909daefeb1cf6490cd287f4b703a40e178c"
+            }
+          },
+          {
+            "id": "b2bbc212dfdda817c3f3e9e398fe55b8b5fae97f29acb294a2e72f78ba385aaa",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_1h",
+            "rule_name": "app_class:gateway_request_duration_seconds_count:increase1h",
+            "definition": {
+              "expression_hash": "3ab550c8c338df3f42d2a4fd2393a7344e13c0766ee1bf2b6cfd86fadb110fbb",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "99b64a294c683e5846bcd5d903a8034f883606392195e2b4262e86de58f7f896"
             }
           },
           {
@@ -818,6 +857,19 @@
             }
           },
           {
+            "id": "fada87e6e893cff0ac18d276f46bb2df279eedcfc338d70a0f7a73a94c6bb0e6",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_5m",
+            "rule_name": "app_class_le:gateway_request_duration_seconds_bucket:increase5m",
+            "definition": {
+              "expression_hash": "c1a8304840cd9af5bcad5dad1e4faa255418881eba3f84c71ae1fed5231164db",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "7737956c909844e5dd2ca9c75921d142500733d0db286c5a53f313c6e472203d"
+            }
+          },
+          {
             "id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
             "file_name": "faas.rules.yml",
             "group_name": "faas_billing",
@@ -845,8 +897,8 @@
           }
         ]
       },
-      "alert_set_revision": "3c4a26ae4cbcfb28346d9bbb9206735f20132af71d10c9063e3de777a4f6c77e",
-      "alert_count": 322,
+      "alert_set_revision": "7649251e356dfeaa441d32e909c35a622bca81267db7ebd04a68ab08acb7dc60",
+      "alert_count": 329,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -1430,6 +1482,10 @@
           ]
         },
         {
+          "rule_id": "8bf66c2d1813969e5efa06fe2189bfb74bc30c78764361ca760265705e7c5dd0",
+          "alerts": []
+        },
+        {
           "rule_id": "8f0de6d81d7dc4cd990d83f09708aec52c09b6339fd7dddeaed251c6e194a406",
           "alerts": [
             {
@@ -1570,6 +1626,14 @@
               "rule_name": "FaasApiDownAccount"
             }
           ]
+        },
+        {
+          "rule_id": "b1f350df4943a9df7ecfdd7ffeb26d9201df8084c8cf1822448a44ff3faecc08",
+          "alerts": []
+        },
+        {
+          "rule_id": "b2bbc212dfdda817c3f3e9e398fe55b8b5fae97f29acb294a2e72f78ba385aaa",
+          "alerts": []
         },
         {
           "rule_id": "b4ec1d925dcf3a13f5891eeb4ed68941ad95d299b3d97fa7c768c723eb0ca4c3",
@@ -1938,6 +2002,10 @@
           "alerts": []
         },
         {
+          "rule_id": "fada87e6e893cff0ac18d276f46bb2df279eedcfc338d70a0f7a73a94c6bb0e6",
+          "alerts": []
+        },
+        {
           "rule_id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
           "alerts": [
             {
@@ -2066,10 +2134,10 @@
       ]
     },
     {
-      "revision": "2ade9cafa224f69833afb7af9fb2ae5ce388c0ea25a9d9826fd932f0df6c6327",
+      "revision": "efec47a016a4351c07b4319fdde1b98952fb6d88c2c57852e26797d1a10fd118",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "d0f32d830517b9cff8ee9992800336b6cef4a393b20f5a751fc2fbaf82222890",
+        "revision": "7453d48e38ee102794a6ebcda7b65a67506589e63ae8ca87de300d31ac958f84",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -2520,6 +2588,19 @@
             }
           },
           {
+            "id": "8bf66c2d1813969e5efa06fe2189bfb74bc30c78764361ca760265705e7c5dd0",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_5m",
+            "rule_name": "app_class:gateway_request_duration_seconds_count:increase5m",
+            "definition": {
+              "expression_hash": "44304b0ab57d2d9e3a2767d382b5545130350276ee4b1b14ca0a05720b85b6d2",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "a0afcd697ccd9fde77466d5479878dfead125b298f910962bfa5465d169d38f8"
+            }
+          },
+          {
             "id": "8f0de6d81d7dc4cd990d83f09708aec52c09b6339fd7dddeaed251c6e194a406",
             "file_name": "faas.rules.yml",
             "group_name": "faas_billing",
@@ -2621,6 +2702,32 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "9fe3be00523ddebe55a176763af8b1175dffde4b442aac29e6e09b5f6f7299b9"
+            }
+          },
+          {
+            "id": "b1f350df4943a9df7ecfdd7ffeb26d9201df8084c8cf1822448a44ff3faecc08",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_1h",
+            "rule_name": "app_class_le:gateway_request_duration_seconds_bucket:increase1h",
+            "definition": {
+              "expression_hash": "2ad0ec5e397860dd9681a8d7824ee3efdb4df01463a003c9813f3d456e8ffe08",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "662b1d0efd19019f4175b1c3d758e909daefeb1cf6490cd287f4b703a40e178c"
+            }
+          },
+          {
+            "id": "b2bbc212dfdda817c3f3e9e398fe55b8b5fae97f29acb294a2e72f78ba385aaa",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_1h",
+            "rule_name": "app_class:gateway_request_duration_seconds_count:increase1h",
+            "definition": {
+              "expression_hash": "3ab550c8c338df3f42d2a4fd2393a7344e13c0766ee1bf2b6cfd86fadb110fbb",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "99b64a294c683e5846bcd5d903a8034f883606392195e2b4262e86de58f7f896"
             }
           },
           {
@@ -2884,6 +2991,19 @@
             }
           },
           {
+            "id": "fada87e6e893cff0ac18d276f46bb2df279eedcfc338d70a0f7a73a94c6bb0e6",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_gateway_account_rollups_5m",
+            "rule_name": "app_class_le:gateway_request_duration_seconds_bucket:increase5m",
+            "definition": {
+              "expression_hash": "c1a8304840cd9af5bcad5dad1e4faa255418881eba3f84c71ae1fed5231164db",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "7737956c909844e5dd2ca9c75921d142500733d0db286c5a53f313c6e472203d"
+            }
+          },
+          {
             "id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
             "file_name": "faas.rules.yml",
             "group_name": "faas_billing",
@@ -2911,8 +3031,8 @@
           }
         ]
       },
-      "alert_set_revision": "7dc5f5b6a2bd754ced10b907cb82087386cebd9cc464bf947e06e9a68fc97450",
-      "alert_count": 334,
+      "alert_set_revision": "4c02fd68679a58e1e4c030486fe8941fb6dc58de61d09c63b652a2a9054bc0b5",
+      "alert_count": 343,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -3496,6 +3616,10 @@
           ]
         },
         {
+          "rule_id": "8bf66c2d1813969e5efa06fe2189bfb74bc30c78764361ca760265705e7c5dd0",
+          "alerts": []
+        },
+        {
           "rule_id": "8f0de6d81d7dc4cd990d83f09708aec52c09b6339fd7dddeaed251c6e194a406",
           "alerts": [
             {
@@ -3636,6 +3760,14 @@
               "rule_name": "FaasApiDownAccount"
             }
           ]
+        },
+        {
+          "rule_id": "b1f350df4943a9df7ecfdd7ffeb26d9201df8084c8cf1822448a44ff3faecc08",
+          "alerts": []
+        },
+        {
+          "rule_id": "b2bbc212dfdda817c3f3e9e398fe55b8b5fae97f29acb294a2e72f78ba385aaa",
+          "alerts": []
         },
         {
           "rule_id": "b4ec1d925dcf3a13f5891eeb4ed68941ad95d299b3d97fa7c768c723eb0ca4c3",
@@ -4001,6 +4133,10 @@
         },
         {
           "rule_id": "fa380956392fc55c0e1d79400b5d10a3afbb669de709a33b0520d64183e7676a",
+          "alerts": []
+        },
+        {
+          "rule_id": "fada87e6e893cff0ac18d276f46bb2df279eedcfc338d70a0f7a73a94c6bb0e6",
           "alerts": []
         },
         {

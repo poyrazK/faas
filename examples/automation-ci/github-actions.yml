@@ -1,0 +1,92 @@
+name: Gregale automation evidence gate
+
+# Copy to .github/workflows/gregale-automation-gate.yml after configuring the
+# repository variables/secrets described in README.md. This reads existing suites.
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App slug
+        required: true
+        type: string
+      name:
+        description: Automation name
+        required: true
+        type: string
+      baseline_suite:
+        description: Retained baseline suite UUID
+        required: true
+        type: string
+      candidate_suite:
+        description: Distinct retained candidate suite UUID
+        required: true
+        type: string
+      saved_version:
+        description: Expected candidate saved automation version
+        required: true
+        type: number
+      published_revision:
+        description: Expected candidate published revision
+        required: true
+        type: number
+      deployment_id:
+        description: Expected candidate current deployment UUID
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Install pinned Gregale CLI
+        env:
+          GREGALE_CLI_VERSION: ${{ vars.GREGALE_CLI_VERSION }}
+        run: |
+          set -euo pipefail
+          : "${GREGALE_CLI_VERSION:?Set GREGALE_CLI_VERSION to a release containing automations live gate}"
+          curl -fsSL https://get.gregale.dev -o "$RUNNER_TEMP/install-gregale.sh"
+          sh "$RUNNER_TEMP/install-gregale.sh" --version "$GREGALE_CLI_VERSION" --dir "$RUNNER_TEMP/gregale"
+      - name: Evaluate retained suite evidence
+        env:
+          FAAS_API: ${{ vars.GREGALE_API }}
+          FAAS_TOKEN: ${{ secrets.GREGALE_AUTOMATION_READ_TOKEN }}
+          GATE_APP: ${{ inputs.app }}
+          GATE_NAME: ${{ inputs.name }}
+          GATE_BASELINE: ${{ inputs.baseline_suite }}
+          GATE_CANDIDATE: ${{ inputs.candidate_suite }}
+          GATE_VERSION: ${{ inputs.saved_version }}
+          GATE_PUBLISHED: ${{ inputs.published_revision }}
+          GATE_DEPLOYMENT: ${{ inputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          : "${FAAS_API:?Set the GREGALE_API repository variable}"
+          : "${FAAS_TOKEN:?Set the GREGALE_AUTOMATION_READ_TOKEN repository secret}"
+          gate_status=0
+          "$RUNNER_TEMP/gregale/gregale" --non-interactive automations live gate \
+            --app "$GATE_APP" --name "$GATE_NAME" \
+            --baseline "$GATE_BASELINE" --candidate "$GATE_CANDIDATE" \
+            --expected-version "$GATE_VERSION" \
+            --expected-published-version "$GATE_PUBLISHED" \
+            --expected-deployment-id "$GATE_DEPLOYMENT" \
+            --json > "$RUNNER_TEMP/automation-gate.json" || gate_status=$?
+          exit "$gate_status"
+      - name: Summarize the gate result
+        if: always()
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/automation-gate.json"
+          if [ -s "$report" ] && jq -e '.schema_version == 1 and .policy == "strict_v1"' "$report" > /dev/null; then
+            jq -r '"Automation gate: \(.outcome)\n\nExit code: \(.exit_code)\n\nReasons: \(.reasons | join(", "))"' "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' 'No gate report was produced. Check the setup and flag diagnostics.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload the gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-automation-gate
+          path: ${{ runner.temp }}/automation-gate.json
+          if-no-files-found: ignore

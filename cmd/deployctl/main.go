@@ -148,6 +148,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/vmmd_service/files", skip: only("vmmd")},
 	{dir: "deploy/ansible/roles/gatewayd_internal_service/files", skip: only("gatewayd-internal")},
 	{dir: "deploy/ansible/roles/gatewayd_public_service/files", skip: only("gatewayd-public")},
+	{dir: "deploy/ansible/roles/gatewayd_public_edge_service/files", skip: only("gatewayd-public-edge")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
@@ -158,15 +159,16 @@ var defaultTargets = []target{
 // daemon lives on the compute-only roles.
 func ansibleRoleSkips() map[string]bool {
 	return map[string]bool{
-		"githubd":           true,
-		"vmmd":              true,
-		"builderd":          true,
-		"imaged":            true,
-		"gatewayd-public":   true,
-		"gatewayd-internal": true,
-		"s3-gatewayd":       true,
-		"realtimed":         true,
-		"profiled":          true,
+		"githubd":              true,
+		"vmmd":                 true,
+		"builderd":             true,
+		"imaged":               true,
+		"gatewayd-public":      true,
+		"gatewayd-public-edge": true,
+		"gatewayd-internal":    true,
+		"s3-gatewayd":          true,
+		"realtimed":            true,
+		"profiled":             true,
 	}
 }
 
@@ -189,9 +191,10 @@ func only(name string) map[string]bool {
 // ship githubd or meterd (those only exist on the control plane).
 func legacySkips() map[string]bool {
 	return map[string]bool{
-		"githubd":     true,
-		"meterd":      true,
-		"s3-gatewayd": true,
+		"githubd":              true,
+		"meterd":               true,
+		"s3-gatewayd":          true,
+		"gatewayd-public-edge": true,
 	}
 }
 
