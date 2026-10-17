@@ -3533,6 +3533,9 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 	if leaseToken == "" {
 		return fmt.Errorf("state: mark instance migrating: empty leaseToken")
 	}
+	if handled, err := s.markFunctionMigrationSource(ctx, instanceID, currentNodeID, leaseToken); handled {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'migrating',

@@ -5799,20 +5799,37 @@ func (e *Engine) ReconcileExpiredMigrations(ctx context.Context) (int, error) {
 	if e.migrateLiveLeaseSeconds > 0 {
 		leaseSeconds = e.migrateLiveLeaseSeconds
 	}
+	attempted, recovered, err := e.reconcileExpiredFunctionMigrationSources(ctx, maxPerTick)
+	if err != nil {
+		return 0, fmt.Errorf("sched: list expired function migration sources: %w", err)
+	}
+	if attempted >= maxPerTick {
+		return recovered, nil
+	}
+	maxPerTick -= attempted
 	rows, err := e.store.ListExpiredMigrations(ctx, maxPerTick, time.Duration(leaseSeconds)*time.Second)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile expired migrations: list: %w", err)
 	}
 	if len(rows) == 0 {
-		return 0, nil
+		return recovered, nil
 	}
 	if len(rows) > maxPerTick {
 		e.log.Info("sched: reconcile expired migrations: capped",
 			"available", len(rows), "cap", maxPerTick)
 		rows = rows[:maxPerTick]
 	}
-	reconciled := 0
+	reconciled := recovered
 	for _, ins := range rows {
+		tracked, err := functionMigrationSourceTracked(ctx, e.store, ins)
+		if err != nil {
+			e.log.Warn("sched: migration source ownership lookup failed", "instance_id", ins.ID, "err", err)
+			continue
+		}
+		if tracked {
+			continue
+		}
+
 		ownerActive, lookupErr := e.computeNodeActive(ctx, ins.NodeID)
 		if lookupErr != nil {
 			if e.ops != nil {
@@ -6575,10 +6592,24 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 	if err != nil {
 		return 0, err
 	}
+	sourceIDs := make(map[string]bool)
+	if sources, ok := e.store.(state.FunctionMigrationSourceStore); ok {
+		ids, err := sources.ListFunctionMigrationSourceInstances(ctx, appID)
+		if err != nil {
+			return 0, err
+		}
+		for _, id := range ids {
+			sourceIDs[id] = true
+		}
+	}
 	repaired := 0
 	for _, ins := range instances {
 		current := state.State(ins.State)
 		if current.CountsForConcurrency() {
+			continue
+		}
+		// Physical source ownership still holds its slot.
+		if sourceIDs[ins.ID] {
 			continue
 		}
 		if current.CountsForRAM() {

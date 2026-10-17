@@ -193,3 +193,29 @@ accounting cases but cannot replace native evidence. Private environment
 qualification restores do not yet expose the new lifetime port. Normal builds
 remain disabled; the special build is an acceptance instrument, not a rollout
 approval. This workspace has no `/dev/kvm` and cannot certify the native gate.
+
+## Function migration source rollback qualification
+
+[ADR-1350](../adr/1350-function-migration-source-rollback.md) adds a source-only
+qualification seam. Ordinary production wiring and measured migration capture
+stay off; destination adoption rejects function-source captures. A native source
+fixture must retain the existing boot/admission contract, never disable a guard
+or discard an admission receipt to make a migration capture run.
+
+Require the same isolated native host and matching Node 22/24 artifacts. Observe
+all eight SQL sessions closing before source pause/publication. Hold the recovery
+ACK until eight fresh, probed sessions exist; ordinary requests must stay closed.
+Exercise cancellation during checkpoint, pre-Phase-2 expiry, lost capture and
+recovery acknowledgements, commit/cancel races, failed probes, caller cancellation,
+Destroy joining recovery, and unconfirmed physical cleanup. Repeated cancel/expiry
+must not replay callbacks or SQL. The original wake can return to RUNNING only
+after recovery; confirmed retirement completes STOPPED. Unconfirmed cleanup keeps
+the allocator and scheduler residency/concurrency reservations. Late events must
+leave a replacement and a committed peer untouched.
+
+Also qualify vmmd restart with the durable source receipt and no reconstructed
+in-memory owner. It must retain uncertainty, not resume a VM using an empty
+execution ledger. Private environment resume authority remains mandatory. Passing
+portable ownership/transaction tests or compiling the tagged suite does not
+qualify these native cases. See the
+[local evidence](evidence/20261017-function-migration-source-rollback/REPORT.md).

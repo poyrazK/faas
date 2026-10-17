@@ -251,10 +251,11 @@ type WakePrepareTimings struct {
 type SnapshotSpec struct {
 	// Only Manager can populate the retained parent. Wire callers never supply
 	// an admission receipt as authority for a snapshot of another live VM.
-	admittedParent runtimeadmission.Receipt
-	admittedGrant  *runtimeadmission.SnapshotGrant
-	StageMemPath   string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath    string // host location vmmd hands to the FC socket during pause
+	admittedParent    runtimeadmission.Receipt
+	admittedGrant     *runtimeadmission.SnapshotGrant
+	functionMigration *FunctionMigrationBinding
+	StageMemPath      string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath       string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string
@@ -272,7 +273,7 @@ type SnapshotSpec struct {
 	ResumeBeforePublish bool
 	// BeforeCheckpoint requests the guest-local callback before capture.
 	// Qualified Node warm captures recover resources under the same flight;
-	// ordinary warm and all migration captures must leave this false.
+	// ordinary warm and unqualified migration captures must leave this false.
 	BeforeCheckpoint bool
 }
 

@@ -94,3 +94,8 @@ does not qualify these cases. Native capture/restore and remaining lifetime
 fault/restart/private-environment acceptance are still required before any
 activation change. See the [acceptance procedure](../ops/function-backend-concurrency-acceptance.md)
 and [evidence](../ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
+
+
+Follow-up: [ADR-1350](1350-function-migration-source-rollback.md) adds a separate
+qualification-only source prepare/rollback path. Ordinary and measured migration
+capture and destination adoption retain their gates.

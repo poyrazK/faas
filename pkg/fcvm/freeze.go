@@ -379,6 +379,10 @@ func (m *Manager) AwaitFrozen(ctx context.Context, instance string) (bool, error
 		var gate chan struct{}
 		m.mu.Lock()
 		if inst := m.live[instance]; inst != nil {
+			if functionMigrationActive(inst) {
+				m.mu.Unlock()
+				return false, ErrInstanceBusy
+			}
 			frozen, gate = inst.Frozen, inst.freezing
 		}
 		m.mu.Unlock()

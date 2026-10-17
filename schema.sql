@@ -68683,3 +68683,12 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+
+-- ADR-1350: qualified function migration source ownership.
+CREATE TABLE public.function_migration_sources (
+    instance_id uuid PRIMARY KEY REFERENCES public.migration_leases(instance_id) ON DELETE CASCADE,
+    lease_token text NOT NULL UNIQUE REFERENCES public.migration_leases(lease_token) ON DELETE CASCADE,
+    source_node_id text NOT NULL CHECK (source_node_id <> ''),
+    source_wake_id uuid NOT NULL,
+    phase text NOT NULL CHECK (phase IN ('preparing', 'prepared', 'recovering', 'recovered', 'retired'))
+);

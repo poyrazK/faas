@@ -24,8 +24,14 @@ func TestMigrationTracker_PutNewEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got != m {
-		t.Errorf("get returned %p, want same pointer %p", got, m)
+	if got == m || *got != *m {
+		t.Fatal("get must return an equal, independently owned snapshot")
+	}
+	got.memKey = "changed by reader"
+	m.pending = true
+	next, err := tr.get("inst-1", "tok")
+	if err != nil || next.memKey != "" || next.pending {
+		t.Fatal("tracker aliases a caller-owned migration", err)
 	}
 }
 

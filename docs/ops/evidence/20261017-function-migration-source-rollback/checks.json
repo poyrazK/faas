@@ -1,0 +1,84 @@
+{
+  "base": "af8dd0344a475aea1b60e471a4adeb6235a2475b",
+  "generation": {
+    "protobuf": {
+      "generated_files": 20,
+      "drift": 0,
+      "protoc_gen_go": "v1.36.11",
+      "protoc_gen_go_grpc": "v1.6.2"
+    },
+    "sqlc": {
+      "generated_files": 86,
+      "drift": 0,
+      "version": "v1.31.1"
+    }
+  },
+  "checks": [
+    {
+      "name": "changed-code lint default",
+      "command": [
+        "go",
+        "tool",
+        "golangci-lint",
+        "run",
+        "--timeout=25m",
+        "--concurrency=1",
+        "--new-from-rev=af8dd0344a475aea1b60e471a4adeb6235a2475b",
+        "./pkg/state",
+        "./pkg/fcvm",
+        "./pkg/sched",
+        "./pkg/vmmdgrpc"
+      ],
+      "exit_code": 0,
+      "issues": 0
+    },
+    {
+      "name": "changed-code lint qualified",
+      "command": [
+        "go",
+        "tool",
+        "golangci-lint",
+        "run",
+        "--timeout=25m",
+        "--concurrency=1",
+        "--new-from-rev=af8dd0344a475aea1b60e471a4adeb6235a2475b",
+        "--build-tags=metal,function_background_native",
+        "./pkg/state",
+        "./pkg/fcvm",
+        "./pkg/sched",
+        "./pkg/vmmdgrpc"
+      ],
+      "exit_code": 0,
+      "issues": 0
+    },
+    {
+      "name": "source policy",
+      "command": [
+        "make",
+        "adr-number-uniqueness-check",
+        "sealed-env-scope-check",
+        "runbook-sql-check",
+        "shell-quoting-check",
+        "text-encoding-check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "workflow validation",
+      "command": [
+        "actionlint",
+        ".github/workflows/function-backends.yml"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "documentation links",
+      "command": [
+        "go",
+        "run",
+        "./cmd/docs-links-check"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

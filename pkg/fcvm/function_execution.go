@@ -186,7 +186,7 @@ func (m *Manager) applyFunctionExecution(lease Lease, req functionlifetime.Reque
 		if req.Hook == "before_checkpoint" {
 			blocked = flight == nil || !flight.functionHookAdmission
 		}
-		if inst.Frozen || inst.Paused || blocked {
+		if inst.Frozen || inst.Paused || blocked || functionMigrationActive(inst) && req.Hook != "before_checkpoint" {
 			reply.Status = functionlifetime.Busy
 			return reply
 		}

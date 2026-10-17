@@ -318,7 +318,9 @@ and plan limits. A timed-out close retains registration until actual drainage.
 Qualified warm captures hold admission through paused publication and a fresh
 all-worker recovery pass before the original VM continues serving. Failed or
 cancelled capture also recovers; an unconfirmed recovery retires that VM.
-Migration capture remains refused. Automatic registration is off in normal
+Ordinary/measured migration capture remains refused. A separate qualification
+path adds fenced source rollback after cancellation or lease expiry; destination
+adoption remains gated. Automatic registration is off in normal
 production adapters; native VM/SQL qualification remains pending.
 Automatic ownership requires the updated SDK runtime or regenerated bundled
 helper. Direct `pg.Pool` instances and older helper versions are not registered
@@ -338,5 +340,7 @@ VM replacement; bounded post-response work does not provide durable execution.
 See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md),
 [ADR-1346](adr/1346-function-background-completion-protocol.md),
 [ADR-1347](adr/1347-function-vm-execution-lifetime.md),
-[ADR-1348](adr/1348-function-postgres-resource-lifecycle.md)
+[ADR-1348](adr/1348-function-postgres-resource-lifecycle.md),
+[ADR-1349](adr/1349-function-warm-snapshot-resource-recovery.md),
+[ADR-1350](adr/1350-function-migration-source-rollback.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

@@ -7,6 +7,18 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Node function migration source rollback — 2026-10-17
+
+[ADR-1350](adr/1350-function-migration-source-rollback.md) adds a qualification-only
+source path: mandatory all-interpreter checkpoint drainage, paused publication,
+a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
+Cancellation and expired leases retain source capacity until recovery or physical
+retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
+vmmd never writes the instance ownership row. Destination adoption and measured
+migration capture remain refused. Native KVM/vsock, restart/private-environment
+acceptance and production activation remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
+
 ## Node function warm-snapshot recovery — 2026-10-17
 
 [ADR-1349](adr/1349-function-warm-snapshot-resource-recovery.md) adds qualified

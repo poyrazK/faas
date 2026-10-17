@@ -101,11 +101,16 @@ func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) 
 }
 
 func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceFlightForMigration(ctx, instance, nil)
+}
+
+func (m *Manager) registerLiveInstanceFlightForMigration(ctx context.Context, instance string, source *functionMigrationSource) (context.Context, *Instance, *instanceFlight, error) {
 	if v := m.nativeVMM(); v != nil {
 		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
 			return nil, nil, nil, err
 		}
 	}
+
 	operationCtx, flight := newInstanceFlight(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,6 +126,10 @@ func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance strin
 	if !ok {
 		flight.cancel()
 		return nil, nil, nil, fmt.Errorf("instance is not live")
+	}
+	if functionMigrationActive(inst) && inst.functionMigration != source || source != nil && (inst != source.inst || inst.functionMigration != source) {
+		flight.cancel()
+		return nil, nil, nil, ErrInstanceBusy
 	}
 	if _, ok := m.instanceFlights[instance]; ok {
 		flight.cancel()

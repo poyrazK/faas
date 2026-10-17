@@ -51,8 +51,8 @@ func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec
 		spec.BeforeCheckpoint = true
 	}
 	_, recoverable := m.vmm.(functionResourceRecoverer)
-	busy := functionExecutionBusy(inst) || resources && (!spec.BeforeCheckpoint || mode == snapshotMigration)
-	unsupported := resources && mode == snapshotWarm && !recoverable
+	busy := functionExecutionBusy(inst) || resources && (!spec.BeforeCheckpoint || mode == snapshotMigration && spec.functionMigration == nil)
+	unsupported := resources && (mode == snapshotWarm || mode == snapshotMigration) && !recoverable
 	if !busy && !unsupported {
 		flight.functionHookAdmission = spec.BeforeCheckpoint
 	}

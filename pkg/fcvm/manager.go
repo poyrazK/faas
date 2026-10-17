@@ -419,10 +419,12 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
-	nativeGeneration string
-	Lease            Lease
-	Net              netns.Config
-	Method           WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	nativeGeneration  string
+	wakeID            string                   // original scheduler wake; source migration authority
+	functionMigration *functionMigrationSource // guarded by Manager.mu
+	Lease             Lease
+	Net               netns.Config
+	Method            WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
 	runtimeAdmissionEgress  WakeRequest
@@ -1211,10 +1213,11 @@ type Manager struct {
 
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
-	freezeActivity   QuietActivity
-	freezeMetrics    *FreezeMetrics
-	functionActivity *activity.ActivityTracker
-	functionStarting map[string]*Instance
+	freezeActivity           QuietActivity
+	freezeMetrics            *FreezeMetrics
+	functionActivity         *activity.ActivityTracker
+	functionMigrationSources map[string]*functionMigrationSource
+	functionStarting         map[string]*Instance
 }
 
 type appCPUPolicy struct {
@@ -4866,7 +4869,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		executionID = req.Instance
 	}
 	inst := &Instance{
-		Lease: lease, Net: nc, Method: method,
+		Lease: lease, Net: nc, Method: method, wakeID: wakeID,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,

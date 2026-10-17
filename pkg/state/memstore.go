@@ -514,7 +514,8 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases map[string]MigrationLease // lease_token → lease
+	migrationLeases          map[string]MigrationLease
+	functionMigrationSources map[string]FunctionMigrationSource // instance_id → source
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -5884,6 +5885,9 @@ func (m *MemStore) MarkInstanceMigrating(ctx context.Context, instanceID, curren
 	}
 	if ins.NodeID != currentNodeID || ins.State != string(StateRunning) {
 		return ErrConflict
+	}
+	if err := m.markFunctionMigrationSourceLocked(ins, leaseToken); err != nil {
+		return err
 	}
 	ins.State = string(StateMigrating)
 	ins.LeaseToken = leaseToken

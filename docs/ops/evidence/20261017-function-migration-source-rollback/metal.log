@@ -1,0 +1,6 @@
+--- FAIL: TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry (0.00s)
+    runtime_snapshot_capture_metal_test.go:39: native standards acceptance requires readable FAAS_TEST_KERNEL: open : no such file or directory
+FAIL
+FAIL	github.com/onebox-faas/faas/pkg/fcvm	0.082s
+FAIL
+make: *** [Makefile:462: test-metal] Error 1

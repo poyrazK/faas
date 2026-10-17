@@ -95,6 +95,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			}
 			retained.complete = true
 			m.mu.Lock()
+			m.markFunctionMigrationRetiredLocked(lease)
 			delete(m.pendingCleanup, lease.Instance)
 			m.mu.Unlock()
 			return nil
@@ -120,6 +121,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			return fmt.Errorf("cleanup %s: release lease: %w", lease.Instance, err)
 		}
 	}
+	m.markFunctionMigrationRetiredLocked(lease)
 	retained.complete = true
 	delete(m.pendingCleanup, lease.Instance)
 	delete(m.pendingProcessExits, lease.Instance)
