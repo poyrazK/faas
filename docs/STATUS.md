@@ -7,6 +7,25 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Two-generation hand-off on reload — 2026-10-18 (branch, not released)
+
+gatewayd-public, gatewayd-internal, apid and realtimed hand off on
+`systemctl reload`: the new release starts on the same sockets and serves new
+connections, and the old generation finishes requests and streams longer than
+the 25 s restart grace, for up to 30 minutes
+([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md), "Two generations").
+deployctl reloads them when only the binary changed and both releases can
+hand off, and restarts otherwise. gatewayd-internal's egress ledger and usage
+outbox and realtimed's callback outbox use per-generation slots. realtimed
+closes its WebSocket sessions at the hand-off (fan-out is per process).
+Portable tests cover a 30 s request across a hand-off with no failed request,
+a refused hand-off, both gateways' drains with requests longer than the grace,
+store adoption across generations, a realtimed hand-off under load, and
+deployctl's reload-or-restart decision. Open: the hand-off under real systemd
+(`MAINPID=` adoption, `NotifyAccess=main`, watchdog, `OOMPolicy`) on a native
+host, apid's tests on Linux, apid's memory headroom (256 M), and a WebSocket
+across a gateway hand-off on a real node.
+
 ## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
 
 gatewayd-internal (unix socket and compute data listener), realtimed and the

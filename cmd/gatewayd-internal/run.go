@@ -3994,6 +3994,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 6)
 	var servers []drainedServer
+	// sessionDrains stop raw listeners and wait for their sessions; a
+	// hand-off's old generation runs them (ADR-1580).
+	var sessionDrains []func(context.Context) error
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) *wire.HTTPDrain {
 		drain := wire.NewHTTPDrain(s)
@@ -4175,9 +4178,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if guestServices == nil {
 			return errors.New("gatewayd: service_tcp_listen requires an available guest service proxy")
 		}
-		if err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log); err != nil {
+		drainServiceTCP, err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log)
+		if err != nil {
 			return err
 		}
+		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
@@ -4332,7 +4337,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			for _, stop := range deps.onHandoff {
 				stop()
 			}
-			return drainOldGeneration(ctx, log, servers, serviceDiscoveryServers, deps)
+			return drainOldGeneration(ctx, log, servers, serviceDiscoveryServers, sessionDrains, deps)
 		case <-ctx.Done():
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 			defer cancel()

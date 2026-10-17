@@ -68,7 +68,7 @@ func TestDrainOldGenerationFinishesRequestsLongerThanTheRestartGrace(t *testing.
 	<-started
 	done := make(chan error, 1)
 	go func() {
-		done <- drainOldGeneration(context.Background(), discardLogger(), []drainedServer{server}, nil, runDeps{drain: drain.NewTracker()})
+		done <- drainOldGeneration(context.Background(), discardLogger(), []drainedServer{server}, nil, nil, runDeps{drain: drain.NewTracker()})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -131,7 +131,7 @@ func TestDrainOldGenerationKeepsStreamsUntilStopped(t *testing.T) {
 	stopping, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- drainOldGeneration(stopping, discardLogger(), []drainedServer{server}, nil, runDeps{drain: tracker})
+		done <- drainOldGeneration(stopping, discardLogger(), []drainedServer{server}, nil, nil, runDeps{drain: tracker})
 	}()
 	select {
 	case err := <-ended:

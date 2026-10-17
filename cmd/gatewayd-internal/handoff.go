@@ -177,7 +177,7 @@ func (g *generationStores) close() {
 // sessions end one restart grace before that bound so their clients
 // reconnect to the successor; a SIGTERM (ctx) ends them at once and allows
 // one more restart grace.
-func drainOldGeneration(ctx context.Context, log *slog.Logger, servers []drainedServer, dnsServers []*dns.Server, deps runDeps) error {
+func drainOldGeneration(ctx context.Context, log *slog.Logger, servers []drainedServer, dnsServers []*dns.Server, sessionDrains []func(context.Context) error, deps runDeps) error {
 	maxDrain := time.Duration(api.HandoffDrainMaxSeconds) * time.Second
 	// The drain outlives ctx: a SIGTERM shortens it to one grace instead of
 	// cutting it.
@@ -211,7 +211,12 @@ func drainOldGeneration(ctx context.Context, log *slog.Logger, servers []drained
 		_ = deps.egressGRPC.stop(stopCtx)
 		stopCancel()
 	}
+	var sessions sync.WaitGroup
+	for _, drainSessions := range sessionDrains {
+		sessions.Go(func() { _ = drainSessions(drainCtx) })
+	}
 	shutdownListeners(drainCtx, servers, dnsServers, deps.synth)
+	sessions.Wait()
 	var drainErr error
 	if deps.drain != nil {
 		outcome, err := deps.drain.Drain(drainCtx, maxDrain)
