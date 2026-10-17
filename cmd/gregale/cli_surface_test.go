@@ -64,8 +64,60 @@ func TestCliAudienceFiltersOnlyDiscoverySurfaces(t *testing.T) {
 			t.Errorf("hidden command %q is missing from lookup manifest", command.Name)
 		}
 	}
-	if got := len(customerCliCommands()) + len(advancedCliCommands()); got != len(cliCommands) {
-		t.Fatalf("audience partition lost commands: customer+advanced=%d manifest=%d", got, len(cliCommands))
+	if got := len(customerCliCommands()) + len(advancedCliCommands()); got != len(visibleCliCommands()) {
+		t.Fatalf("audience partition lost commands: customer+advanced=%d visible=%d", got, len(visibleCliCommands()))
+	}
+}
+
+// Application Auth is a dark launch: without FAAS_APPLICATION_AUTH_ENABLED
+// nothing of it reaches help, completions, the reference, suggestions,
+// dispatch, flag parsing or templates.
+func TestApplicationAuthStaysOutOfEveryCustomerSurface(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "")
+	if _, ok := lookupCliCommand("auth"); ok {
+		t.Fatal("lookup finds the auth command")
+	}
+	var surfaces bytes.Buffer
+	surfaces.WriteString(topLevelUsage(true))
+	renderMarkdownReference(&surfaces, customerCliCommands())
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		oldOut := osStdout
+		osStdout = &surfaces
+		code := run([]string{"completion", shell})
+		osStdout = oldOut
+		if code != 0 {
+			t.Fatalf("completion %s = %d", shell, code)
+		}
+	}
+	for _, leak := range []string{"gregale auth", "Application Auth", "application Auth", "jwt-auth", "AUTH_APP"} {
+		if strings.Contains(surfaces.String(), leak) {
+			t.Errorf("a customer surface mentions %q", leak)
+		}
+	}
+	if suggestion, ok := suggestCommand("auht"); ok && suggestion == "auth" {
+		t.Error("an unknown command suggests auth")
+	}
+	_, stderr, restore := swapIO(t)
+	defer restore()
+	if code := run([]string{"auth", "create", "shop-auth"}); code == 0 || !strings.Contains(stderr(), "unknown command") {
+		t.Fatalf("gregale auth = %d: %s", code, stderr())
+	}
+	for _, args := range [][]string{{"data-api", "create", "notes", "--database", "db", "--auth", "shop-auth"}, {"pipeline", "create", "notes", "--auth", "shop-auth"}, {"pipeline", "create", "notes", "--api", "notes-data"}, {"edge-rules", "create", "--app", "shop", "--kind", "jwt", "--jwt-auth", "shop-auth"}} {
+		before := strings.Count(stderr(), "unknown flag")
+		if code := run(args); code == 0 || strings.Count(stderr(), "unknown flag") != before+1 {
+			t.Errorf("%v = %d: %s", args, code, stderr())
+		}
+	}
+	if templateAvailable("auth") || !templateAvailable("hello-node") {
+		t.Fatal("the auth template is available")
+	}
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+	if _, ok := lookupCliCommand("auth"); !ok || !templateAvailable("auth") {
+		t.Fatal("turning Auth on does not show it")
+	}
+	before := len(stderr())
+	if code := run([]string{"pipeline", "create", "notes", "--api", "notes-data", "--auth", "shop-auth"}); code != 1 || !strings.Contains(stderr()[before:], "Invalid pipeline") {
+		t.Fatalf("turning Auth on does not recognize the pipeline API shortcut: %d: %s", code, stderr()[before:])
 	}
 }
 

@@ -128,7 +128,12 @@ func estimateTestWorkloadMinutes(scenario testScenario, runs int) int {
 	if scenario.Timeout != "" {
 		timeout, _ = time.ParseDuration(scenario.Timeout) // manifest validation has already run
 	}
-	return int(math.Ceil(float64((1+len(scenario.Services))*runs) * timeout.Minutes()))
+	workloads := 1 + len(scenario.Services)
+	if scenario.CommandExecution != nil {
+		workloads++
+		timeout += time.Minute
+	}
+	return int(math.Ceil(float64(workloads*runs) * timeout.Minutes()))
 }
 
 type testSecretEnvironmentReference struct{ workload, name string }

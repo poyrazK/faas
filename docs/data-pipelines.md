@@ -5,6 +5,12 @@ dedicated Gregale managed database and keep them synchronized. You can expose
 the mirror through a read-only [Data API](data-api.md). This feature is available
 only to operator-approved staging accounts on Hobby, Pro, or Scale.
 
+Auth-backed API setup also requires application Auth in the approved staging
+environment. Its CLI shortcuts (`pipeline create --api/--auth` and
+`data-api create --auth`) are exposed only with
+`FAAS_APPLICATION_AUTH_ENABLED=1` in the local CLI environment. Mirror-only
+synchronization does not require application Auth.
+
 ## Connect and read
 
 Start in **Dashboard → Data connections**, or inspect a source with the CLI:

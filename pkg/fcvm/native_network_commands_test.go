@@ -84,6 +84,31 @@ func nativeNetworkProductionDispatch(t *testing.T, m *Manager, v *JailerVMM) str
 	return marker
 }
 
+func TestRehearsalNetworkResumeUsesOriginalNativeOwner(t *testing.T) {
+	m, v, inst := nativeNetworkFixture(t)
+	nativeNetworkProductionDispatch(t, m, v)
+	m.WithRehearsalNetworkPolicies(&rehearsalPolicyStub{run: rehearsalNetworkTestRun})
+	inst.Net.RehearsalRunID = rehearsalNetworkTestRun
+	input := filepath.Join(t.TempDir(), "guard-input")
+	t.Setenv("GREGALE_NATIVE_HELPER_INPUT_MARKER", input)
+	if err := m.ensureRehearsalNetwork(t.Context(), inst); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(input); err != nil || !strings.Contains(string(data), "inet gregale_rehearsal") {
+		t.Fatalf("guard did not reach the owned native helper: %q %v", data, err)
+	}
+	replaceNativeNetworkOwner(t, v, inst)
+	if err := os.Remove(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ensureRehearsalNetwork(t.Context(), inst); err == nil {
+		t.Fatal("stale instance obtained a replacement generation's network authority")
+	}
+	if _, err := os.Stat(input); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stale resume reached native network effects")
+	}
+}
+
 func TestNativeNetworkBatchesAndCaptureUseGatedOwnerWithoutLegacyRunner(t *testing.T) {
 	m, v, inst := nativeNetworkFixture(t)
 	nativeNetworkProductionDispatch(t, m, v)

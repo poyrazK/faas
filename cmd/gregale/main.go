@@ -361,6 +361,9 @@ func run(args []string) (status int) {
 	case "data-api":
 		return cmdDataAPI(args[1:])
 	case "auth":
+		if !applicationAuthCLI() {
+			return unknownCommand(args[0])
+		}
 		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])

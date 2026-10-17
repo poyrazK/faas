@@ -124,8 +124,8 @@ func cmdPipelineCreate(args []string) int {
 	subjects := fs.String("read-subjects", "", "comma-separated application JWT subjects allowed to read the mirror")
 	wait := fs.Bool("wait", false, "wait until initial copying and catch-up complete")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum provisioning and pipeline wait (maximum 1h)")
-	apiName := fs.String("api", "", "deploy a read-only Data API after initial sync")
-	authApp := fs.String("auth", "", "Auth app for --api")
+	apiName := unreleasedStringFlag(fs, "api", "deploy a read-only Data API after initial sync")
+	authApp := unreleasedStringFlag(fs, "auth", "Auth app for --api")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}

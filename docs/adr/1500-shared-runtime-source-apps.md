@@ -38,6 +38,15 @@ today's full-layer path unchanged.
    container app with an empty `app.Runtime` and a Node framework, choose
    `node24`, or `node22` when `.nvmrc` or `engines.node` names major 22. Pass
    it as the build manifest runtime and its pinned base as `RuntimeBaseRef`.
+   *Amended 2026-10-17 (acceptance):* the choice reads the declaration as
+   written (`sharedruntime.NodeRuntimeForSpec`), because the parsed source
+   version drops a bare major: `"engines": {"node": "22"}` used to pick
+   `node24`. `22`, `22.x`, `^22`, `~22` and `lts/jod` pick `node22`. No
+   declaration, `24`, `lts/krypton`, `lts/*` and a lower bound the 24 base
+   satisfies (`>=20`) pick `node24`. Any other declaration (`20`, `^20`, `26`,
+   a compound range, `latest`) keeps today's full-layer path: the builder
+   pins Railpack's Node to the base's major, so the shared path must never
+   replace a declared major.
    This is the same handoff functions use: Railpack builds FROM that base and
    pins its Node package to the base's major. The runtime is recorded on the
    deployment's build plan (`build_plan.runtime`), so the choice is frozen per
