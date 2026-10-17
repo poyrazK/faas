@@ -115,6 +115,14 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 		}
 		*snapshotID = waitAfterRestoreSnapshot(t, store, *deploymentID, *snapshotID)
 	}
+	// Client sessions the guest holds in the customer database; the fixture's own
+	// Data pool is excluded.
+	guestSessions := func(ctx context.Context) (int, error) {
+		var sessions int
+		err := fixture.Data.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND usename <> current_user AND backend_type = 'client backend'`).Scan(&sessions)
+		return sessions, err
+	}
 	starterPhase("release_and_initial_restore", func(t *testing.T) {
 		ca, err := os.ReadFile(os.Getenv("GREGALE_POSTGRES_NATIVE_CA_PATH"))
 		if err != nil {
@@ -148,7 +156,8 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 			t.Fatal("starter migration release did not succeed")
 		}
 		app, err := store.AppByID(ctx, appID)
-		if err != nil || app.Manifest.AfterRestore == nil || app.Manifest.AfterRestore.Path != "/internal/after-restore" || app.Manifest.AfterRestore.TimeoutMS != 2000 {
+		if err != nil || app.Manifest.AfterRestore == nil || app.Manifest.AfterRestore.Path != "/internal/after-restore" || app.Manifest.AfterRestore.TimeoutMS != 2000 ||
+			app.Manifest.BeforeCheckpoint == nil || app.Manifest.BeforeCheckpoint.Path != "/internal/before-checkpoint" || app.Manifest.BeforeCheckpoint.TimeoutMS != 2000 {
 			t.Fatal("generated starter manifest was not applied")
 		}
 		if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
@@ -211,8 +220,17 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 		})
 	})
 	starterPhase("pooled_disconnect_recovery", func(t *testing.T) {
-		read(t, "") // keep an actual driver pool/session in the process being captured
+		read(t, "") // the driver pool keeps an idle session in the process about to be captured
+		if sessions, err := guestSessions(t.Context()); err != nil || sessions == 0 {
+			t.Fatal("starter kept no SQL session before capture; the drain check would prove nothing")
+		}
 		park(t)
+		// before_checkpoint drained the pool, so the capture strands no server
+		// session for keepalive to reap.
+		postgresNativeWait(t, "starter capture to hold no SQL session", func(ctx context.Context) bool {
+			sessions, err := guestSessions(ctx)
+			return err == nil && sessions == 0
+		})
 		proxy.Disconnect()
 		read(t, "restore")
 		request(t, http.MethodPost, "internal/after-restore", nil, http.StatusForbidden)
