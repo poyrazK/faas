@@ -130,7 +130,11 @@ func (m *MemStore) computeTransaction(ctx context.Context, account string, fn fu
 	return err
 }
 func newMemComputeTxn(m *MemStore, account string) *memFinancialComputeTxn {
-	return &memFinancialComputeTxn{m: m, account: account, now: time.Now().UTC(), books: map[string]financial.ComputeBook{}, leases: map[string]financial.ComputeLease{}}
+	now := time.Now().UTC()
+	if m.clock != nil {
+		now = m.clock().UTC()
+	}
+	return &memFinancialComputeTxn{m: m, account: account, now: now, books: map[string]financial.ComputeBook{}, leases: map[string]financial.ComputeLease{}}
 }
 func (t *memFinancialComputeTxn) commit() {
 	m := t.m

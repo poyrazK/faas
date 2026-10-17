@@ -36,6 +36,83 @@ func TestFinancialComputeReservations(t *testing.T) {
 	}
 }
 
+func TestFinancialComputePolicyEditAtUTCReset(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := t.Context()
+	a := financialAccount(t, store)
+	app, err := store.CreateApp(ctx, state.App{AccountID: a.ID, Slug: "compute-reset-edit", RAMMB: 128, MaxConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Now().UTC()
+	store.SetClockForTest(func() time.Time { return clock })
+	nodes, err := store.ListComputeNodes(ctx, false)
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("nodes: %v %v", nodes, err)
+	}
+	var owner runtimeadmission.Identity
+	for _, n := range nodes {
+		owner = runtimeadmission.Identity{NodeID: n.ID, Incarnation: uuid.NewString(), ProtocolVersion: 1}
+		if err := store.RegisterComputeNodeRuntimeIdentity(ctx, owner); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RegisterFinancialComputeOwner(ctx, owner.NodeID, owner.Incarnation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for at := app.CreatedAt.Truncate(time.Minute); at.Before(clock.Truncate(time.Minute)); at = at.Add(time.Minute) {
+		if err := store.RecordFinancialSamplingWindow(ctx, at, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := financialBudgetSpec()
+	spec.Scope = financial.BudgetScope{Kind: "app", ID: app.ID}
+	spec.Mode, spec.Action, spec.Basis = "strict", "suspend_workloads", "gross_usage"
+	spec.NotifyMillicents = []int64{}
+	spec.DrainSeconds, spec.LimitMillicents, spec.ResumeRule = 0, 1000, "manual"
+	p, err := store.CreateFinancialBudget(ctx, a.ID, uuid.NewString(), "test", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := financial.ComputeRequest{AttemptID: uuid.NewString(), Fenced: true, AccountID: a.ID, AppID: app.ID, InstanceID: uuid.NewString(), NodeID: owner.NodeID, Incarnation: owner.Incarnation, BillableMB: 136}
+	lease, err := store.AcquireFinancialCompute(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.LimitMillicents = lease.Reserved
+	p, err = store.UpdateFinancialBudget(ctx, a.ID, p.ID, p.Revision, "test", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AttemptID, request.InstanceID = uuid.NewString(), uuid.NewString()
+	if _, err := store.AcquireFinancialCompute(ctx, request); !errors.Is(err, financial.ErrComputeBudget) {
+		t.Fatalf("second grant escaped hold: %v", err)
+	}
+	previous := clock
+	clock = financial.ComputeMonth(clock).AddDate(0, 1, 0)
+	balance, err := store.FinancialComputeBalance(ctx, p, clock)
+	if err != nil || balance.Initialized || !balance.Held || balance.UnconfirmedLeases != 1 {
+		t.Fatalf("reset lost manual hold or prior attempt: %+v %v", balance, err)
+	}
+	spec.LimitMillicents = 1000
+	p, err = store.UpdateFinancialBudget(ctx, a.ID, p.ID, p.Revision, "test", spec)
+	if err != nil {
+		t.Fatalf("cannot edit an existing policy before period initialization: %v", err)
+	}
+	balance, err = store.FinancialComputeBalance(ctx, p, clock)
+	if err != nil || balance.Initialized || balance.Held || balance.UnconfirmedLeases != 1 {
+		t.Fatalf("edit minted funding or retained its old hold: %+v %v", balance, err)
+	}
+	old, err := store.FinancialComputeBalance(ctx, p, previous)
+	if err != nil || old.ReservedMillicents != lease.Reserved {
+		t.Fatalf("edit released prior physical funding: %+v %v", old, err)
+	}
+	request.AttemptID = uuid.NewString()
+	if _, err := store.AcquireFinancialCompute(ctx, request); !errors.Is(err, financial.ErrComputeUnavailable) {
+		t.Fatalf("edit bypassed period readiness: %v", err)
+	}
+}
+
 func computeReservationSuite(t *testing.T, store computeTestStore) {
 	t.Helper()
 	ctx := t.Context()

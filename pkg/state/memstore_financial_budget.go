@@ -184,13 +184,7 @@ func memFinancialComputeActivation(t *memFinancialComputeTxn, spec financial.Bud
 		}
 	}
 	b, err := t.book(spec.Scope.ID, financial.ComputeMonth(t.now))
-	if err != nil {
-		return err
-	}
-	if b.Committed+b.Reserved > spec.LimitMillicents {
-		return financial.ErrComputeBudget
-	}
-	return nil
+	return validateComputePolicyFunding(b, err, continuing, spec.LimitMillicents)
 }
 
 func (m *MemStore) DeleteFinancialBudget(_ context.Context, account, id string, expected int64, actor string) (FinancialBudget, error) {

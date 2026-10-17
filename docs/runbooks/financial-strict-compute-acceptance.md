@@ -33,6 +33,8 @@ Enable native process recovery and confirm current financial owners on all nodes
    incarnation, then replay its persisted wake ID or command lease token. It
    must remain fenced before native allocation. Check the teardown pause at
    the UTC boundary before initializing the next month's funding.
+   Edit a held policy before that initialization: release its own hold while
+   preserving prior funding and the next acquire's accounting/retirement checks.
 7. Reconcile billed compute with funded ceilings, sidecars, rounding, prices,
    corrections and synthetic floor waiver. Verify API/CLI/SDK/console balances
    and distinguish commitments from invoice spending.

@@ -85,11 +85,8 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 				}
 			}
 			b, err := compute.book(spec.Scope.ID, financial.ComputeMonth(clock.Time))
-			if err != nil {
+			if err := validateComputePolicyFunding(b, err, continuingStrict, spec.LimitMillicents); err != nil {
 				return FinancialBudget{}, err
-			}
-			if b.Committed+b.Reserved > spec.LimitMillicents {
-				return FinancialBudget{}, financial.ErrComputeBudget
 			}
 		}
 	}

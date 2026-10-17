@@ -29,6 +29,8 @@ nodes. Positive historical compute seeds conservative commitments. Register
 unbudgeted native boots too, so in-flight producers cannot race activation.
 Initialize a new month's book only after prior physical leases settle and
 accounting catches up. Resource or policy changes cannot discard app identity.
+An existing policy can be edited before that book initializes; releasing its
+hold preserves old funding and cannot bypass the next acquire's readiness checks.
 
 Reserve two minutes of startup/execution plus thirty seconds of teardown at
 the standard paid gross rate, before allowances. Free plans reserve at that

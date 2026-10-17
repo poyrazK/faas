@@ -74,6 +74,22 @@ func strictComputePolicies(rows []FinancialBudget, app string) []FinancialBudget
 	return out
 }
 
+func validateComputePolicyFunding(b financial.ComputeBook, readErr error, continuing bool, limit int64) error {
+	// An existing policy may release its hold before the next month's book
+	// exists. Editing intent cannot issue funding: acquire still joins old
+	// physical leases and verifies accounting before initializing that book.
+	if continuing && errors.Is(readErr, ErrNotFound) {
+		return nil
+	}
+	if readErr != nil {
+		return readErr
+	}
+	if b.Committed+b.Reserved > limit {
+		return financial.ErrComputeBudget
+	}
+	return nil
+}
+
 func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financial.ComputeLease, error) {
 	var bindErr error
 	r, bindErr = financial.BindComputeRequest(r)
