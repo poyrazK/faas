@@ -29,7 +29,7 @@ func newServiceExplanation(caller, target, method, path string) serviceAuthoriza
 }
 
 func (r *serviceAuthorizationExplanation) add(rule, result, reason, setting, hint string) {
-	r.Checks = append(r.Checks, serviceAuthorizationCheck{rule, result, reason, setting, hint})
+	r.Checks = append(r.Checks, serviceAuthorizationCheck{Rule: rule, Result: result, Reason: reason, Setting: setting, Hint: hint})
 }
 
 func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, target api.AppResponse) {
