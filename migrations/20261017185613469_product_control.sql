@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS product_control_revisions (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,

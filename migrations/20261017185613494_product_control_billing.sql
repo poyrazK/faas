@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $product_control_replay$
 BEGIN

@@ -19,6 +19,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// ADR-1562: settlement delivery receipts are never copied into a cloned environment.
+		"object_node_settlement_outbox": CloneSchemaOperational,
 		// Recovery receipts, physical identities and migration leases stay with their original database.
 		"instance_snapshot_recovery":          CloneSchemaOperational,
 		"migration_admissions":                CloneSchemaOperational,

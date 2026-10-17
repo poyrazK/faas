@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- At most one receipt for each failed attempt; the unchanged six-attempt budget
 -- bounds these records. Receipts expire with the retained delivery.
 CREATE TABLE IF NOT EXISTS product_control_email_retry_receipts (

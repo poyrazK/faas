@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS product_control_help_requests (
     id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

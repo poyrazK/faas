@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- A retained confirmation is distinct from current assignment state. Retrying
 -- an older successful change must never undo a more recent assignment.
 CREATE TABLE IF NOT EXISTS product_control_customer_changes (

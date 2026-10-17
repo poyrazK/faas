@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Independent admission evidence survives Operation result/event retention.
 -- NULL marks older receipts whose historical allowance decision was not saved.
 -- +goose StatementBegin
