@@ -1384,11 +1384,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "financial", "contracts.go"),
 		filepath.Join(root, "pkg", "financial", "forecast.go"),
 		filepath.Join(root, "pkg", "financial", "budget.go"),
+		filepath.Join(root, "pkg", "financial", "monitor.go"),
+		filepath.Join(root, "pkg", "financial", "stop.go"),
+		filepath.Join(root, "pkg", "financial", "compute.go"),
 	})
 	if err != nil {
 		t.Fatalf("scan financial DTOs: %v", err)
 	}
-	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+	for name, schema := range map[string]string{
+		"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation",
+		"MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast",
+		"BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope",
+		"BudgetEvaluation": "FinancialBudgetEvaluation", "BudgetAlert": "FinancialBudgetAlert", "BudgetRuntime": "FinancialBudgetRuntime",
+		"BudgetStop": "FinancialBudgetStop", "BudgetStopTarget": "FinancialBudgetStopTarget", "ComputeBalance": "FinancialComputeBalance",
+	} {
 		dtos[schema] = financialDTOs[name]
 	}
 
