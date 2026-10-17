@@ -52,7 +52,7 @@ func (s *server) projectEnvironmentClonePostgresArchive(ctx context.Context, lea
 		if !d.CapturedAllowConnections || produce == nil || setSecretRecipient == nil {
 			return copyarchive.Receipt{}, managedpostgres.ErrUnavailable
 		}
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if !cloneInventoryCanOpen(recipient, mfaIdentities()) {
 			return copyarchive.Receipt{}, managedpostgres.ErrUnavailable
 		}

@@ -60,18 +60,23 @@ func (s *Service) confirmObjectUpload(ctx context.Context, st state.ObjectTracke
 	c.RecoveryVersionsObserved = c.RecoveryVersionsObserved || result.VersionsObserved
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
-	if err == nil {
-		c.Status = "completed"
-		c.ETag = result.ETag
-		c.ProviderVersionID = result.ProviderVersionID
-		c.VerifiedProtection = result.VerifiedProtection
-		c.VerifiedEncryption = result.Encryption
-		c.ErrorCode = ""
+	if err == nil || errors.Is(err, objectstorage.ErrWriteRejected) {
+		outcome := "completed"
+		c.Status, c.ErrorCode = "completed", ""
+		c.ETag, c.ProviderVersionID = result.ETag, result.ProviderVersionID
+		c.VerifiedProtection, c.VerifiedEncryption = result.VerifiedProtection, result.Encryption
+		if errors.Is(err, objectstorage.ErrWriteRejected) {
+			outcome = "failed"
+			c.Status, c.ErrorCode = "failed", "provider_write_rejected"
+			c.ETag, c.ProviderVersionID = "", ""
+			c.VerifiedProtection = ""
+			c.VerifiedEncryption = api.ObjectEncryption{}
+		}
 		_, err = st.FinishTrackedObjectUploadRecovery(finishCtx, c)
 		if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
 			return "stale", nil
 		}
-		return "completed", err
+		return outcome, err
 	}
 	code := "provider_write_uncertain"
 	if errors.Is(err, objectstorage.ErrConfiguration) || errors.Is(err, objectstorage.ErrUnsupported) {

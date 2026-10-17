@@ -1,0 +1,13 @@
+{
+  "primary": {{ faas_postgres_primary_inventory_host | to_json }},
+  "directories": [
+{% for d in control_plane_standby_directories %}
+    {"path": {{ d.path | to_json }}, "owner": {{ d.pw_name | to_json }}, "group": {{ d.gr_name | to_json }}, "mode": {{ d.mode | to_json }}}{{ "," if not loop.last else "" }}
+{% endfor %}
+  ],
+  "files": [
+{% for f in control_plane_standby_files %}
+    {"path": {{ f.path | to_json }}, "owner": {{ f.pw_name | to_json }}, "group": {{ f.gr_name | to_json }}, "mode": {{ f.mode | to_json }}}{{ "," if not loop.last else "" }}
+{% endfor %}
+  ]
+}

@@ -545,3 +545,78 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		})
 	}
 }
+
+// ADR-1344 §8: postgresql.standby puts the warm standby in its own inventory
+// group, outside control_plane and compute_nodes, and tells the primary which
+// address to admit for replication. Without it nothing renders.
+func TestRenderManifestAnsibleFiles_PostgresStandby(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	withStandby := strings.Replace(base, "  policy: on-boot\n",
+		"  policy: on-boot\n  standby:\n    name: standby-1\n    address: 10.42.0.9\n    ssh_host: 198.51.100.9\n", 1)
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		standby bool
+	}{
+		{name: "absent", yaml: base},
+		{name: "declared", yaml: withStandby, standby: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := manifest.Parse([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var inventory, controlVars, computeVars, standbyVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "hosts.ini"):
+					inventory = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "standby-1.yml"):
+					standbyVars = string(file.Body)
+				}
+			}
+			if !tc.standby {
+				if strings.Contains(inventory, "postgres_standby") || strings.Contains(controlVars, "faas_postgres_standby") || standbyVars != "" {
+					t.Fatalf("standby rendered without postgresql.standby:\n%s\n%s", inventory, controlVars)
+				}
+				return
+			}
+			if !strings.Contains(inventory, "[postgres_standby]\nstandby-1\n") {
+				t.Errorf("inventory has no postgres_standby group:\n%s", inventory)
+			}
+			for _, group := range []string{"[control_plane]", "[compute_nodes]"} {
+				section := inventory[strings.Index(inventory, group):]
+				if next := strings.Index(section[1:], "["); next >= 0 {
+					section = section[:next+1]
+				}
+				if strings.Contains(section, "standby-1") {
+					t.Errorf("standby is in %s, which would turn on leases or count it as compute:\n%s", group, inventory)
+				}
+			}
+			if !strings.Contains(controlVars, `faas_postgres_standby_address: "10.42.0.9"`) {
+				t.Errorf("primary does not admit the standby:\n%s", controlVars)
+			}
+			if strings.Contains(computeVars, "faas_postgres_standby") {
+				t.Errorf("compute host carries standby vars:\n%s", computeVars)
+			}
+			for _, want := range []string{`ansible_host: "198.51.100.9"`, `faas_private_address: "10.42.0.9"`, "faas_postgres_standby_mode: true"} {
+				if !strings.Contains(standbyVars, want) {
+					t.Errorf("standby host vars missing %q:\n%s", want, standbyVars)
+				}
+			}
+		})
+	}
+}

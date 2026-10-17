@@ -1,0 +1,46 @@
+---
+# ADR-1344 §8: control-plane host files the warm standby needs to take over.
+# None of them is in PostgreSQL or the release bundle, and an unplanned
+# failover cannot copy them from a dead host, so every standby converge
+# stages the primary's current copies (sync.yml) and a takeover installs
+# them before the first control-plane bootstrap (takeover.yml).
+
+# The single control-plane host the files are read from (same default as
+# postgres_standby).
+faas_postgres_primary_inventory_host: "{{ (groups['control_plane'] | default(['']))[0] }}"
+
+# Root-only staging area on the standby. Files are kept base64-encoded, with
+# an index of their owner, group and mode on the primary.
+faas_standby_stage_dir: /var/lib/faas-standby
+
+# Every file below these directories on the primary.
+faas_standby_sync_trees:
+  - /etc/faas/secrets
+  - /etc/faas/tls
+  - /etc/grafana/secrets
+
+# Single files, copied when present on the primary.
+faas_standby_sync_files:
+  - /etc/faas/sealed.env
+  - /etc/faas/compute-db.env
+  - /etc/faas/storage.env
+  - /etc/faas/otel.env
+  - /etc/faas/profiling.env
+  - /etc/faas/object-storage.json
+  # Bootstrap generates these when missing, and new keys break audit joins
+  # and every MFA recovery code (control_plane_service).
+  - /var/lib/faas/audit-hmac.key
+  - /var/lib/faas/recovery-hmac.key
+  - /etc/caddy/tls/cloudflare-origin.pem
+  - /etc/caddy/tls/cloudflare-origin.key
+
+# Operator-chosen paths, such as the Alertmanager receiver files
+# (am_*_file).
+faas_standby_sync_extra_files: []
+
+# The host age identity is per host by design (FaasFleetSealDomain): the
+# standby has its own, and copying the primary's would break the fleet-seal
+# domain separation.
+faas_standby_sync_exclude:
+  - /etc/faas/secrets/host.age
+  - /etc/faas/secrets/host.age.previous

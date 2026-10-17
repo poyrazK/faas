@@ -149,6 +149,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"object_s3_copy_source_epochs":                       CloneSchemaConfiguration,
 		"object_version_references":                          CloneSchemaData,
 		"object_deletions":                                   CloneSchemaOperational,
+		"object_node_settlement_outbox":                      CloneSchemaOperational, // ADR-1562: source delivery authority.
 		"object_lifecycle_scans":                             CloneSchemaOperational,
 		"object_storage_capacity_reconciliations":            CloneSchemaOperational,
 		"object_storage_multipart_part_grants":               CloneSchemaOperational,

@@ -7489,6 +7489,25 @@ type ObjectMultipartPartWriter struct {
 	BodySha256         string
 }
 
+type ObjectNodeSettlementOutbox struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	BucketID           pgtype.UUID
+	Kind               string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	Payload            []byte
+	CreatedAt          pgtype.Timestamptz
+	ReadyAt            pgtype.Timestamptz
+	RetryAt            pgtype.Timestamptz
+	LeaseToken         pgtype.UUID
+	LeaseUntil         pgtype.Timestamptz
+	Attempts           int32
+	LastError          string
+}
+
 type ObjectS3CopySourceEpoch struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
