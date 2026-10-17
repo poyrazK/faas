@@ -76,11 +76,13 @@ func applyTestCampaignStatusRecovery(report *testCampaignStatusReport, plan test
 		default:
 			return errors.New("unknown recovery batch status")
 		}
+		passedRuns, executionFailed := 0, false
 		if recovered.AdoptedRuns > 0 || recovered.RecoveredSHA256 != "" {
 			receipts, hash, err := readTestBaselineReport(filepath.Join(bundle, fmt.Sprintf("recovered-batch-%d.json", index+1)), nil)
 			if err != nil || hash != recovered.RecoveredSHA256 {
 				return errors.New("recovered batch artifact changed")
 			}
+			passedRuns, executionFailed = testCampaignPassedRuns(receipts)
 			var leaves []testRunReceipt
 			for _, root := range receipts {
 				collectTestFailureLeaves(root, "", &leaves)
@@ -100,6 +102,7 @@ func applyTestCampaignStatusRecovery(report *testCampaignStatusReport, plan test
 				continue
 			}
 			if recovered.Status != "pending" {
+				row.PassedRuns, row.ExecutionFailed = passedRuns, executionFailed
 				row.Status, row.Evidence, row.Cleanup, row.ExecutedRuns = "recovered", "verified_recovery_bundle", recovered.Cleanup, recovered.AdoptedRuns
 				row.Action = "Use the sealed continuation plan; adopted runs do not need to be repeated."
 				if recovered.Status == "blocked" {

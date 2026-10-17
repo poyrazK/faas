@@ -51,6 +51,9 @@ func cmdTestPolicy(args []string) int {
 	if len(args) > 0 && args[0] == "bundle" {
 		return cmdTestCampaignBundle(args[1:])
 	}
+	if len(args) > 0 && args[0] == "verify" {
+		return cmdTestCampaignStatusMode(args[1:], true)
+	}
 	if len(args) > 0 && args[0] == "status" {
 		return cmdTestCampaignStatus(args[1:])
 	}
@@ -67,7 +70,7 @@ func cmdTestPolicy(args []string) int {
 		return cmdTestPolicyPlan(args[1:])
 	}
 	if len(args) == 0 || (args[0] != "lint" && args[0] != "preview") {
-		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan, preflight, run, reconcile, status, bundle, cancel, cleanup, cleanup-watch, recover, recover-lock or recover-claim"))
+		return printErr("Invalid policy command", errors.New("use test policy lint, preview, plan, preflight, run, reconcile, status, verify, bundle, cancel, cleanup, cleanup-watch, recover, recover-lock or recover-claim"))
 	}
 	mode := args[0]
 	fs := newFlagSet("test policy "+mode, flag.ContinueOnError)

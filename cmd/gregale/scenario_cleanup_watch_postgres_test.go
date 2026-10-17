@@ -606,5 +606,25 @@ func testCleanupWatchPublicLiveStatus(t *testing.T, d *consumerAcceptanceDeliver
 	if err != nil || !bytes.Contains(body, []byte("Live resource verification")) {
 		t.Fatal("HTML lost live state")
 	}
+	if want == "cleanup_recorded_complete" {
+		verifyArgs := append([]string{}, liveArgs...)
+		verifyArgs[0] = "verify"
+		verify := startCleanupWatchAcceptanceProcess(t, "status", verifyArgs, env...)
+		verify.wait(t, testCampaignCIVerdictFailed)
+		var checked testCampaignStatusReport
+		if err := readTestCampaignJSON(output, &checked); err != nil {
+			t.Fatal(err)
+		}
+		verdict := checked.CIVerdict
+		if verdict == nil || verdict.Passed || verdict.Cleanup.State != "passed" || verdict.Execution.State == "passed" || checked.Informational {
+			t.Fatal("real cleanup hid incomplete execution", verdict)
+		}
+		d.mu.Lock()
+		changed = d.mutations
+		d.mu.Unlock()
+		if changed != mutations {
+			t.Fatal("combined verification attempted mutations")
+		}
+	}
 	assertCampaignFaultFrozen(t, before, []string{root})
 }

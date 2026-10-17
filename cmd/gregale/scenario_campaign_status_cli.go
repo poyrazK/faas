@@ -90,8 +90,14 @@ func protectTestCampaignStatusOutputs(outputs, inputs, directories []string) err
 	return nil
 }
 
-func cmdTestCampaignStatus(args []string) int {
-	fs := newFlagSet("test policy status", flag.ContinueOnError)
+func cmdTestCampaignStatus(args []string) int { return cmdTestCampaignStatusMode(args, false) }
+
+func cmdTestCampaignStatusMode(args []string, combined bool) int {
+	name := "test policy status"
+	if combined {
+		name = "test policy verify"
+	}
+	fs := newFlagSet(name, flag.ContinueOnError)
 	handoff := fs.String("handoff", "", "portable import index for offline parent resolution")
 	planPath := fs.String("plan", "", "saved cost-aware campaign plan")
 	policyPath := fs.String("policy", "", "policy used by the plan")
@@ -114,7 +120,7 @@ func cmdTestCampaignStatus(args []string) int {
 		}
 		return 1
 	}
-	if *waitClean {
+	if *waitClean || combined {
 		*verifyLive, *requireClean = true, true
 	}
 	invalidWait := *waitClean && (*timeout < time.Second || *timeout > time.Hour || *interval < time.Second || *interval > time.Minute || *interval > *timeout)
@@ -153,6 +159,11 @@ func cmdTestCampaignStatus(args []string) int {
 	}
 	if err := protectTestCampaignStatusOutputs([]string{*jsonPath, *htmlPath}, inputs, directories); err != nil {
 		return printErr("Invalid status output", err)
+	}
+	ciProof := testCampaignCIProof{}
+	if combined {
+		ciProof.add(inputs...)
+		ciProof.add(filepath.Join(*directory, "checkpoint.json"), filepath.Join(*directory, testCampaignRecoverySealName))
 	}
 	var plan testCampaignPolicyPlan
 	if err := readTestCampaignJSON(*planPath, &plan); err != nil {
@@ -204,6 +215,23 @@ func cmdTestCampaignStatus(args []string) int {
 			}
 			if *side != "" && *side != checkpoint.Side {
 				return printErr("Status side differs", errors.New("scope must match the checkpoint side"))
+			}
+		}
+	}
+	if combined {
+		for _, batch := range plan.Batches {
+			ciProof.add(filepath.Join(*directory, "batch-"+batch.ID+".json"))
+		}
+		lineage, _, _ := testCampaignStatusTrace(plan, resolver)
+		for _, parent := range lineage {
+			ciProof.add(filepath.Join(parent.Directory, "checkpoint.json"), filepath.Join(parent.Directory, testCampaignRecoverySealName))
+		}
+		if *bundle != "" {
+			for _, name := range []string{"reconciliation.json", "continuation-plan.json", "current.json", "baseline.json"} {
+				ciProof.add(filepath.Join(*bundle, name))
+			}
+			for i := range plan.Batches {
+				ciProof.add(filepath.Join(*bundle, fmt.Sprintf("recovered-batch-%d.json", i+1)))
 			}
 		}
 	}
@@ -285,6 +313,9 @@ func cmdTestCampaignStatus(args []string) int {
 		initialEvidence = evidence()
 	}
 	verify := func(ctx context.Context) {
+		if combined && !ciProof.stable() {
+			report.SnapshotStable = false
+		}
 		if *waitClean {
 			if initialEvidence == "" || evidence() != initialEvidence {
 				report.SnapshotStable = false
@@ -319,7 +350,7 @@ func cmdTestCampaignStatus(args []string) int {
 		if !report.SnapshotStable {
 			invalidateTestCampaignStatusLive(&report)
 		}
-		if *waitClean && evidence() != initialEvidence {
+		if (combined && !ciProof.stable()) || (*waitClean && evidence() != initialEvidence) {
 			report.SnapshotStable = false
 			invalidateTestCampaignStatusLive(&report)
 		}
@@ -332,6 +363,15 @@ func cmdTestCampaignStatus(args []string) int {
 		cancel()
 	} else {
 		verify(context.Background())
+	}
+	if combined {
+		if !ciProof.stable() {
+			report.SnapshotStable = false
+			invalidateTestCampaignStatusLive(&report)
+		}
+		report.Informational = false
+		verdict := buildTestCampaignCIVerdict(report)
+		report.CIVerdict = &verdict
 	}
 	if *htmlPath != "" {
 		body, err := renderTestCampaignStatusHTML(report)
@@ -351,6 +391,10 @@ func cmdTestCampaignStatus(args []string) int {
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(report); err != nil {
 		return printErr("Could not write status", err)
+	}
+	if combined {
+		fmt.Fprintf(os.Stderr, "CI verdict: execution %s; policy %s; cleanup %s.\n", report.CIVerdict.Execution.State, report.CIVerdict.Policy.State, report.CIVerdict.Cleanup.State)
+		return report.CIVerdict.ExitCode
 	}
 	if *requireClean {
 		code, summary := testCampaignStatusCleanGate(report)
@@ -385,6 +429,8 @@ th{background:#eef3f7}code{overflow-wrap:anywhere;font-size:.85em}.scroll{overfl
 <p class="muted">Read-only snapshot at {{.ObservedAt}} · side {{.Side}} · stable snapshot: {{.SnapshotStable}}</p>
 <p>Policy accepted: <strong>{{.PolicyPassed}}</strong> · violations: {{.PolicyViolations}} · lock present: {{.LockPresent}} · halted: {{.Halted}} · sealed: {{.Sealed}}</p>
 <p><code>{{.PlanSHA256}}</code></p>
+{{with .CIVerdict}}<section><h2>CI verdict</h2><p>Passed: <strong>{{.Passed}}</strong> · scope: {{.Scope}} · exit code: {{.ExitCode}}</p>
+<table><thead><tr><th>Check</th><th>Result</th><th>Reason</th></tr></thead><tbody><tr><td>Execution</td><td>{{.Execution.State}}</td><td>{{.Execution.Reason}}</td></tr><tr><td>Policy</td><td>{{.Policy.State}}</td><td>{{.Policy.Reason}}</td></tr><tr><td>Cleanup</td><td>{{.Cleanup.State}}</td><td>{{.Cleanup.Reason}}</td></tr></tbody></table></section>{{end}}
 {{with .CleanWait}}<section><h2>Wait for clean resources</h2><p>{{.Outcome}} · attempts: {{.Attempts}} · elapsed milliseconds: {{.ElapsedMilliseconds}}</p></section>{{end}}
 {{with .LiveVerification}}<section><h2>Live resource verification</h2>
 <p>State: <strong>{{.State}}</strong> · all resources verified: {{.AllVerified}} · observed clean: {{.ResourcesClean}} · stable local evidence: {{.SnapshotStable}}</p>

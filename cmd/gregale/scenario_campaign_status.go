@@ -24,6 +24,8 @@ type testCampaignStatusBatch struct {
 	CheckpointStatus string                 `json:"checkpoint_status,omitempty"`
 	Evidence         string                 `json:"evidence"`
 	Cleanup          string                 `json:"cleanup"`
+	PassedRuns       int                    `json:"verified_passed_runs"`
+	ExecutionFailed  bool                   `json:"execution_failed"`
 	ExecutedRuns     int                    `json:"verified_executed_runs"`
 	Estimated        testCampaignPlanBudget `json:"estimated"`
 	ReportSHA256     string                 `json:"report_sha256,omitempty"`
@@ -68,6 +70,7 @@ type testCampaignStatusLineage struct {
 }
 
 type testCampaignStatusReport struct {
+	CIVerdict          *testCampaignCIVerdict          `json:"ci_verdict,omitempty"`
 	CleanWait          *testCampaignStatusCleanWait    `json:"clean_wait,omitempty"`
 	LiveVerification   *testCampaignStatusLiveReport   `json:"live_verification,omitempty"`
 	Watcher            *testCampaignStatusWatcher      `json:"cleanup_watcher,omitempty"`
@@ -180,7 +183,7 @@ func buildTestCampaignStatus(plan testCampaignPolicyPlan, checkpoint *testCampai
 			"Coverage is recomputed from verified receipts; planned repetitions and saved policy summaries do not count as evidence.",
 			"The policy verdict covers the verified evidence subset; it does not imply every planned batch finished.",
 			"The sealed flag records marker presence. A matching recovery bundle verifies adoption and the published continuation.",
-			"This is a read-only snapshot. Only --require-clean or --wait-clean gates resource cleanup; neither certifies test execution or policy success.",
+			"This is a read-only snapshot. Status cleanup gates do not certify execution or policy success; use test policy verify for the combined CI verdict.",
 		}}
 	if plan.Costs != nil {
 		report.PlanBudget = plan.Costs.Budget
@@ -318,6 +321,7 @@ func buildTestCampaignStatus(plan testCampaignPolicyPlan, checkpoint *testCampai
 								after, addErr = appendTestCampaignStatusEvidence(after, receipts)
 							}
 							if addErr == nil {
+								row.PassedRuns, row.ExecutionFailed = testCampaignPassedRuns(receipts)
 								row.Status, row.Evidence, row.ExecutedRuns, row.Action = "completed", "verified_receipts", int(batch.Estimated.Runs), "No further execution is needed for this batch."
 								if cleanup {
 									row.Status, row.Action = "blocked", "Inspect and resolve the recorded cleanup failure before continuing."

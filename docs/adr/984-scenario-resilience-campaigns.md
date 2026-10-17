@@ -338,3 +338,13 @@ fresh resource observations, pinned immutable inputs and inventory, and a final
 report carrying attempts, elapsed time and stop outcome. Watcher progress can
 advance between attempts, but changed evidence during an attempt fails closed.
 It implies live verification and cleanup gating without initiating cleanup.
+
+`test policy verify` combines three independent checks in one read-only CI verdict:
+complete passing execution receipts in the checkpoint-side scope, the reevaluated
+policy including coverage/environment requirements, and fresh clean resource
+verification. It returns 0 only when all pass and 6 otherwise, after writing
+JSON/HTML reports with each check's state and reason. Input and export errors
+retain ordinary CLI codes. It supports bounded cleanup waiting without adopting
+new execution evidence, pins execution/policy files throughout inspection, and
+preserves failed test or recorded cleanup evidence even after resources disappear.
+Default informational status and cleanup-only gates retain their semantics.

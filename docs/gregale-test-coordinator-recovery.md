@@ -597,3 +597,34 @@ The database-outage case also covers exhaustion of a single live-verification
 attempt's 30-second budget followed by recovery within a 60-second overall
 wait. Only the fixture's deliberately parked creation request receives a longer
 client timeout; production read budgets and the status command are unchanged.
+
+### Combined execution, policy and cleanup gate
+
+Use `gregale test policy verify` with the original `--plan`, `--policy`,
+`--manifest`, and `--directory`, plus any original `--from`, `--baseline`,
+`--handoff`, or `--recovery-bundle` inputs. It shares status inspection and export
+protections, always enables live verification, and performs no execution or
+cleanup mutations. Optional `--wait-clean --timeout 5m --interval 10s` waits only
+for cleanup; it cannot adopt new test receipts while waiting.
+
+The report's `ci_verdict` contains separate execution, policy and cleanup states
+(`passed`, `failed`, or `incomplete`), reasons, the checkpoint-side scope, expected
+and verified batch counts, and the overall result. Execution requires every
+batch in that scope to have complete verified passing receipts (including full
+verified recovery adoption). Failed tests or recorded cleanup failures remain
+failures even after live resources disappear. Policy is reevaluated from the
+bound reports, including required coverage and environment evidence. Cleanup
+requires fresh verification of every expected resource using the existing gate.
+
+Exit 0 requires all three checks to pass; exit 6 means the combined verdict did
+not pass. Invalid options, unreadable initial inputs and export errors retain
+ordinary CLI error codes. JSON stdout and optional `--json` / `--html` exports
+are written before returning the verdict. This does not change default `status`
+or its cleanup-only gates. Explicitly disabling live/cleanup flags cannot bypass
+verification in the combined command.
+
+Execution and policy input files are pinned before inspection and checked through
+the final verification, including batch receipts, checkpoint/seal, original
+reports, recovery adoption files, and parent lineage proofs. Changed or unreadable
+evidence yields an incomplete result. Watcher progress may advance as documented
+for `--wait-clean`; successful cleanup never changes the execution verdict.
