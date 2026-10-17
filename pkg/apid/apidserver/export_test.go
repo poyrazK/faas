@@ -1043,6 +1043,10 @@ func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Ev
 }
 func (r *server) Handler() http.Handler { return r.handler() }
 
+func (r *server) ConfigureMailOutbox(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string) error {
+	return r.configureMailOutbox(ctx, pool, getenv)
+}
+
 func (r *server) GitOpsDashboardRequestForTest(request *http.Request) (any, string, error) {
 	body, _, method, err := r.environmentGitOpsDashboardRequest(request)
 	return body, method, err

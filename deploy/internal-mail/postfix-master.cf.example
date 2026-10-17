@@ -1,0 +1,13 @@
+# Add to the dedicated relay's master.cf; keep its normal pickup/cleanup/qmgr,
+# smtp/unix, bounce, defer, trace, rewrite and other required Unix services.
+# Do not enable a public SMTP submission listener for the internal pilot.
+127.0.0.1:2525 inet n - n - - smtpd
+  -o smtpd_sasl_auth_enable=no
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject
+# Internal pipe delivery of Postfix-generated RFC 3464 notifications. No flags
+# that prepend/quote message content. null_sender preserves an explicit <> for
+# the helper's envelope check. Never execute this helper as root or postfix.
+gregale-report unix - n n - 1 pipe
+  null_sender=<> user=faas:faas
+  argv=/usr/local/libexec/faas-mail-report --sender=${sender} --recipient=${recipient}

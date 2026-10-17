@@ -1,0 +1,57 @@
+---
+- name: internal_mail_service — require private telemetry setup before monitoring
+  ansible.builtin.assert:
+    that:
+      - faas_internal_mail_enabled | bool
+      - faas_internal_mail_reports_managed | bool
+      - faas_internal_mail_report_env_src | length > 0
+    fail_msg: "Enable the private service and provision its telemetry environment before starting mail monitoring."
+  when: faas_internal_mail_metrics_enabled | bool
+
+- name: internal_mail_service — verify Postfix and node_exporter prerequisites
+  ansible.builtin.getent:
+    database: group
+    key: "{{ item }}"
+  loop:
+    - node_exporter
+    - postdrop
+  when: faas_internal_mail_metrics_enabled | bool
+
+- name: internal_mail_service — prepare shared aggregate collector directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+    mode: "0775"
+  when: faas_internal_mail_metrics_enabled | bool
+
+- name: internal_mail_service — install optional monitoring timer and helper unit
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-internal-mail-metrics.service
+    - faas-internal-mail-metrics.timer
+
+- name: internal_mail_service — apply explicit monitoring activation
+  ansible.builtin.systemd_service:
+    name: faas-internal-mail-metrics.timer
+    daemon_reload: true
+    enabled: "{{ faas_internal_mail_metrics_enabled | bool }}"
+    state: "{{ 'started' if faas_internal_mail_metrics_enabled | bool else 'stopped' }}"
+
+- name: internal_mail_service — stop disabled monitoring helper
+  ansible.builtin.systemd_service:
+    name: faas-internal-mail-metrics.service
+    state: stopped
+  when: not (faas_internal_mail_metrics_enabled | bool)
+
+- name: internal_mail_service — remove aggregate samples when monitoring is disabled
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector/internal-mail.prom
+    state: absent
+  when: not (faas_internal_mail_metrics_enabled | bool)

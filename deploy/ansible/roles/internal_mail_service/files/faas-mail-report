@@ -1,0 +1,9 @@
+#!/bin/sh
+# Postfix pipe environment: fixed operator-owned file, never message input.
+set -eu
+trap 'printf "%s\n" "4.3.0 Gregale report helper unavailable; retain for retry"; exit 75' 0
+[ -r /etc/faas/mail-reports/bridge.env ] || exit 75
+set -a
+. /etc/faas/mail-reports/bridge.env
+set +a
+exec /opt/faas/current/bin/mail-report "$@"

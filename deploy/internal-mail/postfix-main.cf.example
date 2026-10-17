@@ -1,0 +1,32 @@
+# Dedicated Gregale relay example, reviewed and installed by an operator.
+# maild signs DKIM before submission; Postfix owns its persistent queue and
+# direct MX delivery. Replace hostname/source IP with the verified real values.
+myhostname = mail.example.com
+inet_interfaces = loopback-only
+inet_protocols = ipv4
+smtp_bind_address = 192.0.2.10
+mydestination = localhost
+relayhost =
+mynetworks = 127.0.0.0/8
+smtpd_relay_restrictions = permit_mynetworks, reject
+smtpd_recipient_restrictions = permit_mynetworks, reject
+disable_vrfy_command = yes
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1
+smtp_tls_CApath = /etc/ssl/certs
+maximal_queue_lifetime = 1d
+bounce_queue_lifetime = 1d
+delay_warning_time = 1h
+# Generate acceptance DSNs at our relay's direct MX handoff, rather than
+# delegating success reporting to an Internet peer. Keep inbound DSN advertised
+# on the trusted submission listener for maild's ENVID/NOTIFY requests.
+smtp_discard_ehlo_keywords = silent-discard, dsn
+# Merge this map into any existing transport_maps; restrict entries to the
+# verified sending domains. Postfix keeps undeliverable reports in its queue.
+transport_maps = regexp:/etc/postfix/gregale-report-transports
+gregale-report_destination_recipient_limit = 1
+gregale-report_time_limit = 45s
+# Preserve Postfix's normal persistent queue_directory on durable storage.
+# This bridge consumes local Postfix DSNs only. Delayed bounces originating at
+# remote providers and complaints require a separately qualified inbound/FBL
+# integration. Never expose maild through Caddy or the public gateway.

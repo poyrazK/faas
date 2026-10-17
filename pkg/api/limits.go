@@ -21,6 +21,12 @@ import (
 	"time"
 )
 
+// Email verification keeps its existing 24-hour, single-use credential policy.
+const (
+	EmailVerificationTTL        = 24 * time.Hour
+	EmailVerificationTokenBytes = 32
+)
+
 // Application standards preview safeguards, independent of billing quotas.
 const (
 	ApplicationStandardMaxDefinitionBytes             = 64 << 10
@@ -1121,6 +1127,8 @@ const (
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute
+	// AccountDeletionGraceDays preserves the self-service account restore window.
+	AccountDeletionGraceDays = 30
 	// AppDeleteGraceDays is the restore window for customer app deletes.
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.

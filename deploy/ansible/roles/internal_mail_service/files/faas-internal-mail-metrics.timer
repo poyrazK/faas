@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect Gregale internal mail telemetry every 15 seconds
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=faas-internal-mail-metrics.service
+
+[Install]
+WantedBy=timers.target

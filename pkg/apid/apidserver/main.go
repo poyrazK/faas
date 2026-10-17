@@ -740,6 +740,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runMailOutbox(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
@@ -1450,6 +1451,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	if err := srv.configureMailOutbox(ctx, deps.pool, deps.getenv); err != nil {
+		return fmt.Errorf("apid: producer mail outbox: %w", err)
+	}
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

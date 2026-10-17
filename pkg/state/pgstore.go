@@ -26092,43 +26092,25 @@ func (s *PgStore) ConsumeMFADisableRequest(ctx context.Context, tokenHash []byte
 	return accountID, nil
 }
 
-// IssueEmailVerificationToken persists only the SHA-256 token hash. The raw
-// token exists only in the email sent by apid.
+// IssueEmailVerificationToken is the legacy hash-only issuance path. Durable
+// private handoff stores its encrypted pending credential in apid's outbox.
 func (s *PgStore) IssueEmailVerificationToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
-	_, err := s.pool.Exec(ctx,
-		`insert into email_verification_tokens (token_hash, account_id, expires_at)
-		 values ($1, $2, $3)
-		 on conflict (token_hash) do nothing`,
-		tokenHash, accountID, expiresAt)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	return mapErr(sqlc.New().IssueEmailVerificationToken(ctx, s.pool, sqlc.IssueEmailVerificationTokenParams{TokenHash: tokenHash, AccountID: account, ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}}))
 }
 
-// ConsumeEmailVerificationToken consumes a live token and marks its account
-// verified in one SQL statement. A replay, expiry, or unknown token returns
-// ErrNotFound with the same shape.
+// ConsumeEmailVerificationToken locks account before token, matching private
+// handoff and account erasure. New bound tokens verify only their saved address;
+// the empty-address legacy token format retains its existing behavior.
 func (s *PgStore) ConsumeEmailVerificationToken(ctx context.Context, tokenHash []byte) (string, error) {
-	var accountID string
-	err := s.pool.QueryRow(ctx, `
-		with consumed as (
-			update email_verification_tokens
-			   set consumed_at = now()
-			 where token_hash = $1
-			   and consumed_at is null
-			   and expires_at > now()
-			 returning account_id
-		)
-		update accounts a
-		   set email_verified_at = coalesce(a.email_verified_at, now())
-		  from consumed c
-		 where a.id = c.account_id
-		 returning a.id`, tokenHash).Scan(&accountID)
+	account, err := sqlc.New().ConsumeEmailVerificationToken(ctx, s.pool, tokenHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
-		}
-		return "", err
+		return "", mapErr(err)
 	}
-	return accountID, nil
+	return uuidString(account), nil
 }
 
 // MarkAccountEmailVerified marks an account verified without changing an

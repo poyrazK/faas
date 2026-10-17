@@ -9,6 +9,11 @@ import (
 // after password signup. The deadline is explicit so an old message is not
 // mistaken for a live credential.
 func EmailVerificationBody(email, link string, expiresAt time.Time) (subject, body string) {
+	return EmailVerificationBodyV1(email, link, expiresAt)
+}
+
+// EmailVerificationBodyV1 is frozen for durable handoff retries.
+func EmailVerificationBodyV1(email, link string, expiresAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	subject = "Verify your Gregale email"
 	body = fmt.Sprintf(`Hi,

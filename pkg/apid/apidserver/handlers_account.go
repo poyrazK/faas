@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -224,7 +223,8 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
 			return acct, prob
 		}
-		if err := s.store.MarkAccountDeletionPending(ctx, acct.ID); err != nil {
+		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID)
+		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				return acct, accountDeletionBlocked()
 			}
@@ -237,19 +237,7 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		}
 		if fresh.DeletionRequestedAt != nil {
 			restoreUntil := fresh.DeletionRequestedAt.Add(state.DeletionGraceDuration())
-			subject, body := mail.AccountDeletionPendingBody(
-				fresh.Email, *fresh.DeletionRequestedAt, restoreUntil)
-			// Capture mailer errors explicitly (PR #83 review #4): a
-			// silent email failure is the most expensive kind — the
-			// customer gets a 200, the deletion clock is running, and
-			// they have no record. Warn-log at minimum so a future
-			// audit can correlate "missing email" with "delivery outage".
-			if err := s.mailer.Send(ctx, Message{
-				To: []string{fresh.Email}, Subject: subject, TextBody: body,
-			}); err != nil {
-				s.log.Warn("apid: pending deletion email send failed",
-					"account", fresh.ID, "err", err)
-			}
+			s.sendInlineDeletionNotice(ctx, fresh, outboxed)
 			// Emit pg_notify so any subscriber (audit, schedd's
 			// live-instance evictor once it lands) can react without
 			// polling. The payload matches the contract in

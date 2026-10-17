@@ -1,0 +1,26 @@
+[Unit]
+Description=Export aggregate Gregale internal mail telemetry
+After=faas-maild.service node_exporter.service postfix.service
+
+[Service]
+Type=oneshot
+User=faas
+Group=postdrop
+SupplementaryGroups=faas node_exporter
+Environment=FAAS_INTERNAL_MAIL_ENABLED=0
+Environment=FAAS_INTERNAL_MAIL_REPORTS_ENABLED=0
+Environment=FAAS_INTERNAL_MAIL_RELAY_BACKPRESSURE_ENABLED=0
+EnvironmentFile=/etc/faas/mail-reports/bridge.env
+ExecStart=/opt/faas/current/bin/mail-metrics --output=/var/lib/node_exporter/textfile_collector/internal-mail.prom
+TimeoutStartSec=30s
+MemoryMax=128M
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

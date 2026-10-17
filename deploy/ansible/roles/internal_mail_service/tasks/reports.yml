@@ -1,0 +1,39 @@
+---
+- name: internal_mail_service — require explicit report bridge environment
+  ansible.builtin.assert:
+    that:
+      - faas_internal_mail_report_env_src | length > 0
+    fail_msg: "The report bridge requires an operator-owned environment with its separate telemetry token."
+
+- name: internal_mail_service — create report helper configuration directory
+  ansible.builtin.file:
+    path: /etc/faas/mail-reports
+    state: directory
+    owner: root
+    group: faas
+    mode: "0750"
+
+- name: internal_mail_service — install private report helper environment
+  ansible.builtin.copy:
+    src: "{{ faas_internal_mail_report_env_src }}"
+    dest: /etc/faas/mail-reports/bridge.env
+    owner: root
+    group: faas
+    mode: "0440"
+  no_log: true
+
+- name: internal_mail_service — create report helper executable directory
+  ansible.builtin.file:
+    path: /usr/local/libexec
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: internal_mail_service — install Postfix pipe wrapper
+  ansible.builtin.copy:
+    src: faas-mail-report
+    dest: /usr/local/libexec/faas-mail-report
+    owner: root
+    group: root
+    mode: "0755"

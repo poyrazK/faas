@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
@@ -137,7 +138,9 @@ type server struct {
 	resendWebhookSecret string
 	// mailer emits the dunning + quota-warning emails. nil falls back
 	// to the noop sender so callers never need to nil-check.
-	mailer Mailer
+	deletionMailOutbox              *mailoutbox.Service
+	verificationMailOutboxRequested func() bool
+	mailer                          Mailer
 	// mailBounce dispatches Resend bounce / complaint events into
 	// the suppression + dunning pipeline (issue #246 acceptance
 	// item 8). Wired via WithMailBounce from cmd/apid/main.go

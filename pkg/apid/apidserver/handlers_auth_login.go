@@ -79,7 +79,7 @@ const (
 	passwordResetTTL = 15 * time.Minute
 	// emailVerificationTTL is deliberately longer than a login/reset link:
 	// it proves address ownership and does not authenticate the browser.
-	emailVerificationTTL = 24 * time.Hour
+	emailVerificationTTL = api.EmailVerificationTTL
 	// emailVerificationGrace is surfaced in the persistent dashboard notice.
 	// Sensitive deploy and payment actions still require verification now.
 	emailVerificationGrace = 30 * 24 * time.Hour
@@ -1120,7 +1120,10 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 // token. Delivery errors remain server-side because signup has already
 // committed; a same-credential signup retry mints and sends a fresh link.
 func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acct state.Account) {
-	raw := make([]byte, 32)
+	if s.queueEmailVerification(ctx, acct) {
+		return
+	}
+	raw := make([]byte, api.EmailVerificationTokenBytes)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("email_verification.rand", "err", err)
 		return
