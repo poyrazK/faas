@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EnvironmentRecoveryRetention } from './EnvironmentRecoveryRetention.js';
 import type { EnvironmentWorkload } from './EnvironmentWorkload.js';
 /**
  * Versioned Git intent; omitted settings are unmanaged and removal requires explicit pruning. The workloads map is required; an explicit empty map represents an empty environment.
  */
 export type EnvironmentDefinition = {
+  recovery_retention?: EnvironmentRecoveryRetention;
   api_version: 'gregale.dev/environment/v1';
   project: string;
   environment: string;

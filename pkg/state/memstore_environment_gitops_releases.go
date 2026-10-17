@@ -30,6 +30,13 @@ func (m *MemStore) ListEnvironmentGitReleases(ctx context.Context, source Enviro
 		return out, ErrConflict
 	}
 	out.ObservedAt = time.Now().UTC()
+	out.RecoveryRetention = recoveryPolicy(memory)
+	protection := m.recoveryProtectionLocked(memory, out.RecoveryRetention, out.ObservedAt)
+	for _, row := range protection {
+		if row.status == "protected" {
+			out.RetentionBytes += row.bytes
+		}
+	}
 	releases := []ProjectReleaseSet{}
 	for _, release := range m.projectReleaseSets {
 		if release.AccountID != source.AccountID || release.ProjectID != source.ProjectID || release.EnvironmentSlug != source.EnvironmentSlug {
@@ -37,7 +44,7 @@ func (m *MemStore) ListEnvironmentGitReleases(ctx context.Context, source Enviro
 		}
 		for _, graph := range memory.graphs {
 			receipt, exists := m.environmentWorkloadServingReceipts[graph.ID]
-			if exists && receipt.ReleaseSetID == release.ID && receipt.ServedAt != nil && graph.EnvironmentID == source.EnvironmentID {
+			if exists && receipt.ReleaseSetID == release.ID && historicalServingAt(receipt) != nil && graph.EnvironmentID == source.EnvironmentID {
 				releases = append(releases, release)
 				break
 			}
@@ -69,6 +76,20 @@ func (m *MemStore) ListEnvironmentGitReleases(ctx context.Context, source Enviro
 		if err != nil {
 			return out, err
 		}
+		if out.RecoveryRetention != nil {
+			entry.ProtectionStatus = "expired"
+		}
+
+		for _, g := range memory.graphs {
+			receipt := m.environmentWorkloadServingReceipts[g.ID]
+			if receipt.ReleaseSetID == release.ID && g.EnvironmentID == source.EnvironmentID && historicalServingAt(receipt) != nil {
+				first := *historicalServingAt(receipt)
+				if entry.ServedAt == nil || first.Before(*entry.ServedAt) {
+					entry.ServedAt = &first
+				}
+			}
+		}
+		applyRecoveryProtection(&entry, protection)
 		out.Releases = append(out.Releases, entry)
 	}
 	return out, nil

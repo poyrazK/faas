@@ -10,9 +10,11 @@ import (
 // Omitted fields are unmanaged. Collection ownership is explicit: routes and
 // policies are replaced as a whole, while maps own only their declared keys.
 type EnvironmentDefinition struct {
-	APIVersion  string `json:"api_version"`
-	Project     string `json:"project"`
-	Environment string `json:"environment"`
+	// RecoveryRetention explicitly protects completed serving history within count, time and byte limits.
+	RecoveryRetention *EnvironmentRecoveryRetention `json:"recovery_retention,omitempty"`
+	APIVersion        string                        `json:"api_version"`
+	Project           string                        `json:"project"`
+	Environment       string                        `json:"environment"`
 	// Retain is the only supported queue pruning disposition. It retires
 	// admission/dispatch while preserving accepted work and receipt identity.
 	QueuePruningPolicy string `json:"queue_pruning_policy,omitempty"`

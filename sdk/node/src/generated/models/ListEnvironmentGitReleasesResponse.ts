@@ -3,10 +3,16 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EnvironmentGitRecoveryRelease } from './EnvironmentGitRecoveryRelease.js';
+import type { EnvironmentRecoveryRetention } from './EnvironmentRecoveryRetention.js';
 /**
  * Read-only page of recovery eligibility observations for one verified target manifest commit.
  */
 export type ListEnvironmentGitReleasesResponse = {
+  recovery_retention?: EnvironmentRecoveryRetention;
+  /**
+   * Current charged bytes across all protected releases of this source, including releases outside this page.
+   */
+  retention_bytes?: number;
   /**
    * Registered project slug for this recovery page.
    */

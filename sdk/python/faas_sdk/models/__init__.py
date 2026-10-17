@@ -1167,6 +1167,7 @@ from .environment_git_promotion_target import EnvironmentGitPromotionTarget
 from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
 from .environment_git_recovery_release import EnvironmentGitRecoveryRelease
 from .environment_git_recovery_release_eligibility import EnvironmentGitRecoveryReleaseEligibility
+from .environment_git_recovery_release_protection_status import EnvironmentGitRecoveryReleaseProtectionStatus
 from .environment_git_recovery_release_retention_status import EnvironmentGitRecoveryReleaseRetentionStatus
 from .environment_git_review_evidence import EnvironmentGitReviewEvidence
 from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
@@ -1187,6 +1188,7 @@ from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
+from .environment_recovery_retention import EnvironmentRecoveryRetention
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
@@ -5942,6 +5944,7 @@ __all__ = (
     "EnvironmentGitProtectedBranchEvidence",
     "EnvironmentGitRecoveryRelease",
     "EnvironmentGitRecoveryReleaseEligibility",
+    "EnvironmentGitRecoveryReleaseProtectionStatus",
     "EnvironmentGitRecoveryReleaseRetentionStatus",
     "EnvironmentGitReviewedMergeEvidence",
     "EnvironmentGitReviewEvidence",
@@ -5962,6 +5965,7 @@ __all__ = (
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
+    "EnvironmentRecoveryRetention",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",

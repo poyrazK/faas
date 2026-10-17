@@ -64,6 +64,10 @@ func writeGitOpsRecoveryCatalog(w io.Writer, out api.ListEnvironmentGitReleasesR
 	}
 	var text strings.Builder
 	fmt.Fprintf(&text, "GitOps recovery: %s / %s\nTarget commit: %s\nObserved: %s\n\n", out.Project, out.Environment, out.TargetCommitSHA, out.ObservedAt.Format(time.RFC3339))
+
+	if p := out.RecoveryRetention; p != nil {
+		fmt.Fprintf(&text, "Artifact retention policy: up to %d releases, %d seconds, %d bytes reserved; %d bytes charged across all pages.\n\n", p.Releases, p.Seconds, p.MaxBytes, out.RetentionBytes)
+	}
 	for _, release := range out.Releases {
 		served, expires := "unknown", "unknown"
 		if release.ServedAt != nil {
@@ -73,6 +77,12 @@ func writeGitOpsRecoveryCatalog(w io.Writer, out api.ListEnvironmentGitReleasesR
 			expires = release.ExpiresAt.Format(time.RFC3339)
 		}
 		fmt.Fprintf(&text, "%s: %s · manifest commit %s · served %s\n  Release window: %s (deadline %s)\n", release.ReleaseSetID, release.Eligibility, clean(release.CommitSHA), served, release.RetentionStatus, expires)
+
+		fmt.Fprintf(&text, "  Artifact protection: %s (%d charged bytes)", clean(release.ProtectionStatus), release.RetainedBytes)
+		if release.ArtifactsProtectedUntil != nil {
+			fmt.Fprintf(&text, "; deadline %s", release.ArtifactsProtectedUntil.UTC().Format(time.RFC3339))
+		}
+		text.WriteString("\n")
 		for _, artifact := range release.Artifacts {
 			fmt.Fprintf(&text, "  %s: image %s · layer %s · build %s · code commit %s\n", clean(artifact.Resource), clean(artifact.ImageDigest), clean(artifact.ArtifactDigest), clean(artifact.BuildID), clean(artifact.BuildCommitSHA))
 		}

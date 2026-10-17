@@ -21,17 +21,22 @@ type EnvironmentGitRecoveryRelease struct {
 	Active       bool      `json:"active"`
 	CreatedAt    time.Time `json:"created_at"`
 	// ExpiresAt is the release routing compatibility deadline, not an artifact guarantee.
-	ExpiresAt       *time.Time                        `json:"expires_at,omitempty"`
-	RetentionStatus string                            `json:"retention_status"`
-	CommitSHA       string                            `json:"commit_sha"`
-	ServedAt        *time.Time                        `json:"served_at,omitempty"`
-	Eligibility     string                            `json:"eligibility"`
-	BlockingReasons []string                          `json:"blocking_reasons"`
-	Artifacts       []EnvironmentGitPromotionArtifact `json:"artifacts"`
-	PlanHash        string                            `json:"plan_hash,omitempty"`
+	ExpiresAt               *time.Time                        `json:"expires_at,omitempty"`
+	RetentionStatus         string                            `json:"retention_status"`
+	CommitSHA               string                            `json:"commit_sha"`
+	ServedAt                *time.Time                        `json:"served_at,omitempty"`
+	Eligibility             string                            `json:"eligibility"`
+	BlockingReasons         []string                          `json:"blocking_reasons"`
+	Artifacts               []EnvironmentGitPromotionArtifact `json:"artifacts"`
+	ProtectionStatus        string                            `json:"protection_status"`
+	ArtifactsProtectedUntil *time.Time                        `json:"artifacts_protected_until,omitempty"`
+	RetainedBytes           int64                             `json:"retained_bytes"`
+	PlanHash                string                            `json:"plan_hash,omitempty"`
 }
 
 type ListEnvironmentGitReleasesResponse struct {
+	RecoveryRetention           *EnvironmentRecoveryRetention   `json:"recovery_retention,omitempty"`
+	RetentionBytes              int64                           `json:"retention_bytes"`
 	Project                     string                          `json:"project"`
 	Environment                 string                          `json:"environment"`
 	SourceID                    string                          `json:"source_id"`

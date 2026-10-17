@@ -6498,6 +6498,28 @@ func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX
 	return err
 }
 
+const clearObsoleteDeploymentsRetainingRecovery = `-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
+UPDATE deployments SET deleted_at=$1::timestamptz,deleted_by_principal='system'
+WHERE app_id=$2::uuid AND status IN ('superseded','failed','cancelled')
+ AND created_at<$3::timestamptz AND deleted_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
+ AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=$2::uuid) recent WHERE rn<=2)
+`
+
+type ClearObsoleteDeploymentsRetainingRecoveryParams struct {
+	DeletedAt pgtype.Timestamptz
+	AppID     pgtype.UUID
+	OlderThan pgtype.Timestamptz
+}
+
+func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error) {
+	result, err := db.Exec(ctx, clearObsoleteDeploymentsRetainingRecovery, arg.DeletedAt, arg.AppID, arg.OlderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearServiceRolloutPredecessorPin = `-- name: ClearServiceRolloutPredecessorPin :exec
 DELETE FROM deployment_revision_pins WHERE deployment_id=$1::uuid
 `
@@ -14154,6 +14176,23 @@ func (q *Queries) EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db 
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const environmentRecoveryReleaseFirstServing = `-- name: EnvironmentRecoveryReleaseFirstServing :one
+SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
+WHERE h.source_id=$1::uuid AND h.release_set_id=$2::uuid
+`
+
+type EnvironmentRecoveryReleaseFirstServingParams struct {
+	SourceID  pgtype.UUID
+	ReleaseID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentRecoveryReleaseFirstServing(ctx context.Context, db DBTX, arg EnvironmentRecoveryReleaseFirstServingParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentRecoveryReleaseFirstServing, arg.SourceID, arg.ReleaseID)
+	var served_at pgtype.Timestamptz
+	err := row.Scan(&served_at)
+	return served_at, err
 }
 
 const environmentSecretReferenceQuota = `-- name: EnvironmentSecretReferenceQuota :one
@@ -34312,7 +34351,7 @@ SELECT EXISTS (
  ) OR EXISTS (
  SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
  WHERE f.input_snapshot->>'storage_key'=$1::text
-) AS referenced
+ ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=$1::text) AS referenced
 `
 
 func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error) {
@@ -39814,8 +39853,8 @@ SELECT rs.id::text FROM project_release_sets rs
 WHERE rs.account_id=$1::uuid AND rs.project_id=$2::uuid
  AND rs.environment_slug=$3::text
  AND EXISTS (SELECT 1 FROM environment_workload_graphs g
-  JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
-  WHERE g.source_id=$4::uuid AND g.environment_id=$5::uuid
+  JOIN environment_recovery_serving_history r ON r.graph_id=g.id
+  WHERE r.source_id=$4::uuid AND g.source_id=$4::uuid AND g.environment_id=$5::uuid
    AND r.release_set_id=rs.id AND r.served_at IS NOT NULL)
  AND ($6::timestamptz IS NULL OR (rs.created_at,rs.id)<($6::timestamptz,$7::uuid))
 ORDER BY rs.created_at DESC,rs.id DESC LIMIT $8
@@ -39928,6 +39967,53 @@ func (q *Queries) ListEnvironmentQueueCleanupInvocations(ctx context.Context, db
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentRecoveryProtection = `-- name: ListEnvironmentRecoveryProtection :many
+SELECT release_set_id::text,graph_id::text,protected_until::timestamptz,bytes::bigint,coalesce(available,false)::boolean AS available,
+ CASE WHEN position>max_releases THEN 'outside_policy' WHEN charged_bytes>max_bytes THEN 'budget_exceeded' ELSE 'protected' END::text AS status
+FROM environment_recovery_candidates WHERE source_id=$1::uuid AND (position<=max_releases OR release_set_id=ANY($2::uuid[])) ORDER BY served_at DESC,release_set_id DESC
+`
+
+type ListEnvironmentRecoveryProtectionParams struct {
+	SourceID   pgtype.UUID
+	ReleaseIds []pgtype.UUID
+}
+
+type ListEnvironmentRecoveryProtectionRow struct {
+	ReleaseSetID   string
+	GraphID        string
+	ProtectedUntil pgtype.Timestamptz
+	Bytes          int64
+	Available      bool
+	Status         string
+}
+
+func (q *Queries) ListEnvironmentRecoveryProtection(ctx context.Context, db DBTX, arg ListEnvironmentRecoveryProtectionParams) ([]ListEnvironmentRecoveryProtectionRow, error) {
+	rows, err := db.Query(ctx, listEnvironmentRecoveryProtection, arg.SourceID, arg.ReleaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnvironmentRecoveryProtectionRow{}
+	for rows.Next() {
+		var i ListEnvironmentRecoveryProtectionRow
+		if err := rows.Scan(
+			&i.ReleaseSetID,
+			&i.GraphID,
+			&i.ProtectedUntil,
+			&i.Bytes,
+			&i.Available,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -66581,6 +66667,30 @@ func (q *Queries) ReadEnvironmentQueueProducerPlan(ctx context.Context, db DBTX,
 	return plan, err
 }
 
+const readEnvironmentRecoveryPolicy = `-- name: ReadEnvironmentRecoveryPolicy :one
+SELECT coalesce(v.definition->'recovery_retention','null'::jsonb)::jsonb FROM environment_git_sources s
+LEFT JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
+WHERE s.id=$1::uuid AND NOT s.detached
+`
+
+func (q *Queries) ReadEnvironmentRecoveryPolicy(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readEnvironmentRecoveryPolicy, sourceID)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const readEnvironmentRecoveryServingHistory = `-- name: ReadEnvironmentRecoveryServingHistory :one
+SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=$1::uuid
+`
+
+func (q *Queries) ReadEnvironmentRecoveryServingHistory(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readEnvironmentRecoveryServingHistory, graphID)
+	var served_at pgtype.Timestamptz
+	err := row.Scan(&served_at)
+	return served_at, err
+}
+
 const readExclusiveWorkKey = `-- name: ReadExclusiveWorkKey :one
 SELECT id, account_id, policy_id, scope_id, environment_id, key_digest, generation, next_sequence FROM exclusive_work_keys
 WHERE id=$1::text::uuid AND account_id=$2::text::uuid FOR UPDATE
@@ -77682,6 +77792,7 @@ WITH retained_deployments AS (
     SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
+           OR EXISTS (SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=d.id)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)

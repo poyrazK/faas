@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.environment_git_recovery_release import EnvironmentGitRecoveryRelease
+    from ..models.environment_recovery_retention import EnvironmentRecoveryRetention
 
 
 T = TypeVar("T", bound="ListEnvironmentGitReleasesResponse")
@@ -39,6 +40,11 @@ class ListEnvironmentGitReleasesResponse:
     """Recovery proposals must still pass new qualification for the target environment."""
     releases: list[EnvironmentGitRecoveryRelease]
     """Newest retained completed serving releases from this Git source, including expired windows."""
+    recovery_retention: EnvironmentRecoveryRetention | Unset = UNSET
+    """Explicit artifact retention; count, age and byte limits apply together. Removing the policy or detaching
+    releases its protection. No snapshot or trust transfer."""
+    retention_bytes: int | Unset = UNSET
+    """Current charged bytes across all protected releases of this source, including releases outside this page."""
     next_before: UUID | Unset = UNSET
     """Last release UUID in this page when additional older recovery history exists."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -65,6 +71,12 @@ class ListEnvironmentGitReleasesResponse:
             releases_item = releases_item_data.to_dict()
             releases.append(releases_item)
 
+        recovery_retention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.recovery_retention, Unset):
+            recovery_retention = self.recovery_retention.to_dict()
+
+        retention_bytes = self.retention_bytes
+
         next_before: str | Unset = UNSET
         if not isinstance(self.next_before, Unset):
             next_before = str(self.next_before)
@@ -84,6 +96,10 @@ class ListEnvironmentGitReleasesResponse:
                 "releases": releases,
             }
         )
+        if recovery_retention is not UNSET:
+            field_dict["recovery_retention"] = recovery_retention
+        if retention_bytes is not UNSET:
+            field_dict["retention_bytes"] = retention_bytes
         if next_before is not UNSET:
             field_dict["next_before"] = next_before
 
@@ -92,6 +108,7 @@ class ListEnvironmentGitReleasesResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.environment_git_recovery_release import EnvironmentGitRecoveryRelease
+        from ..models.environment_recovery_retention import EnvironmentRecoveryRetention
 
         d = dict(src_dict)
         project = d.pop("project")
@@ -117,6 +134,15 @@ class ListEnvironmentGitReleasesResponse:
 
             releases.append(releases_item)
 
+        _recovery_retention = d.pop("recovery_retention", UNSET)
+        recovery_retention: EnvironmentRecoveryRetention | Unset
+        if isinstance(_recovery_retention, Unset):
+            recovery_retention = UNSET
+        else:
+            recovery_retention = EnvironmentRecoveryRetention.from_dict(_recovery_retention)
+
+        retention_bytes = d.pop("retention_bytes", UNSET)
+
         _next_before = d.pop("next_before", UNSET)
         next_before: UUID | Unset
         if isinstance(_next_before, Unset):
@@ -134,6 +160,8 @@ class ListEnvironmentGitReleasesResponse:
             values_redacted=values_redacted,
             requires_target_qualification=requires_target_qualification,
             releases=releases,
+            recovery_retention=recovery_retention,
+            retention_bytes=retention_bytes,
             next_before=next_before,
         )
 

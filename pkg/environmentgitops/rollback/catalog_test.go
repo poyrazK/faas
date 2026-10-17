@@ -38,3 +38,27 @@ func TestRecoveryCatalogRejectsUnprovenEligibilityAndUnscopedPages(t *testing.T)
 		}
 	}
 }
+
+func TestRecoveryCatalogRejectsUnbackedRetentionClaims(t *testing.T) {
+	now := time.Now().UTC()
+	until := now.Add(time.Hour)
+	out := api.ListEnvironmentGitReleasesResponse{Project: "shop", Environment: "production", SourceID: "source", TargetCommitSHA: strings.Repeat("a", 40), ObservedAt: now, ReadOnly: true, ValuesRedacted: true, RequiresTargetQualification: true,
+		RecoveryRetention: &api.EnvironmentRecoveryRetention{Releases: 3, Seconds: 3600, MaxBytes: 1000}, RetentionBytes: 100,
+		Releases: []api.EnvironmentGitRecoveryRelease{{ReleaseSetID: "2ba0aa40-2362-4c0e-aeb1-6381666bb514", CreatedAt: now, RetentionStatus: "active", Eligibility: "blocked", BlockingReasons: []string{"trust_revoked"}, ProtectionStatus: "protected", ArtifactsProtectedUntil: &until, RetainedBytes: 100}}}
+	if err := ValidateCatalog(out); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*api.ListEnvironmentGitReleasesResponse){
+		func(o *api.ListEnvironmentGitReleasesResponse) { o.RecoveryRetention = nil },
+		func(o *api.ListEnvironmentGitReleasesResponse) { o.RetentionBytes = 1 },
+		func(o *api.ListEnvironmentGitReleasesResponse) { o.Releases[0].ArtifactsProtectedUntil = &now },
+		func(o *api.ListEnvironmentGitReleasesResponse) { o.Releases[0].ProtectionStatus = "expired" },
+	} {
+		copied := out
+		copied.Releases = append([]api.EnvironmentGitRecoveryRelease(nil), out.Releases...)
+		mutate(&copied)
+		if ValidateCatalog(copied) == nil {
+			t.Fatal("unbacked protection accepted", copied)
+		}
+	}
+}

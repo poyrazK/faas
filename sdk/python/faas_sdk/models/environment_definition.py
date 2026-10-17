@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..models.environment_definition_configuration import EnvironmentDefinitionConfiguration
     from ..models.environment_definition_workload_recoveries import EnvironmentDefinitionWorkloadRecoveries
     from ..models.environment_definition_workloads import EnvironmentDefinitionWorkloads
+    from ..models.environment_recovery_retention import EnvironmentRecoveryRetention
 
 
 T = TypeVar("T", bound="EnvironmentDefinition")
@@ -39,6 +40,9 @@ class EnvironmentDefinition:
     project: str
     environment: str
     workloads: EnvironmentDefinitionWorkloads
+    recovery_retention: EnvironmentRecoveryRetention | Unset = UNSET
+    """Explicit artifact retention; count, age and byte limits apply together. Removing the policy or detaching
+    releases its protection. No snapshot or trust transfer."""
     workload_pruning_policy: EnvironmentDefinitionWorkloadPruningPolicy | Unset = UNSET
     """Reviewed whole-workload retirement when source pruning is enabled. Withdraws this environment after
     replacement qualification, retains configuration and accepted work, and requires original app identity and fresh
@@ -59,6 +63,10 @@ class EnvironmentDefinition:
         environment = self.environment
 
         workloads = self.workloads.to_dict()
+
+        recovery_retention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.recovery_retention, Unset):
+            recovery_retention = self.recovery_retention.to_dict()
 
         workload_pruning_policy: str | Unset = UNSET
         if not isinstance(self.workload_pruning_policy, Unset):
@@ -86,6 +94,8 @@ class EnvironmentDefinition:
                 "workloads": workloads,
             }
         )
+        if recovery_retention is not UNSET:
+            field_dict["recovery_retention"] = recovery_retention
         if workload_pruning_policy is not UNSET:
             field_dict["workload_pruning_policy"] = workload_pruning_policy
         if workload_recoveries is not UNSET:
@@ -102,6 +112,7 @@ class EnvironmentDefinition:
         from ..models.environment_definition_configuration import EnvironmentDefinitionConfiguration
         from ..models.environment_definition_workload_recoveries import EnvironmentDefinitionWorkloadRecoveries
         from ..models.environment_definition_workloads import EnvironmentDefinitionWorkloads
+        from ..models.environment_recovery_retention import EnvironmentRecoveryRetention
 
         d = dict(src_dict)
         api_version = check_environment_definition_api_version(d.pop("api_version"))
@@ -111,6 +122,13 @@ class EnvironmentDefinition:
         environment = d.pop("environment")
 
         workloads = EnvironmentDefinitionWorkloads.from_dict(d.pop("workloads"))
+
+        _recovery_retention = d.pop("recovery_retention", UNSET)
+        recovery_retention: EnvironmentRecoveryRetention | Unset
+        if isinstance(_recovery_retention, Unset):
+            recovery_retention = UNSET
+        else:
+            recovery_retention = EnvironmentRecoveryRetention.from_dict(_recovery_retention)
 
         _workload_pruning_policy = d.pop("workload_pruning_policy", UNSET)
         workload_pruning_policy: EnvironmentDefinitionWorkloadPruningPolicy | Unset
@@ -145,6 +163,7 @@ class EnvironmentDefinition:
             project=project,
             environment=environment,
             workloads=workloads,
+            recovery_retention=recovery_retention,
             workload_pruning_policy=workload_pruning_policy,
             workload_recoveries=workload_recoveries,
             queue_pruning_policy=queue_pruning_policy,

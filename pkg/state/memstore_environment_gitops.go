@@ -139,6 +139,9 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 	if desired.Definition.Project != project.Slug || desired.Definition.Environment != source.EnvironmentSlug {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrInvalidArgument
 	}
+	if err := m.validateRecoveryRetentionApprovalLocked(source, desired.Definition); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
 	if err := m.validateBuildArtifactApprovalLocked(source, desired.Definition); err != nil {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
 	}

@@ -65,6 +65,9 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		if result.Desired.Definition.Project != project.Slug || result.Desired.Definition.Environment != memory.source.EnvironmentSlug {
 			return ErrInvalidArgument
 		}
+		if err := m.validateRecoveryRetentionApprovalLocked(memory.source, result.Desired.Definition); err != nil {
+			return err
+		}
 		if err := m.validateBuildArtifactApprovalLocked(memory.source, result.Desired.Definition); err != nil {
 			return err
 		}

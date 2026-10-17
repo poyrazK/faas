@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	gitopsapi "github.com/onebox-faas/faas/pkg/apid/gitops"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -16,6 +17,10 @@ import (
 )
 
 func writeEnvironmentGitOpsError(w http.ResponseWriter, err error) {
+	if p := gitopsapi.RetentionProblem(err); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "environment_git_source_not_found", "Git source not found", "No environment Git source or managed field exists in this scope."))

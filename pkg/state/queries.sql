@@ -436,13 +436,14 @@ SELECT EXISTS (
  ) OR EXISTS (
  SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
  WHERE f.input_snapshot->>'storage_key'=sqlc.arg(storage_key)::text
-) AS referenced;
+ ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=sqlc.arg(storage_key)::text) AS referenced;
 
 -- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
     SELECT d.* FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
+           OR EXISTS (SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=d.id)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -21613,8 +21614,32 @@ SELECT rs.id::text FROM project_release_sets rs
 WHERE rs.account_id=sqlc.arg(account_id)::uuid AND rs.project_id=sqlc.arg(project_id)::uuid
  AND rs.environment_slug=sqlc.arg(environment)::text
  AND EXISTS (SELECT 1 FROM environment_workload_graphs g
-  JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
-  WHERE g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
+  JOIN environment_recovery_serving_history r ON r.graph_id=g.id
+  WHERE r.source_id=sqlc.arg(source_id)::uuid AND g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
    AND r.release_set_id=rs.id AND r.served_at IS NOT NULL)
  AND (sqlc.narg(before_at)::timestamptz IS NULL OR (rs.created_at,rs.id)<(sqlc.narg(before_at)::timestamptz,sqlc.narg(before_id)::uuid))
 ORDER BY rs.created_at DESC,rs.id DESC LIMIT sqlc.arg(page_limit);
+
+-- name: ListEnvironmentRecoveryProtection :many
+SELECT release_set_id::text,graph_id::text,protected_until::timestamptz,bytes::bigint,coalesce(available,false)::boolean AS available,
+ CASE WHEN position>max_releases THEN 'outside_policy' WHEN charged_bytes>max_bytes THEN 'budget_exceeded' ELSE 'protected' END::text AS status
+FROM environment_recovery_candidates WHERE source_id=sqlc.arg(source_id)::uuid AND (position<=max_releases OR release_set_id=ANY(sqlc.arg(release_ids)::uuid[])) ORDER BY served_at DESC,release_set_id DESC;
+
+-- name: ReadEnvironmentRecoveryPolicy :one
+SELECT coalesce(v.definition->'recovery_retention','null'::jsonb)::jsonb FROM environment_git_sources s
+LEFT JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
+WHERE s.id=sqlc.arg(source_id)::uuid AND NOT s.detached;
+
+-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
+UPDATE deployments SET deleted_at=sqlc.arg(deleted_at)::timestamptz,deleted_by_principal='system'
+WHERE app_id=sqlc.arg(app_id)::uuid AND status IN ('superseded','failed','cancelled')
+ AND created_at<sqlc.arg(older_than)::timestamptz AND deleted_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
+ AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid) recent WHERE rn<=2);
+
+-- name: ReadEnvironmentRecoveryServingHistory :one
+SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.arg(graph_id)::uuid;
+
+-- name: EnvironmentRecoveryReleaseFirstServing :one
+SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
+WHERE h.source_id=sqlc.arg(source_id)::uuid AND h.release_set_id=sqlc.arg(release_id)::uuid;

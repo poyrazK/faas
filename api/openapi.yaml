@@ -58333,6 +58333,20 @@ components:
       description: One retained serving release assessed against the selected current target manifest.
       required: [release_set_id, active, created_at, retention_status, commit_sha, eligibility, blocking_reasons, artifacts]
       properties:
+        protection_status:
+          type: string
+          enum: [disabled, expired, outside_policy, budget_exceeded, protected]
+          description: Current artifact policy selection, independent of rollback eligibility and routing retention.
+        artifacts_protected_until:
+          type: string
+          format: date-time
+          description: Age deadline of current protection; a newer release or explicit policy change may displace it earlier.
+        retained_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Per-release charged layer bytes when currently protected; shared keys are charged once within each release.
+
         release_set_id:
           type: string
           format: uuid
@@ -58381,6 +58395,14 @@ components:
       description: Read-only page of recovery eligibility observations for one verified target manifest commit.
       required: [project, environment, source_id, target_commit_sha, observed_at, read_only, values_redacted, requires_target_qualification, releases]
       properties:
+        recovery_retention:
+          $ref: '#/components/schemas/EnvironmentRecoveryRetention'
+        retention_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current charged bytes across all protected releases of this source, including releases outside this page.
+
         project:
           type: string
           description: Registered project slug for this recovery page.
@@ -59617,10 +59639,34 @@ components:
       - plan_hash
       - changes
       - blocking_reasons
+    EnvironmentRecoveryRetention:
+      type: object
+      additionalProperties: false
+      description: Explicit artifact retention; count, age and byte limits apply together. Removing the policy or detaching releases its protection. No snapshot or trust transfer.
+      required: [releases, seconds, max_bytes]
+      properties:
+        releases:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Maximum newest completed serving releases, including the active release when served.
+        seconds:
+          type: integer
+          minimum: 1
+          maximum: 604800
+          description: Maximum age measured from original serving completion; observations never renew it.
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1073741824
+          description: Conservative per-release unique layer bytes budget; account policy reservations are limited to 2147483648 bytes.
     EnvironmentDefinition:
       type: object
       description: Versioned Git intent; omitted settings are unmanaged and removal requires explicit pruning. The workloads map is required; an explicit empty map represents an empty environment.
       properties:
+        recovery_retention:
+          $ref: '#/components/schemas/EnvironmentRecoveryRetention'
         api_version:
           type: string
           enum:

@@ -366,6 +366,33 @@ enforcement and dedicated native acceptance retain their existing gates. See
 
 ## Prepare a reviewed code rollback
 
+Optionally protect recovery artifacts through reviewed Git intent:
+
+```yaml
+recovery_retention:
+  releases: 3
+  seconds: 86400
+  max_bytes: 536870912
+```
+
+The policy takes effect at approval. It protects the newest completed serving
+releases, including the active served release, within all three bounds. Limits
+are five releases, seven days and 1 GiB per source; account byte reservations
+across sources are capped at 2 GiB. Main and sidecar keys are deduplicated within
+each release and conservatively charged again across releases. A budget that
+cannot fit the newest release protects no release; older smaller releases do not
+skip ahead. Protected storage remains part of ordinary storage accounting.
+
+The catalog reports the effective approved policy and total charged bytes across
+all pages. Each row shows artifact protection separately from rollback eligibility
+and routing compatibility. The protection deadline is measured from original
+serving completion; listing or retrying never renews it. A newer served release,
+policy reduction/removal, or explicit source detachment can release protection
+earlier. Suspension preserves it. Existing trust checks and fresh target
+qualification remain mandatory. Approval cannot resurrect an artifact claimed
+by garbage collection, and protected provenance cannot be erased by cleanup.
+See [ADR-1349](adr/1349-gitops-bounded-recovery-retention.md).
+
 Find retained releases and current eligibility for your target manifest:
 
 ```sh

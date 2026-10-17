@@ -12,6 +12,10 @@ from ..models.environment_git_recovery_release_eligibility import (
     EnvironmentGitRecoveryReleaseEligibility,
     check_environment_git_recovery_release_eligibility,
 )
+from ..models.environment_git_recovery_release_protection_status import (
+    EnvironmentGitRecoveryReleaseProtectionStatus,
+    check_environment_git_recovery_release_protection_status,
+)
 from ..models.environment_git_recovery_release_retention_status import (
     EnvironmentGitRecoveryReleaseRetentionStatus,
     check_environment_git_recovery_release_retention_status,
@@ -45,6 +49,12 @@ class EnvironmentGitRecoveryRelease:
     """Value-redacted rollback planner blockers for this retained release."""
     artifacts: list[EnvironmentGitPromotionArtifact]
     """Public immutable image and signed build identities checked for this recovery selection."""
+    protection_status: EnvironmentGitRecoveryReleaseProtectionStatus | Unset = UNSET
+    """Current artifact policy selection, independent of rollback eligibility and routing retention."""
+    artifacts_protected_until: datetime.datetime | Unset = UNSET
+    """Age deadline of current protection; a newer release or explicit policy change may displace it earlier."""
+    retained_bytes: int | Unset = UNSET
+    """Per-release charged layer bytes when currently protected; shared keys are charged once within each release."""
     expires_at: datetime.datetime | Unset = UNSET
     """Routing compatibility deadline for this release; does not guarantee artifact retention."""
     served_at: datetime.datetime | Unset = UNSET
@@ -73,6 +83,16 @@ class EnvironmentGitRecoveryRelease:
             artifacts_item = artifacts_item_data.to_dict()
             artifacts.append(artifacts_item)
 
+        protection_status: str | Unset = UNSET
+        if not isinstance(self.protection_status, Unset):
+            protection_status = self.protection_status
+
+        artifacts_protected_until: str | Unset = UNSET
+        if not isinstance(self.artifacts_protected_until, Unset):
+            artifacts_protected_until = self.artifacts_protected_until.isoformat()
+
+        retained_bytes = self.retained_bytes
+
         expires_at: str | Unset = UNSET
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
@@ -97,6 +117,12 @@ class EnvironmentGitRecoveryRelease:
                 "artifacts": artifacts,
             }
         )
+        if protection_status is not UNSET:
+            field_dict["protection_status"] = protection_status
+        if artifacts_protected_until is not UNSET:
+            field_dict["artifacts_protected_until"] = artifacts_protected_until
+        if retained_bytes is not UNSET:
+            field_dict["retained_bytes"] = retained_bytes
         if expires_at is not UNSET:
             field_dict["expires_at"] = expires_at
         if served_at is not UNSET:
@@ -132,6 +158,22 @@ class EnvironmentGitRecoveryRelease:
 
             artifacts.append(artifacts_item)
 
+        _protection_status = d.pop("protection_status", UNSET)
+        protection_status: EnvironmentGitRecoveryReleaseProtectionStatus | Unset
+        if isinstance(_protection_status, Unset):
+            protection_status = UNSET
+        else:
+            protection_status = check_environment_git_recovery_release_protection_status(_protection_status)
+
+        _artifacts_protected_until = d.pop("artifacts_protected_until", UNSET)
+        artifacts_protected_until: datetime.datetime | Unset
+        if isinstance(_artifacts_protected_until, Unset):
+            artifacts_protected_until = UNSET
+        else:
+            artifacts_protected_until = datetime.datetime.fromisoformat(_artifacts_protected_until)
+
+        retained_bytes = d.pop("retained_bytes", UNSET)
+
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: datetime.datetime | Unset
         if isinstance(_expires_at, Unset):
@@ -157,6 +199,9 @@ class EnvironmentGitRecoveryRelease:
             eligibility=eligibility,
             blocking_reasons=blocking_reasons,
             artifacts=artifacts,
+            protection_status=protection_status,
+            artifacts_protected_until=artifacts_protected_until,
+            retained_bytes=retained_bytes,
             expires_at=expires_at,
             served_at=served_at,
             plan_hash=plan_hash,

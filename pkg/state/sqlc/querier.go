@@ -295,6 +295,7 @@ type Querier interface {
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
+	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
 	// required so an out-of-order cleanup call cannot hide the path of
@@ -727,6 +728,7 @@ type Querier interface {
 	EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EnvironmentQueueClaimCapacityRow, error)
 	EnvironmentQueueDeliveryClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
+	EnvironmentRecoveryReleaseFirstServing(ctx context.Context, db DBTX, arg EnvironmentRecoveryReleaseFirstServingParams) (pgtype.Timestamptz, error)
 	EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error)
 	EnvironmentSecretReferenceSourcePresent(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceSourcePresentParams) (bool, error)
 	// Public controls check authority before source/quota checks, including a
@@ -2163,6 +2165,7 @@ type Querier interface {
 	// and immutable frame locks before any native retirement RPC.
 	ListEnvironmentQualificationExecutionsForRecovery(ctx context.Context, db DBTX, arg ListEnvironmentQualificationExecutionsForRecoveryParams) ([]EnvironmentQualificationExecution, error)
 	ListEnvironmentQueueCleanupInvocations(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
+	ListEnvironmentRecoveryProtection(ctx context.Context, db DBTX, arg ListEnvironmentRecoveryProtectionParams) ([]ListEnvironmentRecoveryProtectionRow, error)
 	ListEnvironmentServingGatewayNames(ctx context.Context, db DBTX) ([]string, error)
 	// Graph discovery is advisory. Every member is claimed atomically by the
 	// graph claim method, which rechecks source authority, artifacts, smoke policy
@@ -3337,6 +3340,8 @@ type Querier interface {
 	ReadEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueReceipt, error)
 	ReadEnvironmentQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
 	ReadEnvironmentQueueProducerPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
+	ReadEnvironmentRecoveryPolicy(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]byte, error)
+	ReadEnvironmentRecoveryServingHistory(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Timestamptz, error)
 	ReadEnvironmentRouteBudgets(ctx context.Context, db DBTX, arg ReadEnvironmentRouteBudgetsParams) ([]byte, error)
 	ReadExclusiveWorkKey(ctx context.Context, db DBTX, arg ReadExclusiveWorkKeyParams) (ExclusiveWorkKey, error)
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)

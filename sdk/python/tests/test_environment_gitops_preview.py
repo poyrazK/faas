@@ -277,12 +277,17 @@ def test_recovery_catalog_keeps_target_cursor_and_eligibility_typed() -> None:
         "read_only": True,
         "values_redacted": True,
         "requires_target_qualification": True,
+        "recovery_retention": {"releases": 3, "seconds": 86400, "max_bytes": 1000},
+        "retention_bytes": 100,
         "releases": [
             {
                 "release_set_id": str(cursor),
                 "active": False,
                 "created_at": "2026-10-16T12:00:00+00:00",
                 "expires_at": "2026-10-16T13:00:00+00:00",
+                "protection_status": "protected",
+                "artifacts_protected_until": "2026-10-18T12:00:00+00:00",
+                "retained_bytes": 100,
                 "retention_status": "compatibility_window_elapsed",
                 "commit_sha": "b" * 40,
                 "eligibility": "blocked",

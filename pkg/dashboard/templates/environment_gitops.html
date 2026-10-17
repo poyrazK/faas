@@ -81,12 +81,13 @@
           {{with .Recovery}}
             {{$catalog := .}}
             <p>Observed {{.ObservedAt.Format "2006-01-02 15:04:05 MST"}} for <code>{{.TargetCommitSHA}}</code>. Eligibility is an observation; fresh Git review and qualification remain required.</p>
+            {{with .RecoveryRetention}}<p>Artifact retention: up to {{.Releases}} served releases, {{.Seconds}} seconds, {{.MaxBytes}} bytes reserved. Currently charged: {{$catalog.RetentionBytes}} bytes. Count, budget or policy changes can release protection earlier.</p>{{end}}
             <p>Release deadlines describe routing compatibility windows. They do not guarantee artifact retention or extend it.</p>
             <table><thead><tr><th>Release / manifest commit</th><th>Previously served</th><th>Release window</th><th>Rollback eligibility</th></tr></thead><tbody>
             {{range .Releases}}<tr>
               <td><code>{{.ReleaseSetID}}</code>{{if .Active}} · active{{end}}<br><code>{{.CommitSHA}}</code></td>
               <td>{{if .ServedAt}}{{.ServedAt.Format "2006-01-02 15:04:05 MST"}}{{else}}Unknown{{end}}</td>
-              <td>{{.RetentionStatus}}{{if .ExpiresAt}}<br>{{.ExpiresAt.Format "2006-01-02 15:04:05 MST"}}{{end}}</td>
+              <td>Artifact protection: {{.ProtectionStatus}} ({{.RetainedBytes}} bytes){{if .ArtifactsProtectedUntil}}<br>{{.ArtifactsProtectedUntil.Format "2006-01-02 15:04:05 MST"}}{{end}}<br>{{.RetentionStatus}}{{if .ExpiresAt}}<br>{{.ExpiresAt.Format "2006-01-02 15:04:05 MST"}}{{end}}</td>
               <td>{{if eq .Eligibility "eligible"}}Eligible to propose{{else}}Blocked{{end}}<ul>{{range .BlockingReasons}}<li>{{.}}</li>{{end}}</ul>
               {{range .Artifacts}}<p><code>{{.Resource}}</code> · <code>{{.ImageDigest}}{{.ArtifactDigest}}</code>{{if .BuildID}} · build <code>{{.BuildID}}</code>{{end}}{{if .BuildCommitSHA}} · code commit <code>{{.BuildCommitSHA}}</code>{{end}}</p>{{end}}
               <pre>gregale projects environments gitops rollback-plan {{$catalog.Project}} {{$catalog.Environment}} --to-release {{.ReleaseSetID}} --target-commit {{$catalog.TargetCommitSHA}}</pre></td>

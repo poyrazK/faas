@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,6 +29,14 @@ func (s *PgStore) ListEnvironmentGitReleases(ctx context.Context, source Environ
 		return out, err
 	}
 	out.ObservedAt = time.Now().UTC()
+	rawPolicy, err := sqlc.New().ReadEnvironmentRecoveryPolicy(ctx, tx, mustPgUUID(source.ID))
+	if err != nil {
+		return out, mapErr(err)
+	}
+	if err := json.Unmarshal(rawPolicy, &out.RecoveryRetention); err != nil {
+		return out, err
+	}
+
 	params := sqlc.ListEnvironmentGitRecoveryReleasesParams{AccountID: mustPgUUID(source.AccountID), ProjectID: mustPgUUID(source.ProjectID), Environment: source.EnvironmentSlug, SourceID: mustPgUUID(source.ID), EnvironmentID: mustPgUUID(source.EnvironmentID), PageLimit: api.EnvironmentGitRecoveryPageSize + 1}
 	q := sqlc.New()
 	if request.Before != "" {
@@ -49,7 +58,7 @@ func (s *PgStore) ListEnvironmentGitReleases(ctx context.Context, source Environ
 			if err != nil {
 				return out, err
 			}
-			found = found || receipt.ServedAt != nil
+			found = found || historicalServingAt(receipt) != nil
 		}
 		if !found {
 			return out, ErrNotFound
@@ -64,6 +73,23 @@ func (s *PgStore) ListEnvironmentGitReleases(ctx context.Context, source Environ
 		ids = ids[:api.EnvironmentGitRecoveryPageSize]
 		out.NextBefore = ids[len(ids)-1]
 	}
+	releaseIDs := make([]pgtype.UUID, len(ids))
+	for i, id := range ids {
+		releaseIDs[i] = mustPgUUID(id)
+	}
+	protectionRows, err := sqlc.New().ListEnvironmentRecoveryProtection(ctx, tx, sqlc.ListEnvironmentRecoveryProtectionParams{SourceID: mustPgUUID(source.ID), ReleaseIds: releaseIDs})
+	if err != nil {
+		return out, err
+	}
+	protection := make([]recoveryProtection, 0, len(protectionRows))
+	for _, r := range protectionRows {
+		row := recoveryProtection{releaseID: r.ReleaseSetID, graphID: r.GraphID, until: r.ProtectedUntil.Time, bytes: r.Bytes, status: r.Status, available: r.Available}
+		protection = append(protection, row)
+		if row.status == "protected" {
+			out.RetentionBytes += row.bytes
+		}
+	}
+
 	for _, id := range ids {
 		raw, err := q.ReadProjectReleaseSet(ctx, tx, sqlc.ReadProjectReleaseSetParams{AccountID: params.AccountID, ProjectID: params.ProjectID, Environment: params.Environment, ReleaseID: mustPgUUID(id)})
 		if err != nil {
@@ -78,6 +104,19 @@ func (s *PgStore) ListEnvironmentGitReleases(ctx context.Context, source Environ
 		if err != nil {
 			return out, err
 		}
+		if out.RecoveryRetention != nil {
+			entry.ProtectionStatus = "expired"
+		}
+
+		first, err := q.EnvironmentRecoveryReleaseFirstServing(ctx, tx, sqlc.EnvironmentRecoveryReleaseFirstServingParams{SourceID: mustPgUUID(source.ID), ReleaseID: mustPgUUID(id)})
+		if err != nil {
+			return out, err
+		}
+		if first.Valid {
+			at := first.Time
+			entry.ServedAt = &at
+		}
+		applyRecoveryProtection(&entry, protection)
 		out.Releases = append(out.Releases, entry)
 	}
 	return out, nil

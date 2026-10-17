@@ -8,6 +8,18 @@ import type { EnvironmentGitPromotionArtifact } from './EnvironmentGitPromotionA
  */
 export type EnvironmentGitRecoveryRelease = {
   /**
+   * Current artifact policy selection, independent of rollback eligibility and routing retention.
+   */
+  protection_status?: 'disabled' | 'expired' | 'outside_policy' | 'budget_exceeded' | 'protected';
+  /**
+   * Age deadline of current protection; a newer release or explicit policy change may displace it earlier.
+   */
+  artifacts_protected_until?: string;
+  /**
+   * Per-release charged layer bytes when currently protected; shared keys are charged once within each release.
+   */
+  retained_bytes?: number;
+  /**
    * Immutable release UUID within the current Git binding history.
    */
   release_set_id: string;

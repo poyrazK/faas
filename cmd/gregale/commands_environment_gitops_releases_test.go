@@ -14,6 +14,12 @@ import (
 func TestGitOpsRecoveryCatalogUsesReadOnlyProjectsDispatcher(t *testing.T) {
 	now := time.Now().UTC()
 	out := api.ListEnvironmentGitReleasesResponse{Project: "shop", Environment: "production", SourceID: "source", TargetCommitSHA: strings.Repeat("a", 40), ObservedAt: now, ReadOnly: true, ValuesRedacted: true, RequiresTargetQualification: true, Releases: []api.EnvironmentGitRecoveryRelease{{ReleaseSetID: "2ba0aa40-2362-4c0e-aeb1-6381666bb514", CreatedAt: now, RetentionStatus: "compatibility_window_elapsed", Eligibility: "blocked", BlockingReasons: []string{"rollback_source_unverified\n\x1b[2J"}}}}
+	until := now.Add(time.Hour)
+	out.RecoveryRetention = &api.EnvironmentRecoveryRetention{Releases: 3, Seconds: 3600, MaxBytes: 1000}
+	out.RetentionBytes = 100
+	out.Releases[0].ProtectionStatus = "protected"
+	out.Releases[0].ArtifactsProtectedUntil = &until
+	out.Releases[0].RetainedBytes = 100
 	for _, mode := range []string{"text", "json-flag", "global-json"} {
 		t.Run(mode, func(t *testing.T) {
 			resetJSONOut(t)
@@ -30,12 +36,12 @@ func TestGitOpsRecoveryCatalogUsesReadOnlyProjectsDispatcher(t *testing.T) {
 				t.Fatalf("code=%d request=%s %s output=%s", code, fake.sawMethod, fake.sawPath, stdout.String())
 			}
 			if mode == "text" {
-				if strings.ContainsAny(stdout.String(), "\x1b\r") || !strings.Contains(stdout.String(), "rollback-plan shop production --to-release "+out.Releases[0].ReleaseSetID) || !strings.Contains(stdout.String(), "do not guarantee artifact retention") {
+				if !strings.Contains(stdout.String(), "Artifact protection: protected (100 charged bytes)") || strings.ContainsAny(stdout.String(), "\x1b\r") || !strings.Contains(stdout.String(), "rollback-plan shop production --to-release "+out.Releases[0].ReleaseSetID) || !strings.Contains(stdout.String(), "do not guarantee artifact retention") {
 					t.Fatal("unsafe output", stdout.String())
 				}
 			} else {
 				var got api.ListEnvironmentGitReleasesResponse
-				if json.Unmarshal(stdout.Bytes(), &got) != nil || got.TargetCommitSHA != out.TargetCommitSHA {
+				if json.Unmarshal(stdout.Bytes(), &got) != nil || got.TargetCommitSHA != out.TargetCommitSHA || got.RetentionBytes != 100 || got.Releases[0].ArtifactsProtectedUntil == nil {
 					t.Fatal("JSON response lost", stdout.String())
 				}
 			}

@@ -26,7 +26,7 @@ func recoveryListing(source EnvironmentGitSource, request api.ListEnvironmentGit
 }
 
 func recoveryRelease(release ProjectReleaseSet, plan api.PreviewEnvironmentGitRollbackResponse, err error, now time.Time) (api.EnvironmentGitRecoveryRelease, error) {
-	out := api.EnvironmentGitRecoveryRelease{ReleaseSetID: release.ID, Active: release.Active, CreatedAt: release.CreatedAt, ExpiresAt: cloneProjectReleaseSet(release).ExpiresAt, RetentionStatus: "unknown", Eligibility: "blocked", BlockingReasons: []string{}, Artifacts: []api.EnvironmentGitPromotionArtifact{}}
+	out := api.EnvironmentGitRecoveryRelease{ReleaseSetID: release.ID, Active: release.Active, CreatedAt: release.CreatedAt, ExpiresAt: cloneProjectReleaseSet(release).ExpiresAt, RetentionStatus: "unknown", Eligibility: "blocked", BlockingReasons: []string{}, ProtectionStatus: "disabled", Artifacts: []api.EnvironmentGitPromotionArtifact{}}
 	switch {
 	case release.Active:
 		out.RetentionStatus = "active"

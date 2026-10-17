@@ -198,9 +198,9 @@ test('recovery catalog binds the immutable target and source-scoped cursor using
   const cursor = '2ba0aa40-2362-4c0e-aeb1-6381666bb514';
   const body = { project: 'shop', environment: 'production', source_id: 'source', target_commit_sha: sha,
     observed_at: '2026-10-17T12:00:00Z', read_only: true, values_redacted: true,
-    requires_target_qualification: true, releases: [{ release_set_id: cursor, active: false,
+    requires_target_qualification: true, recovery_retention: { releases: 3, seconds: 86400, max_bytes: 1000 }, retention_bytes: 100, releases: [{ release_set_id: cursor, active: false,
       created_at: '2026-10-16T12:00:00Z', expires_at: '2026-10-16T13:00:00Z',
-      retention_status: 'compatibility_window_elapsed', commit_sha: 'b'.repeat(40),
+      protection_status: 'protected', artifacts_protected_until: '2026-10-18T12:00:00Z', retained_bytes: 100, retention_status: 'compatibility_window_elapsed', commit_sha: 'b'.repeat(40),
       eligibility: 'blocked', blocking_reasons: ['workload/api: rollback_artifact_replaced'], artifacts: [] }], next_before: cursor };
   const client = new FaaSClient('https://api.example.test', { token: 'token', fetch: async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));

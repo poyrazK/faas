@@ -7546,6 +7546,180 @@ $$;
 
 
 --
+-- Name: environment_recovery_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO environment_recovery_serving_history(graph_id,source_id,release_set_id,served_at)
+ VALUES(NEW.graph_id,NEW.source_id,NEW.release_set_id,NEW.served_at) ON CONFLICT(graph_id) DO NOTHING;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_recovery_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE account uuid; k text; state text; reserved numeric;
+BEGIN
+ IF TG_TABLE_NAME='environment_git_sources' THEN account:=NEW.account_id;
+ ELSE SELECT account_id INTO account FROM environment_git_sources WHERE id=NEW.source_id; END IF;
+ PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ SELECT coalesce(sum((v.definition->'recovery_retention'->>'max_bytes')::numeric),0) INTO reserved
+ FROM environment_git_sources s JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
+ WHERE s.account_id=account AND NOT s.detached AND v.definition ? 'recovery_retention';
+ IF reserved>2147483648 THEN RAISE EXCEPTION 'account recovery retention reservation exceeded' USING ERRCODE='23514',CONSTRAINT='environment_recovery_budget',DETAIL=reserved::text; END IF;
+ IF EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE account_id=account AND NOT available) THEN
+  RAISE EXCEPTION 'recovery artifact inventory unavailable' USING ERRCODE='23514',CONSTRAINT='environment_recovery_artifact_unavailable';
+ END IF;
+ FOR k IN SELECT DISTINCT storage_key FROM environment_recovery_retained_keys WHERE account_id=account ORDER BY storage_key LOOP
+  INSERT INTO layer_artifact_retention(storage_key) VALUES(k) ON CONFLICT DO NOTHING;
+  SELECT r.state INTO state FROM layer_artifact_retention r WHERE r.storage_key=k FOR UPDATE;
+  IF state<>'retained' THEN RAISE EXCEPTION 'recovery artifact already retired' USING ERRCODE='23514',CONSTRAINT='environment_recovery_artifact_unavailable'; END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_recovery_history_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_history_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'recovery serving history is immutable' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM environment_workload_serving_receipts r WHERE r.graph_id=NEW.graph_id AND r.source_id=NEW.source_id AND r.release_set_id=NEW.release_set_id AND r.served_at=NEW.served_at) OR
+ EXISTS(SELECT 1 FROM environment_recovery_serving_history h WHERE h.graph_id=NEW.graph_id AND (h.source_id,h.release_set_id) IS DISTINCT FROM (NEW.source_id,NEW.release_set_id)) THEN
+  RAISE EXCEPTION 'recovery history requires matching completed serving evidence' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_recovery_metadata_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_metadata_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE account uuid; identity uuid; blocked boolean:=false;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF TG_TABLE_NAME='project_release_members' THEN
+   SELECT account_id INTO account FROM project_release_sets WHERE id=NEW.release_id;
+   PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=NEW.release_id) INTO blocked;
+  ELSE
+   SELECT a.account_id INTO account FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=NEW.deployment_id;
+   PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=NEW.deployment_id) INTO blocked;
+   IF blocked AND EXISTS(SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id=NEW.deployment_id AND l.sidecar_name=NEW.sidecar_name
+    AND (l.storage_key,l.bytes,l.content_digest) IS NOT DISTINCT FROM (NEW.storage_key,NEW.bytes,NEW.content_digest)) THEN RETURN NEW; END IF;
+  END IF;
+  IF blocked THEN RAISE EXCEPTION 'release protected by recovery retention' USING ERRCODE='23514',CONSTRAINT='environment_recovery_retained'; END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF TG_TABLE_NAME='environment_workload_serving_receipts' THEN
+   IF (NEW.graph_id,NEW.source_id,NEW.release_set_id) IS NOT DISTINCT FROM (OLD.graph_id,OLD.source_id,OLD.release_set_id) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='apps' THEN
+   IF (NEW.status<>'deleted' OR OLD.status=NEW.status) AND (NEW.account_id,NEW.project_id) IS NOT DISTINCT FROM (OLD.account_id,OLD.project_id) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='deployment_sidecar_layers' THEN
+   IF (NEW.deployment_id,NEW.sidecar_name,NEW.storage_key,NEW.bytes,NEW.content_digest) IS NOT DISTINCT FROM (OLD.deployment_id,OLD.sidecar_name,OLD.storage_key,OLD.bytes,OLD.content_digest) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='deployments' THEN
+   IF (NEW.rootfs_path,NEW.rootfs_key,NEW.rootfs_bytes,NEW.deleted_at,NEW.environment_workload_runtime,NEW.app_id,NEW.scope,NEW.build_id,NEW.commit_sha,NEW.source_sha256,NEW.sidecars) IS NOT DISTINCT FROM
+      (OLD.rootfs_path,OLD.rootfs_key,OLD.rootfs_bytes,OLD.deleted_at,OLD.environment_workload_runtime,OLD.app_id,OLD.scope,OLD.build_id,OLD.commit_sha,OLD.source_sha256,OLD.sidecars) THEN RETURN NEW; END IF;
+  END IF;
+  IF OLD IS NOT DISTINCT FROM NEW THEN RETURN NEW; END IF;
+ END IF;
+ IF TG_TABLE_NAME='accounts' THEN account:=OLD.id;
+ ELSIF TG_TABLE_NAME='projects' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='project_environments' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='apps' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='environment_git_sources' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='project_release_sets' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='environment_workload_graphs' THEN SELECT account_id INTO account FROM environment_git_sources WHERE id=OLD.source_id;
+ ELSIF TG_TABLE_NAME IN ('environment_workload_serving_receipts','environment_recovery_serving_history') THEN SELECT account_id INTO account FROM environment_git_sources WHERE id=OLD.source_id;
+ ELSIF TG_TABLE_NAME='environment_desired_revisions' THEN SELECT account_id INTO account FROM environment_git_sources WHERE id=OLD.source_id;
+ ELSIF TG_TABLE_NAME='project_release_members' THEN SELECT account_id INTO account FROM project_release_sets WHERE id=OLD.release_id;
+ ELSE
+  IF TG_TABLE_NAME='deployments' THEN identity:=OLD.id; ELSE identity:=OLD.deployment_id; END IF;
+  SELECT a.account_id INTO account FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=identity;
+ END IF;
+ PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ IF TG_TABLE_NAME='accounts' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE account_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='projects' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE project_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='project_environments' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE environment_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='apps' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p JOIN deployments d ON d.id=p.deployment_id WHERE d.app_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='environment_git_sources' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE source_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='project_release_sets' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='environment_desired_revisions' THEN
+  IF TG_OP='UPDATE' THEN
+   SELECT EXISTS(SELECT 1 FROM environment_git_sources s WHERE s.approved_revision_id=OLD.id AND NOT s.detached AND (OLD.definition ? 'recovery_retention' OR NEW.definition ? 'recovery_retention')) INTO blocked;
+  ELSE
+   SELECT EXISTS(SELECT 1 FROM environment_git_sources s WHERE s.approved_revision_id=OLD.id AND NOT s.detached AND OLD.definition ? 'recovery_retention') INTO blocked;
+  END IF;
+  blocked:=blocked OR EXISTS(SELECT 1 FROM environment_recovery_retained_releases p JOIN environment_workload_graphs g ON g.id=p.graph_id WHERE g.revision_id=OLD.id);
+ ELSIF TG_TABLE_NAME='project_release_members' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.release_id) INTO blocked;
+ ELSIF TG_TABLE_NAME='environment_workload_graphs' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME IN ('environment_workload_serving_receipts','environment_recovery_serving_history') THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.graph_id) INTO blocked;
+ ELSE SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=identity) INTO blocked;
+ END IF;
+ IF blocked THEN RAISE EXCEPTION 'release protected by recovery retention' USING ERRCODE='23514',CONSTRAINT='environment_recovery_retained'; END IF;
+ IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: environment_recovery_policy_valid(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_policy_valid() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE p jsonb:=NEW.definition->'recovery_retention';
+BEGIN
+ IF p IS NULL THEN RETURN NEW; END IF;
+ IF jsonb_typeof(p->'releases')<>'number' OR jsonb_typeof(p->'seconds')<>'number' OR jsonb_typeof(p->'max_bytes')<>'number' OR
+ jsonb_typeof(p)<>'object' OR NOT (p ?& ARRAY['releases','seconds','max_bytes']) OR
+   (SELECT count(*) FROM jsonb_object_keys(p))<>3 OR
+   coalesce(p->>'releases','') !~ '^[0-9]+$' OR coalesce(p->>'seconds','') !~ '^[0-9]+$' OR coalesce(p->>'max_bytes','') !~ '^[0-9]+$' THEN
+  RAISE EXCEPTION 'invalid recovery retention policy' USING ERRCODE='23514';
+ END IF;
+ -- Mirrors api.EnvironmentRecovery* ceilings; exercised by the migration test.
+ IF (p->>'releases')::numeric NOT BETWEEN 1 AND 5 OR (p->>'seconds')::numeric NOT BETWEEN 1 AND 604800 OR (p->>'max_bytes')::numeric NOT BETWEEN 1 AND 1073741824 THEN
+  RAISE EXCEPTION 'recovery retention limit exceeded' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
 -- Name: environment_runtime_base_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -26306,17 +26480,18 @@ CREATE TABLE public.environment_qualification_snapshot_receipts (
 
 
 --
--- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
+-- Name: environment_recovery_serving_history; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.environment_route_budget_receipts (
-    account_id uuid NOT NULL,
-    request_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    request_hash text NOT NULL,
-    response jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
+CREATE TABLE public.environment_recovery_serving_history (
+    graph_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    release_set_id uuid NOT NULL,
+    served_at timestamp with time zone NOT NULL,
+    CONSTRAINT environment_recovery_serving_history_graph_id_check CHECK ((graph_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_recovery_serving_history_release_set_id_check CHECK ((release_set_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_recovery_serving_history_served_at_check CHECK (isfinite(served_at)),
+    CONSTRAINT environment_recovery_serving_history_source_id_check CHECK ((source_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -26349,6 +26524,209 @@ CREATE TABLE public.environment_workload_graphs (
     CONSTRAINT environment_workload_graphs_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'prepared'::text, 'failed'::text]))),
     CONSTRAINT environment_workload_graphs_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT environment_workload_graphs_resource_ids_check CHECK ((jsonb_typeof(resource_ids) = 'object'::text))
+);
+
+
+--
+-- Name: environment_recovery_candidates; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_candidates AS
+ WITH policies AS (
+         SELECT s.id AS source_id,
+            s.account_id,
+            s.project_id,
+            s.environment_id,
+            e.slug AS environment_slug,
+            (((v.definition -> 'recovery_retention'::text) ->> 'releases'::text))::integer AS max_releases,
+            (((v.definition -> 'recovery_retention'::text) ->> 'seconds'::text))::integer AS seconds,
+            (((v.definition -> 'recovery_retention'::text) ->> 'max_bytes'::text))::bigint AS max_bytes
+           FROM ((public.environment_git_sources s
+             JOIN public.environment_desired_revisions v ON (((v.id = s.approved_revision_id) AND (v.source_id = s.id))))
+             JOIN public.project_environments e ON (((e.id = s.environment_id) AND (e.project_id = s.project_id))))
+          WHERE ((NOT s.detached) AND (v.definition ? 'recovery_retention'::text))
+        ), history AS (
+         SELECT p.source_id,
+            p.account_id,
+            p.project_id,
+            p.environment_id,
+            p.environment_slug,
+            p.max_releases,
+            p.seconds,
+            p.max_bytes,
+            r.release_set_id,
+            max(r.served_at) AS served_at,
+            (min((g.id)::text))::uuid AS graph_id,
+            count(*) AS graph_count
+           FROM (((policies p
+             JOIN public.environment_workload_graphs g ON (((g.source_id = p.source_id) AND (g.environment_id = p.environment_id))))
+             JOIN public.environment_recovery_serving_history r ON (((r.graph_id = g.id) AND (r.source_id = p.source_id))))
+             JOIN public.project_release_sets rs ON (((rs.id = r.release_set_id) AND (rs.account_id = p.account_id) AND (rs.project_id = p.project_id) AND (rs.environment_slug = p.environment_slug))))
+          WHERE ((r.served_at IS NOT NULL) AND (EXISTS ( SELECT 1
+                   FROM public.project_release_members rm
+                  WHERE (rm.release_id = r.release_set_id))))
+          GROUP BY p.source_id, p.account_id, p.project_id, p.environment_id, p.environment_slug, p.max_releases, p.seconds, p.max_bytes, r.release_set_id
+        ), inventory AS (
+         SELECT h.source_id,
+            h.account_id,
+            h.project_id,
+            h.environment_id,
+            h.environment_slug,
+            h.max_releases,
+            h.seconds,
+            h.max_bytes,
+            h.release_set_id,
+            h.served_at,
+            h.graph_id,
+            h.graph_count,
+            (h.served_at + make_interval(secs => (h.seconds)::double precision)) AS protected_until,
+            COALESCE(( SELECT (sum(k.bytes))::bigint AS sum
+                   FROM ( SELECT parts.key,
+                            max(parts.bytes) AS bytes
+                           FROM ( SELECT d.rootfs_key AS key,
+                                    d.rootfs_bytes AS bytes
+                                   FROM (public.project_release_members rm
+                                     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+                                  WHERE (rm.release_id = h.release_set_id)
+                                UNION ALL
+                                 SELECT l.storage_key,
+                                    l.bytes
+                                   FROM (public.project_release_members rm
+                                     JOIN public.deployment_sidecar_layers l ON ((l.deployment_id = rm.deployment_id)))
+                                  WHERE (rm.release_id = h.release_set_id)) parts
+                          GROUP BY parts.key) k), (0)::bigint) AS bytes,
+            ((h.graph_count = 1) AND (EXISTS ( SELECT 1
+                   FROM public.project_release_members rm
+                  WHERE (rm.release_id = h.release_set_id))) AND (NOT (EXISTS ( SELECT 1
+                   FROM ((public.project_release_members rm
+                     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+                     JOIN public.apps a ON ((a.id = d.app_id)))
+                  WHERE ((rm.release_id = h.release_set_id) AND ((a.account_id <> h.account_id) OR (a.project_id <> h.project_id) OR (d.app_id <> rm.app_id) OR (d.scope <> h.environment_slug) OR (COALESCE(d.rootfs_key, ''::text) = ''::text) OR (COALESCE(d.rootfs_bytes, (0)::bigint) <= 0) OR (d.deleted_at IS NOT NULL) OR (a.status = 'deleted'::text)))))) AND (NOT (EXISTS ( SELECT 1
+                   FROM (public.project_release_members rm
+                     JOIN public.deployment_sidecar_layers l ON ((l.deployment_id = rm.deployment_id)))
+                  WHERE ((rm.release_id = h.release_set_id) AND ((l.storage_key = ''::text) OR (l.bytes <= 0))))))) AS available
+           FROM history h
+        ), ranked AS (
+         SELECT i.source_id,
+            i.account_id,
+            i.project_id,
+            i.environment_id,
+            i.environment_slug,
+            i.max_releases,
+            i.seconds,
+            i.max_bytes,
+            i.release_set_id,
+            i.served_at,
+            i.graph_id,
+            i.graph_count,
+            i.protected_until,
+            i.bytes,
+            i.available,
+            row_number() OVER (PARTITION BY i.source_id ORDER BY i.served_at DESC, i.release_set_id DESC) AS "position",
+            (sum(i.bytes) OVER (PARTITION BY i.source_id ORDER BY i.served_at DESC, i.release_set_id DESC ROWS UNBOUNDED PRECEDING))::bigint AS charged_bytes
+           FROM inventory i
+          WHERE (i.protected_until > clock_timestamp())
+        )
+ SELECT source_id,
+    account_id,
+    project_id,
+    environment_id,
+    environment_slug,
+    max_releases,
+    seconds,
+    max_bytes,
+    release_set_id,
+    served_at,
+    graph_id,
+    graph_count,
+    protected_until,
+    bytes,
+    available,
+    "position",
+    charged_bytes
+   FROM ranked;
+
+
+--
+-- Name: environment_recovery_retained_releases; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_retained_releases AS
+ SELECT source_id,
+    account_id,
+    project_id,
+    environment_id,
+    environment_slug,
+    max_releases,
+    seconds,
+    max_bytes,
+    release_set_id,
+    served_at,
+    graph_id,
+    graph_count,
+    protected_until,
+    bytes,
+    available,
+    "position",
+    charged_bytes
+   FROM public.environment_recovery_candidates
+  WHERE (("position" <= max_releases) AND (charged_bytes <= max_bytes));
+
+
+--
+-- Name: environment_recovery_retained_deployments; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_retained_deployments AS
+ SELECT p.source_id,
+    p.account_id,
+    p.release_set_id,
+    rm.deployment_id
+   FROM (public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+UNION
+ SELECT p.source_id,
+    p.account_id,
+    p.release_set_id,
+    (((d.environment_workload_runtime -> 'built_artifact'::text) ->> 'deployment_id'::text))::uuid AS deployment_id
+   FROM ((public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+  WHERE (d.environment_workload_runtime ? 'built_artifact'::text);
+
+
+--
+-- Name: environment_recovery_retained_keys; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_retained_keys AS
+ SELECT p.account_id,
+    p.release_set_id,
+    d.rootfs_key AS storage_key
+   FROM ((public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+UNION
+ SELECT p.account_id,
+    p.release_set_id,
+    l.storage_key
+   FROM ((public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+     JOIN public.deployment_sidecar_layers l ON ((l.deployment_id = rm.deployment_id)));
+
+
+--
+-- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_route_budget_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
 );
 
 
@@ -41267,6 +41645,14 @@ ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
 
 
 --
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_pkey PRIMARY KEY (graph_id);
+
+
+--
 -- Name: environment_route_budget_receipts environment_route_budget_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49127,6 +49513,20 @@ CREATE UNIQUE INDEX environment_qualification_reserved_instance_unique_idx ON pu
 
 
 --
+-- Name: environment_recovery_serving_history_release; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_recovery_serving_history_release ON public.environment_recovery_serving_history USING btree (release_set_id, source_id, served_at);
+
+
+--
+-- Name: environment_recovery_serving_history_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_recovery_serving_history_source ON public.environment_recovery_serving_history USING btree (source_id, served_at DESC, release_set_id);
+
+
+--
 -- Name: environment_workload_retirement_active_scope; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -56302,6 +56702,146 @@ CREATE TRIGGER environment_qualification_snapshot_receipt_guard BEFORE INSERT OR
 
 
 --
+-- Name: environment_workload_serving_receipts environment_recovery_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_capture AFTER INSERT OR UPDATE OF served_at ON public.environment_workload_serving_receipts FOR EACH ROW WHEN ((new.served_at IS NOT NULL)) EXECUTE FUNCTION public.environment_recovery_capture();
+
+
+--
+-- Name: environment_git_sources environment_recovery_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_fence AFTER INSERT OR UPDATE OF approved_revision_id, detached ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_fence();
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_history_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_history_guard BEFORE INSERT OR UPDATE ON public.environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_history_guard();
+
+
+--
+-- Name: accounts environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: apps environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF status, account_id, project_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: deployment_registry_rootfs environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: deployment_sidecar_layers environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: deployments environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF rootfs_path, rootfs_key, rootfs_bytes, deleted_at, environment_workload_runtime, app_id, scope, build_id, commit_sha, source_sha256, sidecars ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_desired_revisions environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE ON public.environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_git_sources environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id, project_id, environment_id ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_workload_graphs environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.environment_workload_graphs FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_workload_serving_receipts environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF graph_id, source_id, release_set_id ON public.environment_workload_serving_receipts FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: project_environments environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: project_release_members environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: project_release_sets environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id, project_id, environment_slug ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: projects environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: source_build_rootfs environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_desired_revisions environment_recovery_policy_valid; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_policy_valid BEFORE INSERT OR UPDATE OF definition ON public.environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_policy_valid();
+
+
+--
+-- Name: environment_workload_serving_receipts environment_recovery_served_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_served_fence AFTER INSERT OR UPDATE OF served_at ON public.environment_workload_serving_receipts FOR EACH ROW WHEN ((new.served_at IS NOT NULL)) EXECUTE FUNCTION public.environment_recovery_fence();
+
+
+--
 -- Name: app_environment_secret_ref_suppressions environment_secret_ref_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -62397,6 +62937,30 @@ ALTER TABLE ONLY public.environment_qualification_smoke_receipts
 
 ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
     ADD CONSTRAINT environment_qualification_snapshot_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_release_set_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_release_set_id_fkey FOREIGN KEY (release_set_id) REFERENCES public.project_release_sets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
 
 
 --
