@@ -73,8 +73,8 @@ func TestDecorate_ObservedRenderer(t *testing.T) {
 		field    string // "why" or "fix"
 		contains string
 	}{
-		// spend_eur_20 observed=22.5 → Why carries "€22.50"
-		{"spend_eur_20", 22.5, "why", "€22.50"},
+		// spend_eur_20 observed=22.5 → Why carries "$22.50"
+		{"spend_eur_20", 22.5, "why", "$22.50"},
 		// error_rate_2pct observed=4.2 → Fix carries "4.20%" templating
 		{"error_rate_2pct", 4.2, "fix", "4.20"},
 		// cert_expiring_14d observed=864000 (10 days) → Why carries
@@ -126,18 +126,18 @@ func TestDecorate_ZeroObservedUsesStatic(t *testing.T) {
 	if got == nil {
 		t.Fatalf("Decorate returned nil; want populated *Explanation")
 	}
-	// Static Why mentions "€20 threshold" but no observed value.
-	if !strings.Contains(got.Why, "€20") {
-		t.Errorf("static Why missing '€20' threshold phrasing; got %q", got.Why)
+	// Static Why mentions "$20 threshold" but no observed value.
+	if !strings.Contains(got.Why, "$20") {
+		t.Errorf("static Why missing '$20' threshold phrasing; got %q", got.Why)
 	}
-	if strings.Contains(got.Why, "€22.50") {
-		t.Errorf("static Why should not contain templated '€22.50'; got %q", got.Why)
+	if strings.Contains(got.Why, "$22.50") {
+		t.Errorf("static Why should not contain templated '$22.50'; got %q", got.Why)
 	}
 	// Static Fix carries the unobserved prose.
 	if !strings.Contains(got.Fix, "Scale plan") {
 		t.Errorf("static Fix should carry the unobserved Scale-plan hint; got %q", got.Fix)
 	}
-	if strings.Contains(got.Fix, "€22.50 is unusual") {
+	if strings.Contains(got.Fix, "$22.50 is unusual") {
 		t.Errorf("static Fix should not contain templated observed prose; got %q", got.Fix)
 	}
 }

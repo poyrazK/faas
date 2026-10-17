@@ -443,8 +443,26 @@ gregale realtime create shop --auth shop-auth --allowed-origin https://shop.exam
 
 Name channels `org:<org id>:<kind>:<name>`, for example `org:…:room:lobby`, and
 add a policy such as `{"action": "realtime:read", "resource": "room", "permission": "org:read"}`.
-Subscriptions are checked when they start. A ban, deletion or global sign-out
-stops new subscriptions; an open connection keeps its grant until it closes.
+Retained WebSocket and SSE channel grants have a 30-second lifetime. A ban,
+deletion, global sign-out or membership change is enforced when that check next
+runs. Expired grants block further channel output until the check succeeds.
+Idle WebSocket cleanup also includes the history poll interval and callback
+deadline. A definitive denial removes the subscription; a callback outage ends
+the connection so the client can reconnect. Already delivered data cannot be
+recalled. Active subscriptions can keep the Auth app awake through these checks.
+
+The callback checks the token's specific `session_id`, its user and the channel
+policy. Signing out one session revokes its retained channels on their next
+refresh even if another device remains signed in. Retained WebSockets and SSE
+also reverify their JWTs; tokens must include `exp`, and clients reconnect with a
+refreshed token after expiry. Signing-key changes follow the existing JWKS cache
+contract. Principal access controls remain available for explicit revocation.
+Legacy management subscriptions, inbox/direct-message session authorization and
+subscription tickets keep their existing access-control contracts.
+
+Existing Auth apps need a redeploy from the updated template for session-specific
+checks. Deploy the realtime daemon first, update the Auth app, then reconnect
+clients; the updated Auth callback rejects callers that omit the session ID.
 Do not set connect, message or disconnect callback paths on this endpoint; its
 callback URL is the Auth app.
 

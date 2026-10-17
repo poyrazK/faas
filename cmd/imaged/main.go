@@ -638,6 +638,60 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: test deploy base ref override", "ref", dbr)
 	}
 
+	// Issue #571 PR-A2: construct the daemon-level readiness probe
+	// independently of the optional metrics listener. systemd's
+	// Type=notify state must use the same storage/cache signal as
+	// /readyz even when metrics are disabled.
+	cacheRoot := ""
+	if cache := storage.AsCacheBackend(storageBackend); cache != nil {
+		cacheRoot = cache.Root()
+	}
+	imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
+	imagedProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("imaged", ready, reason)
+	})
+	defer imagedProbe.Drain("imaged", log)
+	// H10-105: the listener below starts before boot staging so a long
+	// re-stage (scan renewals, a rebuilt base) keeps up==1 instead of paging
+	// FaasDaemonDown. /readyz, the ready metric and systemd READY still wait
+	// for staging through this signal.
+	bootStaging := imagedProbe.Register()
+	bootStaging.Set(false, "staging boot-critical bases")
+
+	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go
+	// and cmd/builderd/main.go:146-157 — separate bind so a port
+	// collision can't take the daemon down. Defaults to 127.0.0.1:9102
+	// so an operator typo (or a missing env var in prod) can't accidentally
+	// expose the internal registry to the public network — series like
+	// imaged_oci_pull_duration_seconds{op,result} leak per-deploy timing
+	// shape (review finding #1 on PR #132). Loopback bind is safe because
+	// the local Prometheus scrapes from the box itself.
+	//
+	// Disable semantic (ADR-122 follow-on): set `metrics_addr = ""` in
+	// /etc/faas/imaged.toml to disable the listener. The env overlay
+	// (FAAS_IMAGED_METRICS_ADDR) does NOT disable when set to empty
+	// string — both unset and empty env fall through to the TOML
+	// default via GetMetricsAddr's `v != ""` gate (same conflation
+	// the legacy envOr had). The legacy behaviour was already broken
+	// in this respect; ADR-122 propagated it rather than fixing it.
+	// Future improvement: distinguish "unset" from "explicit empty"
+	// in the env overlay (e.g. via os.LookupEnv). Out of scope for
+	// this PR.
+	//
+	// Bind target resolves via cfg.GetMetricsAddr: env wins when
+	// non-empty, else TOML metrics_addr, else the default in
+	// cmd/imaged/config.go::LoadConfig.
+	// The pre-stage one-shot runs beside the serving imaged with the same
+	// config, so it never binds the metrics listener.
+	metricsAddr := imgCfg.GetMetricsAddr(os.Getenv)
+	if metricsAddr != "" && !prestageOnlyFromEnv(getenv) {
+		_, stopMetrics, err := startImagedMetricsListener(ctx, metricsAddr, imgCfg, ops, imagedProbe, log)
+		if err != nil {
+			return err
+		}
+		defer stopMetrics()
+	}
+
 	// F1 + F2: stage the builder-base ext4 on startup, then hand off to the
 	// M8 loop which drives the LISTEN subscriber + nightly GC + one-shot FC
 	// sweep. The stage is still required for cold-boot of builder microVMs
@@ -698,6 +752,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// FAAS_REAP_THRESHOLD env vars retired.
 	})
 
+	bootStaging.Set(true, "")
 	log.Info("imaged ready",
 		"min_layer_mb", rootfs.MinLayerMB,
 		"arch", arch,
@@ -712,79 +767,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// ADR-567: keep every staged base byte-identical to its shared
 	// publication so snapshots restore on any node (ADR-510).
 	go h.RunBaseConvergence(ctx, imaged.BaseConvergenceInterval)
-
-	// Issue #571 PR-A2: construct the daemon-level readiness probe
-	// independently of the optional metrics listener. systemd's
-	// Type=notify state must use the same storage/cache signal as
-	// /readyz even when metrics are disabled.
-	cacheRoot := ""
-	if cache := storage.AsCacheBackend(storageBackend); cache != nil {
-		cacheRoot = cache.Root()
-	}
-	imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
-	imagedProbe.SetReadyObserver(func(ready bool, reason string) {
-		ops.MarkReady("imaged", ready, reason)
-	})
-	defer imagedProbe.Drain("imaged", log)
-
-	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go
-	// and cmd/builderd/main.go:146-157 — separate bind so a port
-	// collision can't take the daemon down. Defaults to 127.0.0.1:9102
-	// so an operator typo (or a missing env var in prod) can't accidentally
-	// expose the internal registry to the public network — series like
-	// imaged_oci_pull_duration_seconds{op,result} leak per-deploy timing
-	// shape (review finding #1 on PR #132). Loopback bind is safe because
-	// the local Prometheus scrapes from the box itself.
-	//
-	// Disable semantic (ADR-122 follow-on): set `metrics_addr = ""` in
-	// /etc/faas/imaged.toml to disable the listener. The env overlay
-	// (FAAS_IMAGED_METRICS_ADDR) does NOT disable when set to empty
-	// string — both unset and empty env fall through to the TOML
-	// default via GetMetricsAddr's `v != ""` gate (same conflation
-	// the legacy envOr had). The legacy behaviour was already broken
-	// in this respect; ADR-122 propagated it rather than fixing it.
-	// Future improvement: distinguish "unset" from "explicit empty"
-	// in the env overlay (e.g. via os.LookupEnv). Out of scope for
-	// this PR.
-	//
-	// Bind target resolves via cfg.GetMetricsAddr: env wins when
-	// non-empty, else TOML metrics_addr, else the default in
-	// cmd/imaged/config.go::LoadConfig.
-	metricsAddr := imgCfg.GetMetricsAddr(os.Getenv)
-	if metricsAddr != "" {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", ops.Handler())
-		wire.ControlMuxLite(mux, imagedProbe.ReadyFunc(), imagedProbe.ReasonFunc())
-		// ADR-122: apply the canonical metrics-listener shape —
-		// RT/WT/IT/MHB from cfg.MetricsListener (cfg → constant
-		// fallback). ReadHeaderTimeout=10s stays from before ADR-122.
-		readTimeout, writeTimeout, idleTimeout, maxHeaderBytes := imgCfg.MetricsListener()
-		msrv := &http.Server{
-			Addr:              metricsAddr,
-			Handler:           mux,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       readTimeout,
-			WriteTimeout:      writeTimeout,
-			IdleTimeout:       idleTimeout,
-			MaxHeaderBytes:    int(maxHeaderBytes),
-		}
-		mlis, err := net.Listen("tcp", metricsAddr)
-		if err != nil {
-			return fmt.Errorf("imaged: metrics listen %q: %w", metricsAddr, err)
-		}
-		go func() {
-			log.Info("imaged /metrics listening", "addr", metricsAddr)
-			if err := msrv.Serve(mlis); err != nil && err != http.ErrServerClosed {
-				log.Error("imaged /metrics serve", "err", err)
-			}
-		}()
-		//nolint:contextcheck // shutdown ctx must outlive request ctx.
-		defer func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = msrv.Shutdown(shutdownCtx)
-		}()
-	}
 
 	// ADR-053: release the vmmd gRPC conn on shutdown so SIGTERM
 	// doesn't leak the dial. Idempotent on a nil receiver; the
@@ -1143,4 +1125,46 @@ func reconcileManifestBuilderBase() error {
 
 func digestHex(digest string) string {
 	return strings.TrimPrefix(strings.TrimSpace(digest), "sha256:")
+}
+
+// startImagedMetricsListener serves /metrics and the control endpoints
+// (/readyz, /healthz) on addr and returns the bound address and a stop func.
+// run starts it before boot staging (H10-105) so Prometheus keeps scraping a
+// daemon that is still staging; /readyz reports not-ready from probe's
+// boot-staging signal until staging finishes.
+func startImagedMetricsListener(ctx context.Context, addr string, cfg *Config, ops *wire.OpsMetrics, probe *wire.ReadyzProbe, log *slog.Logger) (string, func(), error) {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", ops.Handler())
+	wire.ControlMuxLite(mux, probe.ReadyFunc(), probe.ReasonFunc())
+	// ADR-122: apply the canonical metrics-listener shape —
+	// RT/WT/IT/MHB from cfg.MetricsListener (cfg → constant
+	// fallback). ReadHeaderTimeout=10s stays from before ADR-122.
+	readTimeout, writeTimeout, idleTimeout, maxHeaderBytes := cfg.MetricsListener()
+	msrv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    int(maxHeaderBytes),
+	}
+	mlis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return "", nil, fmt.Errorf("imaged: metrics listen %q: %w", addr, err)
+	}
+	go func() {
+		log.Info("imaged /metrics listening", "addr", mlis.Addr().String())
+		if err := msrv.Serve(mlis); err != nil && err != http.ErrServerClosed {
+			log.Error("imaged /metrics serve", "err", err)
+		}
+	}()
+	stop := func() {
+		// Shutdown runs after run's ctx is cancelled, so it must not inherit
+		// that cancellation; it keeps only a bounded deadline.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = msrv.Shutdown(shutdownCtx)
+	}
+	return mlis.Addr().String(), stop, nil
 }

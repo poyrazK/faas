@@ -2,7 +2,7 @@
 
 - Status: harness implemented; native and real GCS execution pending
 - Date: 2026-10-15
-- Extends: ADR-1334 through ADR-1337
+- Extends: ADR-1524 through ADR-1337
 
 Service-path extension: [ADR-1339](1339-internal-ci-execution-service.md) now wires
 HTTP execution admission and the bounded apid worker into this harness. The

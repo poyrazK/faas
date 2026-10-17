@@ -390,6 +390,20 @@ func (e *Engine) serviceReplicaTargets(ctx context.Context, app state.App, deplo
 			targets[deploymentID] = target
 		}
 	}
+
+	// Temporary graph staging and active graph members keep their exact targets
+	// without reducing the traffic-weight allocation of serving generations.
+	if store, ok := e.store.(state.ProjectReleaseStagingStore); ok {
+		readiness, err := store.ServiceReleaseReadinessTargets(ctx, app.ID)
+		if err != nil {
+			return nil, err
+		}
+		for id, desired := range readiness {
+			if _, managed := targets[id]; managed && desired > targets[id] {
+				targets[id] = desired
+			}
+		}
+	}
 	return targets, nil
 }
 
@@ -1118,6 +1132,9 @@ func (e *Engine) ReconcileServiceDeployment(ctx context.Context, deploymentID st
 // every live deployment of an app. Steady-state surplus is parked before a
 // deficit is admitted. Active rollout scopes are handled separately above and
 // never park healthy predecessor capacity merely to make candidate headroom.
+type serviceAllocationRecheckKey struct{}
+type serviceGraphAdmissionKey struct{}
+
 func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) error {
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
@@ -1174,6 +1191,10 @@ func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) erro
 			targets[dep.ID] = 0
 		}
 	}
+	admissions, err := e.serviceAdmissionOrder(ctx, app, deployments)
+	if err != nil {
+		return err
+	}
 	// First release capacity from generations above their allocation.
 	for _, dep := range deployments {
 		target, ok := targets[dep.ID]
@@ -1184,17 +1205,51 @@ func (e *Engine) reconcileServiceAppOnce(ctx context.Context, appID string) erro
 			return err
 		}
 	}
-	// Then fill deficits with the capacity made available above.
-	for _, dep := range deployments {
+	// Restore current routing before allocating spare capacity to candidates.
+	for _, dep := range admissions {
 		target, ok := targets[dep.ID]
 		if !ok {
 			continue
 		}
-		if err := e.convergeServiceReplicasToTarget(ctx, dep.ID, target, true); err != nil {
+		if err := e.convergeServiceReplicasToTarget(context.WithValue(ctx, serviceAllocationRecheckKey{}, true), dep.ID, target, true); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Current graph recipients and weighted routes outrank temporary staging. A
+// failed serving replica must not lose its replacement slot to a newer dark
+// candidate after a scheduler restart or infrastructure failure.
+func (e *Engine) serviceAdmissionOrder(ctx context.Context, app state.App, deployments []state.Deployment) ([]state.Deployment, error) {
+	priority := map[string]int{}
+	scopes := map[string]bool{}
+	for _, dep := range deployments {
+		priority[dep.ID] = 2
+		if dep.TrafficPercent > 0 {
+			priority[dep.ID] = 1
+		}
+		scopes[normalizedDeploymentScope(dep.Scope)] = true
+	}
+	if reader, ok := e.store.(state.ProjectReleaseSetReader); ok && app.ProjectID != "" {
+		for scope := range scopes {
+			release, err := reader.ActiveProjectReleaseSet(ctx, app.AccountID, app.ProjectID, scope)
+			if errors.Is(err, state.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, member := range release.Members {
+				if member.AppID == app.ID {
+					priority[member.DeploymentID] = 0
+				}
+			}
+		}
+	}
+	out := append([]state.Deployment(nil), deployments...)
+	sort.SliceStable(out, func(i, j int) bool { return priority[out[i].ID] < priority[out[j].ID] })
+	return out, nil
 }
 
 func (e *Engine) convergeServiceReplicas(ctx context.Context, deploymentID string) {
@@ -1312,7 +1367,34 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	// chooser sees current fleet headroom so replicas spread across the
 	// available nodes.
 	ctx = withServiceReplicaPlacementSpread(ctx)
+	if store, ok := e.store.(state.ProjectReleaseStagingStore); ok {
+		readiness, err := store.ServiceReleaseReadinessTargets(ctx, app.ID)
+		if err != nil {
+			return err
+		}
+		if readiness[deploymentID] > 0 {
+			ctx = context.WithValue(ctx, serviceGraphAdmissionKey{}, true)
+		}
+	}
 	for status.managed() < desired {
+		// Re-read before each admission: cancellation, expiry or graph changes
+		// during a slow boot cannot authorize another staged replica.
+		if serviceMode && ctx.Value(serviceAllocationRecheckKey{}) == true && !state.IsServiceRollout(dep) {
+			live, err := e.store.LiveDeployments(ctx, app.ID)
+			if err != nil {
+				return err
+			}
+			current, err := e.serviceReplicaTargets(ctx, app, live)
+			if err != nil {
+				return err
+			}
+			if current[deploymentID] < desired {
+				desired = current[deploymentID]
+			}
+			if status.managed() >= desired {
+				break
+			}
+		}
 		result, admitErr := e.AdmitInstanceForDeployment(
 			ctx, dep.AppID, dep.ID, dep.Scope, TriggerServiceReplica,
 		)

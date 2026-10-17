@@ -76,9 +76,9 @@ actual UTC-month close and event delivery:
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 
 The object-storage rate card remains in the object-storage registry and must
-use EUR. At month close Gregale freezes exact storage, request, and egress
+use USD, the billing currency (ADR-1430). At month close Gregale freezes exact storage, request, and egress
 components, then sends their total as an integer `charge_millicents` quantity.
-The Polar metered price must be EUR `0.001` cents per unit. Each product can
+The Polar metered price must be USD `0.001` cents per unit. Each product can
 therefore show one Object storage usage line while Gregale retains the detailed
 components in event metadata and its immutable ledger. Use `shadow` first;
 shadow and pre-activation decisions are durable and cannot be replayed after a
@@ -88,7 +88,7 @@ the closed usage month remains explicit in event metadata.
 
 Create one active monthly recurring product per paid plan in the selected
 Polar environment. Each product must contain the fixed monthly price and the
-enabled metered EUR prices backed by their configured meters. The compute meter must sum the
+enabled metered USD prices backed by their configured meters. The compute meter must sum the
 `gb_ram_hours` property for the configured event name. Gregale removes the
 included calendar-month allowance locally before sending overage events, so
 do not add a Polar meter-credit benefit to these products.
@@ -136,7 +136,7 @@ wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
   retry` returns an unsupported result with the portal fallback; the customer
   must update the payment method in the portal.
 - Operator refunds use `POST /v1/admin/accounts/{id}/refunds`. The route
-  requires the local invoice UUID, a positive EUR-cent amount, a reason, and
+  requires the local invoice UUID, a positive USD-cent amount, a reason, and
   an explicit `Idempotency-Key`; it binds the Polar order to the target
   account before calling Polar and requires the admin scope plus the operator
   email allowlist. **Polar does not honour the `Idempotency-Key` request

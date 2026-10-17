@@ -55,8 +55,9 @@ func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (ma
 }
 
 func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Account, app state.App, dep state.Deployment, request api.ResolvedCreateAppTaskRequest) (*state.BindingVerificationPin, error) {
+	targetProbe := api.IsServiceBindingTargetProbeCommand(request.Command, request.CommandShell)
 	write := api.IsObjectStorageWriteProbeCommand(request.Command, request.CommandShell)
-	if !write && (request.CommandShell || len(request.Command) != 2) {
+	if !write && !targetProbe && (request.CommandShell || len(request.Command) != 2) {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), bindingInventoryReadTimeout)
@@ -71,7 +72,12 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 		scope = "default"
 	}
 	switch kind {
-	case api.AppTaskServiceBindingProbeCommand:
+	case api.AppTaskServiceBindingProbeCommand, api.AppTaskServiceBindingTargetProbeCommand:
+		if targetProbe {
+			if problem := s.selectBindingServiceTargets(r, app, dep, map[string]string{selection: request.Command[2]}); problem != nil {
+				return nil, problem
+			}
+		}
 		section.items = serviceBindingInventory(app)
 		var err error
 		section.revisions, err = s.serviceBindingRevisions(ctx, app)
@@ -107,6 +113,13 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 			matches = item.Name == selection
 		}
 		if matches {
+			if item.Type == api.BindingTypePostgres && item.Access == "migration" {
+				return nil, nil // Release credentials cannot produce manual-task evidence.
+			}
+			target := ""
+			if targetProbe {
+				target = request.Command[2]
+			}
 			mode := ""
 			if write {
 				// Pin the current binding permission, not a caller's broader claim.
@@ -125,7 +138,7 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 			// The command selects a service name, while its public inventory key is an env key.
 			base := section.revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)]
 			return &state.BindingVerificationPin{Type: item.Type, Binding: selection,
-				Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration, ObjectStorageMode: mode}, nil
+				TargetDeploymentID: target, Revision: bindingVerificationRevision(base, changedAt), CredentialGeneration: item.CredentialGeneration, ObjectStorageMode: mode}, nil
 		}
 	}
 	return nil, nil // A generic task can probe an unmanaged env key; it supplies no binding evidence.
@@ -177,7 +190,13 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	if workerRead || middleware.HasScope(r, api.ScopesReadSurface...) {
 		kinds = append(kinds, api.BindingTypeOutbound)
 	}
-	tasks, err := store.ListBindingVerificationTasks(ctx, acct.ID, app.ID, kinds, state.BindingVerificationSelection{DeploymentID: dep.ID, AllowFallback: inventory.RequestedDeploymentID == ""})
+	inventory.ServiceTargets = bindingServiceTargets(r)
+	for i := range inventory.Bindings {
+		if inventory.Bindings[i].Type == api.BindingTypeService {
+			inventory.Bindings[i].ServiceTargetDeploymentID = inventory.ServiceTargets[inventory.Bindings[i].Name]
+		}
+	}
+	tasks, err := store.ListBindingVerificationTasks(ctx, acct.ID, app.ID, kinds, state.BindingVerificationSelection{ServiceTargets: inventory.ServiceTargets, DeploymentID: dep.ID, AllowFallback: inventory.RequestedDeploymentID == ""})
 	if err != nil {
 		bindings.AppendVerificationIssue(inventory)
 		return
@@ -188,6 +207,9 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	}
 	for index := range inventory.Bindings {
 		item := &inventory.Bindings[index]
+		if item.Type == api.BindingTypePostgres && item.Access == "migration" {
+			continue
+		}
 		selection, scope := item.Binding, item.Scope
 		if item.Type == api.BindingTypeService || item.Type == api.BindingTypeOutbound {
 			scope = inventory.VerificationScope

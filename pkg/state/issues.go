@@ -43,8 +43,10 @@ type RecordIssueParams struct {
 }
 
 type IssueCursor struct {
-	Time time.Time
-	ID   string
+	FilterHash string `json:"filter_hash,omitempty"`
+	Tag        string `json:"tag,omitempty"`
+	Time       time.Time
+	ID         string
 
 	// Impact fields are present only on list cursors whose query ranks or
 	// filters by the fixed 24-hour customer-impact window.
@@ -56,6 +58,8 @@ type IssueCursor struct {
 
 // IssueListFilter scopes an issue inbox without changing its pagination shape.
 type IssueListFilter struct {
+	TeamID            string `json:",omitempty"`
+	Tag               string
 	State             string
 	Environment       string
 	AssigneeAccountID string
@@ -85,3 +89,13 @@ func (e *IssueLimitError) Unwrap() error {
 	}
 	return ErrIssueQuota
 }
+
+// IssueTeamStore keeps collaboration separate from the ingestion store boundary.
+type IssueTeamStore interface {
+	ListIssueTeams(context.Context, string, string) (api.ListIssueTeamsResponse, error)
+	GetIssueTeam(context.Context, string, string, string) (api.IssueTeam, error)
+	PutIssueTeam(context.Context, string, string, string, string, api.PutIssueTeamRequest, time.Time) (api.IssueTeam, error)
+	DeleteIssueTeam(context.Context, string, string, string) error
+}
+
+var ErrIssueTeamInUse = errors.New("issue team still owns issues or routing rules")

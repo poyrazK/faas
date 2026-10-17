@@ -1,4 +1,4 @@
-// ADR-1351 / ADR-1347: recovery authority is operational clone inventory.
+// ADR-1531 / ADR-1527: recovery authority is operational clone inventory.
 package ciapi_test
 
 import (

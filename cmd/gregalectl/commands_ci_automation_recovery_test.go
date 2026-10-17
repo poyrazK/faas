@@ -1,4 +1,4 @@
-// ADR-1351: recovery commands preserve explicit event and request identity.
+// ADR-1531: recovery commands preserve explicit event and request identity.
 package main
 
 import (

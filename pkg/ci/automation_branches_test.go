@@ -1,4 +1,4 @@
-// ADR-1352: branch slots and supersession preserve source and native ownership.
+// ADR-1532: branch slots and supersession preserve source and native ownership.
 package ci
 
 import (

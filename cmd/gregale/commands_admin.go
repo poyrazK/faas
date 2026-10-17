@@ -94,7 +94,7 @@ func cmdAdminRefund(args []string) int {
 	}
 	cents, err := strconv.ParseInt(fs.Arg(2), 10, 64)
 	if err != nil || cents <= 0 {
-		fmt.Fprintln(os.Stderr, "gregale: cents must be a positive integer (in EUR cents)")
+		fmt.Fprintln(os.Stderr, "gregale: cents must be a positive integer (in USD cents)")
 		return 2
 	}
 	if n := len(strings.TrimSpace(*reason)); n < 3 || n > 500 {
@@ -159,7 +159,7 @@ func cmdAdminCredit(args []string) int {
 	}
 	cents, err := strconv.ParseInt(fs.Arg(1), 10, 64)
 	if err != nil || cents <= 0 {
-		fmt.Fprintln(os.Stderr, "gregale: cents must be a positive integer (in EUR cents)")
+		fmt.Fprintln(os.Stderr, "gregale: cents must be a positive integer (in USD cents)")
 		return 2
 	}
 	if *reason == "" {

@@ -170,6 +170,11 @@ func (r *Redactor) ApplyHeaders(h map[string]string) (map[string]string, []strin
 	out := make(map[string]string, len(h))
 	seen := map[string]struct{}{}
 	for k, v := range h {
+		if strings.EqualFold(k, "X-Gregale-Event-Acknowledgment-Token") {
+			out[k] = "[REDACTED:event_ack_token]"
+			seen["event_ack_token"] = struct{}{}
+			continue
+		}
 		redacted, names := r.apply(v, k+": ")
 		out[k] = redacted
 		for _, n := range names {
@@ -209,6 +214,16 @@ func sortStrings(s []string) {
 // preserving the caller's case.
 func defaultPatterns() []Pattern {
 	return []Pattern{
+		{
+			Name:  "event_ack_token",
+			Regex: regexp.MustCompile(`(?i)(X-Gregale-Event-Acknowledgment-Token)(\s*:\s*)([^\r\n\000]+)`),
+			Replacer: func(g []string) string {
+				if len(g) < 4 {
+					return "[REDACTED:event_ack_token]"
+				}
+				return g[1] + g[2] + "[REDACTED:event_ack_token]"
+			},
+		},
 		{
 			Name:  "dev_bridge_token",
 			Regex: regexp.MustCompile(`(?i)(X-Gregale-Dev-(?:Bridge-Token|Session-Context))(\s*:\s*)([^\r\n\000]+)`),

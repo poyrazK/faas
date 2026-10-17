@@ -1,4 +1,4 @@
-// ADR-1354: PR execution uses fresh source evidence and existing native owners.
+// ADR-1534: PR execution uses fresh source evidence and existing native owners.
 package ci
 
 import (

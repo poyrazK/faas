@@ -11,7 +11,21 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses } from '../scripts/post-process.mjs';
+import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchAutomationPathEncoding } from '../scripts/post-process.mjs';
+
+test('automation path post-processing is repeatable and fails closed on generator drift', async () => {
+  await withTempDir(async dir => {
+    await mkdir(join(dir, 'core'));
+    const path = join(dir, 'core', 'request.ts');
+    await writeFile(path, 'const encoder = config.ENCODE_PATH || encodeURI;\n');
+    await patchAutomationPathEncoding(dir);
+    const first = await readFile(path, 'utf8');
+    await patchAutomationPathEncoding(dir);
+    assert.equal(await readFile(path, 'utf8'), first);
+    await writeFile(path, 'generator changed\n');
+    await assert.rejects(patchAutomationPathEncoding(dir), /generator anchor missing/);
+  });
+});
 
 test('binary response post-processing is idempotent and preserves Problem parsing', async () => {
   await withTempDir(async (dir) => {

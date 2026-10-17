@@ -374,3 +374,33 @@ func (q *Queries) ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Cont
 	err := row.Scan(&unplanned)
 	return unplanned, err
 }
+
+const readManagedPostgresDrainPlanOwner = `-- name: ReadManagedPostgresDrainPlanOwner :one
+SELECT a.node_id,a.scaling_policy_revision,a.status,a.managed_postgres_admission_cutover_id,a.managed_postgres_admission_fenced_at,
+ coalesce(c.state,'')::text AS cutover_state
+FROM apps a LEFT JOIN managed_postgres_cutovers c ON c.id=a.managed_postgres_admission_cutover_id
+WHERE a.id=$1::text::uuid
+`
+
+type ReadManagedPostgresDrainPlanOwnerRow struct {
+	NodeID                            pgtype.UUID
+	ScalingPolicyRevision             int64
+	Status                            string
+	ManagedPostgresAdmissionCutoverID pgtype.UUID
+	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
+	CutoverState                      string
+}
+
+func (q *Queries) ReadManagedPostgresDrainPlanOwner(ctx context.Context, db DBTX, appID string) (ReadManagedPostgresDrainPlanOwnerRow, error) {
+	row := db.QueryRow(ctx, readManagedPostgresDrainPlanOwner, appID)
+	var i ReadManagedPostgresDrainPlanOwnerRow
+	err := row.Scan(
+		&i.NodeID,
+		&i.ScalingPolicyRevision,
+		&i.Status,
+		&i.ManagedPostgresAdmissionCutoverID,
+		&i.ManagedPostgresAdmissionFencedAt,
+		&i.CutoverState,
+	)
+	return i, err
+}

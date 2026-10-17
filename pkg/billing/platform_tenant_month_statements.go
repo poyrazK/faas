@@ -10,9 +10,10 @@ import (
 )
 
 // ErrTenantMonthPeriodRequired reports a statement whose period a tenant
-// card with a monthly allowance or tiers prices but that is not exactly one
-// UTC calendar month (ADR-975).
-var ErrTenantMonthPeriodRequired = errors.New("platform tenant statements priced by a monthly allowance or tiers must cover one UTC calendar month")
+// card with a monthly allowance, tiers, route weights, or compute or
+// response-size units prices but that is not exactly one UTC calendar month
+// (ADR-975, ADR-1307, ADR-1310).
+var ErrTenantMonthPeriodRequired = errors.New("platform tenant statements priced by a monthly allowance, tiers, route weights, or compute or response-size units must cover one UTC calendar month")
 
 // ErrTenantChargeDecreased reports that re-pricing a month would bill less
 // than its finalized revisions did. Gregale never issues credits.
@@ -86,7 +87,7 @@ func addsWithinInt64(total, delta int64) bool {
 // allowance units and each ladder step become their own lines and every line
 // stays exactly units × price.
 func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
-	usage []state.APIConsumerUsageBucket) (map[string]*tenantLine, string, error) {
+	usage []state.APIConsumerUsageBucket, routes TenantRouteUsage, opts QuoteOptions) (map[string]*tenantLine, string, error) {
 	ordered := append([]state.APIConsumerUsageBucket(nil), usage...)
 	sort.Slice(ordered, func(i, j int) bool {
 		if !ordered[i].WindowStart.Equal(ordered[j].WindowStart) {
@@ -99,12 +100,9 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	asApp := make([]state.APIConsumerRateCard, 0, len(cards))
 	tiersByCard := map[string][]state.APIConsumerRateCardTier{}
 	for _, card := range cards {
-		if card.Unit != state.PlatformTenantRateCardUnitRequest {
-			return nil, "", fmt.Errorf("billing: unsupported platform tenant rate-card unit %q", card.Unit)
-		}
-		asApp = append(asApp, state.APIConsumerRateCard{ID: card.ID, Currency: card.Currency, Unit: state.APIConsumerRateCardUnitRequest,
+		asApp = append(asApp, state.APIConsumerRateCard{ID: card.ID, Currency: card.Currency, Unit: tenantCardUnit(card),
 			PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-			Tiers: card.Tiers, EffectiveFrom: card.EffectiveFrom})
+			Tiers: card.Tiers, TierMode: card.TierMode, EffectiveFrom: card.EffectiveFrom})
 		tiersByCard[card.ID] = card.Tiers
 	}
 	var tenantUsage []state.APIConsumerUsageBucket
@@ -167,7 +165,13 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 		return add(priced.ChargedUnits, priced.PriceMillicentsPerUnit)
 	}
 	if len(tenantUsage) > 0 {
-		quote, err := QuoteAPIConsumerUsageFrom(asApp, tenantUsage, time.Time{})
+		weighted, err := weightTenantUsage(cards, tenantUsage, routes)
+		if err != nil {
+			return nil, "", err
+		}
+		// Each subject minute rounds its own compute time or response size
+		// (ADR-1310), as a consumer minute does (ADR-1308).
+		quote, err := QuoteAPIConsumerUsageWith(asApp, MeterAPIConsumerUsage(asApp, weighted), time.Time{}, opts)
 		if err != nil {
 			return nil, "", err
 		}
@@ -202,17 +206,102 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	return lines, currency, nil
 }
 
+// TenantRouteUsage holds subjects' route counts for tenant route weights
+// (ADR-1307, ADR-1310), keyed by TenantRouteKey or TenantSourceRouteKey.
+type TenantRouteUsage map[string][]state.APIConsumerRouteUsageBucket
+
+// TenantRouteKey keys one consumer's route counts in one app.
+func TenantRouteKey(appID, consumerID string) string { return appID + "\x00" + consumerID }
+
+// TenantSourceRouteKey keys one tenant surface's or JWT rule's route counts
+// in one app; kind is "surface" or "jwt".
+func TenantSourceRouteKey(appID, kind, sourceID string) string {
+	return TenantRouteKey(appID, kind+":"+sourceID)
+}
+
+// tenantSubjectRouteKey keys a usage bucket's subject in TenantRouteUsage.
+func tenantSubjectRouteKey(bucket state.APIConsumerUsageBucket) string {
+	switch {
+	case bucket.ConsumerKey != "":
+		return TenantRouteKey(bucket.AppID, bucket.ConsumerKey)
+	case bucket.SurfaceID != "":
+		return TenantSourceRouteKey(bucket.AppID, "surface", bucket.SurfaceID)
+	case bucket.JWTAuthorizationRuleID != "":
+		return TenantSourceRouteKey(bucket.AppID, "jwt", bucket.JWTAuthorizationRuleID)
+	}
+	return ""
+}
+
+// weightTenantUsage converts subjects' minutes into the units the tenant
+// card in force weights: consumers by their route counts (ADR-1307), and
+// surfaces and JWT rules by theirs (ADR-1310). Requests without a recorded
+// route keep weight 1, like routes the card does not list.
+func weightTenantUsage(cards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket, routes TenantRouteUsage) ([]state.APIConsumerUsageBucket, error) {
+	byMinute := map[string][]state.APIConsumerRouteUsageBucket{}
+	for key, rows := range routes {
+		for _, row := range rows {
+			minuteKey := key + "\x00" + row.WindowStart.UTC().Format(time.RFC3339)
+			byMinute[minuteKey] = append(byMinute[minuteKey], row)
+		}
+	}
+	out := make([]state.APIConsumerUsageBucket, 0, len(usage))
+	for _, bucket := range usage {
+		card := tenantCardAt(cards, bucket.WindowStart.UTC())
+		if subject := tenantSubjectRouteKey(bucket); card != nil && len(card.RouteWeights) > 0 && subject != "" {
+			minuteKey := subject + "\x00" + bucket.WindowStart.UTC().Format(time.RFC3339)
+			units, err := weightedUnits(card.RouteWeights, bucket.BillableUnits, byMinute[minuteKey])
+			if err != nil {
+				return nil, err
+			}
+			bucket.BillableUnits = units
+		}
+		out = append(out, bucket)
+	}
+	return out, nil
+}
+
+// tenantWeightsInForce reports whether a card whose lines count units other
+// than requests, because it weights routes or prices compute or response
+// size, is in force for any minute of [start, end).
+func tenantWeightsInForce(cards []state.PlatformTenantRateCard, start, end time.Time) bool {
+	ordered := sortedTenantCards(cards)
+	for i, card := range ordered {
+		until := end
+		if i+1 < len(ordered) && ordered[i+1].EffectiveFrom.Before(end) {
+			until = ordered[i+1].EffectiveFrom
+		}
+		if (len(card.RouteWeights) > 0 || !card.PricesRequests()) && card.EffectiveFrom.Before(end) && until.After(start) {
+			return true
+		}
+	}
+	return false
+}
+
+// tenantCardAt is the card in force at minute among cards sorted by
+// effective_from, or nil before the first.
+func tenantCardAt(cards []state.PlatformTenantRateCard, minute time.Time) *state.PlatformTenantRateCard {
+	var current *state.PlatformTenantRateCard
+	for i := range cards {
+		if cards[i].EffectiveFrom.After(minute) {
+			break
+		}
+		current = &cards[i]
+	}
+	return current
+}
+
 // BuildPlatformTenantMonthStatement re-prices a whole UTC month (ADR-975)
 // and bills the difference from every finalized revision's lines. Coverage
 // still records the minute units not yet finalized, so regression checks are
 // unchanged; the lines carry re-rated amounts, which may be negative per line
-// but never in total.
+// but never in total. Lines count weighted units under a card with route
+// weights (ADR-1307), so overlap is checked on raw request units.
 func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, asOf time.Time, revision int,
 	priorStatus state.APIConsumerUsageStatementStatus, usageDelta, monthUsage []state.APIConsumerUsageBucket,
 	cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
-	previous []state.PlatformTenantStatement) (state.PlatformTenantStatementInput, error) {
+	previous []state.PlatformTenantStatement, routes TenantRouteUsage, opts ...QuoteOptions) (state.PlatformTenantStatementInput, error) {
 	in := state.PlatformTenantStatementInput{AccountID: accountID, TenantID: tenantID, PeriodStart: start, PeriodEnd: end,
-		AsOf: asOf, Revision: revision, PriorStatus: priorStatus, Repriced: true}
+		AsOf: asOf, Revision: revision, PriorStatus: priorStatus, Repriced: true, Weighted: tenantWeightsInForce(tenantCards, start, end)}
 	if !IsCalendarMonth(start, end) {
 		return in, ErrTenantMonthPeriodRequired
 	}
@@ -228,15 +317,24 @@ func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, a
 	if len(in.Coverage) == 0 {
 		return in, ErrNoNewTenantUsage
 	}
-	current, currency, err := priceTenantMonth(cardsByApp, tenantCards, monthUsage)
+	var options QuoteOptions
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+	current, currency, err := priceTenantMonth(cardsByApp, tenantCards, monthUsage, routes, options)
 	if err != nil {
 		return in, err
 	}
 	in.Currency = currency
+	var rawUnbilled int64
+	for _, bucket := range monthUsage {
+		rawUnbilled += bucket.BillableUnits
+	}
 	for _, statement := range previous {
 		if statement.Status != state.APIConsumerUsageStatementFinalized || !statement.PeriodStart.Equal(start) || !statement.PeriodEnd.Equal(end) {
 			continue
 		}
+		rawUnbilled -= statementRawUnits(statement)
 		for _, prior := range statement.Lines {
 			key := tenantStatementLineKey(prior.AppID, prior.ConsumerID, prior.SurfaceID, prior.JWTAuthorizationRuleID,
 				prior.RateCardID, prior.PlatformTenantRateCardID, prior.Currency, prior.PriceMillicentsPerUnit)
@@ -276,7 +374,7 @@ func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, a
 	for _, minute := range in.Coverage {
 		coverageUnits += minute.BillableUnits
 	}
-	if in.BillableUnits != coverageUnits {
+	if rawUnbilled != coverageUnits {
 		return in, ErrTenantMonthOverlap
 	}
 	if in.AmountMillicents < 0 {
@@ -287,4 +385,58 @@ func BuildPlatformTenantMonthStatement(accountID, tenantID string, start, end, a
 	}
 	sort.SliceStable(in.Lines, func(i, j int) bool { return in.Lines[i].WindowStart.Before(in.Lines[j].WindowStart) })
 	return in, nil
+}
+
+// LockedTenantVolumeSteps returns, for each volume tenant card (ADR-1309)
+// the month's finalized revisions billed, the ladder step they billed it at
+// (ADR-1312): the highest step whose price carries net positive units.
+func LockedTenantVolumeSteps(cards []state.PlatformTenantRateCard, previous []state.PlatformTenantStatement, start, end time.Time) map[string]int {
+	tiers := map[string][]state.APIConsumerRateCardTier{}
+	for _, card := range cards {
+		if len(card.Tiers) > 0 && card.TierMode == state.RateCardTierModeVolume {
+			tiers[card.ID] = card.Tiers
+		}
+	}
+	net := map[string]map[int64]int64{}
+	for _, statement := range previous {
+		if statement.Status != state.APIConsumerUsageStatementFinalized || !statement.PeriodStart.Equal(start) || !statement.PeriodEnd.Equal(end) {
+			continue
+		}
+		for _, line := range statement.Lines {
+			if tiers[line.PlatformTenantRateCardID] == nil {
+				continue
+			}
+			if net[line.PlatformTenantRateCardID] == nil {
+				net[line.PlatformTenantRateCardID] = map[int64]int64{}
+			}
+			net[line.PlatformTenantRateCardID][line.PriceMillicentsPerUnit] += line.BillableUnits
+		}
+	}
+	locked := map[string]int{}
+	for cardID, byPrice := range net {
+		for step := len(tiers[cardID]) - 1; step >= 0; step-- {
+			if byPrice[tiers[cardID][step].PriceMillicentsPerUnit] > 0 {
+				locked[cardID] = step
+				break
+			}
+		}
+	}
+	return locked
+}
+
+// statementRawUnits is the request units a finalized statement covered:
+// its coverage, or its line units for statements stored before coverage,
+// which never weighted routes.
+func statementRawUnits(statement state.PlatformTenantStatement) int64 {
+	var units int64
+	if len(statement.Coverage) == 0 {
+		for _, line := range statement.Lines {
+			units += line.BillableUnits
+		}
+		return units
+	}
+	for _, minute := range statement.Coverage {
+		units += minute.BillableUnits
+	}
+	return units
 }

@@ -263,7 +263,7 @@ input executions before a binary downgrade, and keep admission off during binary
 rollback. Retained input definitions require updated readers before fresh
 admission. Existing CI flags remain off. Native
 and provider verification stays with the separate qualification agent. See
-[ADR-1359](../adr/1359-internal-ci-dependency-artifact-inputs.md).
+[ADR-1539](../adr/1539-internal-ci-dependency-artifact-inputs.md).
 
 ### Run named matrix variants
 
@@ -308,7 +308,7 @@ Matrix expansion happens before dispatch. Concrete jobs use the existing v1/v2/v
 manifest matching their actual features; no matrix declarations reach guests.
 Upgrade definition readers/controllers before use and keep admission off during
 rollback. Existing feature flags remain off and native qualification remains
-separate. See [ADR-1361](../adr/1361-internal-ci-named-matrix-jobs.md) and the
+separate. See [ADR-1541](../adr/1541-internal-ci-named-matrix-jobs.md) and the
 [matrix example](../../examples/internal-ci/matrix.yaml).
 
 ### Configure step environments and working directories
@@ -344,7 +344,7 @@ must be strings; quote numbers and booleans. Values are not interpolated, and
 each step receives a fresh environment without runner/host inheritance.
 Runner-managed `PATH`, `HOME`, `LANG`, `CI`, workspace/runtime identity variables,
 shell startup settings and loader variables are reserved; the full list is in
-[ADR-1360](../adr/1360-internal-ci-step-configuration.md). Custom declarations and
+[ADR-1540](../adr/1540-internal-ci-step-configuration.md). Custom declarations and
 merged step environments are limited to 32 names, 64 bytes/name, 1,024 bytes/value
 and 8 KiB combined entries including separators/NULs. Directory paths are at most
 256 bytes. Existing definition/native manifest limits also apply.
@@ -397,7 +397,7 @@ dispatch gates as fresh submissions. All production defaults remain off. A
 rerun of an automatic PR/push execution is explicit manual work and retains
 lineage without replaying webhook admission or inheriting automatic
 supersession. Jobs retry remains zero and controller recovery never invokes
-rerun. See [ADR-1355](../adr/1355-internal-ci-execution-reruns.md).
+rerun. See [ADR-1535](../adr/1535-internal-ci-execution-reruns.md).
 
 ### Explicit template submission
 
@@ -513,7 +513,7 @@ feedback. Admission recovery cannot promote the source.
 
 All production gates remain off. Policy setup needs the existing internal/GitHub
 account/admin/MFA/HTTPS controls and can happen with compute disabled. See
-[ADR-1356](../adr/1356-internal-ci-automation-path-filters.md).
+[ADR-1536](../adr/1536-internal-ci-automation-path-filters.md).
 
 ## GitHub push automation (disabled)
 
@@ -607,7 +607,7 @@ use a fresh manual submission if that exact commit must run again.
 
 Policy setup creates no compute intent, and all shipped flags remain off. Native
 stop/provider qualification is separate. See
-[ADR-1352](../adr/1352-internal-ci-branch-concurrency.md).
+[ADR-1532](../adr/1532-internal-ci-branch-concurrency.md).
 
 ### Same-repository pull-request execution
 
@@ -670,7 +670,7 @@ by the existing 256 retained source events/account.
 Upgrade all readers and apply the migration before opting in. Keep admission
 off during binary rollback; rollback refuses retained PR authority. All shipped
 flags remain off and release remains paused. See
-[ADR-1354](../adr/1354-internal-ci-pull-request-automation.md).
+[ADR-1534](../adr/1534-internal-ci-pull-request-automation.md).
 
 ### Recover an exhausted automatic admission
 
@@ -721,7 +721,7 @@ operator records intent. Reads keep their existing internal/MFA/HTTPS protection
 and remain available with new admission disabled. All shipped flags remain off.
 Receipts retain their lifetime quota evidence and are not pruned by archival;
 the migration refuses rollback while recovery evidence exists. See
-[ADR-1351](../adr/1351-internal-ci-automation-admission-recovery.md).
+[ADR-1531](../adr/1531-internal-ci-automation-admission-recovery.md).
 
 ## Execution progress and results in GitHub
 
@@ -817,7 +817,7 @@ history retention apply; archival drops failure details and retains only per-job
 report totals. Report reads then return the existing archived-detail response.
 No report backfill or command retry is introduced. All production flags remain
 off. Upgrade all revision/execution readers before using `junit`; keep admission
-off during binary rollback. See [ADR-1353](../adr/1353-internal-ci-junit-reports.md).
+off during binary rollback. See [ADR-1533](../adr/1533-internal-ci-junit-reports.md).
 
 ### Inspect and recover Check delivery
 
@@ -873,7 +873,7 @@ needed. Receipts retain hashed request identity and request/application times;
 they survive restart and prevent duplicate recovery. Retain them during binary
 rollback; migration rollback refuses a nonempty journal. Recovery publishes
 the existing result without creating Jobs runs or executing commands. See
-[ADR-1348](../adr/1348-internal-ci-check-delivery-recovery.md).
+[ADR-1528](../adr/1528-internal-ci-check-delivery-recovery.md).
 
 ### Inspect and recover skipped-source Checks
 
@@ -917,7 +917,7 @@ pending source requests. Keep `ci_source_check_retries` and source Check
 generation evidence during rollback; the migration refuses to discard it.
 Do not retry admission to repair feedback. No execution, Jobs run or compute
 capability is created. See
-[ADR-1357](../adr/1357-internal-ci-source-check-recovery.md).
+[ADR-1537](../adr/1537-internal-ci-source-check-recovery.md).
 
 ## Archive terminal execution history
 
@@ -980,7 +980,7 @@ them. Check retry generations remain lifetime bounded, including after archive.
 Account deletion removes owned archive receipts; managed storage tombstones
 continue to survive. Database rollback refuses archives because compacted
 detail cannot be reconstructed. See
-[ADR-1349](../adr/1349-internal-ci-execution-archival.md).
+[ADR-1529](../adr/1529-internal-ci-execution-archival.md).
 
 ## Definition and offline planning
 
@@ -1127,7 +1127,7 @@ to GitHub:
 go test -race ./pkg/ci/... ./pkg/githubd/... ./pkg/apid/ciapi/... -run 'Test(GitHubSources|GitHubEvents|GitHubFlags|CI)'
 ```
 
-See [ADR-1333](../adr/1333-internal-ci-github-sources.md) for ownership, gate and
+See [ADR-1523](../adr/1523-internal-ci-github-sources.md) for ownership, gate and
 delivery contracts.
 
 ## Execution engine qualification
@@ -1180,7 +1180,7 @@ go test -race ./pkg/ci/... -run 'TestExecutionQualification|TestBackendObservati
 
 The engine suite uses `pgtest` isolation and the complete production migrations.
 Confirm its PostgreSQL test ran rather than skipped when recording evidence.
-See [ADR-1332](../adr/1332-ci-execution-engine-qualification.md) for the backend
+See [ADR-1522](../adr/1522-ci-execution-engine-qualification.md) for the backend
 contract and recovery evidence.
 
 ## Jobs adapter
@@ -1249,7 +1249,7 @@ confirmed. Unsealed cleanup preserves partial diagnostics with
 cancellation. Inconsistent sealed output requires repair. Archive compaction
 clears progress payloads while preserving sequence evidence; rollback refuses
 to discard that evidence. Defaults remain off. See
-[ADR-1358](../adr/1358-internal-ci-live-progress.md).
+[ADR-1538](../adr/1538-internal-ci-live-progress.md).
 
 The fully migrated PostgreSQL test runs real intent transactions against fake
 GitHub bytes, object storage and scheduler/guest receipts:
@@ -1262,7 +1262,7 @@ go test -race ./pkg/state -run '^TestPgCIJobsCannotReplayThroughJobsAPI$'
 The guest runner and task-scoped transfer implementation below extends this
 boundary. HTTPS transfer and artifact routes are mounted behind a separate off
 flag. There is no deployed CI image or automated compute admission. See
-[ADR-1334](../adr/1334-dormant-ci-jobs-adapter.md) for the complete contracts and
+[ADR-1524](../adr/1524-dormant-ci-jobs-adapter.md) for the complete contracts and
 enablement prerequisites.
 
 ## Guest runner and scoped transfers
@@ -1330,7 +1330,7 @@ simulated compute and steps. Native two-job and failure/restart acceptance with
 `test-metal` and `leakcheck` on a dedicated x86_64 KVM host remains pending, as
 does real GCS acceptance. Storage retirement removes grants only after
 stop/output reconciliation and payload retirement. Keep all execution flags off until those gates are met.
-[ADR-1335](../adr/1335-ci-guest-runner-and-scoped-transfers.md) records the
+[ADR-1525](../adr/1525-ci-guest-runner-and-scoped-transfers.md) records the
 authority, cancellation and publication contracts.
 
 ## Disabled scheduler integration

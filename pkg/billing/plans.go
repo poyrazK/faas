@@ -26,7 +26,7 @@ func PlanMonthlyMillicents(p api.Plan) int64 {
 // in integer millicents.
 //
 // The rate is defined by pkg/api because it is part of the financial model
-// (CLAUDE.md "Overage €0.01/GB-h" → 1_000 millicents). Stripe represents
+// (CLAUDE.md "Overage $0.01/GB-h" → 1_000 millicents). Stripe represents
 // overage through a metered subscription; Paddle uses this value as the
 // flat-rate monthly overage line-item price posted at month-rollover (see
 // pkg/billing/paddle/usage.go).
@@ -39,7 +39,7 @@ func PlanOverageMillicentsPerGBHour() int64 {
 // accept. Stripe's metered subscription_item takes an int64 quantity;
 // Paddle's per-line-item Quantity is the same integer axis multiplied by the
 // overage price handle. 1000 wire units = 1 GB-RAM-hour = 1 cent at the
-// €0.01/GB-h overage rate (CLAUDE.md "Overage €0.01/GB-h").
+// $0.01/GB-h overage rate (CLAUDE.md "Overage $0.01/GB-h").
 //
 // Defined here (pkg/billing) rather than in pkg/billing/stripe because the
 // unit is a financial-model constant — the float-to-int truncation that
