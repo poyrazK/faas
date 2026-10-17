@@ -1,0 +1,14 @@
+{{template "automation-live-suite-result" .}}
+{{define "automation-live-suite-result"}}
+{{with .Data.LiveSuite}}<article class="card" id="automation-live-suite-result" data-suite-id="{{.ID}}" data-suite-outcome="{{.Outcome}}" data-suite-managed="{{.Managed}}" data-suite-version="{{.Version}}" data-suite-published="{{.PublishedVersion}}" data-suite-deployment="{{.DeploymentID}}"><h3>Suite result: {{.Outcome}}</h3>
+<p>Suite <code>{{.ID}}</code>. Saved version {{.Version}}, published revision {{.PublishedVersion}}, deployment <code>{{.DeploymentID}}</code>.</p>
+<p>Observed {{.ObservedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}. {{if .Outdated}}The saved automation, published revision or deployment has changed. These results describe the original target.{{else}}These are current observations, not a publication receipt.{{end}}</p>
+<p>{{.Summary.Passed}} passed · {{.Summary.Failed}} failed · {{.Summary.Pending}} waiting · {{.Summary.NotStarted}} unstarted · {{.Summary.Outdated}} outdated · {{.Summary.Unavailable}} unavailable</p>
+<table><thead><tr><th>Case</th><th>Result</th><th>Verification</th></tr></thead><tbody>{{range .Cases}}<tr><td>{{.Name}}</td><td>{{.Outcome}}</td><td>{{if .RunID}}<a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;verification={{.RunID}}"><code>{{.RunID}}</code></a>{{else}}No run linked{{end}}</td></tr>{{end}}</tbody></table>
+<p><a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.ID}}">Refresh suite results</a>. {{if .Managed}}Reopening or refreshing this suite does not continue execution.{{else}}Continue remaining cases through the original CLI journal with explicit real-action confirmation.{{end}}</p>
+{{if .Managed}}<input type="hidden" name="live_suite_id" value="{{.ID}}">
+<label class="check"><input type="checkbox" name="confirm_live_suite_continue" value="yes">I confirm that continuing this suite may perform real actions in my app and connected services.</label>
+<button data-live-suite-continue type="submit" formaction="{{$.Data.BaseURL}}/advance-live-suite" {{if .Outdated}}disabled{{end}}>Continue suite</button>
+<p>Continuation checks existing runs before starting remaining cases. Failed or missing runs are never replaced. Inspect a failed run before deciding whether to resume that individual workflow.</p>{{end}}
+</article>{{end}}
+{{end}}

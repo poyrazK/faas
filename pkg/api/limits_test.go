@@ -230,7 +230,7 @@ func TestAsyncInvocationTimeout(t *testing.T) {
 }
 
 // TestPlanLimitsMatchSpec pins every value in the table to the financial-model /
-// COGS-report numbers (ADR-1350) /
+// COGS-report numbers (ADR-1430) /
 // spec §1 numbers. If the spreadsheet moves, this test must be updated in the
 // same PR — that is the point.
 func TestPlanLimitsMatchSpec(t *testing.T) {
