@@ -5,6 +5,10 @@ also commits a matching unexpired local claim's removal in the business/receipt/
 intent transaction. Stop/join local renewal first. Receipt-only reconciliation
 still skips local lease checks and never repeats preparation.
 
+For preparation with coordinated local/platform renewal, use
+[`run_prepared_durable`](event-acknowledgment-python-preparation.md). It keeps the
+same atomic completion and saved-callback recovery contract.
+
 `AsyncEventAcknowledgmentWorker.run_durable` commits business SQL, the consumer
 receipt and a completion intent in one application PostgreSQL transaction. A
 separate recovery host sends the saved callback. A crash after local COMMIT does

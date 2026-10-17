@@ -43,6 +43,7 @@ class EventAcknowledgmentWorkerResult:
 
 
 _MESSAGES = {
+    "event_consumer_preparation_timeout": "event consumer preparation budget expired",
     "event_acknowledgment_lease_lost": "event acknowledgment lease expired, replaced or unavailable",
     "event_acknowledgment_unconfirmed": "event acknowledgment callback outcome unconfirmed",
     "event_acknowledgment_worker_busy": "event acknowledgment worker operation already running",

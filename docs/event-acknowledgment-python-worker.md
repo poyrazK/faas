@@ -11,6 +11,11 @@ or its durable counterpart. Receipt replay skips the local claim; new transactio
 work requires its current unexpired fence. Applications own preparation and local
 renewal separately from the worker's platform acknowledgment lease.
 
+[`run_prepared_durable`](event-acknowledgment-python-preparation.md) coordinates both
+lease lifetimes during bounded side-effect-free preparation, then stages an atomic
+receipt/intent completion. It uses fresh connection scopes rather than holding
+a business transaction open during preparation.
+
 For atomic transfer of callback responsibility to an independent recovery host,
 use [durable completion intents](event-acknowledgment-python-intents.md). The
 immediate mode documented here retains its original ingestion-job contract.

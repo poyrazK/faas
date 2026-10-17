@@ -125,7 +125,9 @@ and await a valid redelivery. HTTP 202 and these helpers do not keep a parked VM
 The [explicit version-4 example](../examples/event-acknowledgment-python/README.md#complete-with-a-processing-lease)
 uses new leased jobs without relabeling older unleased or failure-decision records.
 The host owns side-effect-free preparation, both relevant lease lifetimes and
-exclusive fenced queue ownership. The worker does not coordinate preparation yet.
+exclusive fenced queue ownership. For coordinated preparation and both renewal
+loops, use the separate
+[`run_prepared_durable` lifecycle](event-acknowledgment-python-preparation.md).
 External effects still require an outbox or their own idempotency protocol.
 
 ## Failure, cancellation and reconciliation

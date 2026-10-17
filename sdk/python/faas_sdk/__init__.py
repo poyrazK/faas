@@ -725,3 +725,7 @@ __all__ += (
     "EventConsumerProcessingError", "EventConsumerProcessingLease",
     "aclaim_event_consumer_processing", "event_consumer_processing_schema",
 )
+
+from .event_acknowledgment_preparation import EventAcknowledgmentPreparedOptions
+
+__all__ += ("EventAcknowledgmentPreparedOptions",)

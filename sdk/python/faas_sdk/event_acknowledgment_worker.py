@@ -31,6 +31,12 @@ from .event_acknowledgment_intents import (
     _save_completion,
     _save_negative,
 )
+from .event_acknowledgment_preparation import (
+    ConnectionFactory,
+    EventAcknowledgmentPreparedOptions,
+    _run_prepared,
+    _settings,
+)
 from .event_consumer_delivery_context import event_consumer_delivery_context_from_headers
 from .event_consumer_processing import EventConsumerProcessingLease
 from .event_consumer_transactions import (
@@ -261,6 +267,23 @@ class AsyncEventAcknowledgmentWorker:
     ) -> EventAcknowledgmentIntentResult:
         """Stage a committed receipt after unknown COMMIT. Never invokes business code."""
         return await self._operate(lambda control: self._stage(connection, None, control), stop_event)
+
+    async def run_prepared_durable(
+        self,
+        connection_factory: ConnectionFactory,
+        prepare: Callable[[EventAcknowledgmentWorkerCancellation], Awaitable[_T]],
+        handler: Callable[[Any, EventAcknowledgmentWorkerCancellation, _T], Awaitable[bytes | str]],
+        options: EventAcknowledgmentPreparedOptions,
+        *,
+        stop_event: asyncio.Event | None = None,
+    ) -> EventAcknowledgmentIntentResult:
+        """Own both lease lifetimes during preparation, then atomically stage fenced completion."""
+        settings = _settings(options)
+        if not callable(connection_factory) or not callable(prepare) or not callable(handler):
+            raise ValueError("invalid acknowledgment preparation factory or callbacks")
+        return await self._operate(
+            lambda control: _run_prepared(self, connection_factory, prepare, handler, settings, control), stop_event
+        )
 
     async def _stage(
         self,

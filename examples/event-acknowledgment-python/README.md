@@ -397,3 +397,63 @@ owner's explicit policy; it proves neither rollback nor ownership. Repeating nor
 completion is also safe only under the original input and a still-valid local
 fence when no receipt exists. Recovery sends saved callbacks without business work.
 See [the full Python lease contract](../../docs/event-consumer-processing-python.md).
+
+## Coordinate preparation and both leases
+
+`prepared_consumer.py` adds explicit version-5 `python-prepared-durable` jobs.
+Use `accept_authenticated_prepared_delivery` on separately configured authenticated
+ingress. Install the same receipt, processing and intent schemas. Keep protected
+original inputs, exclusive fenced job ownership and bounded idle autocommit
+connection scopes. Never relabel earlier immediate, durable, failure or manually
+leased records; each processor rejects other modes and failure decisions.
+
+```python
+from faas_sdk import EventAcknowledgmentPreparedOptions
+from prepared_consumer import process_owned_prepared_delivery
+
+def connection_scope():
+    # Synchronous factory; new exclusive idle autocommit scope on every call.
+    return application_pool.connection(timeout=3)
+
+async def prepare(original_body, cancel):
+    cancel.check()
+    prepared = await read_and_validate_without_effects(original_body, cancel)
+    cancel.check()
+    return prepared
+
+async def apply(cursor, cancel, original_body, prepared):
+    cancel.check()
+    await cursor.execute("UPDATE invoices SET paid=true WHERE id=%s", (prepared.invoice_id,))
+    cancel.check()
+    return b'{"applied":true}'
+
+queued = await process_owned_prepared_delivery(
+    client.inner, job, scope, connection_scope, prepare, apply,
+    EventAcknowledgmentPreparedOptions(preparation_timeout_ms=60_000),
+)
+# The helper independently fences job.ack after confirmed atomic local completion.
+```
+
+The SDK first stages any saved receipt without preparation, processing-table access
+or platform renewal. Otherwise it confirms the exact platform attempt, claims the
+local row and renews both independently during preparation. Local renewal uses
+separate short connection scopes; no business transaction stays open. It stops
+and joins local renewal, refreshes once and checks its budget before the final
+fenced writes/receipt/claim-removal/intent transaction. Platform renewal continues
+through that transaction. The recovery host sends only saved callbacks afterward.
+
+Preparation must be side-effect-free, cooperative and free of detached work.
+Prepared data is passed in memory and never persisted/logged by the SDK. Keep the
+final handler short and SQL-only; external effects need an outbox/idempotency.
+Bound pool, driver and cleanup calls, and keep the host/event loop available.
+Timeouts signal cancellation and join work rather than forcibly cancelling SQL.
+
+Unknown claim/renewal/final COMMIT remains unknown even after cancellation or a
+different callback failure. Retain the job, discard closed connections and apply
+the owner's explicit reconciliation policy. For a possibly committed final
+transaction, `save_owned_prepared_completion_intent` on a fresh connection never
+prepares, claims or invokes business code. Missing receipts establish neither
+rollback nor ownership. No automatic retry/dead-letter or claim release is chosen.
+Confirmed intent commit remains confirmed after late cancellation/renewal/cleanup
+failure; failed job ack can safely replay the receipt/intent handoff. See the
+[coordinated Python lifecycle](../../docs/event-acknowledgment-python-preparation.md).

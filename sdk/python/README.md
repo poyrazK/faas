@@ -2739,6 +2739,15 @@ its unexpired token/input fence. The host owns renewal during preparation and
 must stop/join local renewal before final completion. See the
 [Python processing protocol](../../docs/event-consumer-processing-python.md).
 
+`run_prepared_durable(connection_factory, prepare, handler, options, stop_event=...)`
+coordinates both leases during side-effect-free preparation, then commits the
+same fenced receipt/intent transaction. `EventAcknowledgmentPreparedOptions`
+requires `preparation_timeout_ms` and defaults `processing_lease_ms` to 30,000.
+The synchronous factory supplies fresh exclusive idle autocommit async connection
+scopes for each operation. Existing receipts skip preparation and new claims;
+local renewal is joined before completion while platform renewal continues.
+See [budgets, cleanup and uncertain commits](../../docs/event-acknowledgment-python-preparation.md).
+
 `run_durable` commits business SQL, the receipt and a completion intent together;
 `save_completion_intent` stages a saved receipt without business work. Explicitly
 install `event_acknowledgment_intent_schema` beside the inbox. A confirmed local
