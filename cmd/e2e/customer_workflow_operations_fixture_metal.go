@@ -240,7 +240,9 @@ func (f *customerWorkflowFixture) deploy(t *testing.T, version string) api.Deplo
 	t.Helper()
 	dep, err := f.owner.Deploy(t.Context(), f.app.Slug, api.CreateDeploymentRequest{Image: f.imageRef, Workflows: append([]api.WorkflowSpec{f.workflow}, customerWorkflowWaitChains()...), Overrides: &api.CreateDeploymentOverrides{Env: map[string]string{"FIXTURE_VERSION": version}, Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"}}})
 	mustCustomerWorkflow(t, err)
-	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 3*time.Minute)
+	// The per-deploy image scan alone takes over two minutes on a two-vCPU
+	// acceptance host; three minutes was not enough headroom.
+	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 8*time.Minute)
 	mustCustomerWorkflow(t, err)
 	return dep
 }
