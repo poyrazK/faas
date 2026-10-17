@@ -18,6 +18,30 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// ADR-1591: source credentials are account-owned; pipeline and alert
+		// intent need isolated cloning strategies. Onboarding, verification,
+		// physical capacity and recovery receipts must never be copied.
+		"data_pipeline_connections":      CloneSchemaIdentity,
+		"data_pipelines":                 CloneSchemaConfiguration,
+		"data_pipeline_alerts":           CloneSchemaConfiguration,
+		"data_connection_checks":         CloneSchemaOperational,
+		"data_pipeline_alert_deliveries": CloneSchemaOperational,
+		"data_pipeline_schema_refreshes": CloneSchemaOperational,
+		"data_pipeline_setups":           CloneSchemaOperational,
+		"postgres_capacity_reservations": CloneSchemaOperational,
+		"postgres_capacity_resources":    CloneSchemaOperational,
+		"postgres_capacity_sources":      CloneSchemaOperational,
+		"postgres_capacity_targets":      CloneSchemaOperational,
+		"instance_snapshot_recovery":     CloneSchemaOperational,
+		"migration_admissions":           CloneSchemaOperational,
+		"migration_sources":              CloneSchemaOperational,
+		"node_lifecycle_completions":     CloneSchemaOperational,
+		"object_node_settlement_outbox":  CloneSchemaOperational,
+		"operator_node_executions":       CloneSchemaOperational,
+		"operator_park_executions":       CloneSchemaOperational,
+		"operator_recovery_submissions":  CloneSchemaOperational,
+		"operator_restart_executions":    CloneSchemaOperational,
+
 		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
 		"hosting_sites":                                 CloneSchemaConfiguration,
 		"hosting_domains":                               CloneSchemaConfiguration,
