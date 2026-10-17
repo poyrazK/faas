@@ -458,7 +458,6 @@ PutManagedPostgresSecret
 QueueDeadLetter
 QueuePeek
 QueueState
-QueuedBuildsCount
 ReadActiveInstanceForWakeID
 ReadMFASecret
 ReapExpiredUploadSessions
@@ -552,7 +551,6 @@ UpdateAlertRule
 UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
-UpdateBuildStatus
 UpdateCorsPreset
 UpdateCron
 UpdateCronWithOptions

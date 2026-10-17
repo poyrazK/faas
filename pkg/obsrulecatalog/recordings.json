@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "65c60d1a017bd0bc268b6f28ac87b9da35ba034f85b3e1067bfe9251d735a83f",
+      "revision": "7d9f28117e54505303d7f98f41ab0cb4c16fa6388586877667a17ed3d2205aa8",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "e4753bd317e1ab11d385fbfefa39ba4ff4536e865ac2f440ec65ecb0cb9115d9",
+        "revision": "0be1fde18a8cc546c37d29e142b4c9ac216a9b0cbcdcdd44df08dc4ec536ca89",
         "files": [
           "faas.rules.yml"
         ],
@@ -246,6 +246,19 @@
             }
           },
           {
+            "id": "94eeb13ef724802da4e3725d286c27cdfe2413ec6c196917d96a1eec3faf4da8",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "faas_build_queue_observation_healthy",
+            "definition": {
+              "expression_hash": "1fb3063b943d74b91f7d7d15a0d123a42a70bf040259cfc311030338eea508c0",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "d844180f2384d35e63d5d581b25b8920840a4a3cd44979387d7088140b5a619f"
+            }
+          },
+          {
             "id": "96f7dcfd5164b8f479bb497735d4cc6ac6e9c9ce939e8ada4f1a9af3649b0c12",
             "file_name": "faas.rules.yml",
             "group_name": "faas_managed_postgres",
@@ -442,8 +455,8 @@
           }
         ]
       },
-      "alert_set_revision": "763284aa5250f7f128ef6ad486776ac3edee09a8a36c78ec0713a2be5239eee1",
-      "alert_count": 279,
+      "alert_set_revision": "a3f889915cfeb190e67999bfde1721b327693969452f8a952690bede1dcf5e60",
+      "alert_count": 280,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -703,6 +716,23 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_slo",
               "rule_name": "FaasTrafficDropAccount"
+            }
+          ]
+        },
+        {
+          "rule_id": "94eeb13ef724802da4e3725d286c27cdfe2413ec6c196917d96a1eec3faf4da8",
+          "alerts": [
+            {
+              "id": "252a65df55a0aaf61be1f07f2df5e6c9f147864275c97d515fd419d3a61efd7a",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasBuildQueueDepthHigh"
+            },
+            {
+              "id": "3fb6f6ee21fd3b4bc91e906e547a1f488aa45dbfa3ebfe6c75e9a353174419cf",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasBuildQueueTelemetryUnavailable"
             }
           ]
         },
@@ -974,10 +1004,10 @@
       ]
     },
     {
-      "revision": "23dd09f3a8e7a3ca128874cb5ab0a4e1e54f5a36dc0ca50b5e4dce540c9fa803",
+      "revision": "b5f7b1bc93010eb34dd20da42aa7645d9c936b6027263ec7946680482dd18b92",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "dbbff9d8b9503db0fbcd85045fc0706a7e381c7e5726dd5c83ad0d259565239f",
+        "revision": "36efad39f444ce8be965627516b8743ee26abb0920ddac224e6339f36fad4c5c",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -1220,6 +1250,19 @@
             }
           },
           {
+            "id": "94eeb13ef724802da4e3725d286c27cdfe2413ec6c196917d96a1eec3faf4da8",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "faas_build_queue_observation_healthy",
+            "definition": {
+              "expression_hash": "1fb3063b943d74b91f7d7d15a0d123a42a70bf040259cfc311030338eea508c0",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "d844180f2384d35e63d5d581b25b8920840a4a3cd44979387d7088140b5a619f"
+            }
+          },
+          {
             "id": "96f7dcfd5164b8f479bb497735d4cc6ac6e9c9ce939e8ada4f1a9af3649b0c12",
             "file_name": "faas.rules.yml",
             "group_name": "faas_managed_postgres",
@@ -1416,8 +1459,8 @@
           }
         ]
       },
-      "alert_set_revision": "8505f7cdb284109c6784dcae30b80df50a425b990f11b81b61f22d72d0cec6e9",
-      "alert_count": 291,
+      "alert_set_revision": "c5442301914dd47d1662df4e187969cfbb3addbeeed6b13354d8507b2f624ea0",
+      "alert_count": 292,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -1677,6 +1720,23 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_slo",
               "rule_name": "FaasTrafficDropAccount"
+            }
+          ]
+        },
+        {
+          "rule_id": "94eeb13ef724802da4e3725d286c27cdfe2413ec6c196917d96a1eec3faf4da8",
+          "alerts": [
+            {
+              "id": "252a65df55a0aaf61be1f07f2df5e6c9f147864275c97d515fd419d3a61efd7a",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasBuildQueueDepthHigh"
+            },
+            {
+              "id": "3fb6f6ee21fd3b4bc91e906e547a1f488aa45dbfa3ebfe6c75e9a353174419cf",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasBuildQueueTelemetryUnavailable"
             }
           ]
         },

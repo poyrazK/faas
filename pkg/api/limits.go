@@ -8893,6 +8893,12 @@ const (
 	ObsAlertComponentMaxBytes                        = 64
 	ObsAlertRunbookMaxBytes                          = 2048
 
+	// Queue telemetry uses one sequential store read, independent of scrapes.
+	// Keep the freshness bound aligned with the Prometheus queue alert rules.
+	ObsBuildQueueCollectionInterval = 30 * time.Second
+	ObsBuildQueueCollectionBudget   = 3 * time.Second
+	ObsBuildQueueFreshnessMaxAge    = 2 * time.Minute
+
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100

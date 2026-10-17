@@ -1773,6 +1773,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
 	}
 	go srv.runStatusEvaluator(ctx)
+	buildQueueMetrics := operatorobs.NewBuildQueueMetrics(srv.ops.Registry())
+	queueMetricsCtx, stopQueueMetrics := context.WithCancel(ctx)
+	defer stopQueueMetrics()
+	go buildQueueMetrics.Run(queueMetricsCtx, srv.store, log)
 	alertMetrics := operatorobs.NewMaintenanceMetrics(srv.ops.Registry())
 	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log, alertMetrics)
 	go operatorobs.RunAlertRetention(ctx, srv.store, log, alertMetrics)

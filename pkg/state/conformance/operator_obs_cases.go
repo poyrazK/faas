@@ -11,6 +11,42 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func testOperatorQueuedBuildsCount(t *testing.T, fx *Fixture) {
+	count := func(want int) {
+		t.Helper()
+		got, err := fx.Store.QueuedBuildsCount(fx.Ctx)
+		if err != nil || got != want {
+			t.Fatalf("queued builds = %d, %v; want %d", got, err, want)
+		}
+	}
+	count(0)
+	first, second := seedQueuedBuild(t, fx), seedQueuedBuild(t, fx)
+	count(2)
+	for _, status := range []state.BuildStatus{state.BuildRunning, state.BuildSucceeded, state.BuildFailed, state.BuildCancelled} {
+		build := seedQueuedBuild(t, fx)
+		count(3)
+		if _, err := fx.Store.ClaimQueuedBuild(fx.Ctx, build.ID); err != nil {
+			t.Fatal(err)
+		}
+		if status != state.BuildRunning {
+			if err := fx.Store.UpdateBuildStatus(fx.Ctx, build.ID, status, "", false, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		count(2)
+	}
+	if _, err := fx.Store.ClaimQueuedBuild(fx.Ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	count(1)
+	if err := fx.Store.UpdateBuildStatus(fx.Ctx, second.ID, state.BuildCancelled, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	count(0)
+	seedQueuedBuild(t, fx)
+	count(1)
+}
+
 func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	now := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Second)
 	rule, series := strings.Repeat("a", 64), strings.Repeat("b", 64)

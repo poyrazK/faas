@@ -3512,33 +3512,47 @@ groups:
           description: "The nightly cve-check workflow (issue #601 / ADR-131) reported a new CVE ≥ medium severity within the last hour. The metric is meterd_cve_check_total{result=\"new_cve\"}; the GitHub Issue created by the workflow lists the CVE id, severity, and affected dependency. Triage: read the GitHub Issue for the CVE id + dep, check deps.dev / nvd.nist.gov for the affected versions + fixed-in version, decide patch vs. accept-risk posture, ship the patch (or the grype ignore). Recover per docs/ops/FaasNewCve.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNewCve.md"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Operator-side observability mega-PR — Commit 7 (P5) —
-      # FaasBuildQueueDepthHigh. Pages when the operator dashboard
-      # `faas_build_queue_depth` gauge (fleet-total queued builds,
-      # bumped every 30s by the apid metrics collector) sustains
-      # > 50 queued for 10m. The threshold deliberately errs loose:
-      # builderd's safe production concurrency budget is one microVM under
-      # the 5 GiB parent cgroup, so a sustained
-      # queue > 50 means the cluster's build throughput is
-      # insufficient for the wake rate. Triage: `gregalectl builds
-      # list --status=queued` for the in-flight builds, the
-      # `/v1/admin/obs/builder-heartbeats` endpoint for live
-      # builderd liveness, then the recovery primitives in the
-      # runbook (drain + scale the affected schedd, or recover
-      # the wedged builderd). Recover per
-      # docs/ops/build-queue-stuck.md.
-      # ─────────────────────────────────────────────────────────────────
+      # Each apid independently polls the fleet queue every 30s. Require a
+      # successful scrape and a successful, nonzero, nonfuture read <=120s
+      # old. Missing/failed/expired reads are unavailable, never empty.
+      # Do not sum observations from multiple apids: each counts the fleet.
+      - record: faas_build_queue_observation_healthy
+        expr: |
+          (apid_build_queue_collection_success{job="apid"} == 1)
+          and on (job, instance) (up{job="apid"} == 1)
+          and on (job, instance) (faas_build_queue_depth{job="apid"} >= 0)
+          and on (job, instance) (apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} > 0)
+          and on (job, instance) (time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} >= 0)
+          and on (job, instance) (time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} <= 120)
+
       - alert: FaasBuildQueueDepthHigh
-        expr: faas_build_queue_depth > 50
+        expr: |
+          (faas_build_queue_depth{job="apid"} > 50)
+          and on (job, instance) (faas_build_queue_observation_healthy == 1)
         for: 10m
         labels:
           severity: warn
           component: builderd
           family: build_queue_stuck
+          public_status: internal
         annotations:
           summary: "builderd build queue > 50 queued builds for 10m"
           description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      - alert: FaasBuildQueueTelemetryUnavailable
+        expr: |
+          (up{job="apid"} == 1)
+          unless on (job, instance) (faas_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: build_queue_stuck
+          public_status: internal
+        annotations:
+          summary: "Build queue observation unavailable"
+          description: "A scraped apid has no successful, complete build queue observation at most 120 seconds old for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's successful fleet snapshot cannot establish this collector's health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       # Issue #2418: builder VM exports are node-local, transient handoffs.

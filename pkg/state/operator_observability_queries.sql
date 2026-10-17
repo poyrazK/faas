@@ -1,3 +1,6 @@
+-- name: OperatorQueuedBuildsCount :one
+SELECT count(*)::bigint FROM builds WHERE status = 'queued';
+
 -- name: OperatorOverviewTotals :one
 WITH accounts_summary AS (
     SELECT count(*) FILTER (WHERE status = 'active')::bigint AS accounts_active,

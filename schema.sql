@@ -41974,6 +41974,13 @@ CREATE INDEX builds_deployment_status_cancelled_idx ON public.builds USING btree
 
 
 --
+-- Name: builds_queued_count_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builds_queued_count_idx ON public.builds USING btree (id) WHERE (status = 'queued'::text);
+
+
+--
 -- Name: builds_running_started_idx; Type: INDEX; Schema: public; Owner: -
 --
 

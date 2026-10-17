@@ -1512,6 +1512,17 @@ func (q *Queries) OperatorOverviewTotals(ctx context.Context, db DBTX, arg Opera
 	return i, err
 }
 
+const operatorQueuedBuildsCount = `-- name: OperatorQueuedBuildsCount :one
+SELECT count(*)::bigint FROM builds WHERE status = 'queued'
+`
+
+func (q *Queries) OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, operatorQueuedBuildsCount)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const operatorRecentFailureCounts = `-- name: OperatorRecentFailureCounts :many
 SELECT kind, count(*)::bigint AS hits
 FROM events
