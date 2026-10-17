@@ -82,7 +82,7 @@ Check that the package has been published before using this channel:
 npm view gregale dist-tags --json
 ```
 
-The release workflow now fails if `NPM_TOKEN` is missing and verifies that the
+The release workflow authenticates through GitHub OIDC trusted publishing and verifies that the
 published package installs from the public registry. It waits for all four
 platform manifests and tarballs before publishing the launcher, including on
 retries, and rejects missing provenance or mismatched platform/dependency pins.
@@ -187,10 +187,12 @@ One-time steps behind these channels, for whoever owns the release:
    `gatewayd-public` through the `gregale.dev` wildcard and answers with
    `no app is routed to "get.gregale.dev"`; the working URL meanwhile is
    `https://raw.githubusercontent.com/poyrazK/faas/main/scripts/install.sh`.
-2. **npm** needs an org named `gregale` and a publishing credential in the
-   `NPM_TOKEN` repository secret. Without the secret the `publish-npm` job
-   still stages and validates all five packages, then fails its credential
-   precondition. A successful upload does not establish public availability:
+2. **npm** needs an org named `gregale` and trusted publishers configured on
+   all five packages as described below. The jobs use npm 11.21.0 on
+   GitHub-hosted Node 22 runners with `id-token: write`. They provide no
+   `NODE_AUTH_TOKEN` and do not fall back to the bootstrap secret. Missing
+   trust configuration or missing permissions fails publication. A successful
+   upload does not establish public availability:
    npm can retain a holding placeholder while processing the real version.
    The job waits up to ten minutes per publication phase, then fails with
    the missing package names. Inspect the npm owner dashboard before retrying
@@ -207,3 +209,41 @@ tags, withdraws this release's root `rc` while binaries are unavailable, and
 restores `rc` after all five versions and their tarballs are public. It refuses
 to replace a different release's channel tag and runs the same anonymous
 installation/checksum test. It does not rerun daemon builds or deployment.
+
+### npm trusted publisher setup
+
+In npm's Settings → Trusted publishing for each package below, add two GitHub
+Actions publishers. Enter owner `poyrazK` and repository `faas` exactly,
+leave Environment name empty, and use only the workflow filename, including
+`.yml`. The account owner must complete any interactive 2FA setup or challenge
+requested by npm.
+
+| Packages (apply both configurations to each) |
+| --- |
+| `gregale` |
+| `@gregale/cli-darwin-amd64` |
+| `@gregale/cli-darwin-arm64` |
+| `@gregale/cli-linux-amd64` |
+| `@gregale/cli-linux-arm64` |
+
+| Workflow filename | Allow npm publish | Allow npm dist-tag |
+| --- | --- | --- |
+| `release.yml` | yes | yes |
+| `npm-channel-repair.yml` | no | yes |
+
+npm also grants `npm stage publish` to every trusted publisher. The repair
+workflow never invokes it or uploads a new version. Neither publisher grants
+organization or account administration, or access to other npm packages.
+
+Dist-tag support requires npm ≥ 11.21.0 (or ≥ 12.2.0) and is an independent
+opt-in permission. A token with Bypass 2FA can publish and update a tag, but npm
+rejects tag deletion with HTTP 403; the 90-day bootstrap token therefore cannot
+repair initial prerelease `latest` tags. See
+[npm's trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
+Keep existing bootstrap credentials unchanged until OIDC has been verified;
+this workflow migration does not revoke or shorten them.
+
+After saving all ten configurations, dispatch `npm-channel-repair.yml` against
+the intended release. Confirm tag deletion, all four exact public platform
+versions, and the anonymous install/hash check. `npm whoami` does not verify
+OIDC publishing or dist-tag access.

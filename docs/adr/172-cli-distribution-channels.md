@@ -61,13 +61,16 @@ nixpkgs, and the distro archives.
   installer exits 1 with a named reason, and npm refuses to install via the
   root package's `os` field. Cutting that import is a prerequisite for a
   Windows channel (and for Scoop/WinGet later).
-- The npm job needs an `NPM_TOKEN` repository secret and access to publish
-  the `gregale` and `@gregale` packages. The original workflow skipped npm
-  publication when the secret was absent. As of 2026-09-27, the release job
-  fails when the secret is absent and verifies that the published CLI installs
-  from the public registry. A documented install channel cannot silently
-  miss a release. Until the first successful publication, the installation
-  guide directs users to the curl installer.
+- The npm jobs use GitHub OIDC trusted publishing with npm 11.21.0 and
+  `id-token: write`. Each of the five packages authorizes `poyrazK/faas`
+  `release.yml` for direct publishing and dist-tags, and
+  `npm-channel-repair.yml` for dist-tags (without direct publishing).
+  Authentication or registry failures fail the job; the channel never silently
+  skips a release. The original token-based bootstrap accepted uploads, but
+  npm rejected dist-tag deletion by a token with Bypass 2FA enabled. Keeping
+  prereleases out of `latest` therefore requires the trusted publisher's
+  separate dist-tag permission. Existing bootstrap secrets are not revoked or
+  changed by this migration. See `docs/cli-install.md` for maintainer setup.
 - `get.gregale.dev` is a proxied Cloudflare hostname with a redirect rule to
   the maintained `scripts/install.sh` on the default branch. The release
   pipeline also attaches that script to each immutable release.

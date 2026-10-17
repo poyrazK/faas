@@ -435,6 +435,9 @@ jobs:
     needs: [build]
     runs-on: ubuntu-22.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: gregale-npm-publish
       cancel-in-progress: false
@@ -444,7 +447,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+
+      # npm 11.21 adds OIDC authentication for dist-tag operations.
+      - name: Install the trusted-publishing npm client
+        run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org/
 
       - name: Download CLI archives
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -452,7 +458,7 @@ jobs:
           name: gregale-cli-archives-${{ github.sha }}
           path: ${{ runner.temp }}/archives
 
-      # Staging runs unconditionally, even with no NPM_TOKEN: a packaging
+      # Staging runs unconditionally, even with no trusted publisher: a packaging
       # regression should fail the release that introduced it rather than
       # lie dormant until credentials exist.
       - name: Stage npm packages
@@ -472,19 +478,15 @@ jobs:
         run: bash scripts/verify-npm-package-payloads.sh "$RUNNER_TEMP/npm/publish-order.txt"
 
       - name: Resolve publish preconditions
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           # A documented install channel must never silently miss a release.
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::error title=npm channel unavailable::Set NPM_TOKEN before tagging a release; staged packages were not published."
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error title=npm channel unavailable::GitHub OIDC is unavailable; configure id-token: write and npm trusted publishers for release.yml."
             exit 1
           fi
 
       - name: Publish platforms, verify public availability, then publish the launcher
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm"
 
       - name: Verify npm installation from the public registry
