@@ -253,6 +253,9 @@ func (s *activationSet) listener(network, address string) (net.Listener, bool, e
 		return nil, false, fmt.Errorf("wire: consume inherited %s: %w", sock, err)
 	}
 	s.share(l)
+	if sock.source == sourceHandoff {
+		return newReadyGate(l, handoffReady()), true, nil
+	}
 	return l, true, nil
 }
 

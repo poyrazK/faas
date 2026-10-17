@@ -29,3 +29,11 @@ func UseHandoffListenersForTest(fds []int) (restore func()) {
 	activation = inheritedSet(fds, nil, sourceHandoff, inspectInheritedFD)
 	return func() { activation = prev }
 }
+
+// UseHandoffReadyForTest substitutes the channel that releases a hand-off
+// successor's listeners.
+func UseHandoffReadyForTest(ready <-chan struct{}) (restore func()) {
+	prev := handoffReady
+	handoffReady = func() <-chan struct{} { return ready }
+	return func() { handoffReady = prev }
+}

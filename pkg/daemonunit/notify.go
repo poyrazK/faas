@@ -78,10 +78,11 @@ func runWatchdog(ctx context.Context, every time.Duration, healthy func() bool, 
 }
 
 // Notify sends one sd_notify state datagram to systemd. Abstract namespace
-// sockets use the systemd convention of a leading '@' in NOTIFY_SOCKET.
+// sockets use the systemd convention of a leading '@' in NOTIFY_SOCKET. After
+// MarkHandedOff it sends nothing.
 func Notify(state string) error {
 	socket := os.Getenv("NOTIFY_SOCKET")
-	if socket == "" {
+	if socket == "" || handedOff.Load() {
 		return nil
 	}
 	name := socket

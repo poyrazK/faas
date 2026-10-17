@@ -144,6 +144,7 @@ func Handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 			return 0, fmt.Errorf("wire: systemd did not adopt successor %d: %w", pid, err)
 		}
 	}
+	daemonunit.MarkHandedOff()
 	opts.Log.Info("hand-off: successor is the main process; draining this generation", "pid", pid)
 	return pid, nil
 }

@@ -766,7 +766,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// gated on the FAAS_DNS_PROVIDER and FAAS_STANDBY_WARMUP_ENABLED
 	// knobs and both return nil on ctx cancellation. The DNSHandoff
 	// is skipped when no store is wired (the dev single-box path).
-	if err := startHAComponents(ctx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
+	// The DNS hand-off subscriber and standby warm-up speak for this node's
+	// edge; a two-generation hand-off ends them here and the successor runs
+	// them (ADR-1580).
+	handoffCtx, endHandoffWork := context.WithCancel(ctx)
+	defer endHandoffWork()
+	if err := startHAComponents(handoffCtx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
 		return err
 	}
 	notifyStop := wire.NotifyReadyWhen(ctx, probe.ReadyFunc())
@@ -774,7 +779,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork); err != nil {
 		return err
 	}
 	return nil
@@ -943,7 +948,7 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 // plane's private address (ADR-1343 §2): compute-node edges forward
 // credential-bound requests there. It shares publicSrv, so Shutdown closes and
 // drains it with the public listener.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error) error {
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func()) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -1030,6 +1035,9 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 			// The successor serves new connections; finish what this
 			// generation holds, including requests and streams that outlive
 			// a restart's grace (ADR-1580).
+			if endHandoffWork != nil {
+				endHandoffWork()
+			}
 			return drainOldGeneration(forceCtx, drainCtx, log, publicSrv, publicDrain, controlSrv, drainTracker, gMetrics, tcpDrain)
 		}
 		break
@@ -1075,6 +1083,13 @@ func drainOldGeneration(forceCtx, stopping context.Context, log *slog.Logger, pu
 		case <-ctx.Done():
 		}
 	}()
+	// The successor answers probes and /metrics from now on; scrapes split
+	// across two generations would make every counter jump.
+	controlCtx, controlCancel := context.WithTimeout(ctx, 5*time.Second)
+	if err := controlSrv.Shutdown(controlCtx); err != nil {
+		log.Warn("gatewayd-public: old generation control Shutdown", "err", err)
+	}
+	controlCancel()
 	return shutdownGatewayServers(ctx, log, publicSrv, publicDrain, controlSrv, drainTracker, gMetrics, maxDrain, tcpDrain, endStreams)
 }
 
@@ -1113,16 +1128,26 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv *ht
 	if publicDrain != nil {
 		stopPublic = func(ctx context.Context) error { return publicDrain.Shutdown(ctx, publicSrv) }
 	}
+	// Every listener stops at once: raw TCP and UDP ingress must not keep
+	// accepting while the HTTP drain waits for its slowest request, which
+	// after a hand-off can be many minutes.
+	var tcpErr error
+	tcpDone := make(chan struct{})
+	go func() {
+		defer close(tcpDone)
+		if tcpDrain != nil {
+			tcpErr = tcpDrain(shutdownCtx)
+		}
+	}()
 	if err := stopPublic(shutdownCtx); err != nil {
 		log.Warn("gatewayd-public: public Shutdown", "err", err)
 		shutdownErr = fmt.Errorf("gatewayd-public: public shutdown: %w", err)
 	}
-	if tcpDrain != nil {
-		if err := tcpDrain(shutdownCtx); err != nil {
-			log.Warn("gatewayd-public: TCP drain", "err", err)
-			if shutdownErr == nil {
-				shutdownErr = fmt.Errorf("gatewayd-public: TCP drain: %w", err)
-			}
+	<-tcpDone
+	if tcpErr != nil {
+		log.Warn("gatewayd-public: TCP drain", "err", tcpErr)
+		if shutdownErr == nil {
+			shutdownErr = fmt.Errorf("gatewayd-public: TCP drain: %w", tcpErr)
 		}
 	}
 	if err := controlSrv.Shutdown(shutdownCtx); err != nil {
