@@ -227,7 +227,12 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys} {
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys,
+		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
+		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
+		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
+		"teamInvitationMinSeconds": api.ProductControlTeamInvitationMinSeconds, "teamInvitationMaxSeconds": api.ProductControlTeamInvitationMaxSeconds,
+		"teamHistoryPageSize": api.ProductControlTeamHistoryPageSize, "teamCursorBytes": api.ProductControlOwnerCursorMaxBytes} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}

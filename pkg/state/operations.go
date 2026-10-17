@@ -30,6 +30,7 @@ type OperationDefinition struct {
 // Operation is the internal durable projection. Customer responses omit owner,
 // execution authority and source input; callers use the scoped read boundary.
 type Operation struct {
+	ProductControl *api.ProductOperationReceipt `json:"product_control,omitempty"`
 	api.OperationResponse
 	AccountID                 string                                      `json:"account_id"`
 	AppID                     string                                      `json:"app_id"`
@@ -83,14 +84,20 @@ func operationRecordJSON(op Operation) ([]byte, error) {
 }
 
 type OperationAdmission struct {
-	AccountID        string
-	DefinitionID     string
-	PlatformTenantID string
-	IdempotencyKey   string
-	ReleaseID        string
-	Input            json.RawMessage
-	ExpectedScope    *api.OperationSubmissionScope
-	ExpectedIdentity *api.OperationTenantIdentity
+	ProductAuthOrganizationID string
+	ProductAuthApp            string
+	ExpectedProductQuote      string
+	RequireProductQuote       bool
+	ProductFeature            string
+	ProductControlEnabled     bool
+	AccountID                 string
+	DefinitionID              string
+	PlatformTenantID          string
+	IdempotencyKey            string
+	ReleaseID                 string
+	Input                     json.RawMessage
+	ExpectedScope             *api.OperationSubmissionScope
+	ExpectedIdentity          *api.OperationTenantIdentity
 }
 
 type operationIdentityReceipt struct {
@@ -145,6 +152,9 @@ func prepareOperationAdmission(def OperationDefinition, admission OperationAdmis
 		return Operation{}, Invocation{}, "", "", err
 	}
 	key := operations.IdentityScope(def.AccountID, def.AppID, def.Scope, admission.PlatformTenantID, def.Spec.Name, admission.IdempotencyKey)
+	if admission.ProductFeature != "" {
+		key = productOperationKey(def.AccountID, def.AppID, admission.PlatformTenantID, admission.ProductFeature, admission.IdempotencyKey)
+	}
 	operationID, invocationID := newOperationID(), newOperationID()
 	headers := map[string]string{"Content-Type": "application/json"}
 	if def.Spec.TransactionReceipt == api.OperationTransactionPostgres {

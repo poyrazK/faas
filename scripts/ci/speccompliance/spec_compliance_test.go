@@ -95,15 +95,112 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
-	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                   true, // session + CSRF adapter for automatic profiling policy
-	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
-	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"GET /v1/product-control/email/unsubscribe":                              true,
+	"POST /v1/product-control/email/unsubscribe":                             true,
+	"GET /v1/product-control/email-unsubscribe.js":                           true,
+	"GET /v1/apps/{slug}/product/email-opt-outs":                             true,
+	"GET /v1/product-control/customer/{slug}/email-opt-outs":                 true,
+	"POST /v1/product-control/email/resend-events":                           true,
+	"GET /v1/apps/{slug}/product/email-deliveries":                           true,
+	"POST /v1/apps/{slug}/product/email-deliveries/{delivery}/retry":         true,
+	"GET /v1/apps/{slug}/product/billing/documents":                          true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":       true,
+	"GET /v1/apps/{slug}/product/billing/receipts":                           true,
+	"POST /v1/apps/{slug}/product/onboarding/workspaces":                     true,
+	"POST /v1/apps/{slug}/product/onboarding/preview":                        true,
+	"POST /v1/apps/{slug}/product/onboarding/confirm":                        true,
+	"GET /v1/apps/{slug}/product/onboarding/{onboarding}":                    true,
+	"GET /v1/apps/{slug}/product/team-policy":                                true,
+	"POST /v1/apps/{slug}/product/team-policy/preview":                       true,
+	"PUT /v1/apps/{slug}/product/team-policy":                                true,
+	"GET /v1/product-control/portal-guidance.js":                             true,
+	"GET /v1/product-control/portal-email.js":                                true,
+	"GET /v1/product-control/customer/{slug}/email-preferences":              true,
+	"PUT /v1/product-control/customer/{slug}/email-preferences":              true,
+	"GET /v1/apps/{slug}/product/email-recoveries":                           true,
+	"POST /v1/product-control/customer/{slug}/email-recovery":                true,
+	"GET /v1/product-control/customer/{slug}/email-recoveries":               true,
+	"GET /v1/product-control/customer/{slug}/email-deliveries":               true,
+	"GET /v1/product-control/portal-activity.js":                             true,
+	"GET /v1/product-control/portal-history.js":                              true,
+	"GET /v1/product-control/customer/{slug}/work-history":                   true,
+	"GET /v1/product-control/portal-run.js":                                  true,
+	"GET /v1/product-control/customer/{slug}/operations/{operation}/details": true,
+	"GET /v1/product-control/customer/{slug}/activity":                       true,
+	"GET /v1/product-control/portal-notifications.js":                        true,
+	"GET /v1/product-control/customer/{slug}/notifications":                  true,
+	"POST /v1/product-control/customer/{slug}/notifications/read":            true,
+	"GET /v1/product-control/portal-help.js":                                 true,
+	"POST /v1/product-control/customer/{slug}/help":                          true,
+	"GET /v1/product-control/customer/{slug}/help":                           true,
+	"GET /v1/product-control/customer/{slug}/help/{request}":                 true,
+	"GET /v1/apps/{slug}/product/help":                                       true,
+	"GET /v1/apps/{slug}/product/help/{request}":                             true,
+	"PUT /v1/apps/{slug}/product/help/{request}":                             true,
+	"GET /v1/product-control/portal-team.js":                                 true,
+	"GET /v1/product-control/customer/{slug}/team":                           true,
+	"POST /v1/product-control/customer/{slug}/team/preview":                  true,
+	"POST /v1/product-control/customer/{slug}/team/confirm":                  true,
+	"GET /v1/product-control/customer/{slug}/team/actions":                   true,
+	"GET /v1/product-control/customer/{slug}/team/actions/{change}":          true,
+	"GET /v1/product-control/portal-plans.js":                                true,
+	"GET /v1/apps/{slug}/product/plan-policy":                                true,
+	"POST /v1/apps/{slug}/product/plan-policy/preview":                       true,
+	"PUT /v1/apps/{slug}/product/plan-policy":                                true,
+	"GET /v1/product-control/customer/{slug}/plans":                          true,
+	"POST /v1/product-control/customer/{slug}/plans/preview":                 true,
+	"POST /v1/product-control/customer/{slug}/plans/confirm":                 true,
+	"GET /v1/product-control/customer/{slug}/plans/changes":                  true,
+	"GET /v1/product-control/customer/{slug}/plans/changes/{change}":         true,
+	"GET /v1/apps/{slug}/product/access":                                     true,
+	"POST /v1/apps/{slug}/product/access/preview":                            true,
+	"PUT /v1/apps/{slug}/product/access":                                     true,
+	"GET /v1/apps/{slug}/product/doctor":                                     true,
+	"GET /v1/apps/{slug}/product/billing/review":                             true,
+	"GET /v1/platform-tenant-self/product/billing":                           true,
+	"GET /v1/product-control/customer/{slug}/billing":                        true,
+	"POST /v1/apps/{slug}/product/billing/credits":                           true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
+	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
+	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
+	// ADR-1331: internal Product Control pilot; absent from the public SDK contract.
+	"POST /v1/platform-tenant-self/product/start":                                  true,
+	"GET /v1/apps/{slug}/product":                                                  true,
+	"PUT /v1/apps/{slug}/product":                                                  true,
+	"GET /v1/apps/{slug}/product/customers":                                        true,
+	"GET /v1/apps/{slug}/product/customers/activity":                               true,
+	"GET /v1/apps/{slug}/product/customers/overview":                               true,
+	"PUT /v1/apps/{slug}/product/customers/{tenant}":                               true,
+	"GET /v1/apps/{slug}/product/usage":                                            true,
+	"GET /v1/apps/{slug}/product/operations/{operation}/explain":                   true,
+	"GET /v1/platform-tenant-self/product":                                         true,
+	"GET /v1/product-control/portal":                                               true,
+	"GET /v1/product-control/portal.js":                                            true,
+	"GET /v1/product-control/portal.css":                                           true,
+	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
+	"POST /v1/product-control/customer/{slug}/session":                             true,
+	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
+	"POST /v1/product-control/customer/{slug}/session/refresh":                     true,
+	"DELETE /v1/product-control/customer/{slug}/session":                           true,
+	"GET /v1/product-control/customer/{slug}/workspaces":                           true,
+	"GET /v1/product-control/customer/{slug}/guidance":                             true,
+	"GET /v1/product-control/customer/{slug}/product":                              true,
+	"POST /v1/product-control/customer/{slug}/start":                               true,
+	"POST /v1/product-control/customer/{slug}/submissions/lookup":                  true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}":                      true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}/events":               true,
+	"POST /v1/product-control/customer/{slug}/operations/{id}/cancel":              true,
+	"GET /v1/product-control/customer/{slug}/operations/{id}/artifacts/{artifact}": true,
+	"GET /v1/product-control/portal-core.js":                                       true,
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                    true, // session + CSRF adapter for the public split-rule creation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":          true, // session + CSRF adapter for the public split-rule update API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":     true, // session + CSRF adapter for the public split-rule undo API
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                       true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":               true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":                          true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                        true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                       true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":                           true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol

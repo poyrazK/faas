@@ -55,8 +55,13 @@ and your runtime and read-only bindings cannot read `auth`. Creation fails if
 your database already has an `auth` schema owned by another role.
 
 GoTrue migrations run in the deployment's release task. The image checks every
-pinned upstream migration byte for byte and replaces one migration whose grants
-assumed a role named `postgres`.
+pinned upstream migration byte for byte. The release runner verifies the raw
+files again, applies the overlay for a migration whose grants assumed a role
+named `postgres`, and records progress in `auth.schema_migrations`. Each file and
+its version record commit together; retries skip recorded versions. GoTrue's
+stock migration command uses embedded SQL and cannot apply this overlay, so the
+release runner applies the verified files directly. Serving uses `auth serve`
+and performs no migration.
 
 ## Change settings
 

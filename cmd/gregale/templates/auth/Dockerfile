@@ -11,15 +11,13 @@ COPY --from=gotrue /usr/local/etc/auth/migrations /app/gotrue-migrations
 COPY migrations.sha256 /app/migrations.sha256
 COPY overlay/ /app/overlay/
 # Every upstream migration must match the pinned release byte for byte,
-# including the one file the overlay replaces, before the overlay applies.
+# including the one file the release runner overlays, before it can run.
 RUN cd /app/gotrue-migrations \
  && sha256sum --check --strict --quiet /app/migrations.sha256 \
- && test "$(ls | wc -l)" -eq "$(wc -l < /app/migrations.sha256)" \
- && cp /app/overlay/*.sql /app/gotrue-migrations/ \
- && rm -r /app/overlay /app/migrations.sha256
+ && test "$(ls | wc -l)" -eq "$(wc -l < /app/migrations.sha256)"
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY config.mjs server.mjs authz.mjs admin.mjs email.mjs logs.mjs realtime.mjs storage.mjs workflows.mjs migrate.mjs ./
+COPY config.mjs server.mjs authz.mjs product-email.mjs team.mjs admin.mjs email.mjs logs.mjs realtime.mjs storage.mjs workflows.mjs upstream-migrate.mjs migrate.mjs ./
 COPY sql/ ./sql/
 COPY ui/ ./ui/
 EXPOSE 8080

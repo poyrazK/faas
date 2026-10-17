@@ -1,10 +1,10 @@
-import { spawnSync } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
-import { gotrue, migrationEnv, runtimeConfig } from './config.mjs'
+import { migrationEnv, runtimeConfig } from './config.mjs'
+import { applyGoTrueMigrations } from './upstream-migrate.mjs'
 
-// Release task (ADR-1190): apply GoTrue's pinned migrations (with the Gregale
+// Release task (ADR-1190/1341): apply GoTrue's verified files (with the Gregale
 // overlay), then Gregale's gregale_auth migrations and the declarative
 // AUTH_AUTHZ roles and policies, all through the auth binding, which acts as
 // the auth schemas' owner. Serving instances never migrate, so snapshot
@@ -51,14 +51,13 @@ function fail(event, err) {
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
   const migrateEnv = migrationEnv(config)
-  const result = spawnSync(gotrue.binary, ['migrate'], { env: migrateEnv, stdio: 'inherit' })
-  if (result.error || result.status !== 0) fail('gotrue_migrate_failed', result.error)
   const client = new pg.Client({ connectionString: migrateEnv.DATABASE_URL })
   try {
     await client.connect()
+    await applyGoTrueMigrations(client)
     await applyGregaleMigrations(client, sqlDirectory, config.authz)
   } catch (err) {
-    fail('gregale_auth_migrate_failed', err)
+    fail('auth_migrate_failed', err)
   } finally {
     await client.end().catch(() => {})
   }

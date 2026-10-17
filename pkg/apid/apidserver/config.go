@@ -38,6 +38,7 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	ProductControlEnabled bool `toml:"product_control_enabled"`
 	// Empty preview policy path keeps admission closed. No boolean/env override.
 	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// Runtime trust remains available independently of new admission.

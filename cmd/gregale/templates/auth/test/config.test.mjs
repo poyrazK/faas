@@ -21,6 +21,13 @@ function env(overrides = {}) {
   }
 }
 
+test('Product Control team management requires its own explicit internal flag', () => {
+  for (const value of [undefined, '', 'true', '0']) assert.equal(runtimeConfig(env({ AUTH_PRODUCT_CONTROL_TEAM_ENABLED: value })).productControlTeamEnabled, false)
+  const config = runtimeConfig(env({ AUTH_PRODUCT_CONTROL_TEAM_ENABLED: '1' }))
+  assert.equal(config.productControlTeamEnabled, true)
+  assert.equal(config.gotrueEnv.AUTH_PRODUCT_CONTROL_TEAM_ENABLED, undefined)
+})
+
 test('builds the GoTrue environment from sealed settings', () => {
   const config = runtimeConfig(env({ AUTH_REDIRECT_URLS: 'https://shop.example.com/callback,http://localhost:3000/cb', AUTH_AUTOCONFIRM: '1' }))
   const g = config.gotrueEnv

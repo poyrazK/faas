@@ -140,6 +140,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	productData                                *productMemory
 	baseImageProducers                         map[string]BaseImageProducer
 	baseImageProducerCurrent                   map[string]string
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
