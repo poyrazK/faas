@@ -22,6 +22,12 @@ const [org] = await auth.organizations.list()
 const canWrite = await auth.authorize('write', resource(org.id, 'doc', 42))
 ```
 
+In a backend, verify tokens and check permissions with `@gregale/auth/server`
+(`createVerifier`, `verify`, `authorize`, `bearerToken`): it checks the ES256
+signature against the Auth app's keys, the issuer, the audience and the
+expiry, with the same rules as the Go and Python SDKs. See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 Sessions are stored in `localStorage` in browsers and in memory elsewhere; pass
 `store` to use your own, or `store: null` for memory only. Refresh tokens
 rotate, so the client refreshes one request at a time and signs out when the

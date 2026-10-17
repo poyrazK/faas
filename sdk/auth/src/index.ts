@@ -2,6 +2,7 @@
 // Sign-up, sign-in, passkeys, sessions with single-flight refresh, the hosted
 // pages, and the /authz/v1 organization and authorization API. No
 // dependencies.
+import { baseURL } from './url.js'
 
 export type Session = Readonly<{
   accessToken: string
@@ -70,13 +71,6 @@ function defaultStore(): SessionStore {
   return { get: () => storage.getItem(storageKey), set: v => storage.setItem(storageKey, v), remove: () => storage.removeItem(storageKey) }
 }
 
-function baseURL(value: string): string {
-  const url = new URL(value)
-  if (url.username || url.password || url.search || url.hash) throw new Error('Auth URL must not contain credentials, a query or a fragment')
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) throw new Error('Auth requires HTTPS')
-  return url.origin
-}
 
 type TokenResponse = { access_token: string; refresh_token: string; expires_in: number; expires_at?: number; user?: User }
 
