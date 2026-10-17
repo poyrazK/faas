@@ -162,3 +162,13 @@ and warns that unchanged importers are deferred to the mega tier. Changed-packag
 lint coverage and the existing vet-batch budget remain intact. All 36 selector
 and affected-package regressions pass, including real subprocess timeout,
 expired-budget, successful-output and error-propagation cases.
+
+The same run passed required shards 2 and 3, while shard 1 exhausted its
+20-minute allowance after cold race compilation and successful gateway, API,
+authorization, database and managed PostgreSQL tests. Its scheduler and related
+CLI tests had not finished. The PR shard allowance is now 30 minutes; main keeps
+40 minutes. Every test command, race setting and per-test timeout is retained.
+Changing the workflow intentionally selects full-module lint, so the lint job
+allows 60 minutes while retaining each package's existing lint timeout. A YAML
+semantic comparison verifies that only these job limits change executable
+workflow behavior. Fresh CI must qualify the resulting source before merge.
