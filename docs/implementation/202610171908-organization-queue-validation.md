@@ -92,3 +92,11 @@ contracts. Main's subsequent storage and release-compatibility changes are
 integrated from `5f10b1f27`. The ownership migrations now bound lock waits to five
 seconds and document their atomic-maintenance exceptions; production sizing
 and pause-duration qualification remain deployment prerequisites.
+
+The final integration also includes main's event SDK changes at `80ce06bad`;
+both SDK export sets are retained and the Node build passes. Migration apply,
+replay and the complete ownership down/up recovery regression pass after the
+compatibility updates. The protocol check matches all ten services, 296 messages,
+five enums and 156 guest JSON keys against this base. No ancestor `v*` release
+tag was available, so that comparison does not establish compatibility with an
+independently identified deployed release.
