@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python sustained acknowledgment recovery alerts](20261017144446-python-sustained-acknowledgment-recovery-alerts.md)
+
 - [Python acknowledgment recovery health](20261017143147-python-acknowledgment-recovery-health.md)
 
 - [Python durable retry and dead-letter intents](20261017142209-python-durable-negative-acknowledgments.md)

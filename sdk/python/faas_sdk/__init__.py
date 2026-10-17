@@ -682,3 +682,15 @@ __all__ += (
     "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
     "aget_event_acknowledgment_intent_health",
 )
+
+from .event_acknowledgment_intent_watch import (
+    EventAcknowledgmentIntentAlert,
+    EventAcknowledgmentIntentWatchCallbackError,
+    EventAcknowledgmentIntentWatchOptions,
+    awatch_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
+    "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
+)

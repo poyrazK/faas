@@ -1,7 +1,7 @@
 # Acknowledgment intent recovery health
 
 The Go, Node and Python SDKs inspect the application-owned acknowledgment intent
-store. Go and Node also watch for sustained recovery backlog. Install the schema
+store and watch for sustained recovery backlog. Install the schema
 and configure recovery with [Go intents](event-acknowledgment-intents.md),
 [Node intents](event-acknowledgment-node-intents.md) or
 [Python intents](event-acknowledgment-python-intents.md) first.
@@ -146,7 +146,8 @@ the connection. The helper installs no schema or polling loop.
 Always retain coverage/completeness alongside the values. A truncated or invalid
 sample cannot establish health, even if `stalled` is zero. This summary concerns
 retained local callback recovery, not business success or platform completion.
-Python polling and alert policy remain application-owned. See the
+For sustained conditions use the [Python watch](#python-watch); its startup,
+configuration and notification delivery remain application-owned. See the
 [Python observation example](../examples/event-acknowledgment-python/README.md#observe-recovery-health).
 
 ## Reading the summary
@@ -200,7 +201,7 @@ reset confirmation. They produce `unknown`, or `confirmation_lost` for a firing
 condition, never `resolved`. Fresh evidence must establish a condition again.
 Repeated unchanged unknown reasons are suppressed.
 
-Go notifications are synchronous local callbacks; Node callbacks are awaited
+Go notifications are synchronous local callbacks; Node and Python callbacks are awaited
 sequentially. Slow callbacks delay polling and can invalidate continuity. The
 caller owns cancellation and application lifetime; cancellation returns the
 context error or abort reason without resolving alerts. Alert state is
@@ -309,6 +310,108 @@ and downstream deduplication when needed. See the
 Local validation is build, generation and static checks; database timing,
 cancellation and notification behavior require hosted acceptance before release.
 
-For stable incident identity and replayable pending notifications across restarts,
-use the separate opt-in [checkpointed Node watch](event-acknowledgment-node-checkpoints.md).
-The ordinary watch above retains its in-memory behavior.
+## Python watch
+
+```python
+from dataclasses import asdict
+from faas_sdk import (
+    EventAcknowledgmentIntentWatchOptions,
+    awatch_event_acknowledgment_intent_health,
+)
+
+def connection_scope():
+    # Configure the pool to return idle autocommit async connections.
+    return application_pool.connection(timeout=3)
+
+async def notify(alert, cancel):
+    cancel.check()
+    await record_recovery_alert_locally(asdict(alert))
+    cancel.check()
+
+await awatch_event_acknowledgment_intent_health(
+    connection_scope, account_id, app_id,
+    EventAcknowledgmentIntentWatchOptions(
+        due_threshold=100, stalled_threshold=1, sustain_ms=30000,
+    ),
+    notify, stop_event=shutdown,
+)
+```
+
+The first argument is a **zero-argument synchronous factory returning an async
+context manager**, such as `lambda: application_pool.connection(timeout=3)`.
+It must supply a newly leased, exclusive idle autocommit psycopg async connection
+per read and safely return/discard it when the scope exits. Do not pass one live
+connection or an already-entered scope. The health helper closes failed driver
+connections; the adapter must discard them and permit later acquisitions. This
+allows polling to continue after a failed read. No platform client is required.
+
+The immutable options use snake_case and the same bounds as Node:
+
+| Option | Range and default |
+| --- | --- |
+| `health` | `EventAcknowledgmentIntentHealthOptions`; `None` selects summary defaults. |
+| `due_threshold`, `stalled_threshold` | Native integer counts 0..scan_limit; default 0 disables. Enable at least one. |
+| `poll_interval_ms` | Whole milliseconds 100..60000; default 5000 after completed reads/callbacks. |
+| `query_timeout_ms` | Whole milliseconds 10..30000; default 5000, including acquisition, query and cleanup. |
+| `max_age_ms` | max(2*poll_interval_ms, query_timeout_ms)..300000; `None` defaults to max(3*poll_interval_ms, 2*query_timeout_ms). |
+| `sustain_ms` | poll_interval_ms..86400000; `None` defaults to max(30000, poll_interval_ms), for firing and resolution. |
+
+Options, nested health settings and normalized owner scope are copied before the
+first await. Booleans/floats are rejected where integer settings are required.
+Threshold equality breaches. A watch has at most two conditions and starts with
+one immediate read when awaited. It installs no timer, host or loop on import.
+
+The query deadline sets cooperative cancellation and also checks actual monotonic
+elapsed time after all cleanup, including when the timer callback was delayed.
+It never force-cancels acquisition, SQL or connection cleanup. Overdue reads
+become `read_failed` only after they finish. The next read waits for scope exit;
+no active operation or leased connection is abandoned. Configure bounded pool,
+driver, statement and cleanup calls to bound unresponsive operations.
+
+Proof uses integer nanosecond wall/database instants and monotonic durations.
+Only complete, fresh, strictly advancing database observations can confirm a
+condition. Retain a fresh database high-water mark even for incomplete reads.
+Failed reads, invalid/truncated coverage, future/stale/repeated/regressing
+timestamps and excessive gaps reset confirmation with the same reason precedence
+as Go/Node. Firing and resolution each need at least two eligible observations
+spanning `sustain_ms`. A threshold reversal resets pending proof. Missing evidence
+produces `unknown` or `confirmation_lost`, and repeated unchanged unknown reasons
+are suppressed. Healthy reads after lost confirmation do not resolve an earlier
+incident; the application owns its incident reconciliation policy.
+
+Frozen `EventAcknowledgmentIntentAlert` values contain `account_id`, `app_id`,
+`metric`, `change`, `reason`, local completion time `at`, `value`, `threshold` and
+optional frozen `health`. Metrics/changes/reasons match the Node table above.
+`at` stays tied to that observation if notification is slow; `health.observed_at`
+is the database time. Read failures attach `health=None` and `value=0`, which is
+not evidence of zero backlog. Incomplete/stale snapshots may accompany unknown
+alerts but cannot confirm health. No raw storage error, capability, payload or
+invocation identity appears in an alert.
+
+`notify(alert, cancel)` may be synchronous or return an awaitable; notifications
+are awaited sequentially and never automatically retried. The read-only
+`EventAcknowledgmentWorkerCancellation` view supports `check()`, `is_set()` and
+`wait()`. Callback failure stops the watch with
+`EventAcknowledgmentIntentWatchCallbackError`, fixed code
+`event_acknowledgment_intent_watch_callback_failed`, and the failed `error.alert`.
+The raw callback exception/cause is omitted; notification outcome is unconfirmed.
+Use bounded cooperative callback work. Slow callbacks delay later notifications
+and can trigger `sample_gap` on the next observation.
+
+`stop_event` or native task cancellation signals owned work and waits for active
+acquisition/SQL/cleanup and notifications. Host cancellation takes precedence
+after a running callback finishes and raises `EventAcknowledgmentWorkerCancelled`
+(a `CancelledError`) without emitting a final resolution. Drain the watch before
+closing its pool/event loop. The watch returns no checkpoint and all alert state
+resets on restart. Notification persistence, transport, downstream deduplication
+and incident identity remain application-owned. See the
+[Python watch example](../examples/event-acknowledgment-python/README.md#watch-sustained-recovery-conditions).
+Local build/generation/static evidence does not replace hosted database timing,
+cancellation, connection-replacement and notification qualification before release.
+
+## Checkpointed Node watch
+
+Node applications can use the separate opt-in
+[checkpointed Node watch](event-acknowledgment-node-checkpoints.md) for stable
+incident identity and replayable pending notifications across restarts.
+The ordinary watches retain their in-memory behavior.

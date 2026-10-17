@@ -236,3 +236,45 @@ Native/event cancellation joins active SQL/cursor cleanup before returning. A
 driver/cursor failure closes the leased connection; discard it through the pool.
 Do not share monitoring connections with active processing or recovery. See the
 [Python summary contract](../../docs/event-acknowledgment-intent-health.md#python-summary).
+
+## Watch sustained recovery conditions
+
+Start the watch explicitly from an available monitoring host:
+
+```python
+from dataclasses import asdict
+from durable_consumer import watch_acknowledgment_recovery
+
+def connection_scope():
+    # A new exclusive idle autocommit lease per read, with bounded acquisition.
+    return monitoring_pool.connection(timeout=3)
+
+async def notify(alert, cancel):
+    cancel.check()
+    await record_recovery_alert_locally(asdict(alert))
+    cancel.check()
+
+await watch_acknowledgment_recovery(connection_scope, scope, shutdown, notify)
+```
+
+The example enables due backlog at 100 and stalled recovery at 1, with 30 seconds
+of sustained proof. It uses summary defaults, five-second sequential polling and
+a five-second cooperative read budget including acquisition/cleanup. Configure
+the pool to discard failed/closed connections and bound driver/statement/cleanup
+calls. The factory returns an async context manager, not a connection or coroutine.
+No next poll begins until the preceding scope and notifications finish.
+
+Notifications are local application callbacks, not a configured transport. They
+receive frozen metadata and a read-only cancellation view; persist/deduplicate
+them through the application's own protocol when needed. A callback error stops
+the watch with `EventAcknowledgmentIntentWatchCallbackError.alert` and no raw cause;
+the notification outcome is unconfirmed. Slow callbacks can cause lost continuity.
+
+Only fresh complete observations sustain firing or resolution. Failed/incomplete/
+stale/out-of-order/gapped evidence produces unknown/lost-confirmation alerts,
+never a false resolution. Repeated unchanged unknown reasons are suppressed.
+State resets on restart. Native/event cancellation joins active reads, cleanup
+and callbacks, then raises `EventAcknowledgmentWorkerCancelled` without resolving
+alerts. Drain the watch before closing the pool/loop. No schema installation,
+callback recovery, business work or monitoring loop starts on import. See the
+[Python watch protocol](../../docs/event-acknowledgment-intent-health.md#python-watch).

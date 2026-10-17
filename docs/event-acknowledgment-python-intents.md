@@ -201,6 +201,13 @@ coverage/completeness. It uses one database snapshot/clock and exposes no capabi
 or payload. Always export `complete`/`truncated` with its metrics. See the
 [Python recovery health contract](event-acknowledgment-intent-health.md#python-summary).
 
+`awatch_event_acknowledgment_intent_health(connection_factory, account_id, app_id,
+options, notify, stop_event=...)` adds sustained due/stalled alerts from fresh,
+complete observations. Each read leases a connection through an application-owned
+async scope factory. Reads/notifications run sequentially with cooperative cleanup;
+missing evidence never resolves a condition. See the
+[Python watch contract](event-acknowledgment-intent-health.md#python-watch).
+
 `alist_event_acknowledgment_intents(connection, account_id, app_id, invocation_id=None,
 limit=25, stop_event=None)` returns immutable metadata, at most 100 rows. It does
 not claim work or return raw results/tokens. Generations/counters are native

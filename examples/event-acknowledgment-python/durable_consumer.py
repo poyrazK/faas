@@ -11,10 +11,12 @@ from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from faas_sdk import (
     EventAcknowledgmentIntentError,
     EventAcknowledgmentIntentHealthOptions,
+    EventAcknowledgmentIntentWatchOptions,
     EventAcknowledgmentWorkerCancelled,
     EventAcknowledgmentWorkerResult,
     aget_event_acknowledgment_intent_health,
     arecover_next_event_acknowledgment_intent,
+    awatch_event_acknowledgment_intent_health,
 )
 
 
@@ -162,5 +164,26 @@ async def read_acknowledgment_recovery_health(
         scope["account_id"],
         scope["app_id"],
         EventAcknowledgmentIntentHealthOptions(scan_limit=1000, stall_after_ms=300000),
+        stop_event=stop_event,
+    )
+
+
+async def watch_acknowledgment_recovery(
+    connection_factory: Any, scope: Mapping[str, str], stop_event: Any, notify: Any
+) -> Any:
+    """Explicit monitoring-host lifetime. Factory/callback must provide bounded cooperative cleanup."""
+    return await awatch_event_acknowledgment_intent_health(
+        connection_factory,
+        scope["account_id"],
+        scope["app_id"],
+        EventAcknowledgmentIntentWatchOptions(
+            health=EventAcknowledgmentIntentHealthOptions(
+                scan_limit=1000, stall_after_ms=300000
+            ),
+            due_threshold=100,
+            stalled_threshold=1,
+            sustain_ms=30000,
+        ),
+        notify,
         stop_event=stop_event,
     )

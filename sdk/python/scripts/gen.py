@@ -228,6 +228,8 @@ WRAPPER_MODULES = (
     "event_acknowledgment_intents.py",
     "event_acknowledgment_intent_recovery.py",
     "event_acknowledgment_intent_health.py",
+    "event_acknowledgment_intent_watch.py",
+    "_event_acknowledgment_intent_watch_policy.py",
     "event_acknowledgment_intent_schema.sql",
     "_event_acknowledgment_protocol.py",
     "_event_acknowledgment_callbacks.py",
@@ -1416,6 +1418,18 @@ from .event_acknowledgment_intent_health import (
 __all__ += (
     "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
     "aget_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_watch import (
+    EventAcknowledgmentIntentAlert,
+    EventAcknowledgmentIntentWatchCallbackError,
+    EventAcknowledgmentIntentWatchOptions,
+    awatch_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
+    "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
 )
 '''
 

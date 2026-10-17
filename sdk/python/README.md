@@ -2757,3 +2757,12 @@ result includes due/leased/scheduled/stalled counts, expired claims, oldest ages
 and explicit completeness. Use an exclusively leased idle autocommit async
 connection, bounded driver calls, and always export `complete`/`truncated` alongside
 metrics. See [Python recovery health](../../docs/event-acknowledgment-intent-health.md#python-summary).
+
+`awatch_event_acknowledgment_intent_health(connection_factory, account_id, app_id,
+EventAcknowledgmentIntentWatchOptions(...), notify, stop_event=...)` watches
+sustained due/stalled backlog. The factory returns a fresh async connection scope
+per poll. Confirmation requires fresh complete evidence; failed reads or lost
+coverage produce unknown states. Callbacks are awaited serially, cancellation
+joins active work, and callback errors expose only the affected metadata alert.
+State is in memory and resets on restart. See the
+[Python watch](../../docs/event-acknowledgment-intent-health.md#python-watch).
