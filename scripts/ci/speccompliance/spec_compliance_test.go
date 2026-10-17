@@ -755,6 +755,9 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	"BillingRunExport":           true, // ADR-1301: enum shared by run and schedule DTOs, which carry it as a string field.
+	"BillingRunSources":          true, // ADR-1301: array enum shared by run and schedule DTOs, which carry it as []string.
+	"BillingProvider":            true, // ADR-1305: enum shared by connection and export DTOs, which carry it as a string field.
 	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
 	// in the pkg/api request/response DTOs. This scanner only indexes structs
 	// declared directly in pkg/api; request field parity still checks them.
@@ -1403,6 +1406,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
+		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1300, ADR-1305 statement invoice exports
+		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1301 month-end billing runs
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1304 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
+		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),

@@ -29,12 +29,18 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
+	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
+	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
+	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -240,6 +246,7 @@ var HostHMACKey = &hostHMACKey
 var HostIdentitiesForUnseal = &hostIdentitiesForUnseal
 var MfaIdentities = &mfaIdentities
 var MfaIdentity = &mfaIdentity
+var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
@@ -861,22 +868,28 @@ func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 func (r *server) ManagedPostgresCutovers() **managedpostgres.CutoverService {
 	return &r.managedPostgresCutovers
 }
-func (r *server) Notif() *Notifier                        { return &r.notif }
-func (r *server) Object() *object.Service                 { return &r.object }
-func (r *server) ObjectStorage() **objectstorage.Registry { return &r.objectStorage }
-func (r *server) Operation() *operation.Service           { return &r.operation }
-func (r *server) Ops() **wire.OpsMetrics                  { return &r.ops }
-func (r *server) OutboundProbeGatewayURL() *string        { return &r.outboundProbeGatewayURL }
-func (r *server) ProfileBackend() *profiling.Backend      { return &r.profileBackend }
-func (r *server) ProfileQuerySlots() *chan struct{}       { return &r.profileQuerySlots }
-func (r *server) PromqlClient() **promql.Client           { return &r.promqlClient }
-func (r *server) Realtime() *managedrealtime.Service      { return &r.realtime }
-func (r *server) ResendWebhookSecret() *string            { return &r.resendWebhookSecret }
-func (r *server) RuntimeConfig() **runtimeConfigManager   { return &r.runtimeConfig }
-func (r *server) Sessions() **session.Manager             { return &r.sessions }
-func (r *server) Store() *state.Store                     { return &r.store }
-func (r *server) StripeWebhookSecret() *string            { return &r.stripeWebhookSecret }
-func (r *server) WorkflowRuntimeEnabled() *bool           { return &r.workflowRuntimeEnabled }
+func (r *server) Notif() *Notifier                              { return &r.notif }
+func (r *server) Object() *object.Service                       { return &r.object }
+func (r *server) ObjectStorage() **objectstorage.Registry       { return &r.objectStorage }
+func (r *server) Operation() *operation.Service                 { return &r.operation }
+func (r *server) Ops() **wire.OpsMetrics                        { return &r.ops }
+func (r *server) OutboundProbeGatewayURL() *string              { return &r.outboundProbeGatewayURL }
+func (r *server) ProfileBackend() *profiling.Backend            { return &r.profileBackend }
+func (r *server) ProfileQuerySlots() *chan struct{}             { return &r.profileQuerySlots }
+func (r *server) PromqlClient() **promql.Client                 { return &r.promqlClient }
+func (r *server) Realtime() *managedrealtime.Service            { return &r.realtime }
+func (r *server) ResendWebhookSecret() *string                  { return &r.resendWebhookSecret }
+func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runtimeConfig }
+func (r *server) Sessions() **session.Manager                   { return &r.sessions }
+func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
+func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
+func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
+func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
+func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
+func (r *server) Store() *state.Store                           { return &r.store }
+func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
+func (r *server) WorkflowRuntimeEnabled() *bool                 { return &r.workflowRuntimeEnabled }
 func (r *server) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, error) {
 	return r.abandonProjectEnvironmentCloneConfigurationFence(p0, p1)
 }

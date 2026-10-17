@@ -26,6 +26,22 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   plan_id?: string;
   /**
+   * What the card prices (ADR-1308, ADR-1318): requests; compute_second or response_megabyte, rounded per consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side (ADR-1317); non-request cards take no route weights and cannot be backdated.
+   */
+  unit?: string;
+  /**
+   * Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts (ADR-1316).
+   */
+  base_fee_millicents_per_month?: number;
+  /**
+   * Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316).
+   */
+  minimum_millicents_per_month?: number;
+  /**
+   * How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers.
+   */
+  tier_mode?: 'graduated' | 'volume';
+  /**
    * UTC minute at which this version starts; omitted means the next UTC minute.
    */
   effective_from?: string | null;

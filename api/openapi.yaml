@@ -5122,6 +5122,115 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicStatusOverview' }
 
+  /v1/consumer-billing/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose consumer key authenticates the request.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerBillingSummary
+      summary: Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+      description: |
+        For an app's customers, not operators. Authenticate with a consumer
+        key that carries the billing scope. The amount is priced like the
+        next statement, but late usage can still change it.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The consumer's month to date.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingSummaryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: The key exceeded 60 billing requests per minute (`consumer_billing_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/usage:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose usage is read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerBillingUsage
+      summary: Read your own daily usage with your consumer key.
+      security:
+        - consumerKey: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339 start (default the start of the current UTC month).
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: RFC 3339 end, at most 31 days after since (default now).
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Requests and billable units per UTC day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingUsageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: This consumer key has no billing scope.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many billing requests for this key.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/statements:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose statements are read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: listConsumerBillingStatements
+      summary: Read your own finalized statements and invoice status with your consumer key.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The latest 24 finalized statements, newest first, each with its invoice's payment status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingStatementsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: A consumer key without the billing scope cannot list statements.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Statement reads for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/preflight:
     get:
       tags: [status]
@@ -11540,6 +11649,126 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
 
+  /v1/account/platform-tenant-plans:
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantPlans
+      summary: List the account's tenant plans by name (ADR-1307).
+      responses:
+        '200':
+          description: The account's tenant plans.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantPlan
+      summary: Create a reusable tenant plan of rate card terms and a request budget.
+      description: An account keeps at most 100 tenant plans. A plan changes no tenant until it is assigned.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformTenantPlanRequest' }
+      responses:
+        '201':
+          description: The new tenant plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenant-plans/{plan_id}:
+    parameters:
+      - name: plan_id
+        in: path
+        required: true
+        description: Tenant plan to read or replace.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantPlan
+      summary: Read one tenant plan.
+      responses:
+        '200':
+          description: The plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: updatePlatformTenantPlan
+      summary: Replace a tenant plan's name and terms.
+      description: Tenants already on the plan keep their rate card and budget until the plan is assigned to them again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlatformTenantPlanRequest' }
+      responses:
+        '200':
+          description: The updated tenant plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/account/platform-tenants/{id}/plan-assignments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose plan is assigned or listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantPlanAssignments
+      summary: List a tenant's plan assignments, newest first.
+      responses:
+        '200':
+          description: The tenant's assignments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanAssignmentListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: assignPlatformTenantPlan
+      summary: Move a tenant onto a plan from the next minute (ADR-1307).
+      description: |
+        Creates the tenant's rate card version from the plan's terms,
+        effective the next UTC minute, and sets the plan's request budget at
+        once when the plan has one. The tenant's existing currency must match
+        the plan's.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignPlatformTenantPlanRequest' }
+      responses:
+        '201':
+          description: The assignment and the rate card it created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantPlanAssignmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}/usage:
     parameters:
       - name: id
@@ -11766,6 +11995,336 @@ paths:
               schema: { $ref: '#/components/schemas/PlatformTenantStatementHandoffResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Platform tenant whose statement is exported.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized cross-app statement revision to export.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantStatementInvoice
+      summary: Read the platform tenant statement's invoice export.
+      responses:
+        '200':
+          description: The platform tenant statement's export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: exportPlatformTenantStatementInvoice
+      summary: Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
+      description: |
+        Exports one finalized platform tenant statement revision to the
+        provider in the body (default stripe; connect it with
+        PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+        Stripe gets a draft invoice and Paddle a draft manually collected
+        transaction; neither is finalized or sent. Lago issues a one-off
+        invoice at once, without charging it. Items are one per rate card and
+        unit price plus a rounding item, so the invoice equals the statement
+        total rounded to the cent; Paddle and Lago receive one summary item
+        when a line is negative. On success the statement's handoff records
+        the provider invoice ID. Retrying after a failure resumes the same
+        invoice; repeating a completed export returns it. A statement exports
+        to one provider only. Two-decimal currencies only; Paddle allows USD,
+        EUR and GBP.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStatementInvoiceRequest' }
+      responses:
+        '200':
+          description: The completed platform tenant statement export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The platform tenant statement or customer cannot be invoiced, or the provider rejected the request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the platform tenant statement export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/billing-connections/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Billing provider statements export to (ADR-1305).
+        schema: { $ref: '#/components/schemas/BillingProvider' }
+    get:
+      tags: [account]
+      operationId: getBillingConnection
+      summary: Describe the account's key for one billing provider.
+      responses:
+        '200':
+          description: The connection; the key itself is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [account]
+      operationId: putBillingConnection
+      summary: Store or replace the account's key for one billing provider.
+      description: |
+        Checks the key against the provider, then seals it at rest. Stripe
+        takes a restricted key (rk_live_… or rk_test_…) with read and write
+        access to invoices and invoice items; Paddle an API key
+        (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access; Lago
+        an API key and, for the EU region or a self-hosted Lago, api_url. Only
+        the last four characters, the mode and the Lago API URL are ever
+        returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutBillingConnectionRequest' }
+      responses:
+        '200':
+          description: The stored connection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Not a key of this provider, a bad api_url, or the provider rejected the key.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: The provider could not be reached (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [account]
+      operationId: deleteBillingConnection
+      summary: Remove the account's key for one billing provider.
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/statement-invoices:
+    get:
+      tags: [account]
+      operationId: listStatementInvoices
+      summary: List invoices exported from usage statements, with their payment status (ADR-1302).
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: "`unpaid` (draft, open or uncollectible), `overdue` (open and past due), or one payment status."
+          schema: { type: string, enum: [unpaid, overdue, draft, open, paid, void, uncollectible, deleted] }
+        - name: cursor
+          in: query
+          required: false
+          description: The `next_cursor` of the previous invoice page.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Invoices to return (1–200, default 50).
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Exported invoices, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/account/billing-runs:
+    get:
+      tags: [account]
+      operationId: listBillingRuns
+      summary: List the account's month-end billing runs, newest first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Runs to return (1–100, default 20).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Billing runs with their item counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [account]
+      operationId: createBillingRun
+      summary: Bill one ended month for every customer (ADR-1301).
+      description: |
+        Starts a background run for one UTC calendar month that ended at least
+        an hour ago. For every app consumer and platform tenant with billable
+        usage, it drafts the month's statement, holds consumers whose ledger
+        misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
+        `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to a
+        platform tenant is billed on the tenant's statement. One run per
+        account can be queued or running at a time.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBillingRunRequest' }
+      responses:
+        '202':
+          description: The queued run; poll it or list its items for progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Another run is in progress, or `export` names a provider without a connected key.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The month has not ended, or the options are invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/billing-runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Billing run ID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: getBillingRun
+      summary: Get a billing run and how many customers reached each outcome.
+      responses:
+        '200':
+          description: The billing run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/billing-runs/{id}/items:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Billing run whose customers are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: listBillingRunItems
+      summary: List what a billing run did for each customer.
+      parameters:
+        - name: outcome
+          in: query
+          required: false
+          description: Only items with this outcome, such as `held` or `failed`.
+          schema: { type: string, enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed] }
+        - name: cursor
+          in: query
+          required: false
+          description: The previous page's `next_cursor`.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Items to return (1–500, default 100).
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: One page of the run's items.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunItemListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/billing-run-schedule:
+    get:
+      tags: [account]
+      operationId: getBillingRunSchedule
+      summary: Get the account's monthly billing run schedule.
+      responses:
+        '200':
+          description: The schedule and when it next starts a run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunScheduleResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [account]
+      operationId: putBillingRunSchedule
+      summary: Start a billing run automatically after each month ends.
+      description: |
+        A new schedule starts with the current month: its run starts
+        `delay_hours` after the month ends. Replacing a schedule keeps its
+        next month. If a run is already in progress, the scheduled run
+        starts once it completes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutBillingRunScheduleRequest' }
+      responses:
+        '200':
+          description: The saved schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`export` names a provider without a connected key.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Invalid schedule options or delay.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [account]
+      operationId: deleteBillingRunSchedule
+      summary: Stop scheduled billing runs; a run already started continues.
+      responses:
+        '204': { description: Schedule removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/account/platform-tenants/{id}/webhooks:
     parameters:
@@ -15322,6 +15881,75 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose statement is exported.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized statement revision to export.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageStatementInvoice
+      summary: Read the app consumer statement's invoice export.
+      responses:
+        '200':
+          description: The app consumer statement's export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: exportAPIConsumerUsageStatementInvoice
+      summary: Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
+      description: |
+        Exports one finalized app consumer statement revision to the
+        provider in the body (default stripe; connect it with
+        PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+        Stripe and Paddle receive drafts that Gregale never finalizes or
+        sends; Lago issues its one-off invoice immediately but never charges
+        it. One item per rate card and unit price, plus a rounding item, makes
+        the invoice equal the statement total rounded to the cent; with a
+        negative line, Paddle and Lago get a single summary item instead. The
+        statement's handoff records the provider invoice ID on success. A retry
+        resumes the same invoice, a completed export is returned as is, and a
+        statement exports to one provider only. Two-decimal currencies only;
+        Paddle takes USD, EUR and GBP.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStatementInvoiceRequest' }
+      responses:
+        '200':
+          description: The completed app consumer statement export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The app consumer statement or customer cannot be invoiced, or the provider rejected the request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/rate-cards:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15476,6 +16104,276 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/credits:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose prepaid credit is listed or granted.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerCredits
+      summary: List a consumer's prepaid credit grants, newest first, with the usable balance per currency (ADR-1306).
+      responses:
+        '200':
+          description: The consumer's grants and balances.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerCreditListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerCredit
+      summary: Grant a consumer prepaid credit.
+      description: |
+        Finalized statements in the credit's currency draw it down, the grant
+        that expires first before grants that never expire, in the same
+        transaction that finalizes them (ADR-1306). Credit never pays more
+        than a statement's amount. A consumer holds at most 100 grants with
+        credit left.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerCreditRequest' }
+      responses:
+        '201':
+          description: The new grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerCreditResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The consumer already holds 100 grants with credit left.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Invalid currency, amount, note or expiry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/credits/{credit_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer that holds the credit.
+        schema: { type: string, format: uuid }
+      - name: credit_id
+        in: path
+        required: true
+        description: Credit grant to void.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [consumers]
+      operationId: voidAPIConsumerCredit
+      summary: Void what is left of a prepaid credit grant; credit already applied stays applied.
+      responses:
+        '200':
+          description: The voided grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerCreditResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/spend-cap:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose monthly spend is capped.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerSpendCap
+      summary: Read a consumer's monthly spend cap and its last check.
+      responses:
+        '200':
+          description: The cap and whether it is reached this month.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerSpendCapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putAPIConsumerSpendCap
+      summary: Set a consumer's monthly spend cap (ADR-1306).
+      description: |
+        Once the month's amount due passes the cap, the gateway answers the
+        consumer with 402 `consumer_spend_cap_reached` until the month ends,
+        the cap rises or credit is added. The amount due is the month to
+        date priced like a statement, minus usable prepaid credit. apid
+        checks it every minute and at once when the cap or credit changes,
+        so a consumer can overshoot by about two minutes of traffic. A zero
+        cap allows prepaid usage only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerSpendCapRequest' }
+      responses:
+        '200':
+          description: The stored cap, checked at once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerSpendCapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid currency or cap.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [consumers]
+      operationId: deleteAPIConsumerSpendCap
+      summary: Remove a consumer's spend cap.
+      responses:
+        '204': { description: The spend cap was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/trial:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose free trial is read or changed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerTrial
+      summary: Read a consumer's free trial (ADR-1314).
+      responses:
+        '200':
+          description: The consumer's trial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerTrialResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putAPIConsumerTrial
+      summary: Start a consumer's one free trial, or move the end of a running one.
+      description: |
+        Usage in the trial is priced at zero and consumes no included units.
+        A new trial starts at the next UTC minute; a running trial's end can
+        move, never before the next minute. A consumer whose trial has ended
+        cannot get another (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerTrialRequest' }
+      responses:
+        '200':
+          description: The stored trial.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerTrialResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Invalid trial length or end.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [consumers]
+      operationId: endAPIConsumerTrial
+      summary: End a consumer's running trial at the next minute.
+      responses:
+        '204': { description: "The trial ends at the next minute, or was removed before it started." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-billing-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerBillingPolicy
+      summary: Read the app's overdue-invoice rule (ADR-1315).
+      responses:
+        '200':
+          description: The app's overdue rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerBillingPolicyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putAPIConsumerBillingPolicy
+      summary: Refuse consumers whose exported invoice is unpaid some days after its due date.
+      description: |
+        Every 5 minutes apid places a hold on each consumer whose exported
+        invoice is open or uncollectible with an amount left at least
+        block_overdue_after_days past its due date, and lifts holds that no
+        longer apply. The gateway answers a held consumer with 402
+        `consumer_invoice_overdue`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerBillingPolicyRequest' }
+      responses:
+        '200':
+          description: The stored rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerBillingPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Days outside 0 to 365.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [consumers]
+      operationId: deleteAPIConsumerBillingPolicy
+      summary: Remove the app's overdue rule; holds lift at the next check.
+      responses:
+        '204': { description: The overdue rule was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-overdue-holds:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerOverdueHolds
+      summary: List the consumers the gateway refuses because of an overdue invoice.
+      responses:
+        '200':
+          description: The app's held consumers, oldest due date first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerOverdueHoldListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts:
     parameters:
@@ -54601,6 +55499,11 @@ paths:
 components:
 
   securitySchemes:
+    consumerKey:
+      type: http
+      scheme: bearer
+      bearerFormat: ck_<prefix>_<secret>
+      description: An app's consumer key with the billing scope (ADR-1304); only the consumer billing endpoints accept it.
     realtimePublisherCredential:
       type: http
       scheme: bearer
@@ -71120,7 +72023,14 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
           description: "Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975). Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."
-        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units or tiers." }
+        route_weights:
+          type: object
+          maxProperties: 50
+          description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes; ADR-1307), including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods it prices must cover one calendar month."
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any tenant card has included units, tiers, route weights, or a compute or response-size unit." }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card prices (ADR-1310): requests, or the compute seconds or response megabytes of billable requests, rounded per subject minute. Compute and response-size cards take no route weights, are month-priced, cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC." }
+        tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How the tenant ladder prices a month (ADR-1309): graduated by each unit's position, or volume, every unit of the month at the step the tenant's total reaches. volume needs tiers." }
 
     PlatformTenantRateCardResponse:
       description: Immutable, versioned customer price shared across every app attributed to one platform tenant.
@@ -71130,15 +72040,109 @@ components:
         id: { type: string, format: uuid }
         tenant_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
-        unit: { type: string, enum: [request] }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the tenant card prices (ADR-1310)." }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0, description: "Free units per tenant per UTC calendar month (ADR-975)." }
         tiers:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
-          description: "Graduated ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
+          description: "Ladder counted per tenant per UTC calendar month (ADR-975); absent for flat cards."
+        tier_mode: { type: string, enum: [graduated, volume], description: "How the tenant ladder prices a month (ADR-1309)." }
+        route_weights:
+          type: object
+          description: "Units per request on a route (ADR-1307, ADR-1310); absent when every request counts 1."
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
         effective_from: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
+
+    PlatformTenantPlanBudget:
+      description: "The request budget a tenant plan sets (ADR-240); zero disables a ceiling."
+      type: object
+      required: [max_requests_per_minute, max_requests_per_day]
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, maximum: 1000000 }
+        max_requests_per_day: { type: integer, format: int64, minimum: 0, maximum: 100000000 }
+
+    PlatformTenantPlanRequest:
+      description: "A reusable tenant plan (ADR-1307): rate card terms and an optional request budget that assigning the plan applies."
+      type: object
+      required: [name, currency, price_millicents_per_unit]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          maxProperties: 50
+          additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
+        request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card a plan assignment creates prices (ADR-1310). Assigning a plan whose unit differs from the tenant's current card starts its card at the next UTC month boundary." }
+        tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How the plan's ladder prices a tenant's month (ADR-1309); volume needs tiers." }
+
+    PlatformTenantPlanResponse:
+      description: "One tenant plan."
+      type: object
+      required: [id, name, currency, price_millicents_per_unit, included_units_per_month, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        included_units_per_month: { type: integer, format: int64, minimum: 0 }
+        tiers:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        route_weights:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 1 }
+        request_budget: { $ref: '#/components/schemas/PlatformTenantPlanBudget' }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the plan's card prices (ADR-1310)." }
+        tier_mode: { type: string, enum: [graduated, volume], description: "How the plan's ladder prices a month (ADR-1309)." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantPlanListResponse:
+      description: "An account's tenant plans by name."
+      type: object
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantPlanResponse' }
+
+    AssignPlatformTenantPlanRequest:
+      description: "Moves a tenant onto a plan from the next minute."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+
+    PlatformTenantPlanAssignmentResponse:
+      description: "One plan assignment and the tenant rate card it created."
+      type: object
+      required: [id, tenant_id, plan_id, rate_card_id, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        plan_name: { type: string }
+        rate_card_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PlatformTenantPlanAssignmentListResponse:
+      description: "A tenant's plan assignments, newest first."
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantPlanAssignmentResponse' }
 
     PlatformTenantRateCardListResponse:
       description: Chronological immutable tariff versions for one customer.
@@ -71516,6 +72520,7 @@ components:
       properties:
         external_ref: { type: string, minLength: 1, maxLength: 256, example: customer-42 }
         name: { type: string, minLength: 1, maxLength: 128, example: Acme }
+        trial_days: { type: integer, minimum: 1, maximum: 365, description: "Starts the consumer's one free trial at the next UTC minute for this many days (ADR-1314)." }
 
     APIConsumerResponse:
       description: "Stable API consumer identity. No credential secret is returned. managed_by_platform_tenant distinguishes tenant-bundle-created identities from pre-existing linked identities."
@@ -71550,7 +72555,8 @@ components:
         scopes:
           type: array
           minItems: 1
-          items: { type: string, enum: [read, write, admin] }
+          items: { type: string, enum: [read, write, admin, billing] }
+          description: "read allows GET, write and admin allow every method; billing lets the consumer read its own billing (ADR-1304) and grants no app access."
         expires_at: { type: [string, "null"], format: date-time }
 
     ConsumerKeyResponse:
@@ -71564,7 +72570,7 @@ components:
         prefix: { type: string, description: "Public lookup prefix; not secret." }
         scopes:
           type: array
-          items: { type: string, enum: [read, write, admin] }
+          items: { type: string, enum: [read, write, admin, billing] }
         created_at: { type: string, format: date-time }
         expires_at: { type: [string, "null"], format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
@@ -71626,6 +72632,10 @@ components:
           description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates."
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
         plan_id: { type: string, format: uuid, description: "Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated." }
+        unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', default: request, description: "What the card prices (ADR-1308, ADR-1318): requests; compute_second or response_megabyte, rounded per consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side (ADR-1317); non-request cards take no route weights and cannot be backdated." }
+        base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts (ADR-1316)." }
+        minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316)." }
+        tier_mode: { type: string, enum: [graduated, volume], default: graduated, description: "How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
 
     CreateAPIConsumerPlanRequest:
@@ -71724,12 +72734,15 @@ components:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
-        unit: { type: string, enum: [request] }
+        unit: { type: string, pattern: '^(request|compute_second|response_megabyte|app:[a-z][a-z0-9_]{0,31})$', description: "What the card prices (ADR-1308, ADR-1318): billable requests, their compute seconds or response megabytes, or the units of an app meter." }
+        base_fee_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "The card's fixed monthly charge per consumer (ADR-1316)." }
+        minimum_millicents_per_month: { type: integer, format: int64, minimum: 0, description: "The card's minimum monthly usage charge per consumer (ADR-1316)." }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0 }
         tiers:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        tier_mode: { type: string, enum: [graduated, volume], description: "How the ladder prices a consumer's month (ADR-1309)." }
         route_weights:
           type: object
           description: "Units charged per request on a listed route; unlisted routes count 1."
@@ -71763,6 +72776,8 @@ components:
           description: "Units per step of a tiered rate card's ladder."
           items: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
+        trial: { type: boolean, description: "A minute of the consumer's free trial, quoted at zero (ADR-1314)." }
+        unit: { type: string, description: "The quoted minute's price stream when it is not request (ADR-1317)." }
 
     APIConsumerUsageQuoteResponse:
       description: "Deterministic estimate from durable API consumer usage and versioned app pricing; not an invoice."
@@ -71825,6 +72840,17 @@ components:
           description: "Units per step of a tiered rate card's ladder. In an adjustment revision, entries are differences and can be negative when late usage moved billed units into a cheaper step."
           items: { type: integer, format: int64 }
         amount_millicents: { type: integer, format: int64, description: "Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a cheaper step; a revision's total is never negative." }
+        trial: { type: boolean, description: "A minute of the consumer's free trial, billed at zero (ADR-1314)." }
+        unit: { type: string, description: "The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter> (ADR-1317)." }
+
+    APIConsumerStatementFeeResponse:
+      description: "A statement's monthly base fee or minimum-spend top-up (ADR-1316)."
+      type: object
+      required: [kind, rate_card_id, amount_millicents]
+      properties:
+        kind: { type: string, enum: [base_fee, minimum] }
+        rate_card_id: { type: string, format: uuid }
+        amount_millicents: { type: integer, format: int64, description: "Negative only for a minimum top-up an adjustment reduces because late usage covers it." }
 
     APIConsumerUsageStatementResponse:
       description: "Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is superseded by the next revision, and every revision after a finalized one carries only usage that arrived later."
@@ -71845,9 +72871,136 @@ components:
         buckets:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
+        fees:
+          type: array
+          description: "The month's base fees and minimum top-ups (ADR-1316); amount_millicents includes them."
+          items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
         as_of: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         finalized_at: { type: [string, "null"], format: date-time }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-1306)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to bill." }
+
+    CreateAPIConsumerCreditRequest:
+      description: "Prepaid credit for one consumer (ADR-1306)."
+      type: object
+      required: [currency, amount_millicents]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000, description: "Credit in millicents; 100000 is 1.00." }
+        expires_at: { type: string, format: date-time, description: "When unused credit lapses; omitted, it never does." }
+        note: { type: string, maxLength: 200 }
+
+    APIConsumerCreditResponse:
+      description: "One prepaid credit grant."
+      type: object
+      required: [id, consumer_id, currency, amount_millicents, remaining_millicents, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1 }
+        remaining_millicents: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [active, used, expired, voided] }
+        note: { type: string }
+        expires_at: { type: string, format: date-time }
+        voided_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    APIConsumerCreditBalance:
+      description: "Credit a consumer can still use in one currency."
+      type: object
+      required: [currency, available_millicents]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        available_millicents: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerCreditListResponse:
+      description: "A consumer's credit grants, newest first, with balances per currency."
+      type: object
+      required: [credits, balances]
+      properties:
+        credits:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerCreditResponse' }
+        balances:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerCreditBalance' }
+
+    PutAPIConsumerTrialRequest:
+      description: "A consumer's trial length in days from its start, or its end (ADR-1314). Set exactly one."
+      type: object
+      properties:
+        days: { type: integer, minimum: 1, maximum: 365 }
+        ends_at: { type: string, format: date-time, description: "A UTC minute from the next minute on." }
+
+    APIConsumerTrialResponse:
+      description: "A consumer's free trial: usage in [starts_at, ends_at) is priced at zero."
+      type: object
+      required: [consumer_id, starts_at, ends_at, active]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        active: { type: boolean, description: "False once the trial has ended." }
+
+    PutAPIConsumerBillingPolicyRequest:
+      description: "An app's overdue-invoice rule (ADR-1315)."
+      type: object
+      required: [block_overdue_after_days]
+      properties:
+        block_overdue_after_days: { type: integer, minimum: 0, maximum: 365, description: "Days past an invoice's due date before its consumer is refused; 0 refuses at once." }
+
+    APIConsumerBillingPolicyResponse:
+      description: "An app's stored overdue-invoice rule."
+      type: object
+      required: [app_id, block_overdue_after_days, updated_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        block_overdue_after_days: { type: integer, minimum: 0, maximum: 365 }
+        updated_at: { type: string, format: date-time }
+
+    APIConsumerOverdueHoldResponse:
+      description: "A consumer the gateway refuses because of its oldest overdue invoice."
+      type: object
+      required: [consumer_id, export_id, due_at, since]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        export_id: { type: string, format: uuid }
+        due_at: { type: string, format: date-time }
+        since: { type: string, format: date-time }
+
+    APIConsumerOverdueHoldListResponse:
+      description: "An app's consumers held for overdue invoices."
+      type: object
+      required: [holds]
+      properties:
+        holds:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerOverdueHoldResponse' }
+
+    PutAPIConsumerSpendCapRequest:
+      description: "A consumer's monthly spend cap after prepaid credit (ADR-1306)."
+      type: object
+      required: [currency, monthly_cap_millicents]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        monthly_cap_millicents: { type: integer, format: int64, minimum: 0, maximum: 1000000000000, description: "0 allows prepaid usage only." }
+
+    APIConsumerSpendCapResponse:
+      description: "A consumer's spend cap and its last check."
+      type: object
+      required: [consumer_id, currency, monthly_cap_millicents, capped, created_at, updated_at]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        monthly_cap_millicents: { type: integer, format: int64, minimum: 0 }
+        capped: { type: boolean, description: "True while the gateway refuses the consumer this month." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "UTC month of the last check." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "The month's amount due after prepaid credit at the last check." }
+        checked_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     APIConsumerUsageStatementListResponse:
       description: "Durable API consumer usage statements, newest period first."
@@ -97323,6 +98476,314 @@ components:
           description: Per-message preconditions are unsupported. Omit this field or set it to null; use the batch-level expected_sequence to require a channel head.
       description: One retained publication in a channel batch, with an optional override of the batch message TTL.
 
+    BillingProvider:
+      description: "A billing provider statements export to (ADR-1305)."
+      type: string
+      enum: [stripe, paddle, lago]
+
+    PutBillingConnectionRequest:
+      description: "The account's own key for one billing provider (ADR-1300, ADR-1305)."
+      type: object
+      required: [secret_key]
+      properties:
+        secret_key: { type: string, minLength: 8, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key.", writeOnly: true }
+        api_url: { type: string, format: uri, maxLength: 512, description: "Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default https://api.getlago.com." }
+        collection: { type: string, enum: [none, send, charge], default: none, description: "What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none only." }
+        days_until_due: { type: integer, minimum: 1, maximum: 365, default: 30, description: "With collection send, days until a sent invoice is due." }
+        automatic_tax: { type: boolean, default: false, description: "Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer addresses." }
+
+    BillingConnectionResponse:
+      description: "A stored payment-provider key, identified without revealing it."
+      type: object
+      required: [provider, key_last4, livemode, created_at, updated_at]
+      properties:
+        provider: { $ref: '#/components/schemas/BillingProvider' }
+        key_last4: { type: string, minLength: 4, maxLength: 4 }
+        livemode: { type: boolean, description: "False for Stripe test and Paddle sandbox keys; Lago has no test mode." }
+        api_url: { type: string, format: uri, description: "The Lago API origin." }
+        collection: { type: string, enum: [none, send, charge], description: "What the provider does with exported invoices (ADR-1311)." }
+        days_until_due: { type: integer, minimum: 1, maximum: 365, description: "Days until a sent invoice is due." }
+        automatic_tax: { type: boolean, description: "Whether Stripe Tax calculates tax on the connection's exports (ADR-1313)." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateStatementInvoiceRequest:
+      description: "Target of a statement invoice export."
+      type: object
+      properties:
+        provider: { $ref: '#/components/schemas/BillingProvider' }
+        customer: { type: string, maxLength: 255, description: "The provider's customer: a Stripe cus_… ID, a Paddle ctm_… ID, or a Lago external customer ID. Omitted, the consumer's or tenant's external_ref is used when it is one." }
+
+    StatementInvoiceExportResponse:
+      description: "A finalized statement's invoice in the account's billing provider (ADR-1300, ADR-1305)."
+      type: object
+      required: [statement_id, provider, customer, status, currency, amount_minor, livemode, created_at]
+      properties:
+        statement_id: { type: string, format: uuid }
+        provider: { $ref: '#/components/schemas/BillingProvider' }
+        customer: { type: string }
+        status: { type: string, enum: [creating, completed], description: "creating means an earlier attempt stopped part-way; repeat the export to resume it." }
+        invoice_id: { type: string }
+        dashboard_url: { type: string, format: uri }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_minor: { type: integer, format: int64, description: "Invoice total in the currency's minor unit (cents): the statement total rounded to the cent." }
+        livemode: { type: boolean }
+        collection: { type: string, enum: [none, send, charge], description: "What the provider was asked to do with the invoice when the export began (ADR-1311)." }
+        automatic_tax: { type: boolean, description: "Whether Stripe Tax calculated this invoice's tax (ADR-1313)." }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        payment_status:
+          type: string
+          enum: [draft, open, paid, void, uncollectible, deleted]
+          description: "The provider invoice's status as last read by Gregale (ADR-1302, ADR-1305); deleted means the provider no longer has it. Absent until the first sync."
+        amount_paid_minor: { type: integer, format: int64, minimum: 0 }
+        amount_remaining_minor: { type: integer, format: int64, minimum: 0 }
+        due_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time }
+        hosted_invoice_url: { type: string, format: uri, description: "The provider's customer-facing invoice or checkout page once there is one." }
+        overdue: { type: boolean, description: "Open, past its due date, with an amount remaining." }
+        status_synced_at: { type: string, format: date-time }
+
+    StatementInvoiceListResponse:
+      description: "One page of an account's exported invoices, newest first."
+      type: object
+      required: [invoices]
+      properties:
+        invoices:
+          type: array
+          items: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        next_cursor: { type: string, description: "Pass as cursor for the next invoice page; absent on the last page." }
+
+    ConsumerBillingPlan:
+      description: "The consumer's current plan and its monthly unit cap."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        max_units_per_month: { type: integer, format: int64, minimum: 1 }
+
+    ConsumerBillingSummaryResponse:
+      description: "A consumer's own month to date (ADR-1304), priced like its next statement."
+      type: object
+      required: [consumer_id, external_ref, name, app, month, billable_units, unpriced_units, amount_millicents, priced, as_of]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        app: { type: string, description: "The app's slug." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0, description: "Month-to-date amount; 100000 millicents is 1.00." }
+        priced: { type: boolean, description: "False while some usage has no effective rate card." }
+        plan: { $ref: '#/components/schemas/ConsumerBillingPlan' }
+        as_of: { type: string, format: date-time }
+        credits:
+          type: array
+          description: "Prepaid credit the consumer can still use, per currency (ADR-1306)."
+          items: { $ref: '#/components/schemas/APIConsumerCreditBalance' }
+        spend_cap: { $ref: '#/components/schemas/ConsumerBillingSpendCap' }
+
+    ConsumerBillingSpendCap:
+      description: "The consumer's monthly spend cap; once the amount due passes it, requests are refused until the month ends or credit is added."
+      type: object
+      required: [currency, monthly_cap_millicents, capped]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        monthly_cap_millicents: { type: integer, format: int64, minimum: 0 }
+        capped: { type: boolean }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0 }
+
+    ConsumerBillingDay:
+      description: "One UTC day of a consumer's usage."
+      type: object
+      required: [date, requests, billable_units]
+      properties:
+        date: { type: string, format: date }
+        requests: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+
+    ConsumerBillingUsageResponse:
+      description: "A consumer's daily usage over at most 31 days."
+      type: object
+      required: [since, until, days]
+      properties:
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        days:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerBillingDay' }
+
+    ConsumerBillingInvoice:
+      description: "The customer-facing view of a statement's exported invoice (ADR-1302)."
+      type: object
+      required: [amount_minor]
+      properties:
+        payment_status: { type: string, enum: [draft, open, paid, void, uncollectible, deleted] }
+        amount_minor: { type: integer, format: int64 }
+        amount_remaining_minor: { type: integer, format: int64, minimum: 0 }
+        due_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time }
+        hosted_invoice_url: { type: string, format: uri, description: "Stripe's page where the customer views and pays the invoice." }
+
+    ConsumerBillingStatement:
+      description: "One finalized statement as its consumer sees it."
+      type: object
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      properties:
+        id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        revision: { type: integer, minimum: 1 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64 }
+        finalized_at: { type: string, format: date-time }
+        invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
+
+    ConsumerBillingStatementsResponse:
+      description: "A consumer's latest finalized statements, newest first."
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerBillingStatement' }
+
+    CreateBillingRunRequest:
+      description: "A month-end billing run (ADR-1301). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
+      type: object
+      required: [month]
+      properties:
+        month: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: "UTC calendar month to bill, YYYY-MM; it must have ended at least an hour ago." }
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean, description: "Finalize each drafted statement (default true)." }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean, description: "Hold an app consumer whose usage ledger misses requests telemetry saw (default true)." }
+
+    BillingRunSources:
+      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped."
+      type: array
+      minItems: 1
+      maxItems: 2
+      uniqueItems: true
+      items: { type: string, enum: [app_consumers, platform_tenants] }
+
+    BillingRunExport:
+      description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1305; requires finalize and a connected key)."
+      type: string
+      enum: [none, stripe, paddle, lago]
+
+    BillingRunCounts:
+      description: "How many of a run's customers reached each outcome."
+      type: object
+      required: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
+      properties:
+        pending: { type: integer, minimum: 0 }
+        drafted: { type: integer, minimum: 0 }
+        finalized: { type: integer, minimum: 0 }
+        exported: { type: integer, minimum: 0 }
+        up_to_date: { type: integer, minimum: 0 }
+        held: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+
+    BillingRunResponse:
+      description: "A billing run and its progress. A run completes when no customer is pending; held and failed customers do not fail it."
+      type: object
+      required: [id, month, period_start, period_end, sources, finalize, export, hold_on_gaps, trigger, status, counts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean }
+        trigger: { type: string, enum: [api, schedule] }
+        status: { type: string, enum: [queued, running, completed] }
+        counts: { $ref: '#/components/schemas/BillingRunCounts' }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    BillingRunListResponse:
+      description: "An account's billing runs, newest first."
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunResponse' }
+
+    BillingRunItemResponse:
+      description: "What a billing run did for one app consumer or platform tenant."
+      type: object
+      required: [source_kind, external_ref, outcome, exported_invoices, attempts, updated_at]
+      properties:
+        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: "The consumer's or tenant's external_ref when the run started." }
+        outcome:
+          type: string
+          enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
+          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness gap. skipped: billed through a platform tenant, or already invoiced through the other path."
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, description: "The statement revision's amount in millicents." }
+        completeness: { type: string, enum: [verified, partial, gaps_detected, unverifiable] }
+        invoice_id: { type: string, description: "The last provider invoice this run created for the customer." }
+        exported_invoices: { type: integer, minimum: 0, description: "Provider invoices this run created for the customer." }
+        reason: { type: string, description: "Why the customer was held, skipped or failed, or why a retry is pending." }
+        attempts: { type: integer, minimum: 0 }
+        updated_at: { type: string, format: date-time }
+        payment_status:
+          type: string
+          enum: [draft, open, paid, void, uncollectible, deleted]
+          description: "Payment status of the invoice exported for the item's statement (ADR-1302)."
+
+    BillingRunItemListResponse:
+      description: "One page of a billing run's customers, ordered by kind and ID."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunItemResponse' }
+        next_cursor: { type: string, description: "Pass as cursor to read the next page; absent on the last page." }
+
+    PutBillingRunScheduleRequest:
+      description: "A monthly billing run schedule. Options default like a run's; delay_hours defaults to 24."
+      type: object
+      properties:
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean, description: "Finalize each drafted statement in scheduled runs (default true)." }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean, description: "Hold app consumers with completeness gaps in scheduled runs (default true)." }
+        delay_hours: { type: integer, minimum: 1, maximum: 240, description: "Hours after month end before the run starts (default 24)." }
+
+    BillingRunScheduleResponse:
+      description: "The account's billing run schedule and the month it bills next."
+      type: object
+      required: [sources, finalize, export, hold_on_gaps, delay_hours, next_month, next_run_at, created_at, updated_at]
+      properties:
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean }
+        delay_hours: { type: integer, minimum: 1, maximum: 240 }
+        next_month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        next_run_at: { type: string, format: date-time }
+        last_month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The last month the schedule started a run for." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
     APIConsumerUsageStatementFinalizedWebhookPayload:
       type: object
       description: Complete payable usage statement delivered with usage_statement.finalized.
@@ -97343,6 +98804,8 @@ components:
           items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
         as_of: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn at finalization (ADR-1306)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "What is left to bill after prepaid credit." }
       additionalProperties: true
 
     PlatformTenantStatementFinalizedWebhookPayload:

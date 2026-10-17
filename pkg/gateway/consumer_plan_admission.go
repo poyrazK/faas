@@ -22,6 +22,16 @@ type ConsumerPlanPolicy struct {
 	// AlertThresholdsPercent travel to admission, which records crossings
 	// and enqueues consumer.usage_threshold webhooks (ADR-849).
 	AlertThresholdsPercent []int32
+	// SpendCapped holds, on any plan, while apid's last check found the
+	// month's amount due past the consumer's spend cap (ADR-1306).
+	SpendCapped        bool
+	SpendCapMillicents int64
+	SpendDueMillicents int64
+	SpendCurrency      string
+	// OverdueBlocked holds, on any plan, while apid finds an exported
+	// invoice of the consumer overdue under its app's policy (ADR-1315).
+	OverdueBlocked bool
+	OverdueDueAt   time.Time
 }
 
 func (p ConsumerPlanPolicy) limited() bool {
@@ -97,6 +107,14 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 		return true
 	}
 	policy, err := h.consumerPlanPolicy(r.Context(), app, consumerID)
+	if err == nil && policy.SpendCapped {
+		h.denySpendCapped(w, r, rec, app, policy)
+		return false
+	}
+	if err == nil && policy.OverdueBlocked {
+		h.denyOverdue(w, r, rec, app, policy)
+		return false
+	}
 	if err == nil && !policy.limited() {
 		return true
 	}
@@ -128,4 +146,27 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerPlanLimitExceeded, "Plan limit exceeded", detail))
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return false
+}
+
+// denyOverdue refuses a consumer with an overdue invoice with a 402; the
+// request is never billed.
+func (h *Handler) denyOverdue(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, policy ConsumerPlanPolicy) {
+	suppressFinancialUsage(r)
+	w.Header().Set("x-faas-rate-limit-scope", "consumer-invoice-overdue")
+	detail := "an invoice due " + policy.OverdueDueAt.UTC().Format(time.DateOnly) + " is unpaid; requests resume once it is paid"
+	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeConsumerInvoiceOverdue, "Invoice overdue", detail).
+		WithDocs("https://gregale.dev/docs/api-monetization#overdue-invoices"))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+}
+
+// denySpendCapped refuses a consumer past its monthly spend cap with a 402
+// carrying the cap and the amount due; the request is never billed.
+func (h *Handler) denySpendCapped(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, policy ConsumerPlanPolicy) {
+	suppressFinancialUsage(r)
+	w.Header().Set("x-faas-rate-limit-scope", "consumer-spend-cap")
+	detail := "the consumer's monthly spend cap is " + strconv.FormatInt(policy.SpendCapMillicents, 10) + " " + policy.SpendCurrency +
+		" millicents; " + strconv.FormatInt(policy.SpendDueMillicents, 10) + " are due this month after prepaid credit"
+	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeConsumerSpendCapReached, "Spend cap reached", detail).
+		WithLimit(policy.SpendCapMillicents, policy.SpendDueMillicents).WithDocs("https://gregale.dev/docs/api-monetization#spend-caps"))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 }
