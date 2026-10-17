@@ -44,6 +44,7 @@ var (
 	role              = flag.String("role", "all", "all (engine and compiler in one process), engine, or compiler")
 	compilerURL       = flag.String("compiler-url", "", "with -role engine: the compiler to send queries to; the engine then never starts the SQL parser")
 	compilerListen    = flag.String("compiler-listen", "", "with -role compiler or all: serve compilation at http://<addr>/compile")
+	perConnection     = flag.Int("max-per-connection", 0, "subscriptions per client connection (default the plan limit); raise it when realtimed proxies many clients over one connection")
 )
 
 func main() {
@@ -122,7 +123,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	hub := liveserver.New(liveserver.Config{
 		Database: *databaseID, Keyring: keyring, Engine: engine, Checkpoint: *checkpointPath,
-		CheckpointEvery: *checkpointEvery, Metrics: metrics, Logger: log,
+		CheckpointEvery: *checkpointEvery, Metrics: metrics, Logger: log, MaxPerConnection: *perConnection,
 	})
 
 	var servers []*http.Server

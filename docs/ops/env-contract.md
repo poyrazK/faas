@@ -594,6 +594,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_HISTORY_TLS_CA_PATH` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TLS_CERT_PATH` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TLS_KEY_PATH` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_LIVE_ROUTES_FILE` | realtimed | `default` |  |  | `` | operator-only live-query preview (ADR-1384): JSON routes from live-secret key IDs to databases and their livequeryd hubs; unset disables live frames |
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |

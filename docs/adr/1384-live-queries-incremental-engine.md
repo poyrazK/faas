@@ -147,15 +147,21 @@ customer write ──> Postgres (database VM) ──WAL──> liveq engine (sam
   delta streams to realtimed. It deduplicates identical subscriptions by plan
   fingerprint so a query is maintained once per database however many clients
   hold it.
-- **realtimed.** Verifies sealed queries or RLS-mode JWTs, keeps the current
-  result of each live query it serves, sends new subscribers the cached result
-  without touching the database, and fans out deltas. Live-query bytes count
+- **realtimed.** Carries live frames on v2 connections. Live-query bytes count
   against the per-connection queue and the ADR-1323 node outbound budget; live
   connections count against plan connection limits.
+  - *As built (2026-10-17):* realtimed proxies (`pkg/livequery/liveproxy`) and
+    does not open seals. Each database's hub opens its own seals, keeps
+    per-subscription versions, and sends whole results to subscribers that
+    join. So live secrets never leave the database node.
+  - realtimed needs only routing: a seal's clear header names its key ID,
+    which maps to the database and its hub. One upstream WebSocket per
+    database carries every client subscription to it. RLS-mode JWT
+    verification will sit in the same place.
 - **apid.** Owns customer intent: enabling live queries per database, the live
-  secret (sealed at rest, rotation with overlap), and plan limits. It mirrors
-  live secrets to realtimed with endpoint registrations, as it does endpoint
-  credentials today. It never executes live queries.
+  secret (sealed at rest, rotation with overlap), and plan limits. It delivers
+  live secrets to the database's livequeryd, and key-ID routes (not secret) to
+  realtimed with endpoint registrations. It never executes live queries.
 - **Ownership is unchanged elsewhere:** schedd remains the only waker and
   writer of instance state; vmmd remains the only component touching
   Firecracker; realtimed remains the owner of client connections.
@@ -735,6 +741,41 @@ Phase 0 did not cover:
     host, as section 2 drew it.
   - **Still owed:** cgroup-accurate numbers inside a Linux database VM, and
     the engine's memory ceiling per class.
+- **realtimed carries live queries** (2026-10-17, on main's v2 protocol).
+  - **pkg/realtime.** v2 connections pass `live.*` frames to `Config.Live`
+    before channel access checks and read-only tickets (live frames are not
+    channel traffic; the seal is the capability). They queue the replies on
+    the connection's outbound budget. Without a configured proxy, a
+    subscription is refused with `unavailable`.
+  - **`pkg/livequery/liveproxy`.** One upstream WebSocket per database, with
+    per-session subscription IDs and progress sent once per session.
+    - When an upstream drops, its subscriptions turn `unavailable` (stale),
+      and the proxy reconnects and subscribes them again with their latest
+      seals.
+    - Version offsets keep each client's sequence rising across hub
+      sessions.
+    - A seal that expired while the upstream was away becomes a renewable
+      `seal_expired`.
+  - **Routing preview.** `FAAS_REALTIME_LIVE_ROUTES_FILE` routes key IDs to
+    hubs until apid distributes routes with endpoint registrations.
+  - **Hub additions:**
+    - a per-connection limit for trusted proxies (`livequeryd
+      -max-per-connection`);
+    - a round's changes too large for one frame are sent as a full result,
+      split to size;
+    - `Hub.Subscriptions`, read on the hub's loop.
+  - **Tests:**
+    - the proxy over a real hub, with two client sessions, upstream cuts,
+      resumption above the held versions, and an expired seal renewed across
+      a cut; race-free;
+    - a full-path test: a real `realtime.Manager` v2 connection carries a
+      sealed query through the proxy and hub to PostgreSQL and back, checked
+      by the reference client.
+  - **Not yet:**
+    - apid enablement (`gregale postgres live enable`), live secrets and
+      their delivery to livequeryd, and route distribution to realtimed;
+    - the endpoint-must-be-bound-to-the-database check;
+    - ADR-1323 budget accounting for live bytes.
 
 ## Consequences
 

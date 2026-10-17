@@ -674,6 +674,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_HISTORY_TLS_CA_PATH", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HISTORY_TLS_CERT_PATH", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HISTORY_TLS_KEY_PATH", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_LIVE_ROUTES_FILE", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "", Note: "operator-only live-query preview (ADR-1384): JSON routes from live-secret key IDs to databases and their livequeryd hubs; unset disables live frames"},
 	{Name: "FAAS_REALTIME_MAX_AGE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_MAX_CONNECTIONS", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_MAX_MESSAGE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

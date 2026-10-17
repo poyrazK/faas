@@ -228,6 +228,9 @@ func (NopHooks) Disconnect(context.Context, Event) error      { return nil }
 // Config contains bounded resource and lifecycle settings. Zero values use
 // conservative defaults; all limits are enforced at the data-plane boundary.
 type Config struct {
+	// Live, when set, carries live-query frames on v2 connections (ADR-1384).
+	Live LiveQueries
+
 	MaxConnections  int
 	MaxMessageBytes int64
 	OutboundQueue   int // Maximum queued frames per connection.
@@ -410,6 +413,11 @@ type connection struct {
 	callbackAuth atomic.Pointer[callbackAuthSnapshot]
 	ws           *websocket.Conn
 	m            *Manager
+
+	// live is the connection's live-query session, started by its first
+	// live frame.
+	live     LiveSession
+	liveOnce sync.Once
 
 	outbound       chan Message
 	outboundMu     sync.Mutex

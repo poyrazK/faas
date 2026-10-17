@@ -170,6 +170,7 @@ type resumeSubscription struct {
 }
 
 func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
+	defer c.closeLive()
 	for {
 		kind, data, err := c.ws.ReadMessage()
 		if err != nil {
@@ -182,6 +183,10 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		if kind != websocket.TextMessage {
 			_ = c.close(websocket.CloseUnsupportedData, "v2 requires JSON text frames")
 			return
+		}
+		if kind, subscription := liveFrameType(data); kind != "" {
+			m.handleLive(ctx, c, data, subscription)
+			continue
 		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {

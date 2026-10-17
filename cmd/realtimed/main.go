@@ -134,7 +134,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 		routeReporter = reader
 		fleetClient = reader
 	}
+	// Live queries (ADR-1384): an operator preview routed by a static file
+	// until apid distributes routes with endpoint registrations.
+	proxy, err := liveProxy(os.Getenv("FAAS_REALTIME_LIVE_ROUTES_FILE"), log)
+	if err != nil {
+		return err
+	}
+	var live realtime.LiveQueries
+	if proxy != nil {
+		defer proxy.Close()
+		live = liveAdapter{proxy: proxy}
+	}
 	manager := realtime.NewManager(realtime.Config{
+		Live:                 live,
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),

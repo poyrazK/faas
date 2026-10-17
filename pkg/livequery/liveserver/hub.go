@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -234,6 +235,13 @@ func (h *Hub) round(ctx context.Context) error {
 // deliver sends a delta to its subscriber as frames.
 func (h *Hub) deliver(s *sub, d livequery.Delta) {
 	frames, err := d.Frames(h.cfg.Database, s.version, s.expires.Unix())
+	if err == nil && oversized(frames) {
+		// One round's changes cannot be split without showing a half-applied
+		// snapshot: send the whole result, which can be.
+		if cur, ok := h.engine.Current(s.engineID); ok {
+			frames, err = cur.Frames(h.cfg.Database, s.version, s.expires.Unix())
+		}
+	}
 	if err != nil {
 		s.session.send(&liveproto.Error{Type: liveproto.TypeError, Subscription: s.client, Code: liveproto.CodeLimit,
 			Message: err.Error(), Closed: true})
@@ -377,4 +385,31 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 	if d, ok := h.engine.Current(s.engineID); ok {
 		h.deliver(s, d)
 	}
+}
+
+// oversized reports a live.changes frame larger than a frame may be.
+func oversized(frames []any) bool {
+	if len(frames) != 1 {
+		return false
+	}
+	c, ok := frames[0].(*liveproto.Changes)
+	if !ok {
+		return false
+	}
+	data, err := json.Marshal(c)
+	return err != nil || len(data) > api.LiveQueryServerFrameMaxBytes
+}
+
+// Subscriptions reports how many subscriptions the engine holds, read on the
+// hub's loop; -1 when the hub has stopped.
+func (h *Hub) Subscriptions(ctx context.Context) int {
+	n := make(chan int, 1)
+	h.do(ctx, func(context.Context) { n <- h.engine.Subscriptions() })
+	select {
+	case v := <-n:
+		return v
+	case <-ctx.Done():
+	case <-h.done:
+	}
+	return -1
 }
