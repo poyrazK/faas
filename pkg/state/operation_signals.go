@@ -35,6 +35,10 @@ type OperationSignalInput struct {
 	SignalID    string
 	Event       string
 	Payload     json.RawMessage
+	// Source records who delivered the signal (ADR-1286); empty means the
+	// account. It is history, not identity: a repeat from another source is
+	// still the same signal.
+	Source string
 }
 
 // OperationSignalStore delivers named events to Operations waiting on them.
@@ -46,6 +50,13 @@ type OperationSignalStore interface {
 }
 
 func validateOperationSignal(in *OperationSignalInput) error {
+	switch in.Source {
+	case "":
+		in.Source = api.OperationSignalSourceAccount
+	case api.OperationSignalSourceAccount, api.OperationSignalSourceCustomer, api.OperationSignalSourceWebhook:
+	default:
+		return fmt.Errorf("%w: unknown signal source", ErrInvalidArgument)
+	}
 	if in.SignalID == "" || len(in.SignalID) > api.OperationSignalIDMaxBytes || strings.IndexFunc(in.SignalID, unicode.IsControl) >= 0 {
 		return fmt.Errorf("%w: signal_id must be 1-%d printable bytes", ErrInvalidArgument, api.OperationSignalIDMaxBytes)
 	}
@@ -147,7 +158,7 @@ func (s *PgStore) SignalOperation(ctx context.Context, in OperationSignalInput) 
 	if err := insertWorkflowEventTx(ctx, tx, "", &WorkflowEvent{ID: id, RunID: op.WorkflowRunID, EventName: in.Event, Payload: in.Payload}); err != nil {
 		return api.OperationSignalReceipt{}, err
 	}
-	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting}, time.Now().UTC())
+	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting, "source": in.Source}, time.Now().UTC())
 	if err := operationSaveTx(ctx, tx, op, event); err != nil {
 		return api.OperationSignalReceipt{}, err
 	}
@@ -209,7 +220,7 @@ func (m *MemStore) SignalOperation(_ context.Context, in OperationSignalInput) (
 		return api.OperationSignalReceipt{}, err
 	}
 	op = cloneOperation(op)
-	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting}, time.Now().UTC())
+	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting, "source": in.Source}, time.Now().UTC())
 	m.operationSaveLocked(op, event)
 	return receipt, nil
 }

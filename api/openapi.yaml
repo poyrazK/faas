@@ -48342,6 +48342,88 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/signals:
+    post:
+      tags:
+      - operations
+      operationId: signalPlatformTenantSelfOperation
+      summary: Deliver a named event to this customer's own waiting operation (ADR-1286).
+      description: Requires platform_tenant:operations:manage. Works like the account signal route on the customer's own operation only; another customer's operation is not found. The operation's history records the signal with source customer. signal_id is shared with the account route, so a repeat from either is the same signal.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationSignalRequest'
+      responses:
+        '200':
+          description: The customer's delivery receipt; duplicate marks a repeat of an earlier signal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSignalReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operation-signals:
+    post:
+      tags:
+      - operations
+      operationId: signalPlatformTenantSelfOperationsBySubject
+      summary: Deliver a named event to this customer's own active operations about one business subject (ADR-1286).
+      description: Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation name. Reaches at most 16 of the customer's own active operations whose subject matches; other customers' operations about the same subject are never reached. Each delivery is idempotent per operation by signal_id and recorded with source customer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformTenantSubjectSignalRequest'
+      responses:
+        '200':
+          description: One receipt per customer operation reached; empty when none is active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSubjectSignalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}:
     parameters:
     - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
@@ -57570,6 +57652,17 @@ components:
         signal_id: { type: string, minLength: 1, maxLength: 128 }
         event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
         payload: { description: 'JSON each reached operation''s wait step receives as its output; at most 64 KiB.' }
+    PlatformTenantSubjectSignalRequest:
+      description: One named event for the authenticated customer's own active operations of a definition about one business subject (ADR-1286).
+      type: object
+      additionalProperties: false
+      required: [definition_id, subject, signal_id, event]
+      properties:
+        definition_id: { type: string, format: uuid, description: Operation definition whose app, environment and name select the operations. }
+        subject: { $ref: '#/components/schemas/OperationSubject' }
+        signal_id: { type: string, minLength: 1, maxLength: 128 }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+        payload: { description: 'JSON each of the customer''s reached operations receives as its wait step output; at most 64 KiB.' }
     OperationSignalReceipt:
       description: One signal delivery. waiting reports whether the operation was waiting for this event; otherwise the run holds it for a later wait.
       type: object

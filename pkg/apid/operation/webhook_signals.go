@@ -92,7 +92,7 @@ func (s *Service) signalBoundWebhook(w http.ResponseWriter, r *http.Request, bin
 	}
 	delivered, duplicate := 0, len(ids) > 0
 	for _, id := range ids {
-		got, err := store.SignalOperation(r.Context(), state.OperationSignalInput{AccountID: binding.AccountID, OperationID: id, SignalID: signalID, Event: event, Payload: body})
+		got, err := store.SignalOperation(r.Context(), state.OperationSignalInput{AccountID: binding.AccountID, OperationID: id, SignalID: signalID, Event: event, Payload: body, Source: api.OperationSignalSourceWebhook})
 		// A provider retry fixes neither: the Operation settled meanwhile, or
 		// it runs a workflow snapshot that does not wait for this event.
 		if errors.Is(err, state.ErrOperationNotActive) || errors.Is(err, state.ErrOperationSignalUnexpected) {

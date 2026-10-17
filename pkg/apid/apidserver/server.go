@@ -1757,6 +1757,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationEvents)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.CancelPlatformTenantSelfOperation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.DecidePlatformTenantSelfOperationApproval)))
+	// ADR-1286: a customer resumes its own waiting Operations.
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperation)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperationsBySubject)))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover-receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.RecoverOperationWithReceipt))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.RecoverOperation))))
 	mux.Handle("POST /v1/runtime/operations/{id}/progress", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ReportOperationProgress)))

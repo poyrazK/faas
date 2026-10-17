@@ -190,12 +190,30 @@ with a different event or payload is `409 operation_signal_conflict`.
 - A signal that arrives before its wait is held and used when the wait starts.
 - A subject signal reaches at most 16 active operations of that definition,
   matched by the [subject](#business-references) fixed at acceptance.
-- History records each delivery as a `signal_received` event.
+- History records each delivery as a `signal_received` event, with its
+  `source`: `account`, `customer` or `webhook`.
 - A wait that times out settles `failed` with `event_timeout`.
 - Native workflow event injection is refused for operation runs, so every event
   appears in the operation's history.
 
 See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
+
+A customer resumes its own operations with its tenant credentials and the
+`platform_tenant:operations:manage` scope, without the account's token:
+
+```sh
+gregale customer-operations signal OP_ID --self --event payment.succeeded --signal-id evt_3Nx
+gregale customer-operations signal --self --definition DEF_ID --subject order:ord_42 \
+  --event payment.succeeded --signal-id evt_3Nx
+```
+
+The routes are `POST /v1/platform-tenant-self/customer-operations/{id}/signals`
+and `POST /v1/platform-tenant-self/customer-operation-signals`. The subject
+route names the definition, which fixes the app, environment and operation, and
+reaches only the customer's own operations; another customer's operation about
+the same subject ID is never signalled. A `signal_id` is per operation whichever
+route delivers it. See
+[ADR-1286](adr/1286-customer-self-service-operation-signals.md).
 
 ## Deadlines and budgets
 
