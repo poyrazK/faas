@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE workflow_automation_live_baseline_promotions (
+CREATE TABLE IF NOT EXISTS workflow_automation_live_baseline_promotions (
  promotion_id uuid PRIMARY KEY CHECK (promotion_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  app_id uuid NOT NULL CHECK (app_id <> '00000000-0000-0000-0000-000000000000'::uuid),
  name text NOT NULL CHECK (octet_length(name) BETWEEN 1 AND 128),
@@ -12,4 +12,4 @@ CREATE TABLE workflow_automation_live_baseline_promotions (
  FOREIGN KEY(app_id,name) REFERENCES workflow_automation_definitions(app_id,name) ON DELETE CASCADE
 );
 -- +goose Down
-DROP TABLE workflow_automation_live_baseline_promotions;
+DROP TABLE IF EXISTS workflow_automation_live_baseline_promotions;

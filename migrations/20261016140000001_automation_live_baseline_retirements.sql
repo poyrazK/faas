@@ -1,6 +1,6 @@
 -- adr: 1305
 -- +goose Up
-CREATE TABLE workflow_automation_live_baseline_retirements (
+CREATE TABLE IF NOT EXISTS workflow_automation_live_baseline_retirements (
  retirement_id uuid PRIMARY KEY CHECK (retirement_id <> '00000000-0000-0000-0000-000000000000'),
  app_id uuid NOT NULL CHECK (app_id <> '00000000-0000-0000-0000-000000000000'),
  name text NOT NULL CHECK (octet_length(name) BETWEEN 1 AND 128),
@@ -10,4 +10,4 @@ CREATE TABLE workflow_automation_live_baseline_retirements (
  FOREIGN KEY (app_id,name) REFERENCES workflow_automation_definitions(app_id,name) ON DELETE CASCADE
 );
 -- +goose Down
-DROP TABLE workflow_automation_live_baseline_retirements;
+DROP TABLE IF EXISTS workflow_automation_live_baseline_retirements;

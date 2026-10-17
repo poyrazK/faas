@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE workflow_automation_live_verifications (
+CREATE TABLE IF NOT EXISTS workflow_automation_live_verifications (
  run_id uuid PRIMARY KEY REFERENCES workflow_runs(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
@@ -16,7 +16,7 @@ CREATE TABLE workflow_automation_live_verifications (
  FOREIGN KEY(app_id,name) REFERENCES workflow_automation_definitions(app_id,name) ON DELETE CASCADE,
  UNIQUE(app_id,name,idempotency_key)
 );
-CREATE INDEX workflow_automation_live_history ON workflow_automation_live_verifications(app_id,name,created_at DESC,run_id DESC);
+CREATE INDEX IF NOT EXISTS workflow_automation_live_history ON workflow_automation_live_verifications(app_id,name,created_at DESC,run_id DESC);
 
 -- +goose Down
-DROP TABLE workflow_automation_live_verifications;
+DROP TABLE IF EXISTS workflow_automation_live_verifications;

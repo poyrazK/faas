@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE workflow_automation_live_suites (
+CREATE TABLE IF NOT EXISTS workflow_automation_live_suites (
  id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid),
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  name text NOT NULL CHECK (octet_length(name) BETWEEN 1 AND 128),
@@ -11,7 +11,7 @@ CREATE TABLE workflow_automation_live_suites (
  updated_at timestamptz NOT NULL DEFAULT now(),
  FOREIGN KEY(app_id,name) REFERENCES workflow_automation_definitions(app_id,name) ON DELETE CASCADE
 );
-CREATE INDEX workflow_automation_live_suite_history ON workflow_automation_live_suites(app_id,name,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS workflow_automation_live_suite_history ON workflow_automation_live_suites(app_id,name,created_at DESC,id DESC);
 
 -- +goose Down
-DROP TABLE workflow_automation_live_suites;
+DROP TABLE IF EXISTS workflow_automation_live_suites;
