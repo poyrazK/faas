@@ -80,6 +80,12 @@ requests (main pushes build and scan both architectures) and decides from
 the pull request's merge base whether an image input changed. None of these
 block a merge.
 
+`cancel conflicted PR runs` sweeps on every push to `main` and every 15
+minutes: it cancels the queued and running pull request runs of PRs that now
+conflict with their base (`scripts/ci/cancel_conflicted_pr_runs.py`). GitHub
+already skips starting runs for a conflicting PR; this catches runs that
+started while the PR was clean.
+
 The metal gates (`e2e-native`, `builder-native`) are deliberately excluded:
 they run on dedicated hardware, are dispatch-only, and cannot gate a PR.
 

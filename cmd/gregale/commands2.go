@@ -6025,7 +6025,7 @@ func renderInvoices(w io.Writer, page api.InvoiceListResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  %-33s %-19s %-8s %-7s %-6s %-10s %-3s %s\n",
 			inv.ID, trunc(inv.Number, 19), inv.Provider, inv.PeriodEnd.Format("2006-01"),
-			inv.Status, "€"+total, inv.Currency, pdf)
+			inv.Status, api.BillingCurrencySymbol+total, inv.Currency, pdf)
 	}
 	if page.NextBefore != "" {
 		_, _ = fmt.Fprintf(w, "\n  next page: gregale invoices --before %s\n", page.NextBefore)
@@ -7914,6 +7914,16 @@ func printDeployColdWakeSentence() {
 	_, _ = fmt.Fprintln(osStdout,
 		"  Your app scales to zero when idle. The first request after idle takes\n"+
 			"  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.")
+}
+
+// printDeployNoHTTPSentence replaces the cold-wake line for a worker or job,
+// which never answers requests and does not scale to zero between them.
+func printDeployNoHTTPSentence(executionMode, appSlug string) {
+	if executionMode == api.ExecutionModeJob {
+		_, _ = fmt.Fprintf(osStdout, "  Your job runs to completion when triggered; it does not serve HTTP.\n  Follow it with: gregale logs %s\n", appSlug)
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "  Your worker runs continuously; it does not serve HTTP.\n  Follow it with: gregale logs %s\n", appSlug)
 }
 
 // renderDeployFailure maps the deployment's Error string to one of the

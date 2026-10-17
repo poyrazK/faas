@@ -1,0 +1,12 @@
+{{template "automation-live-result" .}}
+{{define "automation-live-result"}}
+{{with .Data.LiveSelected}}<article id="automation-live-result" class="card" data-live-run="{{.RunID}}" data-live-state="{{.RunStatus}}" data-live-current="{{.ReportCurrent}}" data-live-outdated="{{.Outdated}}" data-live-editor-changed="{{$.Data.LiveEditorChanged}}"><h3>Live verification: {{.CaseName}}</h3>
+<p>Run: <a href="{{$.Data.LiveRunURL}}">{{.RunID}}</a>. State: <strong>{{.RunStatus}}</strong>. Published revision: {{.PublishedVersion}}. Deployment: <code>{{.DeploymentID}}</code>.</p>
+<p data-live-outdated class="notice" {{if not (or .Outdated $.Data.LiveEditorChanged)}}hidden{{end}}>This verification is outdated for the displayed case, published revision, or deployment. Its report describes the original frozen target.</p>
+<input type="hidden" name="verification_id" value="{{.RunID}}"><button data-live-manual type="submit" formaction="{{$.Data.BaseURL}}/check-live">Check live results</button>
+{{if .Report}}{{if .ReportCurrent}}<p role="status">{{if .Report.Passed}}Live verification passed.{{else}}Live verification failed.{{end}}</p>{{else}}<p class="notice">The run has changed since this report. Check live results again after execution finishes.</p>{{end}}
+{{with .Report}}<p class="muted">Checked at {{.CheckedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}.{{if .Issue}} Issue: <code>{{.Issue}}</code>.{{end}}</p>
+<div class="table-scroll"><table><tr><th>Step</th><th>Observed state</th><th>Live assertion</th></tr>{{range .Steps}}<tr><td>{{.Step}}{{if .Loop}} ({{.Loop}} item {{.ItemIndex}}){{end}}</td><td>{{if .State}}{{.State}}{{else}}Not observed{{end}}</td><td>{{if .Passed}}passed{{else}}failed<ul>{{range .Mismatches}}<li>{{template "automation-test-mismatch" .}}</li>{{end}}</ul>{{end}}</td></tr>{{end}}</table></div>{{end}}
+{{else}}<p>No assertion verdict yet. Check live results after the run reaches a terminal state. Waiting or running steps are not treated as failures.</p>{{end}}</article>{{end}}
+
+{{end}}

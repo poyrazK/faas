@@ -346,6 +346,7 @@ jobs:
           python3 scripts/ci/affected_packages_test.py
           python3 scripts/ci/select_package_tests_test.py
           python3 scripts/ci/select_importers_test.py
+          python3 scripts/ci/cancel_conflicted_pr_runs_test.py
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract

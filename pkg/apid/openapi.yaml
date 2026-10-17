@@ -16664,7 +16664,7 @@ paths:
         Overage computation: `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)`. The included band is echoed from
         `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
-        integer-rounded float the Stripe pusher bills at €0.01/GB-h.
+        integer-rounded float the Stripe pusher bills at $0.01/GB-h.
 
         Source: `usage_minutes` today (after the 30d retention cap).
         `usage_daily` / `mixed` land with the trail-period reader
@@ -26378,6 +26378,100 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SetAutomationPublishPolicyRequest'
+  /v1/apps/{slug}/automations/{name}/tests:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose reusable test suite is replaced or cleared.
+    put:
+      tags:
+      - workflows
+      operationId: saveAutomationTestSuite
+      summary: Save or clear reusable test data using the current draft version.
+      responses:
+        '200':
+          description: Versioned saved test data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveAutomationTestSuiteRequest'
+  /v1/apps/{slug}/automations/{name}/tests/run:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose saved test cases are simulated.
+    post:
+      tags:
+      - workflows
+      operationId: runAutomationTests
+      summary: Simulate all saved cases against the saved draft and retain safe results.
+      responses:
+        '200':
+          description: Case and assertion summaries without payloads or publishing authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationTestReport'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunAutomationTestsRequest'
   /v1/apps/{slug}/automations/{name}/publish-check:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -51245,6 +51339,1712 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-baselines:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose baseline catalog is being listed.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveBaselines
+      summary: Discover named baseline heads and current retained evidence health.
+      description: 'Read-only coherent snapshot, sorted by baseline name and bounded by the 20-name quota. Requires
+        app read scope. Never runs workflows, checks assertions, repairs evidence or promotes. Evidence availability
+        and renewal readiness are separate observations, not CI gate verdicts: historical baseline targets and baseline
+        age remain allowed by CI. Renewal evaluates original run age and the current target against each promoted
+        policy.'
+      responses:
+        '200':
+          description: Current heads and current retained evidence observations; historical audit receipts remain
+            immutable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveBaselinesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose current baseline receipt is being read.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Baseline name whose current promotion receipt is requested.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveBaseline
+      summary: Read the current named automation baseline promotion receipt.
+      description: Read-only; requires app read scope. Records the exact suite, revision, actor, promotion time and reviewed
+        coverage/age policy.
+      responses:
+        '200':
+          description: Current immutable promotion receipt; inspect retained evidence separately for current validity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaseline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: This baseline name is permanently retired; its retirement audit remains available from history.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose baseline audit history is being read.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Baseline name whose immutable promotion and retirement history is requested.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveBaselineHistory
+      summary: Read the last 100 promotions for a named automation baseline.
+      description: Newest revision first. History is immutable until bounded retention or automation deletion. Requires app
+        read scope.
+      responses:
+        '200':
+          description: Bounded immutable promotion history, including the permanent retirement receipt when present.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaselineHistory'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose passing suite is being promoted.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Release track to promote within this automation; execution routing is unchanged.
+    - name: promotion_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected UUID. Retry uncertain requests only with the original ID and identical semantic request.
+    put:
+      tags:
+      - workflows
+      operationId: promoteAutomationLiveBaseline
+      summary: Deliberately promote passing retained evidence to a named baseline.
+      description: Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age
+        policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates.
+        An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes
+        or checks assertions. At most 20 active and 100 lifetime names per automation, with 100 receipts per name; active current
+        suite groups are pinned within the existing suite limit, while linked run retention still applies. Retired names cannot
+        be reused; original promotion retries return historical receipts without reactivation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteAutomationLiveBaselineRequest'
+      responses:
+        '200':
+          description: Attributed promotion receipt for this request, replayed unchanged on an identical retained retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaseline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Promotion cannot reuse a retired baseline name. Choose a different active name explicitly.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/retirements/{retirement_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose named baseline is being retired.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Baseline name to retire permanently within this automation.
+    - name: retirement_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected retirement UUID; preserve this ID and expected revision for uncertain retries.
+    put:
+      tags:
+      - workflows
+      operationId: retireAutomationLiveBaseline
+      summary: Permanently retire a named baseline and release its evidence pin.
+      description: Requires deploy write scope and verified email. Atomically compares the positive expected revision and records
+        the authenticated actor. Retirement permanently reserves the name, frees an active-name slot and releases its suite
+        pin for normal retention; no evidence is immediately deleted. Promotion history remains available. Exact retries return
+        the original retirement receipt. Old promotion retries never reactivate the name. At most 20 active and 100 lifetime
+        names per automation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetireAutomationLiveBaselineRequest'
+      responses:
+        '200':
+          description: Attributed immutable retirement receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaselineRetirement'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: The requested baseline was previously retired by another retirement request. Read its audit history.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      description: Saved automation whose managed suite is being started.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: suite_id
+      in: path
+      required: true
+      description: Fresh UUIDv7 for creation; reuse the original ID for start recovery.
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags: [workflows]
+      operationId: startAutomationLiveSuite
+      summary: Start a durable live suite with explicit real-action confirmation.
+      description: Creates an immutable ordered selection and admits its first case atomically with the saved run link. Retry this same suite ID and body after a lost response. A retained start replay only reads progress; it never advances later cases. New IDs must be UUIDv7 generated within the last ten minutes. Existing metadata-only suites cannot be taken over.
+      requestBody:
+        required: true
+        description: Frozen target, saved-case names and real-action confirmation.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAutomationLiveSuiteRequest'
+      responses:
+        '200':
+          description: startAutomationLiveSuite returns the original suite identities and current server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      description: Saved automation whose managed suite is being continued.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: suite_id
+      in: path
+      required: true
+      description: Original retained managed suite ID; missing records are never recreated.
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags: [workflows]
+      operationId: advanceAutomationLiveSuite
+      summary: Check retained results and admit at most one next case of a managed suite.
+      description: Requires explicit real-action confirmation on every call. Checks earlier original run IDs and stops on failed, unavailable, outdated or nonterminal results. The next admission and its immutable link commit together. Never recreates missing suites, replaces runs, resumes workflows or cancels them. Repeat while pending to observe execution; reopening history is read-only.
+      requestBody:
+        required: true
+        description: Explicit authorization to check and continue the original suite.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvanceAutomationLiveSuiteRequest'
+      responses:
+        '200':
+          description: advanceAutomationLiveSuite returns the original suite identities and current server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Saved automation whose shared verification suites are accessed.
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveSuites
+      summary: List recent shared suite identities without executing or checking workflows.
+      responses:
+        '200':
+          description: listAutomationLiveSuites returns safe retained suite metadata and server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveSuitesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/compare/{baseline_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation owning both retained suites.
+    - name: suite_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Candidate suite UUID; direction is baseline to candidate.
+    - name: baseline_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Baseline suite UUID within the same app and automation.
+    get:
+      tags:
+      - workflows
+      operationId: compareAutomationLiveSuites
+      summary: Compare recorded results in one read-only snapshot without executing or checking runs.
+      description: Cases match by name and require equal frozen definition/input/assertion hashes for regression or recovery classification. Historical target drift alone does not invalidate a report. Pending, missing, unchecked and stale reports are unknown. Added and removed refer to the suite selection. No release approval or CI gate is implied.
+      responses:
+        '200':
+          description: Safe comparison of retained evidence, ordered by candidate cases followed by removed baseline cases.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuiteComparison'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation owning the retained shared suite record.
+    - name: suite_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected suite UUID. Retry the same immutable selection and ID to attach progress.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveSuite
+      summary: Read current retained suite results in a consistent database snapshot.
+      responses:
+        '200':
+          description: getAutomationLiveSuite returns safe retained suite metadata and server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags:
+      - workflows
+      operationId: saveAutomationLiveSuite
+      summary: Save a frozen suite selection and monotonically attach existing run IDs; never execute workflows.
+      responses:
+        '200':
+          description: saveAutomationLiveSuite returns safe retained suite metadata and server-derived observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveSuite'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        description: The frozen selection and existing run links to retain. No execution or verdict fields are accepted. Managed execution records cannot be modified here.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveAutomationLiveSuiteRequest'
+  /v1/apps/{slug}/automations/{name}/live-verifications:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose recent live verification history is requested.
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveVerifications
+      summary: List recent live verifications and the current published deployment target.
+      responses:
+        '200':
+          description: listAutomationLiveVerifications returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveVerificationsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags:
+      - workflows
+      operationId: startAutomationLiveVerification
+      summary: Explicitly execute one saved case input with atomic target fences and idempotency.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description: Stable request key; retry the same key and body to recover the original run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAutomationLiveVerificationRequest'
+      responses:
+        '201':
+          description: startAutomationLiveVerification returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveVerification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation containing the retained live verification to read.
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Specific workflow run whose live provenance is requested.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveVerification
+      summary: Read one verification without starting a run or evaluating live assertions.
+      responses:
+        '200':
+          description: getAutomationLiveVerification returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveVerification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description: Automation whose frozen live assertions will be checked.
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Retained live run whose terminal outcomes will be evaluated.
+    post:
+      tags:
+      - workflows
+      operationId: checkAutomationLiveVerification
+      summary: Check terminal run outcomes against frozen live assertions and retain a safe summary.
+      responses:
+        '200':
+          description: checkAutomationLiveVerification returns safe verification identities and observations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveVerification'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/AutomationInvalid'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics:
+    get:
+      operationId: getProjectBindingVerificationRunDiagnostics
+      tags:
+      - projects
+      summary: Explain verification blockers and safe public changes without admitting work
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for diagnosing blockers in a project verification graph."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for diagnosing blockers in a project verification graph."
+      - name: run
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Verification receipt UUID for diagnosing blockers in a project verification graph."
+      responses:
+        '200':
+          description: Read-only public observations and suggested recovery; grants no admission or activation authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationRunDiagnostics'
+        '400':
+          description: Invalid receipt UUID.
+        '403':
+          description: Read access to every reviewed binding domain is required.
+        '404':
+          description: No owned receipt was found.
+        '503':
+          description: Receipt metadata could not be read.
+
+  /v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics:
+    get:
+      operationId: getBindingVerificationRunDiagnostics
+      tags:
+      - apps
+      summary: "Explain blockers and recovery for an app verification receipt"
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the app for diagnosing an app binding verification receipt."
+      - name: run
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: "Verification receipt UUID for diagnosing an app binding verification receipt."
+      responses:
+        '200':
+          description: "App receipt diagnostics. Read-only public observations and suggested recovery; grants no admission or activation authority."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BindingVerificationRunDiagnostics'
+        '400':
+          description: "App receipt diagnostics. Invalid receipt UUID."
+        '403':
+          description: "App receipt diagnostics. Read access to every reviewed binding domain is required."
+        '404':
+          description: "App receipt diagnostics. No owned receipt was found."
+        '503':
+          description: "App receipt diagnostics. Receipt metadata could not be read."
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review:
+    post:
+      operationId: reviewProjectBindingVerification
+      tags:
+      - projects
+      summary: Review verification without creating receipts or admitting work
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for reviewing project graph verification before receipt creation."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for reviewing project graph verification before receipt creation."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewProjectBindingVerificationRequest'
+      responses:
+        '200':
+          description: Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationReview'
+        '403':
+          description: "Project verification review. Read access to every reviewed binding domain is required."
+        '409':
+          description: The selected deployment, policy or prepared manifest changed.
+        '503':
+          description: A complete review could not be read.
+
+  /v1/apps/{slug}/bindings/verification-runs/review:
+    post:
+      operationId: reviewBindingVerification
+      tags:
+      - apps
+      summary: "Review app binding verification selection and consent without admitting work"
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the app for reviewing an app binding plan before admitting work."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewBindingVerificationRequest'
+      responses:
+        '200':
+          description: "App verification review. Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BindingVerificationReview'
+        '403':
+          description: "App verification review. Read access to every reviewed binding domain is required."
+        '409':
+          description: "App verification review. The selected deployment, policy or prepared manifest changed."
+        '503':
+          description: "App verification review. A complete review could not be read."
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete:
+    post:
+      operationId: completeProjectBindingVerificationRun
+      tags:
+      - projects
+      summary: completeProjectBindingVerificationRun
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for finalizing a retained project verification graph."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for finalizing a retained project verification graph."
+      - name: run
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Verification receipt UUID for finalizing a retained project verification graph."
+      responses:
+        '200':
+          description: Frozen graph verification run; qualification does not
+            change traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationRun'
+        '202':
+          description: Original receipt remains pending while recognized final readiness conditions settle. No new work was admitted and its expiry is unchanged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectBindingVerificationRun' }
+        '409':
+          description: Frozen membership, routing, policy, configuration or
+            evidence changed.
+        '429':
+          description: Normal admission or receipt capacity reached.
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume:
+    post:
+      operationId: resumeProjectBindingVerificationRun
+      tags:
+      - projects
+      summary: resumeProjectBindingVerificationRun
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for reconciling unfinished project verification work."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for reconciling unfinished project verification work."
+      - name: run
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Verification receipt UUID for reconciling unfinished project verification work."
+      responses:
+        '200':
+          description: "Project graph reconciliation. Frozen graph verification run; qualification does not change traffic."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationRun'
+        '409':
+          description: "Project graph reconciliation. Frozen membership, routing, policy, configuration or evidence changed."
+        '429':
+          description: "Project graph reconciliation. Normal admission or receipt capacity reached."
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}:
+    get:
+      operationId: getProjectBindingVerificationRun
+      tags:
+      - projects
+      summary: getProjectBindingVerificationRun
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for reading retained project graph verification status."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for reading retained project graph verification status."
+      - name: run
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Verification receipt UUID for reading retained project graph verification status."
+      responses:
+        '200':
+          description: "Project graph status. Frozen graph verification run; qualification does not change traffic."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationRun'
+        '409':
+          description: "Project graph status. Frozen membership, routing, policy, configuration or evidence changed."
+        '429':
+          description: "Project graph status. Normal admission or receipt capacity reached."
+    delete:
+      operationId: cancelProjectBindingVerificationRun
+      tags:
+      - projects
+      summary: cancelProjectBindingVerificationRun
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for requesting cancellation of a project verification graph."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for requesting cancellation of a project verification graph."
+      - name: run
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Verification receipt UUID for requesting cancellation of a project verification graph."
+      responses:
+        '200':
+          description: "Project graph cancellation. Frozen graph verification run; qualification does not change traffic."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationRun'
+        '409':
+          description: "Project graph cancellation. Frozen membership, routing, policy, configuration or evidence changed."
+        '429':
+          description: "Project graph cancellation. Normal admission or receipt capacity reached."
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs:
+    get:
+      tags: [projects]
+      operationId: listProjectBindingVerificationRuns
+      summary: List retained verification receipt summaries without requalifying evidence.
+      description: Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the project for listing retained project graph verification receipts."}
+        - { name: environment, in: path, required: true, schema: { type: string } , description: "Project environment for listing retained project graph verification receipts."}
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } , description: "Maximum retained project verification receipts returned on this page."}
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } , description: "Opaque continuation cursor from the previous project verification receipt page."}
+        - { name: deployment_id, in: query, schema: { type: string, format: uuid } , description: "Restrict retained project verification receipts to this exact deployment UUID."}
+        - { name: status, in: query, schema: { type: string, enum: [pending, passed, cancelled, expired] } , description: "Restrict project verification receipt discovery to this effective retained status."}
+      responses:
+        '200':
+          description: Bounded retained receipt summaries; not a permanent history or proof of current qualification.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRunList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      operationId: createProjectBindingVerificationRun
+      tags:
+      - projects
+      summary: createProjectBindingVerificationRun
+      parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Slug of the project for creating a reviewed project verification graph."
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+        description: "Project environment for creating a reviewed project verification graph."
+      responses:
+        '201':
+          description: "Project graph creation. Frozen graph verification run; qualification does not change traffic."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectBindingVerificationRun'
+        '409':
+          description: "Project graph creation. Frozen membership, routing, policy, configuration or evidence changed."
+        '429':
+          description: "Project graph creation. Normal admission or receipt capacity reached."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectBindingVerificationRunRequest'
+
+  /v1/apps/{slug}/bindings/verification-runs/{run}/steps/{step}/admit:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for admitting one frozen app verification step."}
+      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for admitting one frozen app verification step."}
+      - { name: step, in: path, required: true, schema: { type: integer, minimum: 0, maximum: 127 } , description: "Frozen step index selected for admission within this app receipt."}
+    post:
+      tags: [apps]
+      operationId: admitBindingVerificationRunStep
+      summary: Atomically admit one frozen step or return its previously recorded resource.
+      responses:
+        '200':
+          description: Durable receipt with original identity and deadline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRunStep' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/apps/{slug}/bindings/verification-runs/{run}/complete:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for finalizing an app verification receipt."}
+      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for finalizing an app verification receipt."}
+    post:
+      tags: [apps]
+      operationId: completeBindingVerificationRun
+      summary: Complete only after fresh server-side policy preflight.
+      responses:
+        '200':
+          description: "App receipt completion. Durable receipt with original identity and deadline."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
+        '202':
+          description: "App receipt completion. Original receipt remains pending while recognized final readiness conditions settle. No new work was admitted and its expiry is unchanged."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/bindings/verification-runs/{run}/resume:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for reconciling unfinished app verification work."}
+      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for reconciling unfinished app verification work."}
+    post:
+      tags: [apps]
+      operationId: resumeBindingVerificationRun
+      summary: Confirm the original review without extending deadlines or replacing work.
+      responses:
+        '200':
+          description: "App receipt reconciliation. Durable receipt with original identity and deadline."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/bindings/verification-runs/{run}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for inspecting or cancelling an app verification receipt."}
+      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for inspecting or cancelling an app verification receipt."}
+    get:
+      tags: [apps]
+      operationId: getBindingVerificationRun
+      summary: Observe the original plan and current owned or reused resource status.
+      responses:
+        '200':
+          description: "App receipt status. Durable receipt with original identity and deadline."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [apps]
+      operationId: cancelBindingVerificationRun
+      summary: Block admissions and cancel only unfinished work owned by this run.
+      responses:
+        '200':
+          description: "App receipt cancellation. Durable receipt with original identity and deadline."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/bindings/verification-runs:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for discovering or creating app verification receipts."}
+    get:
+      tags: [apps]
+      operationId: listBindingVerificationRuns
+      summary: "List retained app binding verification receipt summaries"
+      description: "App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority."
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } , description: "Maximum retained app verification receipts returned on this page."}
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } , description: "Opaque continuation cursor from the previous app verification receipt page."}
+        - { name: deployment_id, in: query, schema: { type: string, format: uuid } , description: "Restrict retained app verification receipts to this exact deployment UUID."}
+        - { name: status, in: query, schema: { type: string, enum: [pending, passed, cancelled, expired] } , description: "Restrict app verification receipt discovery to this effective retained status."}
+        - { name: scope, in: query, schema: { type: string } , description: "Only app receipts whose frozen binding scope matches this value are returned."}
+        - { name: include_members, in: query, schema: { type: boolean, default: false } , description: "Include app receipts created as members of project verification graphs."}
+      responses:
+        '200':
+          description: "App receipt discovery. Bounded retained receipt summaries; not a permanent history or proof of current qualification."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRunList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: createBindingVerificationRun
+      summary: Create a reviewed fixed-deadline single-app verification receipt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBindingVerificationRunRequest' }
+      responses:
+        '201':
+          description: "App receipt creation. Durable receipt with original identity and deadline."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/bindings/queue-canaries/{canary}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for inspecting or cancelling an existing queue completion canary."}
+      - { name: canary, in: path, required: true, schema: { type: string, format: uuid } , description: "Identifier of the push queue completion canary selected for inspection or cancellation."}
+    get:
+      tags: [apps]
+      operationId: getQueueBindingCanary
+      summary: Observe exact-deployment queue completion evidence.
+      responses:
+        '200':
+          description: Current evidence; an in-flight handler may finish after cancellation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [apps]
+      operationId: cancelQueueBindingCanary
+      summary: Cancel the canary and revoke its evidence.
+      responses:
+        '200':
+          description: "Queue canary cancellation. Current evidence; an in-flight handler may finish after cancellation."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/apps/{slug}/bindings/queue-canaries:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for publishing a consented push queue completion canary."}
+    post:
+      tags: [apps]
+      operationId: createQueueBindingCanary
+      summary: Publish one explicitly consented safe message through a push queue binding.
+      description: Requires a live pinned deployment declaring this binding in GREGALE_QUEUE_CANARY_BINDINGS. Uses normal queue and runtime capacity; no traffic change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateQueueBindingCanaryRequest' }
+      responses:
+        '201':
+          description: Published canary; publication does not prove delivery or handler completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBindingCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/deactivate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for deactivating a checked project release set."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for deactivating a checked project release set."
+    post:
+      tags: [projects]
+      operationId: deactivateCheckedProjectRelease
+      summary: "Deactivate a checked project release set after verifying fallback recipients"
+      description: |
+        Requires one eligible materialized live 100% fallback per current workload,
+        a current active graph and enforced binding policies on every fallback.
+        Preparation observes routes without changing them. Use the returned manifest
+        to qualify exact fallback service dependencies, then deactivate explicitly.
+        ttl_seconds is zero because the retired graph keeps its existing TTL.
+        Deactivation compares active graph, complete fallback routing, current policies,
+        fresh evidence, artifacts and service readiness atomically. PostgreSQL rechecks
+        routing and evidence expiry at commit. Missing routes and traffic splits block.
+        The retired release contains an immutable deactivation receipt. Use an
+        Idempotency-Key for retries. GitOps-managed workloads remain blocked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
+      responses:
+        '200':
+          description: Deactivate the current graph after checking every fallback recipient.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckedProjectReleaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for reviewing exact weighted fallbacks before graph deactivation."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for reviewing exact weighted fallbacks before graph deactivation."
+    post:
+      tags: [projects]
+      operationId: prepareCheckedProjectDeactivation
+      summary: "Prepare checked release-set deactivation to exact weighted fallback routes"
+      description: "Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback per current workload,\na current active graph and enforced binding policies on every fallback.\nPreparation observes routes without changing them. Use the returned manifest\nto qualify exact fallback service dependencies, then deactivate explicitly.\nttl_seconds is zero because the retired graph keeps its existing TTL.\nDeactivation compares active graph, complete fallback routing, current policies,\nfresh evidence, artifacts and service readiness atomically. PostgreSQL rechecks\nrouting and evidence expiry at commit. Missing routes and traffic splits block.\nThe retired release contains an immutable deactivation receipt. Use an\nIdempotency-Key for retries. GitOps-managed workloads remain blocked.\n"
+      responses:
+        '200':
+          description: Prepare checked return to exact 100% weighted fallback routes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/rollback:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for restoring a retained graph with fresh binding qualification."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for restoring a retained graph with fresh binding qualification."
+    post:
+      tags: [projects]
+      operationId: rollbackCheckedProjectRelease
+      summary: "Restore a historical project release set using fresh binding checks"
+      description: |
+        Selects an inactive, unexpired historical release in this project environment.
+        Requires a different expected active release, exact historical membership,
+        current enforced policies, fresh target-specific evidence and ready artifacts
+        and service replicas. Historical expiry is checked again at commit.
+        Publishes a new immutable release recording rollback_source_release_id and
+        rollback_previous_release_id; history never grants a policy waiver.
+        Use an Idempotency-Key for mutation retries. No deployments are awakened.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
+      responses:
+        '201':
+          description: Recover a retained historical graph with fresh binding evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckedProjectReleaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for reviewing recovery to a selected historical release graph."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for reviewing recovery to a selected historical release graph."
+    post:
+      tags: [projects]
+      operationId: prepareCheckedProjectRollback
+      summary: "Prepare checked release-set recovery to a selected retained graph"
+      description: "Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this project environment.\nRequires a different expected active release, exact historical membership,\ncurrent enforced policies, fresh target-specific evidence and ready artifacts\nand service replicas. Historical expiry is checked again at commit.\nPublishes a new immutable release recording rollback_source_release_id and\nrollback_previous_release_id; history never grants a policy waiver.\nUse an Idempotency-Key for mutation retries. No deployments are awakened.\n"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PrepareProjectRollbackRequest' }
+      responses:
+        '200':
+          description: Prepare recovery to an explicit retained historical graph.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/activate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for activating a pinned project graph after binding checks."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for activating a pinned project graph after binding checks."
+    post:
+      tags: [projects]
+      operationId: activateCheckedProjectRelease
+      summary: "Activate a checked project release set with pinned binding evidence"
+      description: |
+        Requires an enforced binding release policy on every project member scope.
+        Preparation freezes exact deployments, active graph or weighted fallback,
+        policy revisions and internal service targets. It is a metadata observation,
+        not an evidence grant. Qualification uses candidate-specific task probes.
+        Activation independently checks all member evidence, service edges, artifacts,
+        full project membership, current policy, evidence expiry, active graph CAS
+        and service replica readiness in one transaction. A blocked graph keeps
+        current routes. No target handler calls or wakes are made by service probes.
+        Generic graph publication and deactivation remain fail closed under enforcement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
+      responses:
+        '201':
+          description: Activate a pinned graph with fresh checked binding evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckedProjectReleaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/prepare:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for preparing binding qualification for a pinned release-set manifest."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for preparing binding qualification for a pinned release-set manifest."
+    post:
+      tags: [projects]
+      operationId: prepareCheckedProjectRelease
+      summary: "Prepare a project release-set manifest for checked binding qualification"
+      description: "Checked release-set preparation. Requires an enforced binding release policy on every project member scope.\nPreparation freezes exact deployments, active graph or weighted fallback,\npolicy revisions and internal service targets. It is a metadata observation,\nnot an evidence grant. Qualification uses candidate-specific task probes.\nActivation independently checks all member evidence, service edges, artifacts,\nfull project membership, current policy, evidence expiry, active graph CAS\nand service replica readiness in one transaction. A blocked graph keeps\ncurrent routes. No target handler calls or wakes are made by service probes.\nGeneric graph publication and deactivation remain fail closed under enforcement.\n"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishProjectReleaseSetRequest' }
+      responses:
+        '200':
+          description: Prepare a pinned graph manifest without changing routes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for observing or cancelling a candidate service staging lease."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for observing or cancelling a candidate service staging lease."
+      - name: stage
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: "Identifier of the candidate service staging lease selected for status or cancellation."
+    get:
+      tags: [projects]
+      operationId: getProjectReleaseStage
+      summary: Observe a candidate staging lease.
+      responses:
+        '200':
+          description: Current staging lease and observed service readiness; this conveys no binding evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseStage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: cancelProjectReleaseStage
+      summary: Cancel temporary candidate capacity; active graph and traffic allocations remain authoritative.
+      responses:
+        '200':
+          description: "Candidate service staging cancellation. Current staging lease and observed service readiness; this conveys no binding evidence."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseStage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+
+  /v1/projects/{slug}/environments/{environment}/release-sets/staging:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Slug of the project for temporarily admitting selected candidate services for staging."
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Project environment for temporarily admitting selected candidate services for staging."
+    post:
+      tags: [projects]
+      operationId: stageCheckedProjectRelease
+      summary: Lease candidate service capacity without publishing routes.
+      description: |
+        Stages the exact service deployments in a complete prepared forward or rollback manifest.
+        Non-GitOps live materialized candidates only; mirror recipients and active service rollouts are excluded.
+        Policy and routing changes fail closed.
+        Schedd uses normal admission, preserves serving allocations and never grants extra concurrency.
+        Capacity is billable. Repeating the same manifest reuses its unexpired lease without extending it.
+        A different manifest conflicts until the current stage is cancelled or expires.
+        Qualification and activation remain explicit and independently recheck readiness and evidence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StageProjectReleaseRequest' }
+      responses:
+        '200':
+          description: "Candidate service staging admission. Current staging lease and observed service readiness; this conveys no binding evidence."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseStage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/bindings/release-policy-with-queues:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Deployment scope whose queue release requirements will be replaced. Omit for default.
+        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
+    put:
+      tags: [apps]
+      operationId: setQueueBindingReleasePolicy
+      summary: Replace release policy with explicit per-binding queue readiness requirements.
+      description: |
+        Requires deploy:write or admin and completed MFA. queue_requirements is
+        explicit, including an empty object to clear it. Names select one shared
+        or selected-environment push binding; consumer_readiness requires a
+        confirmed queue environment and an enabled, active, healthy scheduler
+        consumer with a poll at most thirty seconds old. Missing, ambiguous,
+        disabled, external pull, unobserved or
+        stale consumers block. Connectivity and message delivery remain
+        unverified; passed readiness policies retain partial coverage. Unlisted
+        queues retain strict unsupported coverage. Existing storage requirements
+        must be explicitly retained or cleared. Policy and queue facts, and poll
+        expiry, are checked at the traffic write. This call sends no messages and
+        performs no probes. Older servers return 404 before mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetQueueBindingReleasePolicyRequest' }
+      responses:
+        '200':
+          description: Saved policy with explicit queue requirements and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages:
     get:
       tags: [events]
@@ -51306,6 +53106,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history:
     get:
       tags: [events]
@@ -51347,6 +53148,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy:
     get:
       tags: [events]
@@ -51436,6 +53238,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+
   /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment:
     get:
       tags: [events]
@@ -51478,6 +53281,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
 
   /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew:
     post:
@@ -51527,6 +53331,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+
   /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete:
     post:
       tags: [events]
@@ -51574,6 +53379,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry:
     post:
       tags: [events]
@@ -51621,6 +53427,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
 
   /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter:
     post:
@@ -51670,934 +53477,6 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics:
-    get:
-      operationId: getProjectBindingVerificationRunDiagnostics
-      tags:
-      - projects
-      summary: Explain verification blockers and safe public changes without admitting work
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for diagnosing blockers in a project verification graph."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for diagnosing blockers in a project verification graph."
-      - name: run
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-        description: "Verification receipt UUID for diagnosing blockers in a project verification graph."
-      responses:
-        '200':
-          description: Read-only public observations and suggested recovery; grants no admission or activation authority.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationRunDiagnostics'
-        '400':
-          description: Invalid receipt UUID.
-        '403':
-          description: Read access to every reviewed binding domain is required.
-        '404':
-          description: No owned receipt was found.
-        '503':
-          description: Receipt metadata could not be read.
-  /v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics:
-    get:
-      operationId: getBindingVerificationRunDiagnostics
-      tags:
-      - apps
-      summary: "Explain blockers and recovery for an app verification receipt"
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the app for diagnosing an app binding verification receipt."
-      - name: run
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-        description: "Verification receipt UUID for diagnosing an app binding verification receipt."
-      responses:
-        '200':
-          description: "App receipt diagnostics. Read-only public observations and suggested recovery; grants no admission or activation authority."
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BindingVerificationRunDiagnostics'
-        '400':
-          description: "App receipt diagnostics. Invalid receipt UUID."
-        '403':
-          description: "App receipt diagnostics. Read access to every reviewed binding domain is required."
-        '404':
-          description: "App receipt diagnostics. No owned receipt was found."
-        '503':
-          description: "App receipt diagnostics. Receipt metadata could not be read."
-  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review:
-    post:
-      operationId: reviewProjectBindingVerification
-      tags:
-      - projects
-      summary: Review verification without creating receipts or admitting work
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for reviewing project graph verification before receipt creation."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for reviewing project graph verification before receipt creation."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReviewProjectBindingVerificationRequest'
-      responses:
-        '200':
-          description: Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationReview'
-        '403':
-          description: "Project verification review. Read access to every reviewed binding domain is required."
-        '409':
-          description: The selected deployment, policy or prepared manifest changed.
-        '503':
-          description: A complete review could not be read.
-  /v1/apps/{slug}/bindings/verification-runs/review:
-    post:
-      operationId: reviewBindingVerification
-      tags:
-      - apps
-      summary: "Review app binding verification selection and consent without admitting work"
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the app for reviewing an app binding plan before admitting work."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReviewBindingVerificationRequest'
-      responses:
-        '200':
-          description: "App verification review. Server plan, blockers, required consent and opaque review digests. Ready means the plan is available; it is not verification evidence."
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BindingVerificationReview'
-        '403':
-          description: "App verification review. Read access to every reviewed binding domain is required."
-        '409':
-          description: "App verification review. The selected deployment, policy or prepared manifest changed."
-        '503':
-          description: "App verification review. A complete review could not be read."
-  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete:
-    post:
-      operationId: completeProjectBindingVerificationRun
-      tags:
-      - projects
-      summary: completeProjectBindingVerificationRun
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for finalizing a retained project verification graph."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for finalizing a retained project verification graph."
-      - name: run
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Verification receipt UUID for finalizing a retained project verification graph."
-      responses:
-        '200':
-          description: Frozen graph verification run; qualification does not
-            change traffic.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationRun'
-        '202':
-          description: Original receipt remains pending while recognized final readiness conditions settle. No new work was admitted and its expiry is unchanged.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProjectBindingVerificationRun' }
-        '409':
-          description: Frozen membership, routing, policy, configuration or
-            evidence changed.
-        '429':
-          description: Normal admission or receipt capacity reached.
-  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume:
-    post:
-      operationId: resumeProjectBindingVerificationRun
-      tags:
-      - projects
-      summary: resumeProjectBindingVerificationRun
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for reconciling unfinished project verification work."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for reconciling unfinished project verification work."
-      - name: run
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Verification receipt UUID for reconciling unfinished project verification work."
-      responses:
-        '200':
-          description: "Project graph reconciliation. Frozen graph verification run; qualification does not change traffic."
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationRun'
-        '409':
-          description: "Project graph reconciliation. Frozen membership, routing, policy, configuration or evidence changed."
-        '429':
-          description: "Project graph reconciliation. Normal admission or receipt capacity reached."
-  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}:
-    get:
-      operationId: getProjectBindingVerificationRun
-      tags:
-      - projects
-      summary: getProjectBindingVerificationRun
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for reading retained project graph verification status."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for reading retained project graph verification status."
-      - name: run
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Verification receipt UUID for reading retained project graph verification status."
-      responses:
-        '200':
-          description: "Project graph status. Frozen graph verification run; qualification does not change traffic."
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationRun'
-        '409':
-          description: "Project graph status. Frozen membership, routing, policy, configuration or evidence changed."
-        '429':
-          description: "Project graph status. Normal admission or receipt capacity reached."
-    delete:
-      operationId: cancelProjectBindingVerificationRun
-      tags:
-      - projects
-      summary: cancelProjectBindingVerificationRun
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for requesting cancellation of a project verification graph."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for requesting cancellation of a project verification graph."
-      - name: run
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Verification receipt UUID for requesting cancellation of a project verification graph."
-      responses:
-        '200':
-          description: "Project graph cancellation. Frozen graph verification run; qualification does not change traffic."
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationRun'
-        '409':
-          description: "Project graph cancellation. Frozen membership, routing, policy, configuration or evidence changed."
-        '429':
-          description: "Project graph cancellation. Normal admission or receipt capacity reached."
-  /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs:
-    get:
-      tags: [projects]
-      operationId: listProjectBindingVerificationRuns
-      summary: List retained verification receipt summaries without requalifying evidence.
-      description: Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority.
-      parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the project for listing retained project graph verification receipts."}
-        - { name: environment, in: path, required: true, schema: { type: string } , description: "Project environment for listing retained project graph verification receipts."}
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } , description: "Maximum retained project verification receipts returned on this page."}
-        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } , description: "Opaque continuation cursor from the previous project verification receipt page."}
-        - { name: deployment_id, in: query, schema: { type: string, format: uuid } , description: "Restrict retained project verification receipts to this exact deployment UUID."}
-        - { name: status, in: query, schema: { type: string, enum: [pending, passed, cancelled, expired] } , description: "Restrict project verification receipt discovery to this effective retained status."}
-      responses:
-        '200':
-          description: Bounded retained receipt summaries; not a permanent history or proof of current qualification.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRunList' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-    post:
-      operationId: createProjectBindingVerificationRun
-      tags:
-      - projects
-      summary: createProjectBindingVerificationRun
-      parameters:
-      - name: slug
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Slug of the project for creating a reviewed project verification graph."
-      - name: environment
-        in: path
-        required: true
-        schema:
-          type: string
-        description: "Project environment for creating a reviewed project verification graph."
-      responses:
-        '201':
-          description: "Project graph creation. Frozen graph verification run; qualification does not change traffic."
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectBindingVerificationRun'
-        '409':
-          description: "Project graph creation. Frozen membership, routing, policy, configuration or evidence changed."
-        '429':
-          description: "Project graph creation. Normal admission or receipt capacity reached."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateProjectBindingVerificationRunRequest'
-  /v1/apps/{slug}/bindings/verification-runs/{run}/steps/{step}/admit:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for admitting one frozen app verification step."}
-      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for admitting one frozen app verification step."}
-      - { name: step, in: path, required: true, schema: { type: integer, minimum: 0, maximum: 127 } , description: "Frozen step index selected for admission within this app receipt."}
-    post:
-      tags: [apps]
-      operationId: admitBindingVerificationRunStep
-      summary: Atomically admit one frozen step or return its previously recorded resource.
-      responses:
-        '200':
-          description: Durable receipt with original identity and deadline.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRunStep' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/apps/{slug}/bindings/verification-runs/{run}/complete:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for finalizing an app verification receipt."}
-      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for finalizing an app verification receipt."}
-    post:
-      tags: [apps]
-      operationId: completeBindingVerificationRun
-      summary: Complete only after fresh server-side policy preflight.
-      responses:
-        '200':
-          description: "App receipt completion. Durable receipt with original identity and deadline."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
-        '202':
-          description: "App receipt completion. Original receipt remains pending while recognized final readiness conditions settle. No new work was admitted and its expiry is unchanged."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /v1/apps/{slug}/bindings/verification-runs/{run}/resume:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for reconciling unfinished app verification work."}
-      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for reconciling unfinished app verification work."}
-    post:
-      tags: [apps]
-      operationId: resumeBindingVerificationRun
-      summary: Confirm the original review without extending deadlines or replacing work.
-      responses:
-        '200':
-          description: "App receipt reconciliation. Durable receipt with original identity and deadline."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /v1/apps/{slug}/bindings/verification-runs/{run}:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for inspecting or cancelling an app verification receipt."}
-      - { name: run, in: path, required: true, schema: { type: string, format: uuid } , description: "Verification receipt UUID for inspecting or cancelling an app verification receipt."}
-    get:
-      tags: [apps]
-      operationId: getBindingVerificationRun
-      summary: Observe the original plan and current owned or reused resource status.
-      responses:
-        '200':
-          description: "App receipt status. Durable receipt with original identity and deadline."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-    delete:
-      tags: [apps]
-      operationId: cancelBindingVerificationRun
-      summary: Block admissions and cancel only unfinished work owned by this run.
-      responses:
-        '200':
-          description: "App receipt cancellation. Durable receipt with original identity and deadline."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /v1/apps/{slug}/bindings/verification-runs:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for discovering or creating app verification receipts."}
-    get:
-      tags: [apps]
-      operationId: listBindingVerificationRuns
-      summary: "List retained app binding verification receipt summaries"
-      description: "App receipt discovery. Newest first with creation-time and UUID keyset pagination. Reuse filters with next_cursor. observed_at freezes the expiry cutoff; recorded state may change between pages. Listings grant no admission or release authority."
-      parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } , description: "Maximum retained app verification receipts returned on this page."}
-        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } , description: "Opaque continuation cursor from the previous app verification receipt page."}
-        - { name: deployment_id, in: query, schema: { type: string, format: uuid } , description: "Restrict retained app verification receipts to this exact deployment UUID."}
-        - { name: status, in: query, schema: { type: string, enum: [pending, passed, cancelled, expired] } , description: "Restrict app verification receipt discovery to this effective retained status."}
-        - { name: scope, in: query, schema: { type: string } , description: "Only app receipts whose frozen binding scope matches this value are returned."}
-        - { name: include_members, in: query, schema: { type: boolean, default: false } , description: "Include app receipts created as members of project verification graphs."}
-      responses:
-        '200':
-          description: "App receipt discovery. Bounded retained receipt summaries; not a permanent history or proof of current qualification."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRunList' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-    post:
-      tags: [apps]
-      operationId: createBindingVerificationRun
-      summary: Create a reviewed fixed-deadline single-app verification receipt.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CreateBindingVerificationRunRequest' }
-      responses:
-        '201':
-          description: "App receipt creation. Durable receipt with original identity and deadline."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingVerificationRun' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /v1/apps/{slug}/bindings/queue-canaries/{canary}:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for inspecting or cancelling an existing queue completion canary."}
-      - { name: canary, in: path, required: true, schema: { type: string, format: uuid } , description: "Identifier of the push queue completion canary selected for inspection or cancellation."}
-    get:
-      tags: [apps]
-      operationId: getQueueBindingCanary
-      summary: Observe exact-deployment queue completion evidence.
-      responses:
-        '200':
-          description: Current evidence; an in-flight handler may finish after cancellation.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QueueBindingCanary' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-    delete:
-      tags: [apps]
-      operationId: cancelQueueBindingCanary
-      summary: Cancel the canary and revoke its evidence.
-      responses:
-        '200':
-          description: "Queue canary cancellation. Current evidence; an in-flight handler may finish after cancellation."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QueueBindingCanary' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/apps/{slug}/bindings/queue-canaries:
-    parameters:
-      - { name: slug, in: path, required: true, schema: { type: string } , description: "Slug of the app for publishing a consented push queue completion canary."}
-    post:
-      tags: [apps]
-      operationId: createQueueBindingCanary
-      summary: Publish one explicitly consented safe message through a push queue binding.
-      description: Requires a live pinned deployment declaring this binding in GREGALE_QUEUE_CANARY_BINDINGS. Uses normal queue and runtime capacity; no traffic change.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CreateQueueBindingCanaryRequest' }
-      responses:
-        '201':
-          description: Published canary; publication does not prove delivery or handler completion.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/QueueBindingCanary' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /v1/projects/{slug}/environments/{environment}/release-sets/deactivate:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for deactivating a checked project release set."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for deactivating a checked project release set."
-    post:
-      tags: [projects]
-      operationId: deactivateCheckedProjectRelease
-      summary: "Deactivate a checked project release set after verifying fallback recipients"
-      description: |
-        Requires one eligible materialized live 100% fallback per current workload,
-        a current active graph and enforced binding policies on every fallback.
-        Preparation observes routes without changing them. Use the returned manifest
-        to qualify exact fallback service dependencies, then deactivate explicitly.
-        ttl_seconds is zero because the retired graph keeps its existing TTL.
-        Deactivation compares active graph, complete fallback routing, current policies,
-        fresh evidence, artifacts and service readiness atomically. PostgreSQL rechecks
-        routing and evidence expiry at commit. Missing routes and traffic splits block.
-        The retired release contains an immutable deactivation receipt. Use an
-        Idempotency-Key for retries. GitOps-managed workloads remain blocked.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
-      responses:
-        '200':
-          description: Deactivate the current graph after checking every fallback recipient.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CheckedProjectReleaseResponse' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for reviewing exact weighted fallbacks before graph deactivation."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for reviewing exact weighted fallbacks before graph deactivation."
-    post:
-      tags: [projects]
-      operationId: prepareCheckedProjectDeactivation
-      summary: "Prepare checked release-set deactivation to exact weighted fallback routes"
-      description: "Checked release-set deactivation preparation. Requires one eligible materialized live 100% fallback per current workload,\na current active graph and enforced binding policies on every fallback.\nPreparation observes routes without changing them. Use the returned manifest\nto qualify exact fallback service dependencies, then deactivate explicitly.\nttl_seconds is zero because the retired graph keeps its existing TTL.\nDeactivation compares active graph, complete fallback routing, current policies,\nfresh evidence, artifacts and service readiness atomically. PostgreSQL rechecks\nrouting and evidence expiry at commit. Missing routes and traffic splits block.\nThe retired release contains an immutable deactivation receipt. Use an\nIdempotency-Key for retries. GitOps-managed workloads remain blocked.\n"
-      responses:
-        '200':
-          description: Prepare checked return to exact 100% weighted fallback routes.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/rollback:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for restoring a retained graph with fresh binding qualification."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for restoring a retained graph with fresh binding qualification."
-    post:
-      tags: [projects]
-      operationId: rollbackCheckedProjectRelease
-      summary: "Restore a historical project release set using fresh binding checks"
-      description: |
-        Selects an inactive, unexpired historical release in this project environment.
-        Requires a different expected active release, exact historical membership,
-        current enforced policies, fresh target-specific evidence and ready artifacts
-        and service replicas. Historical expiry is checked again at commit.
-        Publishes a new immutable release recording rollback_source_release_id and
-        rollback_previous_release_id; history never grants a policy waiver.
-        Use an Idempotency-Key for mutation retries. No deployments are awakened.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
-      responses:
-        '201':
-          description: Recover a retained historical graph with fresh binding evidence.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CheckedProjectReleaseResponse' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for reviewing recovery to a selected historical release graph."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for reviewing recovery to a selected historical release graph."
-    post:
-      tags: [projects]
-      operationId: prepareCheckedProjectRollback
-      summary: "Prepare checked release-set recovery to a selected retained graph"
-      description: "Checked release-set rollback preparation. Selects an inactive, unexpired historical release in this project environment.\nRequires a different expected active release, exact historical membership,\ncurrent enforced policies, fresh target-specific evidence and ready artifacts\nand service replicas. Historical expiry is checked again at commit.\nPublishes a new immutable release recording rollback_source_release_id and\nrollback_previous_release_id; history never grants a policy waiver.\nUse an Idempotency-Key for mutation retries. No deployments are awakened.\n"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PrepareProjectRollbackRequest' }
-      responses:
-        '200':
-          description: Prepare recovery to an explicit retained historical graph.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/activate:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for activating a pinned project graph after binding checks."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for activating a pinned project graph after binding checks."
-    post:
-      tags: [projects]
-      operationId: activateCheckedProjectRelease
-      summary: "Activate a checked project release set with pinned binding evidence"
-      description: |
-        Requires an enforced binding release policy on every project member scope.
-        Preparation freezes exact deployments, active graph or weighted fallback,
-        policy revisions and internal service targets. It is a metadata observation,
-        not an evidence grant. Qualification uses candidate-specific task probes.
-        Activation independently checks all member evidence, service edges, artifacts,
-        full project membership, current policy, evidence expiry, active graph CAS
-        and service replica readiness in one transaction. A blocked graph keeps
-        current routes. No target handler calls or wakes are made by service probes.
-        Generic graph publication and deactivation remain fail closed under enforcement.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
-      responses:
-        '201':
-          description: Activate a pinned graph with fresh checked binding evidence.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CheckedProjectReleaseResponse' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/prepare:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for preparing binding qualification for a pinned release-set manifest."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for preparing binding qualification for a pinned release-set manifest."
-    post:
-      tags: [projects]
-      operationId: prepareCheckedProjectRelease
-      summary: "Prepare a project release-set manifest for checked binding qualification"
-      description: "Checked release-set preparation. Requires an enforced binding release policy on every project member scope.\nPreparation freezes exact deployments, active graph or weighted fallback,\npolicy revisions and internal service targets. It is a metadata observation,\nnot an evidence grant. Qualification uses candidate-specific task probes.\nActivation independently checks all member evidence, service edges, artifacts,\nfull project membership, current policy, evidence expiry, active graph CAS\nand service replica readiness in one transaction. A blocked graph keeps\ncurrent routes. No target handler calls or wakes are made by service probes.\nGeneric graph publication and deactivation remain fail closed under enforcement.\n"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/PublishProjectReleaseSetRequest' }
-      responses:
-        '200':
-          description: Prepare a pinned graph manifest without changing routes.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CheckedProjectReleaseManifest' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for observing or cancelling a candidate service staging lease."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for observing or cancelling a candidate service staging lease."
-      - name: stage
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-        description: "Identifier of the candidate service staging lease selected for status or cancellation."
-    get:
-      tags: [projects]
-      operationId: getProjectReleaseStage
-      summary: Observe a candidate staging lease.
-      responses:
-        '200':
-          description: Current staging lease and observed service readiness; this conveys no binding evidence.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProjectReleaseStage' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-    delete:
-      tags: [projects]
-      operationId: cancelProjectReleaseStage
-      summary: Cancel temporary candidate capacity; active graph and traffic allocations remain authoritative.
-      responses:
-        '200':
-          description: "Candidate service staging cancellation. Current staging lease and observed service readiness; this conveys no binding evidence."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProjectReleaseStage' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-
-  /v1/projects/{slug}/environments/{environment}/release-sets/staging:
-    parameters:
-      - name: slug
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Slug of the project for temporarily admitting selected candidate services for staging."
-      - name: environment
-        in: path
-        required: true
-        schema: { type: string }
-        description: "Project environment for temporarily admitting selected candidate services for staging."
-    post:
-      tags: [projects]
-      operationId: stageCheckedProjectRelease
-      summary: Lease candidate service capacity without publishing routes.
-      description: |
-        Stages the exact service deployments in a complete prepared forward or rollback manifest.
-        Non-GitOps live materialized candidates only; mirror recipients and active service rollouts are excluded.
-        Policy and routing changes fail closed.
-        Schedd uses normal admission, preserves serving allocations and never grants extra concurrency.
-        Capacity is billable. Repeating the same manifest reuses its unexpired lease without extending it.
-        A different manifest conflicts until the current stage is cancelled or expires.
-        Qualification and activation remain explicit and independently recheck readiness and evidence.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/StageProjectReleaseRequest' }
-      responses:
-        '200':
-          description: "Candidate service staging admission. Current staging lease and observed service readiness; this conveys no binding evidence."
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ProjectReleaseStage' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-  /v1/apps/{slug}/bindings/release-policy-with-queues:
-    parameters:
-      - $ref: '#/components/parameters/Slug'
-      - name: scope
-        in: query
-        description: Deployment scope whose queue release requirements will be replaced. Omit for default.
-        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
-    put:
-      tags: [apps]
-      operationId: setQueueBindingReleasePolicy
-      summary: Replace release policy with explicit per-binding queue readiness requirements.
-      description: |
-        Requires deploy:write or admin and completed MFA. queue_requirements is
-        explicit, including an empty object to clear it. Names select one shared
-        or selected-environment push binding; consumer_readiness requires a
-        confirmed queue environment and an enabled, active, healthy scheduler
-        consumer with a poll at most thirty seconds old. Missing, ambiguous,
-        disabled, external pull, unobserved or
-        stale consumers block. Connectivity and message delivery remain
-        unverified; passed readiness policies retain partial coverage. Unlisted
-        queues retain strict unsupported coverage. Existing storage requirements
-        must be explicitly retained or cleared. Policy and queue facts, and poll
-        expiry, are checked at the traffic write. This call sends no messages and
-        performs no probes. Older servers return 404 before mutation.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/SetQueueBindingReleasePolicyRequest' }
-      responses:
-        '200':
-          description: Saved policy with explicit queue requirements and incremented revision.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
 components:
 
@@ -73847,6 +74726,10 @@ components:
       - draft
       - enabled
       properties:
+        test_suite:
+          $ref: '#/components/schemas/AutomationTestSuite'
+        test_report:
+          $ref: '#/components/schemas/AutomationTestReport'
         failure_paused:
           type: boolean
           description: Runtime failure guard blocks automatic admissions independently of configured enabled intent.
@@ -74097,6 +74980,1042 @@ components:
           maxItems: 25
       description: Requires at least one assertion. Loop item assertions use step <loop>/action, loop
         name and canonical zero-based item index.
+    AutomationTestInputs:
+      description: Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft.
+      type: object
+      additionalProperties: false
+      properties:
+        input:
+          description: Saved test data — Workflow input as any JSON value; omission is equivalent to null.
+        mock_outputs:
+          description: Saved test data — Successful action outputs keyed by root step name; explicit null is a supplied result.
+          type: object
+          additionalProperties: {}
+        mock_item_outputs:
+          description: Saved test data — Ordered successful output prefix keyed by for_each root name; waits and controls cannot be mocked.
+          type: object
+          additionalProperties:
+            type: array
+            maxItems: 128
+            items: {}
+        mock_item_attempts:
+          description: Saved test data — Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for failed items when continuing.
+          type: object
+          additionalProperties:
+            type: object
+            minProperties: 1
+            maxProperties: 128
+            additionalProperties:
+              type: array
+              minItems: 1
+              maxItems: 25
+              items:
+                $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+        mock_attempts:
+          description: Saved test data — Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one success with the received payload as output, or one timeout with a configured timeout and on_timeout route. Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action timeouts require on_timeout. Cannot be combined with mock_outputs for the same step.
+          type: object
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 25
+            items:
+              $ref: '#/components/schemas/AutomationSimulationMockAttempt'
+    AutomationTestCase:
+      description: A uniquely named set of definition-free mocks and expected step results.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - simulation
+      - expectations
+      properties:
+        live:
+          description: Optional live assertions saved with this case; null disables its live test.
+          anyOf:
+          - $ref: '#/components/schemas/AutomationLiveTest'
+          - type: 'null'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        simulation:
+          $ref: '#/components/schemas/AutomationTestInputs'
+        expectations:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: '#/components/schemas/AutomationCheckExpectation'
+    AutomationLiveExpectation:
+      description: A separate assertion against a real terminal workflow step, not a mock trace.
+      type: object
+      additionalProperties: false
+      required:
+      - step
+      properties:
+        step:
+          type: string
+        loop:
+          type: string
+        item_index:
+          type: integer
+          minimum: 0
+          maximum: 127
+        state:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - dead
+          - skipped
+        output:
+          description: Optional expected JSON result; an explicit null is asserted.
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 425
+    AutomationLiveTest:
+      description: Explicit live assertions frozen when a saved case is admitted for execution.
+      type: object
+      additionalProperties: false
+      required:
+      - expectations
+      properties:
+        expected_run_status:
+          type: string
+          enum:
+          - succeeded
+          - failed
+          - dead
+          description: Desired terminal run state; omitted means succeeded. Cancellation always fails verification.
+        expectations:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/AutomationLiveExpectation'
+    StartAutomationLiveVerificationRequest:
+      description: Fenced request to execute one saved case input against a specific published revision and deployment.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - case_name
+      - confirm_real_actions
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        expected_published_version:
+          type: integer
+          minimum: 1
+        expected_deployment_id:
+          type: string
+        case_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        confirm_real_actions:
+          type: boolean
+          description: Must be true to authorize real handler and connected-service actions.
+    AutomationLiveReport:
+      description: Payload-free verdict for the frozen live assertions at one terminal run state.
+      type: object
+      additionalProperties: false
+      required:
+      - checked_at
+      - passed
+      - run_status
+      - resume_count
+      - run_updated_at
+      - steps
+      properties:
+        checked_at:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+        issue:
+          type: string
+        run_status:
+          type: string
+        resume_count:
+          type: integer
+          minimum: 0
+        run_updated_at:
+          type: string
+          format: date-time
+        steps:
+          type: array
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/AutomationTestStepResult'
+    StartAutomationLiveSuiteRequest:
+      type: object
+      additionalProperties: false
+      description: At most 16 KiB. Bind an ordered selection of saved live case names to the exact saved version, published revision and deployment, with explicit real-action authorization.
+      required: [expected_version, expected_published_version, expected_deployment_id, cases, confirm_real_actions]
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        expected_published_version:
+          type: integer
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        confirm_real_actions:
+          type: boolean
+    AdvanceAutomationLiveSuiteRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit authorization to inspect existing identities and admit at most one remaining case. No target changes, run replacements or uploaded verdicts are accepted.
+      required: [confirm_real_actions]
+      properties:
+        confirm_real_actions:
+          type: boolean
+    SaveAutomationLiveSuiteRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - cases
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        expected_published_version:
+          type: integer
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteMember'
+      description: At most 16 KiB. Freeze an ordered saved-case selection and attach existing verification run IDs.
+        No assertions, verdicts, keys or payloads are accepted. Saving never executes or checks a run. Existing run
+        links cannot be replaced or removed.
+    AutomationLiveSuiteMember:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+      description: One saved live case and its optional existing verification run identity.
+    AutomationLiveBaselinePolicy:
+      description: Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion.
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - required_cases
+      - max_candidate_age_seconds
+      properties:
+        version:
+          type: integer
+          enum:
+          - 2
+        required_cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        max_candidate_age_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036
+    PromoteAutomationLiveBaselineRequest:
+      description: Explicit target suite, reviewed policy and expected baseline revision for an audited promotion.
+      type: object
+      additionalProperties: false
+      required:
+      - suite_id
+      - expected_revision
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - policy
+      properties:
+        suite_id:
+          type: string
+          format: uuid
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9223372036854775806
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        expected_published_version:
+          type: integer
+          format: int64
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        policy:
+          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+    AutomationLiveBaseline:
+      description: Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy.
+      type: object
+      additionalProperties: false
+      required:
+      - promotion_id
+      - app_id
+      - name
+      - baseline_name
+      - revision
+      - actor_account_id
+      - promoted_at
+      - suite
+      - policy
+      - policy_hash
+      - cases_passed
+      - oldest_run_created_at
+      - evidence_age_seconds
+      properties:
+        promotion_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseline_name:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        previous_promotion_id:
+          type: string
+          format: uuid
+        actor_account_id:
+          type: string
+          format: uuid
+        actor_api_key_id:
+          type: string
+          format: uuid
+        promoted_at:
+          type: string
+          format: date-time
+        suite:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        policy:
+          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+        policy_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        cases_passed:
+          type: integer
+          minimum: 1
+          maximum: 32
+        oldest_run_created_at:
+          type: string
+          format: date-time
+        evidence_age_seconds:
+          type: number
+          format: double
+          minimum: 0
+    AutomationLiveBaselineCaseHealth:
+      description: Current retained verification availability and renewal readiness for one promoted suite case.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - passed
+          - failed
+          - pending
+          - unavailable
+          - not_started
+    AutomationLiveBaselineHealth:
+      description: Coherent read-only evidence health observations for a named baseline head.
+      type: object
+      additionalProperties: false
+      required:
+      - baseline
+      - evidence_status
+      - renewal_status
+      - reasons
+      - outdated
+      - cases
+      properties:
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveBaseline'
+        evidence_status:
+          type: string
+          enum:
+          - usable
+          - failed
+          - unavailable
+          description: Availability of current recorded reports; not a gate verdict.
+        renewal_status:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          description: Whether this same suite qualifies for a new promotion now.
+        reasons:
+          type: array
+          items:
+            type: string
+        outdated:
+          type: boolean
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaselineCaseHealth'
+        age_seconds:
+          type: number
+          description: Oldest original retained run age. Negative values indicate future timestamps.
+        oldest_run_created_at:
+          type: string
+          format: date-time
+        max_age_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036
+    ListAutomationLiveBaselinesResponse:
+      description: Bounded sorted catalog of active named baseline heads and their current evidence observations.
+      type: object
+      additionalProperties: false
+      required:
+      - baselines
+      - observed_at
+      properties:
+        baselines:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaselineHealth'
+        observed_at:
+          type: string
+          format: date-time
+    RetireAutomationLiveBaselineRequest:
+      description: Expected positive baseline revision required to permanently retire an active name.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775806
+    AutomationLiveBaselineRetirement:
+      description: Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin.
+      type: object
+      additionalProperties: false
+      required:
+      - retirement_id
+      - app_id
+      - name
+      - baseline_name
+      - revision
+      - previous_promotion_id
+      - actor_account_id
+      - retired_at
+      properties:
+        retirement_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        baseline_name:
+          type: string
+          minLength: 1
+          maxLength: 63
+        revision:
+          type: integer
+          format: int64
+          minimum: 2
+        previous_promotion_id:
+          type: string
+          format: uuid
+        actor_account_id:
+          type: string
+          format: uuid
+        actor_api_key_id:
+          type: string
+          format: uuid
+        retired_at:
+          type: string
+          format: date-time
+    AutomationLiveBaselineHistory:
+      description: Bounded promotion audit history and optional permanent retirement receipt for one baseline name.
+      type: object
+      additionalProperties: false
+      required:
+      - promotions
+      properties:
+        retirement:
+          $ref: '#/components/schemas/AutomationLiveBaselineRetirement'
+        promotions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaseline'
+    AutomationLiveSuiteComparison:
+      type: object
+      additionalProperties: false
+      required:
+      - baseline
+      - candidate
+      - baseline_outdated
+      - candidate_outdated
+      - observed_at
+      - summary
+      - cases
+      properties:
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        candidate:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        baseline_outdated:
+          type: boolean
+        candidate_outdated:
+          type: boolean
+        observed_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/AutomationLiveSuiteComparisonCounts'
+        cases:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteCaseComparison'
+      description: Read-only evidence comparison. Outdated identifies target drift, independently of recorded result validity. Contains no inputs, outputs, assertions or admission keys.
+    AutomationLiveSuiteComparisonCounts:
+      type: object
+      additionalProperties: false
+      required:
+      - total
+      - regressions
+      - recoveries
+      - unchanged
+      - added
+      - removed
+      - incompatible
+      - unknown
+      properties:
+        total:
+          type: integer
+          minimum: 0
+          maximum: 64
+        regressions:
+          type: integer
+          minimum: 0
+          maximum: 32
+        recoveries:
+          type: integer
+          minimum: 0
+          maximum: 32
+        unchanged:
+          type: integer
+          minimum: 0
+          maximum: 32
+        added:
+          type: integer
+          minimum: 0
+          maximum: 32
+        removed:
+          type: integer
+          minimum: 0
+          maximum: 32
+        incompatible:
+          type: integer
+          minimum: 0
+          maximum: 32
+        unknown:
+          type: integer
+          minimum: 0
+          maximum: 32
+      description: Disjoint case classifications; all categories sum to total. Zero regressions alone is not evidence that the candidate passed.
+    AutomationLiveSuiteCaseComparison:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - change
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        change:
+          type: string
+          enum: [regression, recovery, unchanged, added, removed, incompatible, unknown]
+          description: Equal hashes and current terminal reports are required for regression, recovery or unchanged. Hash mismatch is incompatible even when a report is pending; absent evidence is unknown. Added and removed take precedence when only one suite selected the case.
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveSuiteObservation'
+        candidate:
+          $ref: '#/components/schemas/AutomationLiveSuiteObservation'
+      description: A missing side means the case was not selected in that suite. A selected case without a run has a not_started observation.
+    AutomationLiveSuiteObservation:
+      type: object
+      additionalProperties: false
+      required:
+      - result
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+          description: Original linked verification creation time, when retained. Never refreshed by grouping or checking runs.
+        result:
+          type: string
+          enum: [passed, failed, pending, not_started, unavailable]
+          description: Result of the original run independently of target drift. Unavailable includes missing runs and terminal runs without a current assertion report.
+      description: Safe original run identity, creation time and recorded result only.
+    AutomationLiveSuiteSummary:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - version
+      - published_version
+      - deployment_id
+      - created_at
+      - updated_at
+      - case_count
+      - linked_runs
+      properties:
+        managed:
+          type: boolean
+          description: True for suites with durable server-managed admission. Metadata PUT cannot change these records; continuation requires explicit execution authorization.
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        version:
+          type: integer
+          minimum: 1
+        published_version:
+          type: integer
+          minimum: 1
+        deployment_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        case_count:
+          type: integer
+          minimum: 1
+          maximum: 32
+        linked_runs:
+          type: integer
+          minimum: 0
+          maximum: 32
+      description: Retained suite identity and linked-run counts. Listing is not an assertion verdict.
+    AutomationLiveSuiteCase:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - outcome
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum:
+          - not_started
+          - passed
+          - failed
+          - pending
+          - outdated
+          - unavailable
+        verification:
+          $ref: '#/components/schemas/AutomationLiveVerification'
+      description: A server-derived case observation; unavailable records keep their original run identity.
+    AutomationLiveSuiteCounts:
+      type: object
+      additionalProperties: false
+      required:
+      - selected
+      - passed
+      - failed
+      - pending
+      - not_started
+      - unavailable
+      - outdated
+      properties:
+        selected:
+          type: integer
+          minimum: 0
+          maximum: 32
+        passed:
+          type: integer
+          minimum: 0
+          maximum: 32
+        failed:
+          type: integer
+          minimum: 0
+          maximum: 32
+        pending:
+          type: integer
+          minimum: 0
+          maximum: 32
+        not_started:
+          type: integer
+          minimum: 0
+          maximum: 32
+        unavailable:
+          type: integer
+          minimum: 0
+          maximum: 32
+        outdated:
+          type: integer
+          minimum: 0
+          maximum: 32
+      description: Current suite case counts, including unstarted and unverifiable members.
+    AutomationLiveSuite:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - version
+      - published_version
+      - deployment_id
+      - created_at
+      - updated_at
+      - case_count
+      - linked_runs
+      - outcome
+      - outdated
+      - observed_at
+      - summary
+      - cases
+      properties:
+        managed:
+          type: boolean
+          description: True when the suite owns durable server-managed execution and can be continued with explicit real-action confirmation.
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        version:
+          type: integer
+          minimum: 1
+        published_version:
+          type: integer
+          minimum: 1
+        deployment_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        case_count:
+          type: integer
+          minimum: 1
+          maximum: 32
+        linked_runs:
+          type: integer
+          minimum: 0
+          maximum: 32
+        outcome:
+          type: string
+          enum:
+          - passed
+          - failed
+          - pending
+          - incomplete
+          - outdated
+          - unavailable
+        outdated:
+          type: boolean
+        observed_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/AutomationLiveSuiteCounts'
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteCase'
+      description: Server-derived observation of retained verification records. GET is read-only and never checks assertions
+        or admits work. Missing records remain unavailable with their known IDs. Passed requires every linked case to
+        have a current passing report and an unchanged saved version, published revision and deployment. Not a publication
+        receipt.
+    ListAutomationLiveSuitesResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - suites
+      properties:
+        suites:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+      description: Twenty most recently created suites. One hundred recent suites are retained per automation; clearing
+        saved test data clears shared suite history.
+    AutomationLiveVerification:
+      description: Safe provenance and status for one explicitly authorized live verification run.
+      type: object
+      additionalProperties: false
+      required:
+      - run_id
+      - case_name
+      - deployment_id
+      - inputs_hash
+      - run_status
+      - version
+      - published_version
+      - created_at
+      - outdated
+      - report_current
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        case_name:
+          type: string
+        deployment_id:
+          type: string
+        inputs_hash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        run_status:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        published_version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        outdated:
+          type: boolean
+          description: True when the saved case, published revision, or current default deployment differs from the
+            frozen target.
+        report_current:
+          type: boolean
+          description: True when the report still matches this run status, resume count and update time; also require
+            outdated=false for current-target evidence.
+        report:
+          $ref: '#/components/schemas/AutomationLiveReport'
+    ListAutomationLiveVerificationsResponse:
+      description: Current target identities and the twenty most recent retained live verifications.
+      type: object
+      additionalProperties: false
+      required:
+      - published_version
+      - verifications
+      properties:
+        deployment_id:
+          type: string
+        published_version:
+          type: integer
+          minimum: 0
+        verifications:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveVerification'
+    AutomationTestSuite:
+      type: object
+      additionalProperties: false
+      required:
+      - sample
+      - cases
+      properties:
+        sample:
+          $ref: '#/components/schemas/AutomationTestInputs'
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationTestCase'
+      description: At most 32 uniquely named cases; sample up to 3 MiB, cases up to 24 MiB combined, suite up to 27 MiB. Data is explicitly persisted, never captured from real runs.
+    SaveAutomationTestSuiteRequest:
+      description: Versioned suite replacement; explicitly sending null removes saved data and results.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      - suite
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        suite:
+          anyOf:
+          - $ref: '#/components/schemas/AutomationTestSuite'
+          - type: 'null'
+          description: Null clears saved tests and the retained report. Saving advances the automation version and invalidates earlier publishing receipts.
+    RunAutomationTestsRequest:
+      description: Expected current draft version for simulating its saved test cases.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_version
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+    AutomationTestReport:
+      type: object
+      additionalProperties: false
+      required:
+      - checked_version
+      - checked_at
+      - inputs_hash
+      - passed
+      - cases
+      properties:
+        checked_version:
+          type: integer
+          format: int64
+          minimum: 1
+        checked_at:
+          type: string
+          format: date-time
+        inputs_hash:
+          type: string
+        passed:
+          type: boolean
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationTestCaseResult'
+      description: Retained observation, not a publishing receipt. Freshness compares definition and suite content; running does not advance the draft version or perform real actions.
+    AutomationTestCaseResult:
+      description: Safe overall case result and bounded per-step assertion summaries.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - passed
+      - steps
+      properties:
+        name:
+          type: string
+        passed:
+          type: boolean
+        issue:
+          type: string
+          enum:
+          - invalid_expectations
+          - simulation_rejected
+          - definition_invalid
+          - simulation_incomplete
+          - assertion_failed
+        steps_truncated:
+          type: boolean
+        steps:
+          type: array
+          maxItems: 1024
+          items:
+            $ref: '#/components/schemas/AutomationTestStepResult'
+    AutomationTestStepResult:
+      description: One assertion result and observed state, excluding input, output and error data.
+      type: object
+      additionalProperties: false
+      required:
+      - step
+      - passed
+      properties:
+        step:
+          type: string
+        loop:
+          type: string
+        item_index:
+          type: integer
+          minimum: 0
+        state:
+          type: string
+        passed:
+          type: boolean
+        mismatches:
+          description: Failed assertion field names only; expected and observed values are omitted.
+          type: array
+          items:
+            type: string
+            enum: [step, state, reason, when_matched, output, attempt_count, attempts]
     AutomationPublishCheckScenario:
       description: Named simulation and assertions to evaluate against a saved automation draft.
       type: object
@@ -74106,6 +76025,11 @@ components:
         - simulation
         - expectations
       properties:
+        live:
+          description: Live test configuration carried by the case editor; mock publishing checks do not evaluate it.
+          anyOf:
+          - $ref: '#/components/schemas/AutomationLiveTest'
+          - type: 'null'
         name:
           type: string
           minLength: 1
@@ -89087,7 +91011,7 @@ components:
         rounding). `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)` — 0 when the customer is under
         their included band, the billable overage above the band
-        otherwise. The Stripe pusher bills overage at €0.01/GB-h
+        otherwise. The Stripe pusher bills overage at $0.01/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
       required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
@@ -89721,7 +91645,7 @@ components:
         used_gb_hours: { type: number , example: 1.234}
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
-        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at €0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
+        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
         used_cpu_hours:
           type: number
           description: 'Per-month CPU-hours (informational; not billed). issue #279 / PR-B.'

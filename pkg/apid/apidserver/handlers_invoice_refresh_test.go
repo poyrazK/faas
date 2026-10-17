@@ -32,7 +32,7 @@ func TestFOCUSInvoiceRefreshOwnershipAndCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	period := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if err := e.store.UpsertInvoice(t.Context(), state.Invoice{AccountID: e.acct.ID, Provider: "stripe", ProviderInvoiceID: "in_refresh", ProviderChargeID: "ch_refresh", Status: "paid", Currency: "eur", Plan: api.PlanPro, TotalCents: 1000, AmountPaidCents: 1000, PeriodStart: period, PeriodEnd: period.AddDate(0, 0, 29)}); err != nil {
+	if err := e.store.UpsertInvoice(t.Context(), state.Invoice{AccountID: e.acct.ID, Provider: "stripe", ProviderInvoiceID: "in_refresh", ProviderChargeID: "ch_refresh", Status: "paid", Currency: "usd", Plan: api.PlanPro, TotalCents: 1000, AmountPaidCents: 1000, PeriodStart: period, PeriodEnd: period.AddDate(0, 0, 29)}); err != nil {
 		t.Fatal(err)
 	}
 	inv, err := e.store.GetInvoiceByProviderID(t.Context(), e.acct.ID, "stripe", "in_refresh")
@@ -155,7 +155,7 @@ func TestFOCUSInvoiceRefreshLegacyStripeIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	period := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if err := e.store.UpsertInvoice(t.Context(), state.Invoice{AccountID: e.acct.ID, Provider: "stripe", ProviderInvoiceID: "in_legacy_refresh", Status: "paid", Currency: "eur", Plan: api.PlanPro, TotalCents: 1000, PeriodStart: period, PeriodEnd: period.AddDate(0, 0, 29)}); err != nil {
+	if err := e.store.UpsertInvoice(t.Context(), state.Invoice{AccountID: e.acct.ID, Provider: "stripe", ProviderInvoiceID: "in_legacy_refresh", Status: "paid", Currency: "usd", Plan: api.PlanPro, TotalCents: 1000, PeriodStart: period, PeriodEnd: period.AddDate(0, 0, 29)}); err != nil {
 		t.Fatal(err)
 	}
 	inv, err := e.store.GetInvoiceByProviderID(t.Context(), e.acct.ID, "stripe", "in_legacy_refresh")

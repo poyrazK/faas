@@ -176,4 +176,4 @@ ceiling is physics, the floor is budget).
 Every parked app costs nothing to keep. A box that runs 100 apps
 and serves 5 of them looks the same as a box that serves 1 of
 them — most apps are idle most of the time. Scale-to-zero is
-what makes the hobby plan affordable at €9/month.
+what makes the hobby plan affordable at $10/month.

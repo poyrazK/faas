@@ -83,19 +83,20 @@ func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.
 	return nil
 }
 
-func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
+// adr: 1350 — object-storage charges use the billing currency.
+func TestValidateObjectStorageBillingSetupRequiresBillingCurrency(t *testing.T) {
 	provider := &objectStorageBillingStatusProvider{}
 	if err := object.ValidateObjectStorageBillingSetup(provider, nil); err == nil || !strings.Contains(err.Error(), "requires object-storage pricing") {
 		t.Fatalf("missing pricing error = %v", err)
 	}
 	registry := objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external")
-	registry.Pricing = &api.ObjectStoragePricing{Currency: "USD"}
-	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires EUR") {
-		t.Fatalf("USD pricing error = %v", err)
-	}
 	registry.Pricing = &api.ObjectStoragePricing{Currency: "EUR"}
-	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err != nil {
+	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires "+api.BillingCurrency) {
 		t.Fatalf("EUR pricing error = %v", err)
+	}
+	registry.Pricing = &api.ObjectStoragePricing{Currency: api.BillingCurrency}
+	if err := object.ValidateObjectStorageBillingSetup(provider, registry); err != nil {
+		t.Fatalf("%s pricing error = %v", api.BillingCurrency, err)
 	}
 }
 

@@ -171,6 +171,12 @@ var catalog = map[string]Render{
 		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
 		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
 	},
+	api.CodeExecutionModeConflict: {
+		Title: "Execution mode conflict",
+		Hint:  "your app did not behave like its execution mode",
+		Why:   "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)",
+		Fix:   "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared",
+	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
 		Hint:  "this app shape needs persistent storage we don't provide",

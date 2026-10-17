@@ -68,6 +68,7 @@ from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
+from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
@@ -451,6 +452,35 @@ from .automation_health_response_status_counts import AutomationHealthResponseSt
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_live_baseline import AutomationLiveBaseline
+from .automation_live_baseline_case_health import AutomationLiveBaselineCaseHealth
+from .automation_live_baseline_case_health_status import AutomationLiveBaselineCaseHealthStatus
+from .automation_live_baseline_health import AutomationLiveBaselineHealth
+from .automation_live_baseline_health_evidence_status import AutomationLiveBaselineHealthEvidenceStatus
+from .automation_live_baseline_health_renewal_status import AutomationLiveBaselineHealthRenewalStatus
+from .automation_live_baseline_history import AutomationLiveBaselineHistory
+from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
+from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
+from .automation_live_baseline_retirement import AutomationLiveBaselineRetirement
+from .automation_live_expectation import AutomationLiveExpectation
+from .automation_live_expectation_state import AutomationLiveExpectationState
+from .automation_live_report import AutomationLiveReport
+from .automation_live_suite import AutomationLiveSuite
+from .automation_live_suite_case import AutomationLiveSuiteCase
+from .automation_live_suite_case_comparison import AutomationLiveSuiteCaseComparison
+from .automation_live_suite_case_comparison_change import AutomationLiveSuiteCaseComparisonChange
+from .automation_live_suite_case_outcome import AutomationLiveSuiteCaseOutcome
+from .automation_live_suite_comparison import AutomationLiveSuiteComparison
+from .automation_live_suite_comparison_counts import AutomationLiveSuiteComparisonCounts
+from .automation_live_suite_counts import AutomationLiveSuiteCounts
+from .automation_live_suite_member import AutomationLiveSuiteMember
+from .automation_live_suite_observation import AutomationLiveSuiteObservation
+from .automation_live_suite_observation_result import AutomationLiveSuiteObservationResult
+from .automation_live_suite_outcome import AutomationLiveSuiteOutcome
+from .automation_live_suite_summary import AutomationLiveSuiteSummary
+from .automation_live_test import AutomationLiveTest
+from .automation_live_test_expected_run_status import AutomationLiveTestExpectedRunStatus
+from .automation_live_verification import AutomationLiveVerification
 from .automation_publish_check_scenario import AutomationPublishCheckScenario
 from .automation_publish_policy import AutomationPublishPolicy
 from .automation_publish_policy_mode import AutomationPublishPolicyMode
@@ -466,6 +496,21 @@ from .automation_simulation_mock_attempt_outcome import AutomationSimulationMock
 from .automation_simulation_step import AutomationSimulationStep
 from .automation_simulation_step_kind import AutomationSimulationStepKind
 from .automation_simulation_step_state import AutomationSimulationStepState
+from .automation_test_case import AutomationTestCase
+from .automation_test_case_result import AutomationTestCaseResult
+from .automation_test_case_result_issue import AutomationTestCaseResultIssue
+from .automation_test_inputs import AutomationTestInputs
+from .automation_test_inputs_mock_attempts import AutomationTestInputsMockAttempts
+from .automation_test_inputs_mock_item_attempts import AutomationTestInputsMockItemAttempts
+from .automation_test_inputs_mock_item_attempts_additional_property import (
+    AutomationTestInputsMockItemAttemptsAdditionalProperty,
+)
+from .automation_test_inputs_mock_item_outputs import AutomationTestInputsMockItemOutputs
+from .automation_test_inputs_mock_outputs import AutomationTestInputsMockOutputs
+from .automation_test_report import AutomationTestReport
+from .automation_test_step_result import AutomationTestStepResult
+from .automation_test_step_result_mismatches_item import AutomationTestStepResultMismatchesItem
+from .automation_test_suite import AutomationTestSuite
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -1975,6 +2020,9 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
+from .list_automation_live_suites_response import ListAutomationLiveSuitesResponse
+from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
 from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
@@ -3711,6 +3759,7 @@ from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
+from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
@@ -3975,6 +4024,7 @@ from .restore_automation_revision_request import RestoreAutomationRevisionReques
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
+from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_event_execution_lineage_case_request import RetryEventExecutionLineageCaseRequest
@@ -4253,6 +4303,7 @@ from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
+from .run_automation_tests_request import RunAutomationTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -4275,6 +4326,8 @@ from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
+from .save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
+from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
@@ -4446,6 +4499,8 @@ from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .stage_project_release_request import StageProjectReleaseRequest
+from .start_automation_live_suite_request import StartAutomationLiveSuiteRequest
+from .start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -4999,6 +5054,7 @@ __all__ = (
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
+    "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
@@ -5378,6 +5434,35 @@ __all__ = (
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationLiveBaseline",
+    "AutomationLiveBaselineCaseHealth",
+    "AutomationLiveBaselineCaseHealthStatus",
+    "AutomationLiveBaselineHealth",
+    "AutomationLiveBaselineHealthEvidenceStatus",
+    "AutomationLiveBaselineHealthRenewalStatus",
+    "AutomationLiveBaselineHistory",
+    "AutomationLiveBaselinePolicy",
+    "AutomationLiveBaselinePolicyVersion",
+    "AutomationLiveBaselineRetirement",
+    "AutomationLiveExpectation",
+    "AutomationLiveExpectationState",
+    "AutomationLiveReport",
+    "AutomationLiveSuite",
+    "AutomationLiveSuiteCase",
+    "AutomationLiveSuiteCaseComparison",
+    "AutomationLiveSuiteCaseComparisonChange",
+    "AutomationLiveSuiteCaseOutcome",
+    "AutomationLiveSuiteComparison",
+    "AutomationLiveSuiteComparisonCounts",
+    "AutomationLiveSuiteCounts",
+    "AutomationLiveSuiteMember",
+    "AutomationLiveSuiteObservation",
+    "AutomationLiveSuiteObservationResult",
+    "AutomationLiveSuiteOutcome",
+    "AutomationLiveSuiteSummary",
+    "AutomationLiveTest",
+    "AutomationLiveTestExpectedRunStatus",
+    "AutomationLiveVerification",
     "AutomationPublishCheckScenario",
     "AutomationPublishPolicy",
     "AutomationPublishPolicyMode",
@@ -5393,6 +5478,19 @@ __all__ = (
     "AutomationSimulationStep",
     "AutomationSimulationStepKind",
     "AutomationSimulationStepState",
+    "AutomationTestCase",
+    "AutomationTestCaseResult",
+    "AutomationTestCaseResultIssue",
+    "AutomationTestInputs",
+    "AutomationTestInputsMockAttempts",
+    "AutomationTestInputsMockItemAttempts",
+    "AutomationTestInputsMockItemAttemptsAdditionalProperty",
+    "AutomationTestInputsMockItemOutputs",
+    "AutomationTestInputsMockOutputs",
+    "AutomationTestReport",
+    "AutomationTestStepResult",
+    "AutomationTestStepResultMismatchesItem",
+    "AutomationTestSuite",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -6826,6 +6924,9 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationLiveBaselinesResponse",
+    "ListAutomationLiveSuitesResponse",
+    "ListAutomationLiveVerificationsResponse",
     "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
     "ListBindingVerificationRunsStatus",
@@ -8358,6 +8459,7 @@ __all__ = (
     "ProjectSourceRefScanRequest",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
+    "PromoteAutomationLiveBaselineRequest",
     "PromoteProjectEnvironmentRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
@@ -8616,6 +8718,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
+    "RetireAutomationLiveBaselineRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryEventExecutionLineageCaseRequest",
@@ -8888,6 +8991,7 @@ __all__ = (
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",
+    "RunAutomationTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -8910,6 +9014,8 @@ __all__ = (
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
+    "SaveAutomationLiveSuiteRequest",
+    "SaveAutomationTestSuiteRequest",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
@@ -9073,6 +9179,8 @@ __all__ = (
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StageProjectReleaseRequest",
+    "StartAutomationLiveSuiteRequest",
+    "StartAutomationLiveVerificationRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",

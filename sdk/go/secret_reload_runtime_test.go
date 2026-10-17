@@ -451,6 +451,9 @@ func TestSecretReloadCancellationFencesLateFactoryAndQueuedRequests(t *testing.T
 		t.Fatal("shutdown blocked invalidation")
 	}
 	close(release)
+	// The stopped coordinator may still invalidate while its worker unwinds.
+	// Reuse the binding only after that owner has finished shutting down.
+	waitSecret(t, f.runtime.workerDone)
 	// A fresh factory can only run after the late one drains; it cannot overlap.
 	if err := f.storage.Reload(context.Background(), runtimeStorageValues()); err != nil {
 		t.Fatal(err)
