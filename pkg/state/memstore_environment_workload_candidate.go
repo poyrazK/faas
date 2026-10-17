@@ -84,7 +84,11 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 		if candidate.ID != "" {
 			continue
 		}
-		inputs[i], err = attachCandidateSource(input, artifacts, snapshot.Plan)
+		if candidateFrozenInputs(input).Source.BuildArtifactID != "" {
+			inputs[i], err = m.attachBuiltArtifactLocked(input, snapshot.Plan)
+		} else {
+			inputs[i], err = attachCandidateSource(input, artifacts, snapshot.Plan)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -130,7 +134,9 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(_ context.Context, lease E
 			input.TrafficPercentExplicit = true
 			input.CanaryPreset, input.RolloutState = "none", "pending"
 			input.StageState, _ = deploymentStageStateForCreate(nil, input.CreatedAt)
-			if input.Kind != DeploymentKindImage {
+			if frozen.BuiltArtifact != nil {
+				input.Status = DeploySnapshotting
+			} else if input.Kind != DeploymentKindImage {
 				input.Status = DeployBuilding
 				m.builds[input.BuildID] = Build{ID: input.BuildID, DeploymentID: input.ID, Kind: input.Kind, Status: BuildQueued,
 					SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath, EnqueuedAt: input.CreatedAt}
@@ -179,7 +185,7 @@ func (m *MemStore) EnvironmentGitOpsSourceRequests(_ context.Context, lease Envi
 		if err != nil {
 			return nil, err
 		}
-		if input.Kind == DeploymentKindImage || candidate.ID != "" {
+		if input.Kind == DeploymentKindImage || candidateFrozenInputs(input).Source.BuildArtifactID != "" || candidate.ID != "" {
 			continue
 		}
 		request, err := sourceRequest(input)

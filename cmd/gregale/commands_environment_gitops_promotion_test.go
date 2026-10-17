@@ -130,3 +130,35 @@ func TestGitOpsPromotionExportsReviewedTargetWithoutChangingConfiguration(t *tes
 		})
 	}
 }
+
+func TestGitOpsBuiltArtifactPromotionMarkdownShowsReviewedProvenance(t *testing.T) {
+	resetJSONOut(t)
+	out := promotionCLIResponse(t)
+	id := "018f22b4-1d51-7d55-a5d8-fdc06ec7c663"
+	hash, commit := strings.Repeat("f", 64), strings.Repeat("b", 40)
+	before := api.EnvironmentWorkloadSource{Kind: "source", Directory: "apps/api"}
+	after := before
+	after.BuildArtifactID, after.BuildArtifactHash = id, hash
+	out.BlockingReasons = nil
+	out.Changes = []api.EnvironmentGitPromotionChange{{Resource: "workload/api", Before: before, After: after}}
+	out.Artifacts = []api.EnvironmentGitPromotionArtifact{{Resource: "workload/api", DeploymentID: "deployment", BuildID: id, Kind: "github", BuildArtifactID: id, BuildArtifactHash: hash, ArtifactDigest: "sha256:" + hash, BuildCommitSHA: commit}}
+	var err error
+	out, err = promotion.Finish(out, out.TargetPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(out)
+	authedFakeAPI(t, string(body), http.StatusOK)
+	var stdout bytes.Buffer
+	code := captureStdoutSwap(t, &stdout, func() int {
+		return cmdProjects([]string{"environments", "gitops", "promotion-plan", "shop", "production", "--from", "staging", "--target-commit", out.Target.CommitSHA, "--format", "markdown"})
+	})
+	if code != 0 {
+		t.Fatal("Markdown preview failed", code)
+	}
+	for _, value := range []string{id, hash, commit, "apps/api", "Read-only", "fresh qualification"} {
+		if !strings.Contains(stdout.String(), value) {
+			t.Fatal("Markdown omitted reviewed code provenance", value, stdout.String())
+		}
+	}
+}

@@ -284,7 +284,7 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	}
 	if workload.Source != nil {
 		row.Source = workload.Source
-		if workload.Source.Kind == "image" {
+		if workload.Source.Kind == "image" || workload.Source.BuildArtifactID != "" {
 			row.SourceRevision = ""
 		}
 	}

@@ -34,7 +34,7 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 	// commit must reconcile source workloads even if their manifest is unchanged.
 	for _, name := range sortedKeys(compiled.Definition.Workloads) {
 		workload := compiled.Definition.Workloads[name]
-		if workload.Source == nil || workload.Source.Kind == "image" {
+		if workload.Source == nil || workload.Source.Kind == "image" || workload.Source.BuildArtifactID != "" {
 			continue
 		}
 		if !validCommitSHA(options.CommitSHA) {

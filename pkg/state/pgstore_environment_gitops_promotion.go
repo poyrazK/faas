@@ -18,7 +18,7 @@ func (s *PgStore) PreviewEnvironmentGitOpsPromotion(ctx context.Context, from, t
 	if err := validateGitPromotion(from, to, request, desired); err != nil {
 		return zero, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return zero, err
 	}
@@ -109,7 +109,25 @@ func promotionArtifactsTx(ctx context.Context, tx pgx.Tx, input *promotion.Input
 			return mapErr(err)
 		}
 		buildID, _ := dep.Coalesce.(string)
-		input.Artifacts = append(input.Artifacts, api.EnvironmentGitPromotionArtifact{Resource: workload.Resource, DeploymentID: workload.DeploymentID, BuildID: buildID, Kind: dep.Kind, ImageDigest: dep.ImageDigest})
+		artifact := api.EnvironmentGitPromotionArtifact{Resource: workload.Resource, DeploymentID: workload.DeploymentID, BuildID: buildID, Kind: dep.Kind, ImageDigest: dep.ImageDigest}
+		if dep.Kind != string(DeploymentKindImage) {
+			root, err := readSourceRuntimeRootfs(ctx, tx, input.From.AccountID, workload.AppID, workload.DeploymentID)
+			if err == nil {
+				if _, _, err = lockSourceRuntimeApproval(ctx, tx, root); err == nil {
+					origin, err := deploymentByIDDB(ctx, tx, root.Input.DeploymentID)
+					if err != nil {
+						return err
+					}
+					artifact.BuildArtifactID, artifact.BuildArtifactHash, artifact.ArtifactDigest = root.ID, root.InputHash, root.Input.ArtifactDigest
+					artifact.BuildID, artifact.BuildCommitSHA = origin.BuildID, origin.CommitSHA
+				}
+			}
+			// A failed SQL fence aborts the transaction; never hide it as a blocker.
+			if err != nil {
+				return err
+			}
+		}
+		input.Artifacts = append(input.Artifacts, artifact)
 	}
 	return nil
 }

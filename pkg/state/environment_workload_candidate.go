@@ -38,6 +38,7 @@ type EnvironmentWorkloadRuntime struct {
 	Schedule          *api.EnvironmentJobSchedule                `json:"schedule,omitempty"`
 	ServiceBindings   map[string]EnvironmentScopedServiceBinding `json:"service_bindings,omitempty"`
 	Source            *api.EnvironmentWorkloadSource             `json:"source,omitempty"`
+	BuiltArtifact     *EnvironmentWorkloadBuiltArtifact          `json:"built_artifact,omitempty"`
 	SourceArchive     *EnvironmentWorkloadSourceArtifact         `json:"source_archive,omitempty"`
 	SourceDeployments []string                                   `json:"source_deployments,omitempty"`
 	DeploymentInputs  *EnvironmentWorkloadDeploymentInputs       `json:"deployment_inputs,omitempty"`
@@ -187,9 +188,13 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 	if frozen.Source != nil && frozen.Source.Kind == "function" && (frozen.AppType != AppTypeFunction || frozen.RuntimeBase != frozen.Source.Runtime) {
 		return nil, fmt.Errorf("%w: frozen function runner differs from source", ErrInvalidArgument)
 	}
-	if frozen.SourceArchive != nil {
+	if frozen.BuiltArtifact != nil {
+		if !builtArtifactMatchesDeployment(d, frozen) {
+			return nil, fmt.Errorf("%w: frozen build artifact disagrees with candidate", ErrInvalidArgument)
+		}
+	} else if frozen.SourceArchive != nil {
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
-			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || !validEnvironmentGitCandidateProvenance(d, frozen) ||
+			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || frozen.Source.BuildArtifactID != "" || frozen.Source.BuildArtifactHash != "" || !validEnvironmentGitCandidateProvenance(d, frozen) ||
 			d.ImageDigest != "" ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||
 			d.BuildID != frozen.SourceArchive.BuildID || d.LogPath != frozen.SourceArchive.LogPath || d.SourceRoot != frozen.Source.Directory ||
@@ -342,6 +347,8 @@ func frozenCandidateInputsMatch(stored []byte, expected EnvironmentWorkloadRunti
 	// The source archive is attached after the reviewed input snapshot is made.
 	// Compare all authority fields while allowing that separately validated
 	// materialization receipt to be present on a retry.
+	prior.BuiltArtifact = nil
+	expected.BuiltArtifact = nil
 	prior.SourceArchive = nil
 	expected.SourceArchive = nil
 	priorJSON, err := json.Marshal(prior)
@@ -557,7 +564,7 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		if !maps.Equal(app.SecretRefs, workload.SecretRefs) {
 			return nil, fmt.Errorf("%w: scoped secret references must exactly match the reviewed workload references", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
-		if workloadSource.Kind != "image" && (!sourceOwned || intent.SourceRevision != revision.CommitSHA) {
+		if workloadSource.Kind != "image" && (!sourceOwned || workloadSource.BuildArtifactID == "" && intent.SourceRevision != revision.CommitSHA) {
 			return nil, fmt.Errorf("%w: source builds require owned source intent at the reviewed commit", ErrEnvironmentWorkloadPreparationUnavailable)
 		}
 		if workloadSource.Kind == "function" && (app.Type != AppTypeFunction || app.RuntimeBase != workloadSource.Runtime) {

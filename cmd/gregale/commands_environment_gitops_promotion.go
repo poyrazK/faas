@@ -88,7 +88,15 @@ func writeGitOpsPromotionPlan(out api.PreviewEnvironmentGitPromotionResponse, fo
 			return err
 		}
 		for _, change := range out.Changes {
-			if _, err := fmt.Fprintf(osStdout, "- %s: `%s` → `%s`\n", gitOpsMarkdownText(change.Resource), gitOpsMarkdownText(change.Before.Image), gitOpsMarkdownText(change.After.Image)); err != nil {
+			if _, err := fmt.Fprintf(osStdout, "- %s: `%s` → `%s`\n", gitOpsMarkdownText(change.Resource), gitOpsMarkdownText(gitOpsPromotionSourceLabel(change.Before)), gitOpsMarkdownText(gitOpsPromotionSourceLabel(change.After))); err != nil {
+				return err
+			}
+		}
+		for _, artifact := range out.Artifacts {
+			if artifact.BuildArtifactID == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(osStdout, "- %s: layer `%s` · build `%s` · code commit `%s`\n", gitOpsMarkdownText(artifact.Resource), gitOpsMarkdownText(artifact.ArtifactDigest), gitOpsMarkdownText(artifact.BuildID), gitOpsMarkdownText(artifact.BuildCommitSHA)); err != nil {
 				return err
 			}
 		}
@@ -103,4 +111,14 @@ func writeGitOpsPromotionPlan(out api.PreviewEnvironmentGitPromotionResponse, fo
 		}
 	}
 	return nil
+}
+
+func gitOpsPromotionSourceLabel(source api.EnvironmentWorkloadSource) string {
+	if source.Kind == "image" {
+		return source.Image
+	}
+	if source.BuildArtifactID != "" {
+		return source.Kind + " artifact " + source.BuildArtifactID + " input sha256:" + source.BuildArtifactHash
+	}
+	return source.Kind + " " + source.Directory
 }

@@ -46,7 +46,17 @@ func (m *MemStore) PreviewEnvironmentGitOpsPromotion(ctx context.Context, from, 
 				if !exists || releaseMemberForApp(release, workload.AppID) != dep.ID || dep.AppID != workload.AppID || dep.Status != DeployLive || dep.EnvironmentWorkloadHeld() || normalizedDeploymentScope(dep.Scope) != from.EnvironmentSlug {
 					continue
 				}
-				input.Artifacts = append(input.Artifacts, api.EnvironmentGitPromotionArtifact{Resource: workload.Resource, DeploymentID: dep.ID, BuildID: dep.BuildID, Kind: string(dep.Kind), ImageDigest: dep.ImageDigest})
+				artifact := api.EnvironmentGitPromotionArtifact{Resource: workload.Resource, DeploymentID: dep.ID, BuildID: dep.BuildID, Kind: string(dep.Kind), ImageDigest: dep.ImageDigest}
+				if dep.Kind != DeploymentKindImage {
+					selected, err := m.sourceRuntimeProducerLocked(m.apps[dep.AppID], dep, input.Now)
+					if err == nil {
+						root := m.sourceBuildRootfs[selected.Artifact.ProducerID]
+						artifact.BuildArtifactID, artifact.BuildArtifactHash, artifact.ArtifactDigest = root.ID, root.InputHash, root.Input.ArtifactDigest
+						_, _, origin, _ := m.registryVerificationOwnerLocked(root.Input.AppID, root.Input.DeploymentID)
+						artifact.BuildID, artifact.BuildCommitSHA = origin.BuildID, origin.CommitSHA
+					}
+				}
+				input.Artifacts = append(input.Artifacts, artifact)
 			}
 		}
 	}

@@ -132,7 +132,7 @@ func TestPromotionBlocksUnprovenAndUnsupportedInputs(t *testing.T) {
 			}
 			in.Revision.Digest = compiled.Digest
 			in.Revision.Definition, _ = json.Marshal(compiled.Definition)
-		}, "workload/api: promotion_source_artifact_reference_unsupported"},
+		}, "workload/api: promotion_build_artifact_unproven"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := fixture(t)
@@ -189,5 +189,59 @@ func TestPromotionRefusesExportWhileTargetOverridesPreventConvergence(t *testing
 	}
 	if _, err := ExportPatch(out); err == nil {
 		t.Fatal("target override did not block export")
+	}
+}
+
+func TestBuiltArtifactPromotionExportsCodeWithoutSourceConfiguration(t *testing.T) {
+	for _, kind := range []string{"source", "dockerfile", "function"} {
+		t.Run(kind, func(t *testing.T) {
+			in := fixture(t)
+			var definition api.EnvironmentDefinition
+			_ = json.Unmarshal(in.Revision.Definition, &definition)
+			w := definition.Workloads["api"]
+			w.App = "shared-api"
+			w.Source = &api.EnvironmentWorkloadSource{Kind: kind, Directory: "apps/api"}
+			if kind == "function" {
+				w.Source.Runtime = "node22"
+			}
+			definition.Workloads["api"] = w
+			origin, err := environmentsync.Compile(definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in.Revision.Definition, _ = json.Marshal(origin.Definition)
+			in.Revision.Digest, in.Evidence.DefinitionDigest = origin.Digest, origin.Digest
+			target := in.Target.Definition.Workloads["api"]
+			target.App, target.Source = w.App, w.Source
+			in.Target.Definition.Workloads["api"] = target
+			in.Target, err = environmentsync.Compile(in.Target.Definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in.Artifacts = []api.EnvironmentGitPromotionArtifact{{Resource: "workload/api", DeploymentID: "deployment", BuildID: "build", Kind: "github",
+				BuildArtifactID: "018f22b4-1d51-7d55-a5d8-fdc06ec7c663", BuildArtifactHash: strings.Repeat("a", 64), ArtifactDigest: "sha256:" + strings.Repeat("b", 64), BuildCommitSHA: strings.Repeat("c", 40)}}
+			out := complete(t, in)
+			if len(out.BlockingReasons) != 0 {
+				t.Fatal(out.BlockingReasons)
+			}
+			encoded, err := ExportManifest(out, in.Target.Definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var proposed api.EnvironmentDefinition
+			_ = json.Unmarshal(encoded, &proposed)
+			if proposed.Workloads["api"].Source.BuildArtifactID != in.Artifacts[0].BuildArtifactID || proposed.Workloads["api"].Variables["MODE"] != "PRODUCTION_PRIVATE" || proposed.Workloads["api"].SecretRefs["TOKEN"] != "secret:PRODUCTION_TOKEN" {
+				t.Fatal("code or target config changed")
+			}
+			in.Artifacts[0].BuildArtifactHash = strings.Repeat("e", 64)
+			if complete(t, in).PlanHash == out.PlanHash {
+				t.Fatal("producer replacement retained the review hash")
+			}
+			delete(in.Target.Definition.Workloads, "api")
+			in.Target, _ = environmentsync.Compile(in.Target.Definition)
+			if len(complete(t, in).BlockingReasons) == 0 {
+				t.Fatal("missing target contract accepted")
+			}
+		})
 	}
 }

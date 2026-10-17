@@ -8,6 +8,14 @@
 export type EnvironmentWorkloadSource = {
   kind: 'source' | 'dockerfile' | 'image' | 'function';
   /**
+   * Existing signed source-build producer. Requires build_artifact_hash; same mapped app only. Unsupported for images and scheduled Jobs.
+   */
+  build_artifact_id?: string;
+  /**
+   * Exact immutable producer input hash. Retention does not grant qualification or activation authority.
+   */
+  build_artifact_hash?: string;
+  /**
    * Supported runner; required only when kind is function.
    */
   runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';

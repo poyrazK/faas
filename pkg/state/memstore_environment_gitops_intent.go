@@ -58,6 +58,11 @@ func touchGitOpsMemoryIntent(memory *environmentGitOpsMemory) {
 }
 
 func (m *MemStore) gitOpsGuardAppRemovalLocked(appID string) ([]*environmentGitOpsMemory, error) {
+	for _, root := range m.sourceBuildRootfs {
+		if sameStandardUUID(root.Input.AppID, appID) && m.buildArtifactSourcePinnedLocked(root.ID) {
+			return nil, ErrConflict
+		}
+	}
 	var sources []*environmentGitOpsMemory
 	for _, memory := range m.environmentGitOps {
 		if memory.source.Detached {

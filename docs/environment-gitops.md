@@ -299,14 +299,45 @@ environments on one database snapshot. The output identifies the approved source
 commit, graph, active release and selected deployments. Export requires current
 source verification and matching qualification, activation and serving evidence.
 Both environments must belong to the same project and verified provider
-repository. Missing evidence and source-built workloads are explicit blockers.
+repository. Missing or incompatible artifact evidence is an explicit blocker.
 
-Only immutable image `source` contracts are proposed for replacement. Production
+Immutable image sources and retained signed source-build artifacts can be proposed. Production
 variables, secret references, runtime settings, routes, policies, schedules,
 queue/service bindings, app mappings and additional workloads are preserved.
 The proposal and target field plan omit configuration values and secret-reference
-targets. A source/Dockerfile/function descriptor cannot pin an already built
-artifact across environments, so those workloads cannot export a promotion yet.
+targets. Source, Dockerfile and function promotion requires explicit matching
+`app` mappings and the same source recipe/runner. The proposal adds
+`build_artifact_id` and `build_artifact_hash`, selecting the existing signed
+application-layer producer. The target manifest commit is distinct from the
+original code commit shown in the artifact evidence.
+
+On normal Git approval, the reference pins the retained layer before preparation.
+Preparation rechecks current publisher trust and base lineage, then creates a
+held target candidate with the same code bytes and no new build. Configuration,
+secret aliases and qualification belong to the target. Revoked publishers,
+missing/deleting artifacts, changed recipes and cross-app reuse are rejected.
+Sidecars and scheduled Jobs do not yet support these artifact references; their existing
+source-build path remains available. See [ADR-1346](adr/1346-gitops-built-artifact-reuse.md).
+
+For example, a reviewed production source can pin the producer returned by the
+promotion plan (use the actual ID/hash, not these placeholders):
+
+```yaml
+workloads:
+  api:
+    app: shop-api
+    source:
+      kind: source
+      directory: apps/api
+      build_artifact_id: <producer UUID>
+      build_artifact_hash: <producer input SHA256>
+    variables:
+      MODE: production
+```
+
+Pins retain code and provenance; they do not copy snapshots or grant serving
+permission. Fresh target qualification and activation are still required. Full
+native VM/leak acceptance remains pending on an exclusive physical x86_64 host.
 
 Review the plan and reuse its `plan_hash` in a fresh request before exporting:
 

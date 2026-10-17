@@ -2488,6 +2488,9 @@ BEGIN
   AND artifact=application_standard_source_runtime_producer(a,d)) IS NOT TRUE THEN
   RAISE EXCEPTION 'native source identity changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
+ IF d.environment_workload_runtime ? 'built_artifact' THEN
+  SELECT * INTO d FROM deployments WHERE id=(d.environment_workload_runtime->'built_artifact'->>'deployment_id')::uuid FOR SHARE NOWAIT;
+ END IF;
  SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
  WHERE c.deployment_id=d.id FOR SHARE OF c,r NOWAIT;
  SELECT * INTO origin FROM build_export_publications WHERE id=f.publication_id FOR SHARE NOWAIT;
@@ -3181,7 +3184,7 @@ CREATE FUNCTION public.application_standard_runtime_producers(a public.apps, d p
     AS $_$
 DECLARE workloads text[]; workload text; root_producer jsonb; base_producer jsonb; artifacts jsonb:='[]'::jsonb;
 BEGIN
- IF NOT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id)
+ IF NOT (coalesce(d.environment_workload_runtime ? 'built_artifact',false) OR coalesce(d.environment_workload_runtime->'source' ? 'build_artifact_id',false) OR EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id))
   AND NOT EXISTS(SELECT 1 FROM deployment_registry_rootfs WHERE deployment_id=d.id) THEN RETURN NULL; END IF;
  IF jsonb_typeof(d.sidecars) IS DISTINCT FROM 'array' OR EXISTS(
   SELECT 1 FROM jsonb_array_elements(d.sidecars) x GROUP BY x->>'name'
@@ -3190,7 +3193,7 @@ BEGIN
  END IF;
  workloads:=ARRAY[''] || ARRAY(SELECT x->>'name' FROM jsonb_array_elements(d.sidecars) x WHERE coalesce(x->>'image','')<>'' ORDER BY x->>'name');
  FOREACH workload IN ARRAY workloads LOOP
-  IF workload='' AND EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id) THEN
+  IF workload='' AND (coalesce(d.environment_workload_runtime ? 'built_artifact',false) OR coalesce(d.environment_workload_runtime->'source' ? 'build_artifact_id',false) OR EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id)) THEN
    root_producer:=application_standard_source_runtime_producer(a,d);
   ELSE root_producer:=application_standard_runtime_root_producer(a,d,workload); END IF;
   artifacts:=artifacts || jsonb_build_array(root_producer);
@@ -3858,11 +3861,16 @@ CREATE FUNCTION public.application_standard_source_runtime_producer(a public.app
     LANGUAGE plpgsql
     AS $_$
 DECLARE f source_build_rootfs%ROWTYPE; origin build_export_publications%ROWTYPE;
- base jsonb; b base_image_producers%ROWTYPE; runtime text; kind text;
+ base jsonb; b base_image_producers%ROWTYPE; runtime text; kind text; borrowed_id uuid;
 BEGIN
+ IF d.environment_workload_runtime ? 'built_artifact' THEN
+  borrowed_id:=(d.environment_workload_runtime->'built_artifact'->>'id')::uuid;
+  IF NOT environment_build_artifact_valid(d,true) THEN RAISE EXCEPTION 'borrowed source runtime changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;
+  SELECT * INTO d FROM deployments WHERE id=(d.environment_workload_runtime->'built_artifact'->>'deployment_id')::uuid FOR SHARE NOWAIT;
+ END IF;
  SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
  WHERE c.deployment_id=d.id FOR SHARE OF c,r NOWAIT;
- IF NOT FOUND THEN
+ IF NOT FOUND OR (borrowed_id IS NOT NULL AND f.id IS DISTINCT FROM borrowed_id) THEN
   RAISE EXCEPTION 'source runtime selection missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
  PERFORM application_standard_lock_source_runtime_rootfs(f.input_snapshot,f.id);
@@ -7083,6 +7091,130 @@ $$;
 
 
 --
+-- Name: environment_build_artifact_app_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_app_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (TG_OP='DELETE' OR NEW.status='deleted') AND EXISTS(SELECT 1 FROM source_build_rootfs f JOIN environment_build_artifact_pins p ON p.artifact_id=f.id
+  WHERE f.input_snapshot->>'app_id'=OLD.id::text AND p.source_id IS NOT NULL) THEN RAISE EXCEPTION 'app has manifest-pinned build artifacts' USING ERRCODE='23514'; END IF;
+ IF TG_OP='DELETE' THEN
+  -- Explicit owner erasure may release same-app history only after retirement.
+  -- Foreign/corrupt borrowers remain and the origin/FK guards still reject.
+  IF OLD.status<>'deleted' OR EXISTS(SELECT 1 FROM instances WHERE app_id=OLD.id AND state IN ('pending','waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen','evicting_account_deleting')) THEN
+   IF EXISTS(SELECT 1 FROM environment_build_artifact_pins p JOIN deployments d ON d.id=p.candidate_id WHERE d.app_id=OLD.id) THEN
+    RAISE EXCEPTION 'build artifact owner has not retired' USING ERRCODE='23514';
+   END IF;
+  END IF;
+  DELETE FROM environment_build_artifact_pins p USING deployments d,source_build_rootfs f
+   WHERE p.candidate_id=d.id AND p.artifact_id=f.id AND d.app_id=OLD.id AND f.input_snapshot->>'app_id'=OLD.id::text;
+  RETURN OLD;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_candidate_pin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_candidate_pin() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b jsonb:=NEW.environment_workload_runtime->'built_artifact'; a apps%ROWTYPE;
+BEGIN
+ IF b IS NOT NULL THEN
+  IF (TG_OP='INSERT' OR ROW(NEW.rootfs_path,NEW.rootfs_key,NEW.rootfs_bytes) IS DISTINCT FROM ROW(OLD.rootfs_path,OLD.rootfs_key,OLD.rootfs_bytes)) AND NOT environment_build_artifact_valid(NEW,TG_OP='UPDATE') THEN RAISE EXCEPTION 'borrowed build artifact changed' USING ERRCODE='23514'; END IF;
+  IF TG_OP='INSERT' THEN
+   SELECT * INTO a FROM apps WHERE id=NEW.app_id;
+   PERFORM environment_pin_build_artifact((b->>'id')::uuid,b->>'input_hash',a.account_id,a.project_id);
+   INSERT INTO environment_build_artifact_pins(candidate_id,artifact_id) VALUES(NEW.id,(b->>'id')::uuid);
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_origin_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_origin_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM source_build_rootfs f JOIN environment_build_artifact_pins p ON p.artifact_id=f.id WHERE f.deployment_id=OLD.id) THEN
+  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'build artifact provenance is pinned' USING ERRCODE='23514'; END IF;
+  IF ROW(NEW.app_id,NEW.scope,NEW.deleted_at,NEW.rootfs_path,NEW.rootfs_key,NEW.rootfs_bytes,NEW.build_id,NEW.commit_sha,NEW.environment_workload_runtime)
+   IS DISTINCT FROM ROW(OLD.app_id,OLD.scope,OLD.deleted_at,OLD.rootfs_path,OLD.rootfs_key,OLD.rootfs_bytes,OLD.build_id,OLD.commit_sha,OLD.environment_workload_runtime) THEN
+   RAISE EXCEPTION 'build artifact provenance is pinned' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_source_pins(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_source_pins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE w jsonb; wanted jsonb;
+BEGIN
+ -- Serialize the pin writer with origin deletion/update and the GC key fence.
+ DELETE FROM environment_build_artifact_pins WHERE source_id=NEW.id;
+ IF NOT NEW.detached AND NEW.approved_revision_id IS NOT NULL THEN
+  SELECT definition INTO wanted FROM environment_desired_revisions WHERE id=NEW.approved_revision_id AND source_id=NEW.id;
+  FOR w IN SELECT value->'source' FROM jsonb_each(wanted->'workloads') WHERE value->'source' ? 'build_artifact_id' LOOP
+   IF w->>'kind' NOT IN ('source','dockerfile','function') OR w->>'build_artifact_hash' !~ '^[a-f0-9]{64}$' THEN
+    RAISE EXCEPTION 'invalid build artifact reference' USING ERRCODE='23514';
+   END IF;
+   PERFORM environment_pin_build_artifact((w->>'build_artifact_id')::uuid,w->>'build_artifact_hash',NEW.account_id,NEW.project_id);
+   INSERT INTO environment_build_artifact_pins(source_id,artifact_id) VALUES(NEW.id,(w->>'build_artifact_id')::uuid) ON CONFLICT DO NOTHING;
+  END LOOP;
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: environment_build_artifact_valid(public.deployments, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_valid(d public.deployments, materialized boolean) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b jsonb:=d.environment_workload_runtime->'built_artifact'; f source_build_rootfs%ROWTYPE; origin deployments%ROWTYPE; a apps%ROWTYPE; src environment_git_sources%ROWTYPE;
+BEGIN
+ SELECT * INTO f FROM source_build_rootfs WHERE id=(b->>'id')::uuid FOR SHARE NOWAIT;
+ SELECT * INTO origin FROM deployments WHERE id=f.deployment_id FOR SHARE NOWAIT;
+ SELECT * INTO a FROM apps WHERE id=d.app_id FOR SHARE NOWAIT;
+ SELECT * INTO src FROM environment_git_sources WHERE id=(d.environment_workload_runtime->>'source_id')::uuid;
+ RETURN (b IS NOT NULL AND d.environment_workload_runtime->'source_archive' IS NULL
+  AND d.environment_workload_runtime->'source'->>'build_artifact_id'=f.id::text AND d.environment_workload_runtime->'source'->>'build_artifact_hash'=f.input_hash
+  AND EXISTS(SELECT 1 FROM source_build_rootfs_current c WHERE c.deployment_id=origin.id AND c.artifact_id=f.id)
+  AND b->>'input_hash'=f.input_hash AND b->>'deployment_id'=origin.id::text AND b->>'build_id'=origin.build_id::text AND b->>'commit_sha'=origin.commit_sha
+  AND b->>'digest'=f.input_snapshot->>'artifact_digest' AND b->>'storage_key'=f.input_snapshot->>'storage_key'
+  AND b->>'rootfs_path'=f.input_snapshot->>'rootfs_path' AND b->'bytes'=f.input_snapshot->'content_bytes'
+  AND origin.app_id=d.app_id AND origin.scope<>d.scope AND origin.deleted_at IS NULL AND a.status<>'deleted'
+  AND a.account_id=src.account_id AND a.project_id=src.project_id AND f.input_snapshot->>'app_id'=a.id::text
+  AND origin.environment_workload_runtime->'source_archive' IS NOT NULL AND origin.environment_workload_runtime->'built_artifact' IS NULL
+  AND ((d.environment_workload_runtime->'source') - 'build_artifact_id'::text - 'build_artifact_hash'::text)=origin.environment_workload_runtime->'source'
+  AND coalesce(d.environment_workload_runtime->>'source_provider','')=coalesce(origin.environment_workload_runtime->>'source_provider','')
+  AND d.environment_workload_runtime->>'source_repository_id'=origin.environment_workload_runtime->>'source_repository_id'
+  AND d.environment_workload_runtime->>'source_repository'=origin.environment_workload_runtime->>'source_repository'
+  AND coalesce(d.sidecars,'[]'::jsonb)='[]'::jsonb
+  AND d.build_id IS NULL AND coalesce(d.image_digest,'')='' AND coalesce(d.source_path,'')='' AND coalesce(d.source_sha256,'')='' AND d.source_bytes=0 AND coalesce(d.log_path,'')=''
+  AND (NOT materialized OR (d.rootfs_key=b->>'storage_key' AND d.rootfs_path=b->>'rootfs_path' AND d.rootfs_bytes=(b->>'bytes')::bigint
+   AND EXISTS(SELECT 1 FROM environment_build_artifact_pins p WHERE p.candidate_id=d.id AND p.artifact_id=f.id)))) IS TRUE;
+END $$;
+
+
+--
 -- Name: environment_gitops_guard_app_presence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7270,6 +7402,30 @@ CREATE FUNCTION public.environment_gitops_queue_recovery_declared(target_source 
    AND v.definition->'workloads'->substr(r.logical_name,10)->'queue_recoveries'->>b.name=b.id::text
    AND v.definition->'workloads'->substr(r.logical_name,10)->'queue_bindings' ? b.name);
 $$;
+
+
+--
+-- Name: environment_pin_build_artifact(uuid, text, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_pin_build_artifact(artifact uuid, expected_hash text, account uuid, project uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f source_build_rootfs%ROWTYPE; d deployments%ROWTYPE; a apps%ROWTYPE; retained text;
+BEGIN
+ SELECT * INTO f FROM source_build_rootfs WHERE id=artifact FOR SHARE;
+ SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR SHARE;
+ SELECT * INTO a FROM apps WHERE id=d.app_id FOR SHARE;
+ IF (f.input_hash=expected_hash AND a.account_id=account AND a.project_id=project AND a.status<>'deleted'
+  AND d.deleted_at IS NULL AND f.input_snapshot->>'storage_key'=d.rootfs_key
+  AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
+  AND d.environment_workload_runtime->'source_archive' IS NOT NULL) IS NOT TRUE THEN
+  RAISE EXCEPTION 'build artifact is unavailable' USING ERRCODE='23514';
+ END IF;
+ INSERT INTO layer_artifact_retention(storage_key) VALUES(f.input_snapshot->>'storage_key') ON CONFLICT DO NOTHING;
+ SELECT state INTO retained FROM layer_artifact_retention WHERE storage_key=f.input_snapshot->>'storage_key' FOR UPDATE;
+ IF retained IS DISTINCT FROM 'retained' THEN RAISE EXCEPTION 'build artifact is retiring' USING ERRCODE='23514'; END IF;
+END $$;
 
 
 --
@@ -12228,7 +12384,7 @@ BEGIN
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL THEN
   IF NEW.environment_workload_runtime IS DISTINCT FROM OLD.environment_workload_runtime OR
-   (OLD.environment_workload_runtime ? 'source_archive' AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,NEW.inferred_profile,NEW.github_source_ref,NEW.github_installation_id)
+   ((OLD.environment_workload_runtime ? 'source_archive' OR OLD.environment_workload_runtime ? 'built_artifact') AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,NEW.inferred_profile,NEW.github_source_ref,NEW.github_installation_id)
     IS DISTINCT FROM ROW(OLD.source_bytes,OLD.source_url,OLD.log_path,OLD.inferred_profile,OLD.github_source_ref,OLD.github_installation_id)) OR
    (NEW.build_id IS DISTINCT FROM OLD.build_id AND (OLD.build_id IS NOT NULL OR frozen->'source_archive' IS NULL OR
     NEW.build_id IS DISTINCT FROM (frozen->'source_archive'->>'build_id')::uuid OR NOT EXISTS(
@@ -12263,7 +12419,8 @@ BEGIN
         AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'
          AND (d.kind<>'image' OR d.image_digest IS DISTINCT FROM NEW.image_digest))))
       AND NEW.image_digest ~ '^[^[:space:]]+@sha256:[a-f0-9]{64}$') OR
-     (((src.provider='github' AND NEW.kind='github') OR (src.provider='gitlab' AND NEW.kind='tarball')) AND w.source->>'kind' IN ('source','dockerfile','function') AND
+     (((src.provider='github' AND NEW.kind='github') OR (src.provider='gitlab' AND NEW.kind='tarball')) AND NEW.source_root=w.source->>'directory' AND NEW.source_url=CASE src.provider WHEN 'gitlab' THEN 'gitlab://'||src.repository_id::text||'/'||src.repository||'@'||rev.commit_sha ELSE 'github://'||src.repository||'@'||rev.commit_sha END AND environment_build_artifact_valid(NEW,false) AND frozen->'source'=w.source AND w.source_revision IS NULL AND frozen->>'definition_digest'=rev.definition_digest AND NEW.build_id IS NULL) OR
+     (((src.provider='github' AND NEW.kind='github') OR (src.provider='gitlab' AND NEW.kind='tarball')) AND w.source->>'kind' IN ('source','dockerfile','function') AND NOT (w.source ? 'build_artifact_id') AND
       (w.source->>'kind'<>'function' OR a.type='function' AND a.runtime=w.source->>'runtime') AND w.source_revision=rev.commit_sha
       AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND f.field_path='source') AND frozen->'source'=w.source AND
       jsonb_typeof(frozen->'source_archive')='object' AND frozen->'source_archive' ?& ARRAY['build_id','path','sha256','bytes','log_path','revision_id','commit_sha','definition_digest'] AND
@@ -21508,6 +21665,7 @@ CREATE TABLE public.app_environment_workload_intents (
     CONSTRAINT app_environment_workload_intents_service_bindings_check CHECK ((jsonb_typeof(service_bindings) = 'object'::text)),
     CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text))),
     CONSTRAINT app_environment_workload_intents_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text)),
+    CONSTRAINT environment_build_artifact_revision_exclusive CHECK (((source_revision IS NULL) OR (NOT (source ? 'build_artifact_id'::text)))),
     CONSTRAINT environment_workload_job_schedule_shape CHECK (((schedule IS NULL) OR ((jsonb_typeof(schedule) = 'object'::text) AND (jsonb_typeof((schedule -> 'cron'::text)) = 'string'::text) AND (btrim((schedule ->> 'cron'::text)) <> ''::text) AND (jsonb_typeof((schedule -> 'timezone'::text)) = 'string'::text) AND (btrim((schedule ->> 'timezone'::text)) <> ''::text)))),
     CONSTRAINT environment_workload_source_revision_shape CHECK (((source_revision IS NULL) OR ((source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text) AND (source IS NOT NULL) AND ((source ->> 'kind'::text) = ANY (ARRAY['source'::text, 'dockerfile'::text, 'function'::text])))))
 );
@@ -25594,6 +25752,18 @@ CREATE TABLE public.entity_outbox_acceptances (
     fingerprint text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT entity_outbox_acceptances_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: environment_build_artifact_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_build_artifact_pins (
+    source_id uuid,
+    candidate_id uuid,
+    artifact_id uuid NOT NULL,
+    CONSTRAINT environment_build_artifact_pins_check CHECK (((source_id IS NULL) <> (candidate_id IS NULL)))
 );
 
 
@@ -40769,6 +40939,22 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_candidate_id_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_candidate_id_artifact_id_key UNIQUE (candidate_id, artifact_id);
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_source_id_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_source_id_artifact_id_key UNIQUE (source_id, artifact_id);
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -55892,6 +56078,34 @@ CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress
 
 
 --
+-- Name: apps environment_build_artifact_app_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_app_guard BEFORE DELETE OR UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_app_guard();
+
+
+--
+-- Name: deployments environment_build_artifact_candidate_pin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_candidate_pin AFTER INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_candidate_pin();
+
+
+--
+-- Name: deployments environment_build_artifact_origin_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_origin_guard BEFORE DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_origin_guard();
+
+
+--
+-- Name: environment_git_sources environment_build_artifact_source_pins; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_source_pins AFTER INSERT OR UPDATE OF approved_revision_id, detached ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_source_pins();
+
+
+--
 -- Name: environment_external_field_owners environment_external_field_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -61815,6 +62029,30 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 ALTER TABLE ONLY public.entity_outbox_acceptances
     ADD CONSTRAINT entity_outbox_acceptances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.source_build_rootfs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_candidate_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
 
 
 --

@@ -433,6 +433,9 @@ SELECT EXISTS (
 ) OR EXISTS (
     SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
         AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=sqlc.arg(storage_key)::text
+ ) OR EXISTS (
+ SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
+ WHERE f.input_snapshot->>'storage_key'=sqlc.arg(storage_key)::text
 ) AS referenced;
 
 -- name: RetainedLayerBytesWithClonePins :one
@@ -9985,7 +9988,7 @@ SELECT lock_source_build_rootfs(sqlc.arg(input)::jsonb)::jsonb AS inputs;
 SELECT lock_source_build_runtime_rootfs(sqlc.arg(input)::jsonb,sqlc.arg(id)::uuid)::jsonb AS inputs;
 
 -- name: HasSourceBuildRootfs :one
-SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid UNION ALL SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid AND (d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS present;
 
 -- name: AuthorizeSourceBuildRootfsInsert :exec
 SELECT set_config('gregale.source_build_rootfs_insert',sqlc.arg(id)::uuid::text,true);
@@ -10225,7 +10228,7 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
 
 -- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
- OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id UNION ALL SELECT 1 WHERE d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
  AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
@@ -18415,7 +18418,8 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scan_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
-    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'environment_build_artifact_pins_candidate_id_fkey', (SELECT count(*) FROM environment_build_artifact_pins WHERE candidate_id = sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
@@ -18430,7 +18434,7 @@ SELECT lock_clone_deployment_cleanup_borrower_writers();
 
 -- name: LockCloneDeploymentCleanupRetirementWriters :exec
 -- Deployment UUID arrays retain original artifacts without a foreign-key lock.
-LOCK TABLE environment_workload_retirements IN SHARE MODE;
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins IN SHARE MODE;
 
 -- name: DeleteCloneOwnedDeployments :execrows
 DELETE FROM deployments d USING project_environment_clone_workloads w
@@ -21582,3 +21586,15 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND j.status <> 'deleted'
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
+
+-- name: MaterializeEnvironmentBuildArtifact :exec
+UPDATE deployments SET rootfs_path=environment_workload_runtime->'built_artifact'->>'rootfs_path',
+ rootfs_key=environment_workload_runtime->'built_artifact'->>'storage_key',rootfs_bytes=(environment_workload_runtime->'built_artifact'->>'bytes')::bigint,
+ status='snapshotting' WHERE id=sqlc.arg(id)::uuid AND status='pending' AND environment_workload_held;
+
+-- name: EnvironmentBuildArtifactOrigin :one
+SELECT f.deployment_id::text FROM deployments d JOIN apps a ON a.id=d.app_id
+ JOIN environment_build_artifact_pins p ON p.candidate_id=d.id
+ JOIN source_build_rootfs f ON f.id=p.artifact_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+ AND environment_build_artifact_valid(d,true);

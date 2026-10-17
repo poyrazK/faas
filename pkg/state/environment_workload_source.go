@@ -41,7 +41,7 @@ func sourceRequest(input Deployment) (EnvironmentWorkloadSourceRequest, error) {
 }
 
 func attachCandidateSource(input Deployment, artifacts map[string]EnvironmentWorkloadSourceArtifact, plan api.Plan) (Deployment, error) {
-	if input.Kind == DeploymentKindImage {
+	if input.Kind == DeploymentKindImage || candidateFrozenInputs(input).Source.BuildArtifactID != "" {
 		return input, nil
 	}
 	frozen := candidateFrozenInputs(input)

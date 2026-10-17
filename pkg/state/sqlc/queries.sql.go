@@ -13449,6 +13449,27 @@ func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg Ens
 	return err
 }
 
+const environmentBuildArtifactOrigin = `-- name: EnvironmentBuildArtifactOrigin :one
+SELECT f.deployment_id::text FROM deployments d JOIN apps a ON a.id=d.app_id
+ JOIN environment_build_artifact_pins p ON p.candidate_id=d.id
+ JOIN source_build_rootfs f ON f.id=p.artifact_id
+WHERE d.id=$1::uuid AND d.app_id=$2::uuid AND a.account_id=$3::uuid
+ AND environment_build_artifact_valid(d,true)
+`
+
+type EnvironmentBuildArtifactOriginParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) EnvironmentBuildArtifactOrigin(ctx context.Context, db DBTX, arg EnvironmentBuildArtifactOriginParams) (string, error) {
+	row := db.QueryRow(ctx, environmentBuildArtifactOrigin, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var f_deployment_id string
+	err := row.Scan(&f_deployment_id)
+	return f_deployment_id, err
+}
+
 const environmentFieldGitOwned = `-- name: EnvironmentFieldGitOwned :one
 SELECT EXISTS(SELECT 1 FROM environment_managed_fields f JOIN active_environment_git_sources s ON s.id=f.source_id
  LEFT JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=f.resource
@@ -21201,7 +21222,7 @@ func (q *Queries) GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX,
 
 const getDeploymentArtifactWorkloads = `-- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
- OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id UNION ALL SELECT 1 WHERE d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=$1::uuid AND a.id=$2::uuid
  AND a.account_id=$3::uuid AND a.status<>'deleted'
@@ -23812,7 +23833,7 @@ func (q *Queries) HasScopedBuildExportPublication(ctx context.Context, db DBTX, 
 }
 
 const hasSourceBuildRootfs = `-- name: HasSourceBuildRootfs :one
-SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid)::boolean AS present
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid UNION ALL SELECT 1 FROM deployments d WHERE d.id=$1::uuid AND (d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS present
 `
 
 func (q *Queries) HasSourceBuildRootfs(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error) {
@@ -34238,6 +34259,9 @@ SELECT EXISTS (
 ) OR EXISTS (
     SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
         AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=$1::text
+ ) OR EXISTS (
+ SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
+ WHERE f.input_snapshot->>'storage_key'=$1::text
 ) AS referenced
 `
 
@@ -45934,7 +45958,7 @@ func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context,
 }
 
 const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
-LOCK TABLE environment_workload_retirements IN SHARE MODE
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins IN SHARE MODE
 `
 
 // Deployment UUID arrays retain original artifacts without a foreign-key lock.
@@ -50973,6 +50997,17 @@ func (q *Queries) MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const materializeEnvironmentBuildArtifact = `-- name: MaterializeEnvironmentBuildArtifact :exec
+UPDATE deployments SET rootfs_path=environment_workload_runtime->'built_artifact'->>'rootfs_path',
+ rootfs_key=environment_workload_runtime->'built_artifact'->>'storage_key',rootfs_bytes=(environment_workload_runtime->'built_artifact'->>'bytes')::bigint,
+ status='snapshotting' WHERE id=$1::uuid AND status='pending' AND environment_workload_held
+`
+
+func (q *Queries) MaterializeEnvironmentBuildArtifact(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, materializeEnvironmentBuildArtifact, id)
+	return err
 }
 
 const migrateInstanceRuntimeConfig = `-- name: MigrateInstanceRuntimeConfig :one
@@ -65407,7 +65442,8 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scan_current WHERE deployment_id = $1::uuid),
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = $1::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = $1::uuid),
-    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid)
+    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid),
+    'environment_build_artifact_pins_candidate_id_fkey', (SELECT count(*) FROM environment_build_artifact_pins WHERE candidate_id = $1::uuid)
 ))::jsonb AS borrowers
 `
 

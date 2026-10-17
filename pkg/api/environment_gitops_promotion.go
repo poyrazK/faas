@@ -35,11 +35,15 @@ type EnvironmentGitPromotionTarget struct {
 
 // Artifact identities omit host paths, storage keys, configuration and secrets.
 type EnvironmentGitPromotionArtifact struct {
-	Resource     string `json:"resource"`
-	DeploymentID string `json:"deployment_id"`
-	BuildID      string `json:"build_id,omitempty"`
-	Kind         string `json:"kind"`
-	ImageDigest  string `json:"image_digest,omitempty"`
+	Resource          string `json:"resource"`
+	DeploymentID      string `json:"deployment_id"`
+	BuildID           string `json:"build_id,omitempty"`
+	Kind              string `json:"kind"`
+	ImageDigest       string `json:"image_digest,omitempty"`
+	BuildArtifactID   string `json:"build_artifact_id,omitempty"`
+	BuildArtifactHash string `json:"build_artifact_hash,omitempty"`
+	ArtifactDigest    string `json:"artifact_digest,omitempty"`
+	BuildCommitSHA    string `json:"build_commit_sha,omitempty"`
 }
 
 type EnvironmentGitPromotionChange struct {

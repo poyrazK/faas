@@ -143,6 +143,9 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		}
 		w.JobSmoke.Command = slices.Clone(w.JobSmoke.Command)
 	}
+	if w.Schedule != nil && w.Source != nil && w.Source.BuildArtifactID != "" {
+		return nil, fmt.Errorf("build artifact reuse is not supported for scheduled Jobs")
+	}
 	if w.Schedule != nil {
 		var runtimeFields map[string]json.RawMessage
 		if len(w.Runtime) == 0 || json.Unmarshal(w.Runtime, &runtimeFields) != nil {
@@ -335,6 +338,11 @@ func normalizeJobSchedule(schedule *api.EnvironmentJobSchedule) error {
 }
 
 func normalizeSource(source *api.EnvironmentWorkloadSource) error {
+	if source.BuildArtifactID != "" || source.BuildArtifactHash != "" {
+		if source.Kind == "image" || !api.ValidEnvironmentBuildArtifactReference(source.BuildArtifactID, source.BuildArtifactHash) {
+			return fmt.Errorf("source build artifact requires a canonical ID and SHA256 input hash")
+		}
+	}
 	if source.Kind == "" {
 		source.Kind = "source"
 	}

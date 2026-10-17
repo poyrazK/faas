@@ -76,6 +76,11 @@ func Prepare(in Input) (api.PreviewEnvironmentGitPromotionResponse, environments
 			out.Artifacts[i] = artifact
 			out.BlockingReasons = append(out.BlockingReasons, artifact.Resource+": promotion_artifact_provenance_mismatch")
 		}
+		if hasBuildArtifact(artifact) && !validBuildArtifact(artifact) {
+			artifact.BuildArtifactID, artifact.BuildArtifactHash, artifact.ArtifactDigest, artifact.BuildCommitSHA = "", "", "", ""
+			out.Artifacts[i] = artifact
+			out.BlockingReasons = append(out.BlockingReasons, artifact.Resource+": promotion_artifact_provenance_mismatch")
+		}
 		if _, exists := artifacts[artifact.Resource]; exists {
 			out.BlockingReasons = append(out.BlockingReasons, "promotion_artifact_ambiguous")
 		}
@@ -88,7 +93,26 @@ func Prepare(in Input) (api.PreviewEnvironmentGitPromotionResponse, environments
 	for _, name := range slices.Sorted(maps.Keys(from.Definition.Workloads)) {
 		resource := "workload/" + name
 		origin, target := from.Definition.Workloads[name], proposed.Definition.Workloads[name]
-		if origin.Source == nil || origin.Source.Kind != "image" {
+		if origin.Source != nil && origin.Source.Kind != "image" {
+			artifact, exists := artifacts[resource]
+			if !exists || !validBuildArtifact(artifact) {
+				out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_build_artifact_unproven")
+				continue
+			}
+			if target.Source == nil || sourceRecipe(*origin.Source) != sourceRecipe(*target.Source) || origin.App == "" || origin.App != target.App || origin.Schedule != nil || target.Schedule != nil {
+				out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_build_artifact_target_incompatible")
+				continue
+			}
+			after := *origin.Source
+			after.BuildArtifactID, after.BuildArtifactHash = artifact.BuildArtifactID, artifact.BuildArtifactHash
+			if after != *target.Source {
+				out.Changes = append(out.Changes, api.EnvironmentGitPromotionChange{Resource: resource, Before: *target.Source, After: after})
+				target.Source = &after
+				proposed.Definition.Workloads[name] = target
+			}
+			continue
+		}
+		if origin.Source == nil {
 			out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_source_artifact_reference_unsupported")
 			continue
 		}
@@ -163,4 +187,24 @@ func provider(source api.EnvironmentGitSource) string {
 		return "github"
 	}
 	return source.Spec.Provider
+}
+
+func sourceRecipe(source api.EnvironmentWorkloadSource) api.EnvironmentWorkloadSource {
+	source.BuildArtifactID, source.BuildArtifactHash = "", ""
+	return source
+}
+
+func validBuildCommit(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil && strings.ToLower(value) == value
+}
+
+func hasBuildArtifact(artifact api.EnvironmentGitPromotionArtifact) bool {
+	return artifact.BuildArtifactID != "" || artifact.BuildArtifactHash != "" || artifact.ArtifactDigest != "" || artifact.BuildCommitSHA != ""
+}
+func validBuildArtifact(artifact api.EnvironmentGitPromotionArtifact) bool {
+	return api.ValidEnvironmentBuildArtifactReference(artifact.BuildArtifactID, artifact.BuildArtifactHash) && len(artifact.ArtifactDigest) == 71 && strings.HasPrefix(artifact.ArtifactDigest, "sha256:") && validImageIdentity(artifact.ArtifactDigest) && artifact.BuildID != "" && validBuildCommit(artifact.BuildCommitSHA)
 }

@@ -7,6 +7,32 @@ from faas_sdk.api.projects import preview_environment_git_plan, preview_environm
 from faas_sdk.models import PreviewEnvironmentGitPromotionRequest, PreviewEnvironmentGitRevisionRequest
 
 
+def test_built_artifact_reference_round_trip_keeps_typed_provenance() -> None:
+    from faas_sdk.models import EnvironmentGitPromotionArtifact, EnvironmentWorkloadSource
+
+    artifact_id = "018f22b4-1d51-7d55-a5d8-fdc06ec7c663"
+    source = {
+        "kind": "source",
+        "directory": "apps/api",
+        "build_artifact_id": artifact_id,
+        "build_artifact_hash": "a" * 64,
+    }
+    decoded = EnvironmentWorkloadSource.from_dict(source)
+    assert str(decoded.build_artifact_id) == artifact_id
+    assert decoded.build_artifact_hash == "a" * 64
+    assert decoded.to_dict() == source
+    artifact = {
+        "resource": "workload/api", "deployment_id": "deployment", "kind": "github",
+        "build_id": artifact_id, "build_artifact_id": artifact_id,
+        "build_artifact_hash": "a" * 64, "artifact_digest": "sha256:" + "b" * 64,
+        "build_commit_sha": "c" * 40,
+    }
+    decoded_artifact = EnvironmentGitPromotionArtifact.from_dict(artifact)
+    assert str(decoded_artifact.build_artifact_id) == artifact_id
+    assert decoded_artifact.build_commit_sha == "c" * 40
+    assert decoded_artifact.to_dict() == artifact
+
+
 def test_promotion_preview_preserves_artifact_identity_and_expected_hash() -> None:
     sha, digest, plan_hash = "a" * 40, "b" * 64, "c" * 64
     body = {

@@ -32,13 +32,17 @@ func Validate(out api.PreviewEnvironmentGitPromotionResponse) error {
 		}
 	}
 	for _, artifact := range out.Artifacts {
+		if hasBuildArtifact(artifact) && !validBuildArtifact(artifact) {
+			return fmt.Errorf("invalid promotion build artifact identity")
+		}
 		if artifact.ImageDigest != "" && !validImageIdentity(artifact.ImageDigest) {
 			return fmt.Errorf("invalid promotion artifact identity")
 		}
 	}
 	for _, change := range out.Changes {
-		if change.Before.Kind != "image" || change.After.Kind != "image" || !api.ValidDeploymentImage(change.Before.Image) || !api.ValidDeploymentImage(change.After.Image) {
-			return fmt.Errorf("invalid promotion image source")
+		if !validPromotionSource(change.Before) || !validPromotionSource(change.After) || change.Before.Kind != change.After.Kind ||
+			change.After.Kind != "image" && (!api.ValidEnvironmentBuildArtifactReference(change.After.BuildArtifactID, change.After.BuildArtifactHash) || sourceRecipe(change.Before) != sourceRecipe(change.After)) {
+			return fmt.Errorf("invalid promotion source")
 		}
 	}
 	expected := out.PlanHash
@@ -81,7 +85,7 @@ func ExportPatch(out api.PreviewEnvironmentGitPromotionResponse) (Patch, error) 
 		Operations: []Operation{{"test", "/project", out.Project}, {"test", "/environment", out.ToEnvironment}}}
 	for _, change := range out.Changes {
 		name, ok := strings.CutPrefix(change.Resource, "workload/")
-		if !ok || !api.ValidAppSlug(name) || change.Before.Kind != "image" || change.After.Kind != "image" {
+		if !ok || !api.ValidAppSlug(name) || !validPromotionSource(change.Before) || !validPromotionSource(change.After) {
 			return Patch{}, fmt.Errorf("unsupported promotion source change")
 		}
 		path := "/workloads/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(name) + "/source"
@@ -116,4 +120,12 @@ func ExportManifest(out api.PreviewEnvironmentGitPromotionResponse, definition a
 	}
 	encoded, err := json.MarshalIndent(proposed.Definition, "", "  ")
 	return append(encoded, '\n'), err
+}
+
+func validPromotionSource(source api.EnvironmentWorkloadSource) bool {
+	if source.Kind == "image" {
+		return api.ValidDeploymentImage(source.Image) && source.BuildArtifactID == "" && source.BuildArtifactHash == ""
+	}
+	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "validation", Environment: "validation", Workloads: map[string]api.EnvironmentWorkload{"app": {Source: &source}}})
+	return err == nil && *desired.Definition.Workloads["app"].Source == source
 }

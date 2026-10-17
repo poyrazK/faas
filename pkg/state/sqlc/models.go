@@ -2888,6 +2888,12 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentBuildArtifactPin struct {
+	SourceID    pgtype.UUID
+	CandidateID pgtype.UUID
+	ArtifactID  pgtype.UUID
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID

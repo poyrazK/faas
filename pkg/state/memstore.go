@@ -9458,6 +9458,9 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	if !ok {
 		return ErrNotFound
 	}
+	if m.buildArtifactOriginPinnedLocked(id) {
+		return ErrConflict
+	}
 	if d.Status == DeployLive {
 		return ErrCancelLiveForbidden
 	}
@@ -9515,6 +9518,9 @@ func (m *MemStore) ClearObsoleteDeployments(_ context.Context, appID string, old
 			continue
 		}
 		if skippable[id] {
+			continue
+		}
+		if m.buildArtifactOriginPinnedLocked(id) {
 			continue
 		}
 		if d.DeletedAt != nil {
@@ -10026,6 +10032,10 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	if !ok {
 		return ErrNotFound
 	}
+	if (m.buildArtifactOriginPinnedLocked(d.ID) || candidateFrozenInputs(d).BuiltArtifact != nil) &&
+		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
+	}
 	if d.EnvironmentWorkloadRuntime != "" && d.Status == DeployLive &&
 		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
 		return ErrInvalidStateTransition
@@ -10058,6 +10068,9 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if (m.buildArtifactOriginPinnedLocked(d.ID) || candidateFrozenInputs(d).BuiltArtifact != nil) && (d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
 	}
 	if d.Status.IsTerminal() || d.Status == DeployLive {
 		return ErrInvalidStateTransition

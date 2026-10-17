@@ -26,5 +26,21 @@ export type EnvironmentGitPromotionArtifact = {
    * Recorded immutable image identity, if present.
    */
   image_digest?: string;
+  /**
+   * Existing signed source-build producer identity.
+   */
+  build_artifact_id?: string;
+  /**
+   * Immutable producer input hash.
+   */
+  build_artifact_hash?: string;
+  /**
+   * Exact built application-layer byte digest.
+   */
+  artifact_digest?: string;
+  /**
+   * Original code commit, distinct from the target manifest commit.
+   */
+  build_commit_sha?: string;
 };
 

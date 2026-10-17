@@ -60,6 +60,10 @@ type EnvironmentWorkload struct {
 
 type EnvironmentWorkloadSource struct {
 	Kind string `json:"kind"`
+	// BuildArtifactID and BuildArtifactHash pin an existing signed source build.
+	// They never carry configuration, snapshot state or execution authority.
+	BuildArtifactID   string `json:"build_artifact_id,omitempty"`
+	BuildArtifactHash string `json:"build_artifact_hash,omitempty"`
 	// Runtime is required for kind function and selects its supported runner.
 	Runtime    string `json:"runtime,omitempty"`
 	Directory  string `json:"directory,omitempty"`

@@ -58339,6 +58339,22 @@ components:
         image_digest:
           type: string
           description: Recorded immutable image identity, if present.
+        build_artifact_id:
+          type: string
+          format: uuid
+          description: Existing signed source-build producer identity.
+        build_artifact_hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Immutable producer input hash.
+        artifact_digest:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Exact built application-layer byte digest.
+        build_commit_sha:
+          type: string
+          pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$'
+          description: Original code commit, distinct from the target manifest commit.
     EnvironmentGitPromotionChange:
       type: object
       description: Only a workload source contract changes; target configuration and identity are preserved.
@@ -59398,6 +59414,14 @@ components:
           - dockerfile
           - image
           - function
+        build_artifact_id:
+          type: string
+          format: uuid
+          description: Existing signed source-build producer. Requires build_artifact_hash; same mapped app only. Unsupported for images and scheduled Jobs.
+        build_artifact_hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Exact immutable producer input hash. Retention does not grant qualification or activation authority.
         runtime:
           type: string
           description: Supported runner; required only when kind is function.
