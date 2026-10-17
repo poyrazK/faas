@@ -1,7 +1,7 @@
 // vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
 // ADR-014, ADR-016). RPCs map 1:1 to spec §4.4 line 138. Wire shape
-// stays narrow: the caller resolves `(app)` into AppSpec; vmmd never queries
-// apid or postgres on its own.
+// stays narrow: the caller resolves `(app)` into AppSpec. vmmd never calls
+// apid directly; it reads durable rehearsal network authority before app boot.
 
 syntax = "proto3";
 
@@ -17,6 +17,9 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;v
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 service Vmmd {
+  // ADR-20261017201005: old nodes reject these methods before releasing guest code.
+  rpc CreateRehearsalColdBoot(CreateColdBootRequest) returns (WakeResponse);
+  rpc CreateRehearsalFromSnapshot(CreateFromSnapshotRequest) returns (WakeResponse);
   // Distinct methods fail closed on older nodes before allocating a VM.
   rpc RuntimeAdmissionIdentity(RuntimeAdmissionIdentityRequest) returns (RuntimeAdmissionIdentityResponse);
   rpc CreateAdmittedRuntime(CreateAdmittedRuntimeRequest) returns (CreateAdmittedRuntimeResponse);
@@ -85,6 +88,8 @@ service Vmmd {
   // command data. The command crosses the trust boundary only after schedd
   // has committed the durable running fence.
   rpc RestoreAppTask(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
+  // ADR-20261017201008: a distinct method refuses mixed-version runtimes before boot.
+  rpc RestoreRehearsalAppTask(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
 
   // ExecuteAppTask dispatches exactly one command to a restored app-task VM.
   // vmmd tears the disposable VM down before returning the terminal result.
@@ -150,6 +155,9 @@ service Vmmd {
   // owns the durable WARM-to-RUNNING transition and ledger promotion; vmmd
   // only resumes Firecracker and re-attaches its liveness loops.
   rpc ResumeWarmInstance(ResumeWarmInstanceRequest) returns (ResumeWarmInstanceResponse);
+
+  // ADR-20261017201014: atomic, original-owner contained pause/resume rehearsal.
+  rpc RehearseSuspendResume(RehearseSuspendResumeRequest) returns (RehearseSuspendResumeResponse);
 
   // FreezeInstance (ADR-1151) pauses an idle running instance in place for
   // the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
@@ -577,6 +585,8 @@ service Vmmd {
 // it; the proto exists so each request is self-describing and vmmd stays
 // stateless about app config (ADR-014).
 message AppSpec {
+  // Immutable retained network policy, verified by vmmd against durable storage.
+  string rehearsal_run_id = 33;
   // Issue #96 / ADR-025 axis 2 (PR #116): drive0 base + drive1 layer
   // are referenced by StorageBackend keys, not host paths. The wire
   // carries canonical keys (e.g. "base/runtime-node22.ext4",
@@ -950,6 +960,8 @@ message SnapshotRef {
 // NOT receive the inner guest networking — that's identical across instances
 // (ADR-009) and stays implicit.
 message WakeResponse {
+  // Exact run whose containment was installed before guest execution.
+  string rehearsal_run_id = 19;
   // The instance name as it appears in the `instances` table; echoes the
   // request's `instance` field for request logging.
   string instance              = 1;
@@ -1436,6 +1448,11 @@ message FrameworkReadyResponse {
 
 message DestroyRequest {
   string instance = 1;
+  // Optional ADR-20261017201012 fault authority. Requires the original held checkpoint;
+  // ordinary Destroy cannot acknowledge a rehearsal worker termination.
+  string rehearsal_worker_fault_id = 2;
+  // ADR-20261017201013 original recorder retirement during preview cold preparation.
+  string rehearsal_cold_preparation_id = 3;
 }
 
 message GetOperatorRestartGenerationRequest { string instance = 1; }
@@ -1466,6 +1483,8 @@ message DestroyResponse {
   // build's own exit code; 137 = OOM, 124 = timeout, etc — see
   // pkg/builderd/builderd.go failure-class table). 0 for app VMs.
   int32  exit_code = 2;
+  string rehearsal_worker_fault_id = 3;
+  string rehearsal_cold_preparation_id = 4;
 }
 
 // StopInstanceRequest is the M-2 / ADR-138 graceful-stop input.
@@ -2711,6 +2730,10 @@ message RestoreAppTaskResponse {
   int32 lease_uid = 2;
   WakeMethod method = 3;
   bool supports_secret_aliases = 4;
+  string rehearsal_run_id = 5;
+  string netns = 6;
+  uint32 command_version = 7;
+  string host_ip = 8;
 }
 
 // ExecuteAppTaskRequest contains only dispatch-time data. In particular it
@@ -3033,4 +3056,14 @@ message RetireManagedPostgresDrainRequest { ManagedPostgresDrainFrame frame = 1;
 message RetireManagedPostgresDrainResponse {
   ManagedPostgresDrainFrame frame = 1;
   ManagedPostgresDrainProof proof = 2;
+}
+
+// ADR-20261017201014: authority names the durable run-owned lifecycle receipt.
+message RehearseSuspendResumeRequest {
+  string instance = 1;
+  string receipt_id = 2;
+}
+message RehearseSuspendResumeResponse {
+  string instance = 1;
+  string receipt_id = 2;
 }

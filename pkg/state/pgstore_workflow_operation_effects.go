@@ -71,6 +71,10 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 			}
 		}
 		generation := int64(commit.Attempt)
+		captureRun, err := scenarioCaptureRunTx(ctx, tx, appScope.AccountID, run.AppID)
+		if err != nil {
+			return err
+		}
 		for _, effect := range commit.Effects {
 			hookID, err := q.ResolveExclusiveWebhookEffectTarget(ctx, tx, sqlc.ResolveExclusiveWebhookEffectTargetParams{
 				WebhookID: effect.WebhookID, AccountID: appScope.AccountID, TenantID: run.PlatformTenantID, AppID: run.AppID,
@@ -86,15 +90,23 @@ func (s *PgStore) CommitManagedWorkflowStep(ctx context.Context, input ManagedWo
 				return fmt.Errorf("pgstore: encode workflow effect: %w", err)
 			}
 			id := workflowOperationEffectID(commit.OperationID, effect.Name)
-			if err := q.EnqueueExclusiveWebhookEffect(ctx, tx, sqlc.EnqueueExclusiveWebhookEffectParams{
-				ID: id, WebhookID: hookID, AppID: run.AppID, AccountID: appScope.AccountID, Payload: body,
-			}); err != nil {
-				return fmt.Errorf("pgstore: enqueue workflow effect: %w", err)
+			receiverSHA256 := ""
+			if captureRun == "" {
+				if err := q.EnqueueExclusiveWebhookEffect(ctx, tx, sqlc.EnqueueExclusiveWebhookEffectParams{
+					ID: id, WebhookID: hookID, AppID: run.AppID, AccountID: appScope.AccountID, Payload: body,
+				}); err != nil {
+					return fmt.Errorf("pgstore: enqueue workflow effect: %w", err)
+				}
+			} else {
+				receiverSHA256, err = scenarioReceiverFingerprintTx(ctx, tx, hookID)
+				if err != nil {
+					return fmt.Errorf("pgstore: capture workflow receiver: %w", err)
+				}
 			}
 			if err := q.InsertWorkflowOperationEffect(ctx, tx, sqlc.InsertWorkflowOperationEffectParams{
 				ID: id, AccountID: appScope.AccountID, AppID: run.AppID, RunID: commit.RunID,
 				StepName: commit.StepName, OperationID: commit.OperationID, Generation: generation,
-				Name: effect.Name, Payload: effect.Payload, WebhookID: hookID, EventType: effect.Type,
+				Name: effect.Name, Payload: effect.Payload, WebhookID: hookID, EventType: effect.Type, RehearsalRunID: captureRun, ReceiverSha256: receiverSHA256,
 			}); err != nil {
 				return fmt.Errorf("pgstore: record workflow effect: %w", err)
 			}

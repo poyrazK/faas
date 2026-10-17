@@ -6779,8 +6779,17 @@ const (
 	// vmmd.toml nor FAAS_PREPARED_NETWORKS sets one (ADR-149, amended
 	// 2026-10-12). It matches the vmmd_service role default, which nodes
 	// joined through node_join never received.
-	DefaultPreparedNetworkCacheSize        = 4
-	PreparedNetworkCacheTTLSeconds         = 60
+	DefaultPreparedNetworkCacheSize = 4
+	// PreparedNetworkCacheTTLSeconds is how long an unused prepared network
+	// stays claimable; maintenance replaces it at half this age (ADR-149,
+	// amended 2026-10-17). A claim re-checks the namespace, veth ownership and
+	// complete network config, so age is not a correctness guard. At 60 s an
+	// idle node rebuilt every spare each 45 s, and the bridge and networkd
+	// lines from those rebuilds were 96% of a production node's journal.
+	PreparedNetworkCacheTTLSeconds = 3600
+	// PreparedNetworkMaintenanceSeconds is how often vmmd retries a failed
+	// spare teardown and replaces spares past half their TTL.
+	PreparedNetworkMaintenanceSeconds      = 15
 	PreparedNetworkOperationTimeoutSeconds = 2
 	// PreparedNetworkRefillDelayMillis defers the wake-triggered refill
 	// until the wake's publish and first proxied byte have left the host;
@@ -11110,6 +11119,19 @@ const (
 	// and AuthSSOMaxDomains the email domains one provider serves.
 	AuthSSOMetadataBytes = 512 << 10
 	AuthSSOMaxDomains    = 50
+	// AuthSMSMaxCountries bounds the country calling codes phone sign-in may
+	// text (AUTH_SMS_COUNTRIES).
+	AuthSMSMaxCountries = 50
+	// AuthSCIMPageSize bounds one SCIM list page, and AuthSCIMBodyBytes a
+	// SCIM request body.
+	AuthSCIMPageSize  = 100
+	AuthSCIMBodyBytes = 64 << 10
+	// AuthOAuthMaxClients bounds the OAuth clients one Auth app holds,
+	// registered by the owner or by the clients themselves (RFC 7591).
+	AuthOAuthMaxClients = 1000
+	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
+	// be kept before the Auth app deletes them, when the owner sets a limit.
+	AuthAnonymousRetentionMaxDays = 3650
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app

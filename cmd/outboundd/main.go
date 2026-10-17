@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -190,6 +191,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	} else if needCustomerCredentials {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
+	handler.SimulationHandler = &outbound.SimulationHandler{Store: state.NewPgStore(pool)}
 	handler.IdentityVerifier = identityVerifier
 	handler.ExecutionIdentityVerifier = executionIdentityVerifier
 	handler.ExecutionAuthorizer = executionAuthorizer
@@ -219,7 +221,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-997: replays recorded by apid run through this daemon's handler.
 	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
 	go replayWorker.Run(ctx)
-	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
+	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
+	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err
 	}
