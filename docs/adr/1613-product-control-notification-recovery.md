@@ -85,7 +85,7 @@ promise that the subscription remains active after a later complaint or bounce.
 The portal preserves an uncertain request in memory for an explicit unchanged
 retry, clears it on sign-out/workspace change and never automatically resubmits.
 
-Append-only migration `20261017170000000_product_control_email_recovery.sql`
+Append-only migration `20261017185613557_product_control_email_recovery.sql`
 adds encrypted evidence, checked generations and recovery receipts. Existing
 issued migrations are unchanged. All routes and assets remain under the existing
 default-off Product Control gate. Email still defaults disabled and real sending

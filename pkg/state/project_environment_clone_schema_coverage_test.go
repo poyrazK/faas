@@ -19,6 +19,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Recovery receipts, physical identities and migration leases stay with their original database.
+		"instance_snapshot_recovery":          CloneSchemaOperational,
+		"migration_admissions":                CloneSchemaOperational,
+		"migration_sources":                   CloneSchemaOperational,
+		"node_lifecycle_completions":          CloneSchemaOperational,
+		"operator_node_executions":            CloneSchemaOperational,
+		"operator_park_executions":            CloneSchemaOperational,
+		"operator_recovery_submissions":       CloneSchemaOperational,
+		"operator_restart_executions":         CloneSchemaOperational,
 		"product_control_heads":               CloneSchemaConfiguration,
 		"product_control_revisions":           CloneSchemaConfiguration,
 		"product_control_customers":           CloneSchemaConfiguration,

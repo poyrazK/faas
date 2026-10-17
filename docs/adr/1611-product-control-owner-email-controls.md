@@ -58,7 +58,7 @@ worker cannot finish a newer lease. A repeated receipt acknowledges the original
 requeue and never repeats it. Receipts cascade with their delivery's retention,
 and the attempt budget bounds each delivery to five owner retry receipts.
 
-Append-only migration `20261017130000000_product_control_email_owner.sql` adds
+Append-only migration `20261017185613546_product_control_email_owner.sql` adds
 the receipt table and owner scope index. Existing issued migrations stay intact.
 All SQL uses the leaf outbox SQLC adapter. No Auth protocol change, deployment,
 credentials, flag enablement or real email is necessary for local verification.

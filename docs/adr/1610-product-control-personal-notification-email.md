@@ -45,7 +45,7 @@ the same source between scans can collapse to its latest state. Inbox read/unrea
 choices do not affect email. Scans retain per-subscriber cursors, and the worker
 advances its subscriber cursor even when one Auth realm is unavailable.
 
-Migration `20261017110000000_product_control_email.sql` owns the preference and
+Migration `20261017185613541_product_control_email.sql` owns the preference and
 delivery tables. SQLC generates the small `pkg/productemail/sqlc` adapter; both
 Postgres and memory repositories implement the same contracts. Each tenant has
 at most 500 personal preference records and each subscription retains at most

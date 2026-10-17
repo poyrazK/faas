@@ -70,7 +70,7 @@ saving preferences resumes delivery. Pause metadata persists with the personal
 subscription, independently of the rolling message history.
 
 Append-only migration
-`20261017150000000_product_control_email_feedback.sql` adds checked pause/report
+`20261017185613551_product_control_email_feedback.sql` adds checked pause/report
 fields, a unique provider UUID and the bounded pending metadata table. SQL uses
 the leaf SQLC adapter. Product Control stays default off, email defaults disabled
 and real sending keeps its independent switch. Signed loopback fixtures and

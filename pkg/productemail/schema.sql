@@ -1,4 +1,4 @@
--- Projection of migration 20261017110000000; cross-domain FKs live in the migration.
+-- Projection of migration 20261017185613541; cross-domain FKs live in the migration.
 CREATE TABLE product_control_email_subscriptions (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
