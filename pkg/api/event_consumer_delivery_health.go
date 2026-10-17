@@ -10,6 +10,7 @@ import (
 // EventConsumerDeliveryHealth combines independent routing, execution and
 // oldest-first pending reads. It is not a single database snapshot.
 type EventConsumerDeliveryHealth struct {
+	Processing       *EventConsumerProcessingHealth `json:"processing,omitempty"`
 	CapacityPressure *EventConsumerCapacityPressure `json:"capacity_pressure,omitempty"`
 	StartedAt        time.Time                      `json:"started_at"`
 	ObservedAt       time.Time                      `json:"observed_at"`

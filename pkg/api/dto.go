@@ -12915,6 +12915,8 @@ type AppEventPublishStatusResponse struct {
 }
 
 type AppPublishEventRequest struct {
+	// ExpectedAppID fences slug reuse when set.
+	ExpectedAppID string          `json:"expected_app_id,omitempty"`
 	Key           string          `json:"key"`
 	Type          string          `json:"type"`
 	Data          json.RawMessage `json:"data"`

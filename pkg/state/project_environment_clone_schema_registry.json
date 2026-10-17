@@ -3854,6 +3854,78 @@
     "kind": "operational"
   },
   {
+    "table": "event_acknowledgment_metric_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "kind",
+      "occurrences",
+      "retain_until",
+      "saturated",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_outcomes",
+    "columns": [
+      "attempt",
+      "first_at",
+      "invocation_id",
+      "kind",
+      "last_at",
+      "occurrences",
+      "replay_generation",
+      "retain_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_recording_coverage",
+    "columns": [
+      "continuous_since",
+      "inventory_revision",
+      "singleton",
+      "updated_at",
+      "verified_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_writers",
+    "columns": [
+      "capability_version",
+      "continuous_since",
+      "expires_at",
+      "inventory",
+      "inventory_revision",
+      "role",
+      "seen_at",
+      "session_id",
+      "slot",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_delivery_acknowledgments",
+    "columns": [
+      "attempt",
+      "completion_digest",
+      "deadline_at",
+      "invocation_id",
+      "lease_seconds",
+      "max_attempts",
+      "phase",
+      "rejection_status",
+      "replay_generation",
+      "retry_delay_ms",
+      "token_digest"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_delivery_capacity",
     "columns": [
       "account_id",
@@ -4324,11 +4396,33 @@
       "max_pending_deliveries",
       "paused",
       "paused_at",
+      "rate_burst",
+      "rate_credit_ms",
+      "rate_enabled",
+      "rate_interval_ms",
       "rate_per_second",
+      "rate_refilled_at",
+      "rate_revision",
+      "rate_sequence",
       "subscription_id",
       "updated_at",
       "window_count",
       "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_rate_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "sequence",
+      "subscription_id"
     ],
     "kind": "operational"
   },
@@ -4349,6 +4443,7 @@
     "table": "event_subscriptions",
     "columns": [
       "account_id",
+      "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
       "enabled",

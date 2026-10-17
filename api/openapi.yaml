@@ -7878,6 +7878,8 @@ paths:
         replacement_acceptance or unavailable independently of content status.
         Returned receipts describe the currently observed acceptance even on mismatch.
         Only expected_accepted_at is accepted as a query parameter; use the status read for consumer evidence.
+        An optional expected_app_id in the body returns 409 before comparison if
+        the resolved application UUID differs.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -7905,6 +7907,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
@@ -7990,6 +7993,8 @@ paths:
         become eligible for pruning after 30 days; holds can extend this window.
         After pruning the same key may be accepted again. App renames preserve
         identity; replacement apps have a new UUID and a new key namespace.
+        Optional expected_app_id must match the resolved canonical app UUID;
+        mismatches return 409 before accepting any publication.
         No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
         with the same app, key and content. Acceptance does not mean delivery success.
       security: [{ bearerAuth: [] }]
@@ -40229,6 +40234,335 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadlines:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptionDeadlines
+      summary: List pending deliveries by effective deadline.
+      description: "Read-only deadline triage for retained captured pending application recipients of one owned subscription, without payloads. Orders by effective deadline, acceptance time and internal receipt ID ascending; this does not guarantee delivery order. Optional deadline_from is inclusive and deadline_before exclusive. Expired/upcoming filters compare to the first page window_at, which also bounds acceptance time. Each page has a fresh observation and live routing state, so expired flags and waiting reasons use observed_at. Cursor is scoped to account, application, subscription, normalized filters and page size, expires after 15 minutes, and is navigational metadata rather than authorization. Membership and deadlines can change between pages; newly captured or replayed work can appear, disappear, move or be skipped. This is not a frozen snapshot, reservation or deadline-safety certificate. No effective deadline means exclusion. Reads have fixed time budgets; timeout returns no partial page."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for a deadline-ordered pending-delivery listing.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose pending deadlines are being investigated.
+          schema: { type: string, format: uuid }
+        - name: deadline_from
+          in: query
+          description: Inclusive effective-deadline bound, normalized to UTC microseconds.
+          schema: { type: string, format: date-time }
+        - name: deadline_before
+          in: query
+          description: Exclusive effective-deadline bound, later than deadline_from after normalization.
+          schema: { type: string, format: date-time }
+        - name: status
+          in: query
+          description: Expiry classification at the first page window_at; keep unchanged across pages.
+          schema: { type: string, enum: [all, expired, upcoming], default: all }
+        - name: cursor
+          in: query
+          description: Opaque continuation; preserve scope, filters and page size. Expires 15 minutes after the first page.
+          schema: { type: string, maxLength: 4096 }
+        - name: limit
+          in: query
+          description: Maximum returned recipients; keep unchanged across pages.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: within_millis
+          in: query
+          description: Optional upcoming window strictly after the first page window_at and before window_at plus this horizon. Normalizes all/omitted status to upcoming; expired status is rejected. Keep unchanged across pages.
+          schema: { type: integer, format: int64, minimum: 100, maximum: 86400000 }
+        - name: waiting_reason
+          in: query
+          description: Optional known observed backlog waiting reason, applied before pagination at each page observation. Keep unchanged across pages; reasons remain live.
+          schema: { type: string, enum: [circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, ready] }
+      responses:
+        '200':
+          description: A bounded live page of pending deliveries with effective deadlines.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeadlinePage' }
+        '400':
+          description: Subscription UUID, deadline filters, page size or cursor are invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Deadline listing exceeded its read budget; no partial page was returned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/deadline-window:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionDeadlineWindow
+      summary: Count upcoming delivery deadlines and observed waiting reasons.
+      description: "Read-only, payload-free full pending summary and deadline cohorts from one Repeatable Read snapshot. Upcoming deadlines are strictly after summary.observed_at and strictly before window_end_at. Already-expired recipients are separate in summary.already_expired_count. Each cohort has an exact partition of observed backlog waiting reasons, including zero keys. Counts have no sample cap and include only retained captured pending application recipients with effective deadlines; processing, future arrivals and recipients without deadlines are excluded from cohorts. Waiting reasons are observations, not unique causes or execution guarantees. Fixed request and statement budgets apply; timeout returns no partial counts. Require summary.complete before interpreting coverage or recovery. This does not predict admissions, change state, reserve capacity or extend deadlines."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for full deadline-window monitoring.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose retained pending deadlines are being counted.
+          schema: { type: string, format: uuid }
+        - name: within_millis
+          in: query
+          required: true
+          description: Positive whole-millisecond horizon from this snapshot observation; upper deadline boundary is exclusive.
+          schema: { type: integer, format: int64, minimum: 100, maximum: 86400000 }
+      responses:
+        '200':
+          description: Full pending summary, separate upcoming and expired counts, and exact waiting-reason partitions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionDeadlineWindow' }
+        '400':
+          description: Subscription UUID or within_millis is invalid, missing, repeated or unsupported.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Deadline-window read exceeded its budget; no partial counts were returned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pending-summary:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionPendingSummary
+      summary: Read complete consumer pending counts and effective deadlines.
+      description: "Read-only, payload-free counts and earliest effective deadline across all retained captured pending application recipients for this subscription. One Repeatable Read snapshot includes current controls. Processing work, future arrivals and publications awaiting recipient capture are excluded. No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not model future admission or guarantee deadline safety."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for a full pending summary.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose retained pending recipients are being counted.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Complete pending counts, effective deadlines and current controls; inspect complete before monitoring.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionPendingSummary' }
+        '400':
+          description: Subscription UUID is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Full pending-summary read exceeded its budget; coverage is unknown.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/preview:
+    post:
+      tags: [events]
+      operationId: previewEventSubscriptionRateLimit
+      summary: Preview consumer pacing and delivery deadline risk.
+      description: "Read-only advisory preview of proposed interval/burst settings from one owned subscription snapshot. Requires read scope. Returns the reviewed bucket revision for a subsequent guarded command, without allocating a command ID or receipt, consuming tokens, claiming work or reserving capacity. Models the oldest 1000 captured pending recipients in acceptance order, with current scheduled times and the legacy per-second cap. This models admission rather than completion and does not promise scheduler ordering. Pause, circuit, lease and capacity constraints can delay actual admission without bound; inspect constraints and completeness. Deadline-risk identities are limited to 100."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug for a read-only consumer pacing preview.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned application subscription UUID whose pacing is being reviewed.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionRatePreviewRequest' }
+      responses:
+        '200':
+          description: Advisory rate-only admission model and bounded deadline evidence; completeness does not certify deadline safety.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRatePreview' }
+        '400':
+          description: Proposed preview settings or subscription UUID are invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Read-only pacing preview exceeded its request deadline; retry with a fresh observation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit:
+    put:
+      tags: [events]
+      operationId: setEventSubscriptionRateLimit
+      summary: Configure rate bucket.
+      description: "Configure rate bucket: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Configure rate bucket: Application slug owning this subscription rate policy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Configure rate bucket: Application subscription UUID for rate controls."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventSubscriptionRateRequest' }
+      responses:
+        '200':
+          description: "Configure rate bucket: Retained rate command evidence; inspect outcome for applied or rejected."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRateCommandReceipt' }
+        '400':
+          description: "Configure rate bucket: Invalid rate control input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "Configure rate bucket: Command UUID inputs changed or database clock moved behind the refill anchor."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: "Configure rate bucket: 128 unexpired receipts retained; known repeats remain available."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptionRateCommands
+      summary: List rate history.
+      description: "List rate history: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "List rate history: Application slug owning this subscription rate policy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "List rate history: Application subscription UUID for rate controls."
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: "List rate history: Exclusive increasing history sequence; pages contain at most 50 retained receipts and do not freeze history."
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: "List rate history: Retained rate command evidence; inspect outcome for applied or rejected."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRateCommands' }
+        '400':
+          description: "List rate history: Invalid rate control input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/rate-limit/commands/{commandID}:
+    get:
+      tags: [events]
+      operationId: getEventSubscriptionRateCommand
+      summary: Look up rate command.
+      description: "Look up rate command: Durable per-subscription pacing shared by admission workers. Mutations require deploy:write or admin and return an applied or rejected receipt; revision mismatch is a recorded rejection with no configuration change. Repeating an unexpired command UUID with identical inputs returns its original receipt. Reads require read scope. Existing pause, circuit, per-second drain caps, attempts and delivery deadlines remain in force. Capacity observations reserve nothing."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "Look up rate command: Application slug owning this subscription rate policy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "Look up rate command: Application subscription UUID for rate controls."
+          schema: { type: string, format: uuid }
+        - name: commandID
+          in: path
+          required: true
+          description: "Look up rate command: Nonzero UUID of a retained rate command."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Look up rate command: Retained rate command evidence; inspect outcome for applied or rejected."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionRateCommandReceipt' }
+        '400':
+          description: "Look up rate command: Invalid rate control input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: "Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity:
     put:
       tags: [events]
@@ -52711,6 +53045,439 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history/pages:
+    get:
+      tags: [events]
+      operationId: listEventAcknowledgmentHistoryPage
+      summary: Page through retained acknowledgment outcome groups.
+      description: 'Requires apps:read or admin. Orders immutable first occurrence and identity fields descending so renewals cannot move groups between pages. A fixed first-page cutoff excludes later-created groups. Counts and last_at remain live; deletion, retention and initially uncommitted inserts prevent a database snapshot guarantee. Filters select groups by first_at, not individual occurrences. Repeat all filters and the page size with the cursor. Cursors expire one hour after the cutoff and grant no authority. The existing acknowledgment-history operation keeps its latest-update ordering.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug owning the paginated outcome view.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Consumer subscription used to bind page cursors.
+          schema: { type: string, format: uuid }
+        - name: invocation_id
+          in: query
+          description: Restrict all pages to the specified delivery UUID.
+          schema: { type: string, format: uuid }
+        - name: kind
+          in: query
+          description: Restrict pages to one deferred outcome kind.
+          schema: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired, retry_requested, dead_letter_requested] }
+        - name: from
+          in: query
+          description: Inclusive first occurrence lower bound, normalized to UTC microseconds.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive first occurrence upper bound, normalized to UTC microseconds.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          description: Maximum groups per page, fixed for the cursor traversal.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+        - name: cursor
+          in: query
+          description: Opaque continuation bound to account, application, consumer, filters and page size.
+          schema: { type: string, maxLength: 2048 }
+      responses:
+        '200':
+          description: Retained outcome page with stable ordering and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentHistoryPage' }
+        '400':
+          description: Invalid, expired or mismatched history page cursor or filters.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Paginated acknowledgment read exceeded its request deadline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-history:
+    get:
+      tags: [events]
+      operationId: listEventAcknowledgmentHistory
+      summary: Inspect retained deferred acknowledgment outcomes.
+      description: Requires apps:read or admin. Returns the 100 most recently updated outcome groups for this consumer, optionally restricted to one delivery. Repeated operations coalesce per attempt and kind; occurrences saturates at 2147483647. Retention ends seven days after the attempt deadline, or earlier when the invocation is deleted. Invalid and replaced tokens produce no history. This is diagnostic coverage since rollout, not a complete audit log or a rate denominator.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug owning acknowledgment history.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Consumer subscription whose retained outcomes are inspected.
+          schema: { type: string, format: uuid }
+        - name: invocation_id
+          in: query
+          description: Optional delivery UUID restricting consumer outcome history.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Bounded coalesced acknowledgment history, with explicit truncation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentHistory' }
+        '400':
+          description: Malformed acknowledgment history scope or delivery filter.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Acknowledgment history read exceeded its time budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/acknowledgment-policy:
+    get:
+      tags: [events]
+      operationId: getEventAcknowledgmentPolicy
+      summary: Inspect future delivery acknowledgment policy.
+      description: "Requires apps:read or admin. Tokens are never returned by inspection. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1\u2013300 seconds enables a deferred lease after HTTP 202."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for getEventAcknowledgmentPolicy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "subscriptionID identifying the target for getEventAcknowledgmentPolicy."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Inspect future delivery acknowledgment policy result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentPolicy' }
+        '400':
+          description: "Invalid scope, token or policy for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [events]
+      operationId: setEventAcknowledgmentPolicy
+      summary: Configure future delivery acknowledgment policy.
+      description: "Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Policies affect future acceptances and explicit backfills only. Zero preserves HTTP-success acknowledgment; 1\u2013300 seconds enables a deferred lease after HTTP 202."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for setEventAcknowledgmentPolicy."
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: "subscriptionID identifying the target for setEventAcknowledgmentPolicy."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentPolicyRequest' }
+      responses:
+        '200':
+          description: "Configure future delivery acknowledgment policy result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentPolicy' }
+        '400':
+          description: "Invalid scope, token or policy for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment:
+    get:
+      tags: [events]
+      operationId: getEventAcknowledgment
+      summary: Inspect retained delivery processing state.
+      description: "Requires apps:read or admin. Tokens are never returned by inspection. Processing state distinguishes waiting, delivering, processing, expired and terminal invocation states. It does not prove business effects outside the consumer transaction."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for getEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for getEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: "Inspect retained delivery processing state result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/renew:
+    post:
+      tags: [events]
+      operationId: renewEventAcknowledgment
+      summary: Renew a deferred delivery processing lease.
+      description: "Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Renewal requires an unexpired awaiting lease and cannot exceed the one-hour attempt deadline. A 409 during the 202 handoff may be retried with the same token."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for renewEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for renewEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentRequest' }
+      responses:
+        '200':
+          description: "Renew a deferred delivery processing lease result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/complete:
+    post:
+      tags: [events]
+      operationId: completeEventAcknowledgment
+      summary: Complete a deferred delivery attempt.
+      description: "Requires deploy:write or admin. Writes remain app-scoped; delivery callbacks additionally require the opaque token. Never log tokens. Complete only after durable business processing. Matching successful repeats return the saved completion state. Replaced attempts and changed results return 409. Completion can precede the scheduler observing 202."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for completeEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for completeEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentRequest' }
+      responses:
+        '200':
+          description: "Complete a deferred delivery attempt result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/retry:
+    post:
+      tags: [events]
+      operationId: retryEventAcknowledgment
+      summary: Retry a deferred delivery attempt.
+      description: "Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and schedules the captured backoff; an exhausted captured attempt budget dead-letters instead. Matching repeats return the saved disposition until the attempt or replay generation is replaced. Changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for retryEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for retryEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentFailureRequest' }
+      responses:
+        '200':
+          description: "Retry a deferred delivery attempt result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
+  /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment/dead-letter:
+    post:
+      tags: [events]
+      operationId: deadLetterEventAcknowledgment
+      summary: Dead-letter a deferred delivery attempt.
+      description: "Requires deploy:write or admin and the current delivery token. Atomically releases the claim and quota and dead-letters this delivery independently of other consumers. Matching repeats return the saved disposition until replacement; changed reason or action returns 409. May precede the scheduler observing 202. Reason is a bounded non-sensitive code. Does not undo consumer effects."
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: "slug identifying the target for deadLetterEventAcknowledgment."
+          schema: { type: string }
+        - name: invocationID
+          in: path
+          required: true
+          description: "invocationID identifying the target for deadLetterEventAcknowledgment."
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventAcknowledgmentFailureRequest' }
+      responses:
+        '200':
+          description: "Dead-letter a deferred delivery attempt result."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAcknowledgmentStatus' }
+        '400':
+          description: "Invalid scope, token or policy for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "Expired lease, replaced attempt or incompatible completion for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: "Acknowledgment request timed out for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
 components:
 
   securitySchemes:
@@ -53220,6 +53987,102 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    EventAcknowledgmentPolicy:
+      type: object
+      description: Acceptance-time deferred acknowledgment configuration for an application subscription.
+      required: [subscription_id, lease_seconds]
+      properties:
+        subscription_id: { type: string, format: uuid, description: Subscription whose future acceptance policy is configured. }
+        lease_seconds: { type: integer, minimum: 0, maximum: 300, description: Zero uses ordinary HTTP success; positive values enable deferred HTTP 202 processing. }
+    EventAcknowledgmentPolicyRequest:
+      type: object
+      description: Explicit replacement of a subscription policy for future acceptances.
+      required: [lease_seconds]
+      properties:
+        lease_seconds: { type: integer, minimum: 0, maximum: 300, description: Requested processing lease duration; zero disables deferred acknowledgment for future acceptances. }
+    EventAcknowledgmentFailureRequest:
+      type: object
+      additionalProperties: false
+      description: App-authorized negative acknowledgment for the current live attempt; repeat exactly after an uncertain response.
+      required: [token, reason]
+      properties:
+        token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Secret attempt token; never log it or put it in a URL. }
+        reason: { type: string, minLength: 1, maxLength: 128, pattern: '^[a-z0-9_.-]+$', description: Non-sensitive failure code; no payloads or credentials. }
+    EventAcknowledgmentRequest:
+      type: object
+      description: App-authorized callback fenced by the current opaque delivery token.
+      required: [token]
+      properties:
+        token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true, description: Secret attempt token from the authenticated internal delivery; never log or persist in diagnostic artifacts. }
+        result:
+          description: Optional JSON completion result up to one MiB; omitted means null and renewal forbids this field.
+    EventAcknowledgmentOutcome:
+      type: object
+      description: Payload-free coalesced outcome for one deferred delivery attempt.
+      required: [invocation_id, attempt, replay_generation, kind, first_at, last_at, occurrences, retain_until]
+      properties:
+        invocation_id: { type: string, format: uuid, description: Delivery whose attempt produced this outcome. }
+        attempt: { type: integer, minimum: 1, description: Fenced invocation attempt number. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: Replay generation fenced by this outcome. }
+        kind:
+          type: string
+          enum: [accepted, renewed, renewal_rejected, completed, expired, retry_requested, dead_letter_requested]
+          description: Deferred acknowledgment operation or scheduler expiry outcome.
+        first_at: { type: string, format: date-time, description: Database time of the first retained occurrence. }
+        last_at: { type: string, format: date-time, description: Database time of the latest retained occurrence. }
+        occurrences: { type: integer, format: int64, minimum: 1, maximum: 2147483647, description: Coalesced count saturating at the documented maximum. }
+        retain_until: { type: string, format: date-time, description: Fixed history expiry anchored to the attempt deadline. }
+    EventAcknowledgmentHistoryQuery:
+      type: object
+      description: Scope-bound page options selecting coalesced groups by first occurrence.
+      properties:
+        invocation_id: { type: string, format: uuid, description: Delivery filter shared by every continuation request. }
+        kind: { type: string, enum: [accepted, renewed, renewal_rejected, completed, expired, retry_requested, dead_letter_requested], description: Outcome kind shared by the page traversal. }
+        from: { type: string, format: date-time, description: Inclusive first_at bound for the traversal. }
+        until: { type: string, format: date-time, description: Exclusive first_at bound for the traversal. }
+        limit: { type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding. }
+        cursor: { type: string, maxLength: 2048, description: Previous page continuation retaining its initial cutoff. }
+    EventAcknowledgmentHistoryPage:
+      type: object
+      description: Bounded page of coalesced outcomes ordered by immutable group identity.
+      required: [outcomes, has_more, cutoff, coverage]
+      properties:
+        outcomes:
+          type: array
+          maxItems: 100
+          description: Groups ordered by first_at, invocation UUID, attempt, generation and kind descending.
+          items: { $ref: '#/components/schemas/EventAcknowledgmentOutcome' }
+        has_more: { type: boolean, description: Another retained matching group existed in this read. }
+        next_cursor: { type: string, maxLength: 2048, description: Continuation emitted only when has_more is true. }
+        cutoff: { type: string, format: date-time, description: Fixed initial read time excluding groups with later first occurrences. }
+        coverage: { type: string, enum: [retained_coalesced_deferred_outcomes], description: Retained diagnostic groups with live aggregate values and no historical snapshot guarantee. }
+    EventAcknowledgmentHistory:
+      type: object
+      description: Most recently updated retained outcome groups for a scoped consumer.
+      required: [outcomes, truncated, coverage]
+      properties:
+        outcomes:
+          type: array
+          maxItems: 100
+          description: Outcome groups ordered by latest occurrence descending with stable tie breakers.
+          items: { $ref: '#/components/schemas/EventAcknowledgmentOutcome' }
+        truncated: { type: boolean, description: More retained outcome groups existed at the read snapshot. }
+        coverage: { type: string, enum: [retained_coalesced_deferred_outcomes], description: Diagnostic retained invocation coverage since the ledger rollout. }
+    EventAcknowledgmentStatus:
+      type: object
+      description: Retained invocation and processing lease observation without secret token material.
+      required: [invocation_id, attempt, replay_generation, state, processing_state]
+      properties:
+        disposition: { type: string, enum: [retry, dead-letter], description: Requested negative acknowledgment action; retry may exhaust its captured budget and dead-letter. }
+        failure_reason: { type: string, maxLength: 128, pattern: '^[a-z0-9_.-]+$', description: Non-sensitive reason code retained for this attempt. }
+        next_attempt_at: { type: string, format: date-time, description: Saved retry due time; absent for a terminal disposition. }
+        invocation_id: { type: string, format: uuid, description: Durable invocation receiving the deferred processing callback. }
+        attempt: { type: integer, minimum: 0, description: Current execution claim number for this processing observation; zero follows an in-place replay reset. }
+        replay_generation: { type: integer, format: int64, minimum: 0, description: Current in-place replay generation fencing old delivery attempts. }
+        state: { type: string, description: Underlying durable invocation lifecycle state. }
+        processing_state: { type: string, enum: [waiting, delivering, processing, expired, completed, failed, dead_letter, cancelled, superseded], description: Processing phase derived from the retained claim and current database clock. }
+        lease_expires_at: { type: string, format: date-time, description: Current invocation lease expiry; absent after expiry recovery. }
+        deadline_at: { type: string, format: date-time, description: Absolute one-hour processing deadline of the matching attempt. }
     MCPCatalogObserverOAuthConfig:
       description: Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
       type: object
@@ -76347,6 +77210,10 @@ components:
       description: Producer-key event publication with a 1 MiB total body limit.
       required: [key, type, data]
       properties:
+        expected_app_id:
+          type: string
+          format: uuid
+          description: Optional canonical application UUID guard; mismatches return 409 before publication or comparison.
         key:
           type: string
           minLength: 1
@@ -76635,12 +77502,76 @@ components:
       properties:
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
 
+    EventAcknowledgmentRecordingCoverage:
+      type: object
+      additionalProperties: false
+      description: Capability and heartbeat verification against the exhaustive deployment-declared writer roster; not automatic discovery of unlisted processes or proof of metric data integrity.
+      required: [verified, reason, observed_at, expected_writers, active_writers, capability_version, heartbeat_lease_seconds]
+      properties:
+        verified: { type: boolean, description: All declared slots have one live compatible session and a continuous heartbeat watermark. }
+        reason: { type: string, description: Bounded coverage diagnostic such as verified or missing_writer or inventory_unconfigured or warming_up. }
+        observed_at: { type: string, format: date-time, description: Database clock used to assess writer leases in the metric read snapshot. }
+        continuous_since: { type: string, format: date-time, description: Conservative continuity boundary reset by observed membership changes or heartbeat gaps. }
+        verified_through: { type: string, format: date-time, description: Least recent live writer heartbeat; no later minute is considered verified. }
+        inventory_revision: { type: string, pattern: '^[0-9a-f]{64}$', description: Opaque hash of the common canonical declared inventory without exposing slots or sessions. }
+        expected_writers: { type: integer, minimum: 0, maximum: 128, description: Declared members when a usable inventory is available. }
+        active_writers: { type: integer, minimum: 0, maximum: 257, description: Bounded live session count; 257 denotes evidence exceeding the scan limit. }
+        capability_version: { type: integer, const: 1, description: Required deferred metric recording capability protocol. }
+        heartbeat_lease_seconds: { type: integer, const: 30, description: Writer heartbeat lease horizon assessed using database time. }
+    EventAcknowledgmentWindowHealth:
+      type: object
+      additionalProperties: false
+      description: Recorded renewal and expiry operations in full UTC minute buckets with optional verification of deployment-declared writer continuity.
+      required: [window_start, window_end, bucket_seconds, retention_seconds, coverage, renewal_successes, renewal_rejections, renewal_attempts, lease_expiries, saturated]
+      properties:
+        window_start: { type: string, format: date-time, description: Inclusive boundary of full minutes wholly inside the requested processing window. }
+        recording_coverage: { $ref: '#/components/schemas/EventAcknowledgmentRecordingCoverage' }
+        window_end: { type: string, format: date-time, description: Exclusive completed-minute boundary capped by the verified writer heartbeat watermark when available. }
+        bucket_seconds: { type: integer, const: 60, description: Fixed width of each durable operation bucket. }
+        retention_seconds: { type: integer, const: 172800, description: Metric retention measured from bucket start independently of invocation pruning. }
+        coverage: { type: string, enum: [recorded_full_minute_buckets], description: Only instrumented writers contribute; inspect recording_coverage for declared-inventory continuity and no pre-upgrade activity is reconstructed. }
+        renewal_successes: { type: integer, format: int64, minimum: 0, description: Explicit successful renewals recorded in selected complete buckets. }
+        renewal_rejections: { type: integer, format: int64, minimum: 0, description: Current-token renewal conflicts recorded after token and attempt verification. }
+        renewal_attempts: { type: integer, format: int64, minimum: 0, description: Sum of recorded successful and rejected renewals used as the fraction denominator. }
+        lease_expiries: { type: integer, format: int64, minimum: 0, description: Recorded deferred-awaiting scheduler expiry transitions in these minutes. }
+        saturated: { type: boolean, description: At least one bucket overflowed its saturating counter; totals are lower bounds and rate fields are omitted. }
+        renewal_rejection_fraction: { type: number, minimum: 0, maximum: 1, description: Recorded rejected renewals divided by recorded renewal attempts; absent without samples or complete minutes or after saturation. }
+        lease_expiry_rate_per_second: { type: number, minimum: 0, description: Recorded lease expiry transitions divided by the effective window duration; absent for an empty or saturated window. }
+    EventConsumerProcessingHealth:
+      type: object
+      additionalProperties: false
+      description: Current retained deferred invocation gauges, retained completion latency and optional durable full-minute renewal metrics with independent coverage.
+      required: [app_id, subscription_id, observed_at, window_start, coverage, complete, waiting, delivering, processing, expired, completed, dead_lettered, failed, other, near_expiry, near_expiry_seconds, oldest_processing_age_seconds, acknowledgment_samples, acknowledgment_latency_max_seconds, renewal_failure_coverage]
+      properties:
+        app_id: { type: string, format: uuid, description: Application owning this processing summary. }
+        subscription_id: { type: string, format: uuid, description: Consumer subscription selected for the retained processing aggregate. }
+        observed_at: { type: string, format: date-time, description: Database snapshot clock for processing gauges. }
+        window_start: { type: string, format: date-time, description: Start of the retained acknowledgment completion window. }
+        coverage: { type: string, enum: [retained_deferred_invocations], description: Coverage is limited to currently retained opted-in invocations. }
+        complete: { type: boolean, description: All matching retained invocations were aggregated without sampling; this is not historical completeness. }
+        waiting: { type: integer, format: int64, minimum: 0, description: Deferred invocations currently pending dispatch. }
+        delivering: { type: integer, format: int64, minimum: 0, description: Live deferred dispatches not yet handed off. }
+        processing: { type: integer, format: int64, minimum: 0, description: Unexpired matching leases handed off after HTTP 202. }
+        expired: { type: integer, format: int64, minimum: 0, description: Expired dispatching leases before recovery sweeps. }
+        completed: { type: integer, format: int64, minimum: 0, description: Retained opted-in invocations completed by callback or ordinary success. }
+        dead_lettered: { type: integer, format: int64, minimum: 0, description: Retained deferred invocations in dead letters. }
+        failed: { type: integer, format: int64, minimum: 0, description: Retained deferred invocations permanently failed. }
+        other: { type: integer, format: int64, minimum: 0, description: Other terminal states including cancellation and supersession and work-policy expiry. }
+        near_expiry: { type: integer, format: int64, minimum: 0, description: Active handed-off leases in their final third; the risk horizon is capped by near_expiry_seconds. }
+        near_expiry_seconds: { type: integer, minimum: 1, description: Maximum lease risk horizon in seconds; each claim uses the smaller of this cap and one third of its lease duration. }
+        oldest_processing_offered_at: { type: string, format: date-time, description: Oldest token issue time among live handed-off claims; includes initial dispatch time. }
+        oldest_processing_age_seconds: { type: number, minimum: 0, description: Age since oldest active processing token issue; zero when absent. }
+        acknowledgment_samples: { type: integer, format: int64, minimum: 0, description: Retained matching explicit completions whose completion time falls inside the window. }
+        acknowledgment_latency_max_seconds: { type: number, minimum: 0, description: Maximum token-issue-to-completion seconds among acknowledgment samples; zero requires inspecting sample count. }
+        renewal_failure_coverage: { type: string, enum: [not_recorded], deprecated: true, description: Legacy non-windowed coverage marker retained for older clients; use renewal_window for durable recorded operation counts. }
+        renewal_window: { $ref: '#/components/schemas/EventAcknowledgmentWindowHealth' }
     EventConsumerDeliveryHealth:
       type: object
       additionalProperties: false
       description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
       required: [started_at, observed_at, routing, execution, pending_sample]
       properties:
+        processing: { $ref: '#/components/schemas/EventConsumerProcessingHealth' }
         capacity_pressure: { $ref: '#/components/schemas/EventConsumerCapacityPressure' }
         waiting_reasons: { $ref: '#/components/schemas/EventConsumerWaitingReasons' }
         capacity_waits: { $ref: '#/components/schemas/EventConsumerCapacityWaits' }
@@ -77262,12 +78193,203 @@ components:
         recorded_at: { type: string, format: date-time }
         retain_until: { type: string, format: date-time }
 
+    EventSubscriptionRatePreviewRequest:
+      type: object
+      additionalProperties: false
+      description: Proposed bucket settings for a preview only; this request has no command UUID or mutation guard.
+      required: [enabled, interval_millis, burst]
+      properties:
+        enabled: { type: boolean }
+        interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
+        burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+    EventSubscriptionDeadlineRecipient:
+      type: object
+      description: Payload-free identity, effective deadline and observed waiting reason of a retained pending delivery. The expiry flag uses the current page observation, not the fixed status-filter window.
+      required: [event_source, event_id, accepted_at, deadline_at, expired, waiting_reason]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        expired: { type: boolean }
+        waiting_reason: { type: string, enum: [circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, ready] }
+        next_attempt_at: { type: string, format: date-time }
+        lease_until: { type: string, format: date-time }
+
+    EventSubscriptionDeadlinePage:
+      type: object
+      description: One read-only live page ordered by effective deadline, acceptance time and internal receipt identity. No aggregate health or frozen membership is implied. Empty recipients are not proof of successful delivery.
+      required: [coverage, app_id, subscription_id, observed_at, window_at, read_only, recipients, has_more]
+      properties:
+        coverage: { type: string, enum: [retained_captured_pending_application_deadlines] }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        window_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        recipients:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventSubscriptionDeadlineRecipient' }
+        has_more: { type: boolean, description: "A lookahead row existed in this page snapshot; later pages can still be empty as routing state changes." }
+        next_cursor: { type: string, maxLength: 4096, description: "Present only when has_more is true. Carries no authorization." }
+
+    EventSubscriptionDeadlineWindow:
+      type: object
+      description: Complete, disjoint deadline cohorts with the full pending summary from one read-only snapshot. Upcoming means observed_at < deadline < window_end_at; expired means deadline <= observed_at. Incomplete summary coverage invalidates all counts for alert confirmation.
+      required: [coverage, summary, within_millis, window_end_at, upcoming_recipients, upcoming_waiting_reasons, expired_waiting_reasons]
+      properties:
+        coverage: { type: string, enum: [all_retained_captured_pending_application_deadline_window] }
+        summary: { $ref: '#/components/schemas/EventSubscriptionPendingSummary' }
+        within_millis: { type: integer, format: int64, minimum: 100, maximum: 86400000 }
+        window_end_at: { type: string, format: date-time }
+        upcoming_recipients: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        earliest_upcoming_deadline_at: { type: string, format: date-time, description: Omitted exactly when upcoming_recipients is zero. }
+        upcoming_waiting_reasons:
+          type: object
+          description: Exact partition of upcoming_recipients over every known backlog waiting reason, including explicit zero keys. Labels do not establish unique causes.
+          additionalProperties: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expired_waiting_reasons:
+          type: object
+          description: Exact partition of summary.already_expired_count over every known backlog waiting reason, including explicit zero keys.
+          additionalProperties: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+
+    EventSubscriptionPendingSummary:
+      type: object
+      description: Full retained captured pending application-recipient counts from one read-only snapshot. No payloads, identities or modeled completion estimates. Incomplete evidence cannot establish health or recovery.
+      required: [coverage, app_id, subscription_id, observed_at, read_only, complete, pending_recipients, deadline_recipients, already_expired_count, current, paused, legacy_rate_per_second, circuit_state, capacity_blocking_scopes, constraints]
+      properties:
+        coverage: { type: string, enum: [all_retained_captured_pending_application_recipients] }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        read_only: { type: boolean, enum: [true] }
+        complete: { type: boolean, description: "False for unusable clocks; incomplete counts must not drive alert recovery." }
+        pending_recipients: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        deadline_recipients: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        already_expired_count: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        earliest_deadline_at: { type: string, format: date-time, description: "Earliest effective deadline, including expired rows; omitted when no pending recipients have deadlines." }
+        current: { $ref: '#/components/schemas/EventSubscriptionRateLimit' }
+        paused: { type: boolean }
+        legacy_rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        circuit_state: { type: string, enum: [closed, open, half_open, draining] }
+        capacity_blocking_scopes:
+          type: array
+          items: { type: string, enum: [consumer, app, account] }
+        constraints:
+          type: array
+          items: { type: string, enum: [subscription_paused, legacy_rate_limit, circuit_open, circuit_half_open, circuit_draining, capacity_consumer, capacity_app, capacity_account, active_leases, scheduled_retries, clock_uncertain] }
+
+    EventSubscriptionRatePreview:
+      type: object
+      additionalProperties: false
+      description: One snapshot of current controls and a hypothetical rate-only admission model. The deterministic oldest-first model is not an ordering guarantee, completion ETA or deadline-safety certificate. Full pending coverage excludes processing, unattributed receipts and future arrivals.
+      required: [coverage, app_id, subscription_id, observed_at, advisory, read_only, expected_revision, current, projected, paused, legacy_rate_per_second, circuit_state, capacity_blocking_scopes, constraints, sample_limit, sampled_pending, complete, truncated, deadline_risk_count, already_expired_count, deadline_risks, risks_truncated]
+      properties:
+        deadline_coverage: { type: string, enum: [sampled_effective_pending_deadlines], description: "Explicit evidence marker for earliest-deadline monitoring; absent on older responses." }
+        deadline_recipients: { type: integer, minimum: 0, maximum: 1000, description: "Sampled pending recipients with an effective delivery deadline, including expired rows." }
+        earliest_deadline_at: { type: string, format: date-time, description: "Earliest effective deadline in the sampled pending rows, independent of modeled admission risk; omitted when deadline_recipients is zero." }
+        coverage: { type: string, enum: [retained_captured_pending_application_recipients] }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        advisory: { type: boolean, enum: [true] }
+        read_only: { type: boolean, enum: [true] }
+        expected_revision: { type: integer, format: int64, minimum: 0, description: "Reviewed bucket revision for the subsequent mutation; other controls and backlog can change independently." }
+        current: { $ref: '#/components/schemas/EventSubscriptionRateLimit' }
+        projected: { $ref: '#/components/schemas/EventSubscriptionRateLimit', description: "Hypothetical capacity immediately after applying the proposal. Revision remains the reviewed baseline because no mutation occurred." }
+        paused: { type: boolean }
+        legacy_rate_per_second: { type: integer, minimum: 0, maximum: 100 }
+        circuit_state: { type: string }
+        capacity_blocking_scopes:
+          type: array
+          maxItems: 3
+          items: { type: string, enum: [consumer, app, account] }
+        constraints:
+          type: array
+          description: Current pause, circuit, capacity, lease, scheduled-retry, clock and sampling constraints. An empty list does not promise future readiness.
+          items: { type: string }
+        sample_limit: { type: integer, enum: [1000] }
+        sampled_pending: { type: integer, minimum: 0, maximum: 1000 }
+        complete: { type: boolean, description: "Captured pending sample is untruncated with usable timestamps; not evidence of eventual delivery." }
+        truncated: { type: boolean }
+        rate_only_drain_millis: { type: integer, format: int64, minimum: 0, description: "Modeled admission span for the sample, assuming all unexpired sampled recipients are admitted once, no new arrivals, oldest-first order and no blocking from pause/circuit/capacity/leases or execution. Includes scheduled times and legacy pacing. Missing when clocks or duration are unusable. Truncated samples never estimate the full backlog." }
+        deadline_risk_count: { type: integer, minimum: 0, maximum: 1000 }
+        already_expired_count: { type: integer, minimum: 0, maximum: 1000 }
+        deadline_risks:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventSubscriptionRateDeadlineRisk' }
+        risks_truncated: { type: boolean }
+    EventSubscriptionRateDeadlineRisk:
+      type: object
+      additionalProperties: false
+      description: Payload-free identity of an expired or model-at-risk sampled recipient. Absence from the sample is not evidence that its deadline is safe.
+      required: [event_source, event_id, accepted_at, deadline_at, reason]
+      properties:
+        event_source: { type: string }
+        event_id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        modeled_admission_at: { type: string, format: date-time }
+        reason: { type: string, enum: [already_expired, modeled_deadline_risk] }
+    EventSubscriptionRateRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit guarded command for per-subscription token-bucket pacing. Disabled retains configuration without enforcing the bucket.
+      required: [command_id, expected_revision, enabled, interval_millis, burst]
+      properties:
+        command_id: { type: string, format: uuid, description: "Nonzero command UUID; retained for 30 days, at most 128 per subscription." }
+        expected_revision: { type: integer, format: int64, minimum: 0, description: "Current bucket revision, initially zero. Mismatch records a rejected receipt." }
+        enabled: { type: boolean }
+        interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
+        burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+    EventSubscriptionRateLimit:
+      type: object
+      additionalProperties: false
+      description: Projected token-bucket capacity at observed_at. Read-only metadata reserves no tokens. Missing rate_limit on older responses means unknown.
+      required: [enabled, revision, interval_millis, burst, available_tokens, rate_limited, observed_at]
+      properties:
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64, minimum: 0 }
+        interval_millis: { type: integer, format: int64, minimum: 10, maximum: 3600000 }
+        burst: { type: integer, format: int64, minimum: 1, maximum: 100 }
+        available_tokens: { type: integer, format: int64, minimum: 0 }
+        rate_limited: { type: boolean }
+        next_available_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+    EventSubscriptionRateCommandReceipt:
+      type: object
+      additionalProperties: false
+      description: Historical idempotent command outcome; rejected commands preserve configuration. Look up after an uncertain mutation before submitting a new UUID.
+      required: [command_id, app_id, subscription_id, sequence, outcome, result, recorded_at, retain_until]
+      properties:
+        command_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        sequence: { type: integer, format: int64, minimum: 1 }
+        outcome: { type: string, enum: [applied, rejected] }
+        result: { $ref: '#/components/schemas/EventSubscriptionRateLimit' }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventSubscriptionRateCommands:
+      type: object
+      additionalProperties: false
+      description: Bounded retained rate command history in increasing sequence order; expiry can leave sequence gaps. Pages are fresh observations.
+      required: [receipts]
+      properties:
+        receipts:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventSubscriptionRateCommandReceipt' }
+        next_after: { type: integer, format: int64, minimum: 1, description: "Exclusive cursor for the next page when another retained receipt exists." }
     EventSubscriptionDeliveryControl:
       type: object
       additionalProperties: false
       description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
       required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, max_pending_deliveries, effective_max_pending_deliveries, live_deliveries]
       properties:
+        rate_limit: { $ref: '#/components/schemas/EventSubscriptionRateLimit', description: 'Optional token-bucket observation; absent on older responses.' }
         capacity_command_budget: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandBudget', description: "Optional complete receipt budget in read-only delivery-control status. Mutation responses may omit it; absence means unknown." }
         capacity_command_receipt: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Configured live-delivery ceiling; zero uses the current plan limit. }

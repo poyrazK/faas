@@ -122,14 +122,16 @@ type EventConsumerTransactionResult struct {
 // Commit the receipt with business writes before acknowledging the delivery.
 // Concurrent duplicates wait and replay saved bytes without calling handler.
 func WithEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventConsumerRequest, handler func(EventConsumerSQLTransaction) (json.RawMessage, error)) (EventConsumerTransactionResult, error) {
+	return withEventConsumerTransaction(ctx, db, input, handler, nil)
+}
+
+func withEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventConsumerRequest, handler func(EventConsumerSQLTransaction) (json.RawMessage, error), lease *EventConsumerProcessingLease, hooks ...func(context.Context, *sql.Tx, EventConsumerTransactionResult) error) (EventConsumerTransactionResult, error) {
 	if !input.valid || db == nil || handler == nil {
 		return EventConsumerTransactionResult{}, ErrInvalidEventConsumerRequest
 	}
 	id := input.identity
-	// UUIDs and canonical positive decimal IDs cannot contain newlines.
-	identityFrame := "gregale.event-consumer.v1\n" + id.AccountID + "\n" + id.AppID + "\n" + id.SubscriptionID + "\n" + strconv.FormatInt(id.AcceptanceID, 10)
-	identityDigest := sha256.Sum256([]byte(identityFrame))
-	requestDigest := sha256.Sum256(append([]byte("gregale.event-consumer-input.v1\n"), input.body...))
+	identityDigest, requestDigest := eventConsumerDigests(input)
+
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return EventConsumerTransactionResult{}, fmt.Errorf("event consumer transaction begin: %w", err)
@@ -148,6 +150,11 @@ func WithEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventCo
 			return EventConsumerTransactionResult{}, ErrEventConsumerReceiptConflict
 		}
 	} else if errors.Is(err, sql.ErrNoRows) {
+		if lease != nil {
+			if err := lease.check(ctx, tx); err != nil {
+				return EventConsumerTransactionResult{}, err
+			}
+		}
 		body, err := handler(tx)
 		if err != nil {
 			return EventConsumerTransactionResult{}, err
@@ -165,12 +172,31 @@ func WithEventConsumerTransaction(ctx context.Context, db *sql.DB, input EventCo
 	if !validEventConsumerResponse(response) {
 		return EventConsumerTransactionResult{}, ErrInvalidEventConsumerRequest
 	}
+	if lease != nil && !replayed {
+		if err := lease.release(ctx, tx); err != nil {
+			return EventConsumerTransactionResult{}, err
+		}
+	}
+	result := EventConsumerTransactionResult{Body: json.RawMessage(response), Replayed: replayed}
+	for _, hook := range hooks {
+		if hook != nil {
+			if err := hook(ctx, tx, result); err != nil {
+				return EventConsumerTransactionResult{}, err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return EventConsumerTransactionResult{}, fmt.Errorf("%w: %w", ErrEventConsumerCommitUnknown, err)
 	}
-	return EventConsumerTransactionResult{Body: json.RawMessage(response), Replayed: replayed}, nil
+	return result, nil
 }
 
 func validEventConsumerResponse(body string) bool {
 	return len(body) > 0 && len(body) <= eventConsumerResultMaxBytes && utf8.ValidString(body) && !strings.ContainsRune(body, '\x00') && json.Valid([]byte(body))
+}
+
+func eventConsumerDigests(input EventConsumerRequest) ([32]byte, [32]byte) {
+	id := input.identity
+	frame := "gregale.event-consumer.v1\n" + id.AccountID + "\n" + id.AppID + "\n" + id.SubscriptionID + "\n" + strconv.FormatInt(id.AcceptanceID, 10)
+	return sha256.Sum256([]byte(frame)), sha256.Sum256(append([]byte("gregale.event-consumer-input.v1\n"), input.body...))
 }
