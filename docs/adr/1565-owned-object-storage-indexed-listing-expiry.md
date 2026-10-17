@@ -1,4 +1,4 @@
-# ADR-1354: Indexed object listings and bounded multipart expiry
+# ADR-1565: Indexed object listings and bounded multipart expiry
 
 Status: Accepted
 

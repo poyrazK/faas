@@ -1,8 +1,8 @@
-# ADR-1339: Replica-confirmed owned-node acknowledgements
+# ADR-1550: Replica-confirmed owned-node acknowledgements
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-1337](1337-owned-object-storage-replication-journal.md), [ADR-1338](1338-owned-object-storage-primary-switchover.md)
+- Related: [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-1548](1548-owned-object-storage-replication-journal.md), [ADR-1549](1549-owned-object-storage-primary-switchover.md)
 
 ## Context
 
@@ -120,7 +120,7 @@ can exceed the response wait even with a healthy follower; retain the original
 receipt and settle later. Local mode remains available through explicit, safe
 configuration, with its existing weaker acknowledgement semantics.
 Continuous follow scheduling is updated by
-[ADR-1342](1342-owned-object-storage-replication-waits.md).
+[ADR-1553](1553-owned-object-storage-replication-waits.md).
 
 Memory-only Prometheus samples expose required/bound policy, whether a
 confirmation is known, lag in records and whether the sampled applied head is

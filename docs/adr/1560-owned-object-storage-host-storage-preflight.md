@@ -1,8 +1,8 @@
-# ADR-1349: Inspect qualification hosts and storage before creating node data
+# ADR-1560: Inspect qualification hosts and storage before creating node data
 
 - Status: Accepted for development qualification; independent-host execution pending test hosts.
 - Date: 2026-10-17
-- Related: [ADR-1344](1344-owned-object-storage-ssh-qualification.md), [ADR-1346](1346-owned-object-storage-soak-qualification.md), [ADR-1348](1348-owned-object-storage-write-admission.md)
+- Related: [ADR-1555](1555-owned-object-storage-ssh-qualification.md), [ADR-1557](1557-owned-object-storage-soak-qualification.md), [ADR-1559](1559-owned-object-storage-write-admission.md)
 
 ## Context
 

@@ -1,8 +1,8 @@
-# ADR-1334: Owned-node inventory, capacity reconciliation and disk observations
+# ADR-1545: Owned-node inventory, capacity reconciliation and disk observations
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1331](1331-owned-object-storage-first-node.md), [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-122](122-canonical-metrics-listener-shape.md)
+- Related: [ADR-1542](1542-owned-object-storage-first-node.md), [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-122](122-canonical-metrics-listener-shape.md)
 
 ## Context
 

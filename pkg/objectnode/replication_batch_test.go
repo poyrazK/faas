@@ -32,7 +32,7 @@ func (s *batchTestSource) Entries(ctx context.Context, stream string, sequence i
 	return entries, err
 }
 
-// ADR-1347: validate the entire fetched prefix before persisting any of it.
+// ADR-1558: validate the entire fetched prefix before persisting any of it.
 func TestReplicaBatchRejectsInvalidPrefetch(t *testing.T) {
 	for _, kind := range []string{"empty", "extra", "gap", "reordered", "previous", "stream", "epoch", "hash"} {
 		t.Run(kind, func(t *testing.T) {

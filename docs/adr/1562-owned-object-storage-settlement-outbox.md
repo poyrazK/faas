@@ -1,10 +1,10 @@
-# ADR-1351: Durable owned-node settlement acknowledgement delivery
+# ADR-1562: Durable owned-node settlement acknowledgement delivery
 
 Status: Accepted
 
 ## Context
 
-ADR-1350 permits collection of historical node proofs only after an exact
+ADR-1561 permits collection of historical node proofs only after an exact
 acknowledgement of central terminal settlement and a further 30-day retention
 window. A single delivery attempt can be lost after the database commit or
 during a restart, pinning otherwise collectible metadata indefinitely.
@@ -65,7 +65,7 @@ historical settlements can still use the explicit signed adapter/offline CLI
 after an operator verifies their exact durable terminal evidence.
 
 Back up the outbox with central PostgreSQL state. Restore compatible central
-and node recovery points under ADR-1350's 30-day post-acknowledgement contract.
+and node recovery points under ADR-1561's 30-day post-acknowledgement contract.
 A database rollback that resurrects an already collected proof cannot be
 resolved from absence: its job stays deferred for operator reconciliation.
 The outbox is delivery durability, not a distributed rollback guarantee.

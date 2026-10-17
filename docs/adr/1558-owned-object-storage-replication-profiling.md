@@ -1,8 +1,8 @@
-# ADR-1347: Profile replication and fetch bounded journal pages
+# ADR-1558: Profile replication and fetch bounded journal pages
 
 - Status: Accepted for development qualification; no production enrollment.
 - Date: 2026-10-17
-- Related: [ADR-1337](1337-owned-object-storage-replication-journal.md), [ADR-1339](1339-owned-object-storage-replica-durability.md), [ADR-1343](1343-owned-object-storage-publication-preparation.md), [ADR-1345](1345-owned-object-storage-automatic-compaction.md), [ADR-1346](1346-owned-object-storage-soak-qualification.md)
+- Related: [ADR-1548](1548-owned-object-storage-replication-journal.md), [ADR-1550](1550-owned-object-storage-replica-durability.md), [ADR-1554](1554-owned-object-storage-publication-preparation.md), [ADR-1556](1556-owned-object-storage-automatic-compaction.md), [ADR-1557](1557-owned-object-storage-soak-qualification.md)
 
 ## Context
 

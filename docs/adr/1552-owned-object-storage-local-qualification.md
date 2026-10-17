@@ -1,8 +1,8 @@
-# ADR-1341: Repeatable local object-service qualification
+# ADR-1552: Repeatable local object-service qualification
 
 - Status: Accepted for development evidence; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-1336](1336-owned-object-storage-backups.md), [ADR-1338](1338-owned-object-storage-primary-switchover.md), [ADR-1339](1339-owned-object-storage-replica-durability.md), [ADR-1340](1340-owned-object-storage-journal-compaction.md)
+- Related: [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-1547](1547-owned-object-storage-backups.md), [ADR-1549](1549-owned-object-storage-primary-switchover.md), [ADR-1550](1550-owned-object-storage-replica-durability.md), [ADR-1551](1551-owned-object-storage-journal-compaction.md)
 
 ## Context
 

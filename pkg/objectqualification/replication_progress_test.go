@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-1347: preserve complete observations under pipe chunking and log limits.
+// ADR-1558: preserve complete observations under pipe chunking and log limits.
 func TestReplicationProgressCaptureBounds(t *testing.T) {
 	var output bytes.Buffer
 	w := &replicationProgressWriter{output: &output}

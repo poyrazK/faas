@@ -1,4 +1,4 @@
-# ADR-1353: Qualify format-5 recovery protection with built object nodes
+# ADR-1564: Qualify format-5 recovery protection with built object nodes
 
 Status: Accepted
 
@@ -64,6 +64,6 @@ they cannot qualify independent hosts, disks or power-loss durability.
 
 A short soak validates fresh-proof protection and persistence across process
 failures. It does not exercise eligible 30-day retirement or certify an elapsed
-retention interval. ADR-1352's controlled-clock tests cover aged collection and
+retention interval. ADR-1563's controlled-clock tests cover aged collection and
 crash replay locally. The gateway fixture remains in-memory, so PostgreSQL crash
 and coordinated central/node restore qualification remain outside this profile.

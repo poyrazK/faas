@@ -1,8 +1,8 @@
-# ADR-1332: Durable write receipts for the owned object node
+# ADR-1543: Durable write receipts for the owned object node
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-15
-- Related: [ADR-1331](1331-owned-object-storage-first-node.md), [ADR-535](535-recoverable-s3-gateway-puts.md)
+- Related: [ADR-1542](1542-owned-object-storage-first-node.md), [ADR-535](535-recoverable-s3-gateway-puts.md)
 
 ## Context
 
@@ -106,5 +106,5 @@ This remains a single-node development prototype. Multipart, receipt retention
 coordination, indexed metadata, authoritative usage, scrubbing, backups,
 replication and distributed placement/fencing remain separate milestones.
 
-[ADR-1333](1333-owned-object-storage-multipart.md) adds multipart sessions and
+[ADR-1544](1544-owned-object-storage-multipart.md) adds multipart sessions and
 extends the journal to exact completion proof. The current disk format is 3.

@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-1351: enroll at admission, publish evidence with terminal settlement.
+-- ADR-1562: enroll at admission, publish evidence with terminal settlement.
 -- Deliberately no foreign keys: delivery must survive source/bucket deletion.
 CREATE TABLE object_node_settlement_outbox (
     id uuid PRIMARY KEY CHECK (id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),

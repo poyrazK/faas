@@ -1,8 +1,8 @@
-# ADR-1344: Qualify disposable object nodes across SSH hosts
+# ADR-1555: Qualify disposable object nodes across SSH hosts
 
 - Status: Accepted for development qualification; independent-host evidence pending.
 - Date: 2026-10-17
-- Related: [ADR-1341](1341-owned-object-storage-local-qualification.md), [ADR-1343](1343-owned-object-storage-publication-preparation.md)
+- Related: [ADR-1552](1552-owned-object-storage-local-qualification.md), [ADR-1554](1554-owned-object-storage-publication-preparation.md)
 
 ## Context
 
@@ -76,7 +76,7 @@ the actual storage layout separately.
 ### Network profiles and operating measurements
 
 Expose follower byte-work and entry-start rates in the runner and pass them to
-continuous workers, restored followers and promotion catch-up. Keep ADR-1343's
+continuous workers, restored followers and promotion catch-up. Keep ADR-1554's
 defaults and maxima. Add a bounded delay per replication RPC and an optional
 aggregate response-body byte rate for replication payloads at the proxy. Both
 are cancelable and apply only to replication traffic. Payload shaping has one

@@ -1,8 +1,8 @@
-# ADR-1342: Bounded replication change waits
+# ADR-1553: Bounded replication change waits
 
 - Status: Accepted for development qualification; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1337](1337-owned-object-storage-replication-journal.md), [ADR-1338](1338-owned-object-storage-primary-switchover.md), [ADR-1339](1339-owned-object-storage-replica-durability.md), [ADR-1340](1340-owned-object-storage-journal-compaction.md), [ADR-1341](1341-owned-object-storage-local-qualification.md)
+- Related: [ADR-1548](1548-owned-object-storage-replication-journal.md), [ADR-1549](1549-owned-object-storage-primary-switchover.md), [ADR-1550](1550-owned-object-storage-replica-durability.md), [ADR-1551](1551-owned-object-storage-journal-compaction.md), [ADR-1552](1552-owned-object-storage-local-qualification.md)
 
 ## Context
 

@@ -5,24 +5,24 @@ that stores bytes on our disks. The existing public S3 gateway continues to own
 customer credentials and bucket permissions. Its generic S3 adapter can target
 this node using the same provider configuration shape used for R2.
 
-Architecture and limits: [ADR-1331](adr/1331-owned-object-storage-first-node.md).
-Durable receipt protocol: [ADR-1332](adr/1332-owned-object-storage-write-receipts.md).
-Multipart protocol: [ADR-1333](adr/1333-owned-object-storage-multipart.md).
-Inventory and disk observations: [ADR-1334](adr/1334-owned-object-storage-inventory.md).
-Checksum scrubbing: [ADR-1335](adr/1335-owned-object-storage-scrubbing.md).
-Offline backup and restore: [ADR-1336](adr/1336-owned-object-storage-backups.md).
-Replication journal and followers: [ADR-1337](adr/1337-owned-object-storage-replication-journal.md).
-Planned primary switchover: [ADR-1338](adr/1338-owned-object-storage-primary-switchover.md).
-Replica-confirmed acknowledgements: [ADR-1339](adr/1339-owned-object-storage-replica-durability.md).
-Journal retention and compaction: [ADR-1340](adr/1340-owned-object-storage-journal-compaction.md).
-Sustained traffic qualification: [ADR-1346](adr/1346-owned-object-storage-soak-qualification.md).
-Repeatable local qualification: [ADR-1341](adr/1341-owned-object-storage-local-qualification.md).
-Replication change waits: [ADR-1342](adr/1342-owned-object-storage-replication-waits.md).
-Publication preparation and work budgets: [ADR-1343](adr/1343-owned-object-storage-publication-preparation.md).
-SSH host qualification: [ADR-1344](adr/1344-owned-object-storage-ssh-qualification.md).
-Automatic journal maintenance: [ADR-1345](adr/1345-owned-object-storage-automatic-compaction.md).
-Write admission: [ADR-1348](adr/1348-owned-object-storage-write-admission.md).
-Host/storage preflight: [ADR-1349](adr/1349-owned-object-storage-host-storage-preflight.md).
+Architecture and limits: [ADR-1542](adr/1542-owned-object-storage-first-node.md).
+Durable receipt protocol: [ADR-1543](adr/1543-owned-object-storage-write-receipts.md).
+Multipart protocol: [ADR-1544](adr/1544-owned-object-storage-multipart.md).
+Inventory and disk observations: [ADR-1545](adr/1545-owned-object-storage-inventory.md).
+Checksum scrubbing: [ADR-1546](adr/1546-owned-object-storage-scrubbing.md).
+Offline backup and restore: [ADR-1547](adr/1547-owned-object-storage-backups.md).
+Replication journal and followers: [ADR-1548](adr/1548-owned-object-storage-replication-journal.md).
+Planned primary switchover: [ADR-1549](adr/1549-owned-object-storage-primary-switchover.md).
+Replica-confirmed acknowledgements: [ADR-1550](adr/1550-owned-object-storage-replica-durability.md).
+Journal retention and compaction: [ADR-1551](adr/1551-owned-object-storage-journal-compaction.md).
+Sustained traffic qualification: [ADR-1557](adr/1557-owned-object-storage-soak-qualification.md).
+Repeatable local qualification: [ADR-1552](adr/1552-owned-object-storage-local-qualification.md).
+Replication change waits: [ADR-1553](adr/1553-owned-object-storage-replication-waits.md).
+Publication preparation and work budgets: [ADR-1554](adr/1554-owned-object-storage-publication-preparation.md).
+SSH host qualification: [ADR-1555](adr/1555-owned-object-storage-ssh-qualification.md).
+Automatic journal maintenance: [ADR-1556](adr/1556-owned-object-storage-automatic-compaction.md).
+Write admission: [ADR-1559](adr/1559-owned-object-storage-write-admission.md).
+Host/storage preflight: [ADR-1560](adr/1560-owned-object-storage-host-storage-preflight.md).
 This is a development prototype with one writable primary. It is not enabled in production.
 
 ## Development feature flags
@@ -60,8 +60,8 @@ The explicitly invoked qualifier strips all inherited private flags, then sets
 only master and server in its disposable node child. Its offline follower/control
 children and SSH clients receive no private feature flags. It does not enable a
 live deployment or alter the parent environment. See
-[ADR-1359](adr/1359-owned-object-storage-capability-gates.md), which refines
-[ADR-1358](adr/1358-owned-object-storage-development-gate.md).
+[ADR-1570](adr/1570-owned-object-storage-capability-gates.md), which refines
+[ADR-1569](adr/1569-owned-object-storage-development-gate.md).
 
 ## Run locally
 
@@ -293,8 +293,8 @@ billing-off requirements still apply; production qualification remains pending.
 
 ## Incremental inventory audits
 
-[ADR-1356](adr/1356-owned-object-storage-incremental-audits.md) introduces
-checkpointed turns; [ADR-1357](adr/1357-owned-object-storage-mutation-aware-audits.md)
+[ADR-1567](adr/1567-owned-object-storage-incremental-audits.md) introduces
+checkpointed turns; [ADR-1568](adr/1568-owned-object-storage-mutation-aware-audits.md)
 preserves verified progress while writes continue. Defaults are
 `--inventory-audit-records=64`, `--inventory-audit-time=25ms` and
 `--inventory-audit-backlog-records=4096`. Maxima are 256 work units, 100 ms and
@@ -470,7 +470,7 @@ Opening an earlier format-1 or format-2 directory upgrades its marker to format 
 Earlier node binaries refuse format 3. Keep a consistent pre-upgrade backup if
 rollback is needed, and never change the marker back manually.
 
-[ADR-1354](adr/1354-owned-object-storage-indexed-listing-expiry.md) adds a local
+[ADR-1565](adr/1565-owned-object-storage-indexed-listing-expiry.md) adds a local
 ordered index for S3 object listings, active multipart counts and expiry.
 Prefix and delimiter pages seek directly to matching keys and read at most
 `max-keys + 2` source records, including the lookahead and boundary. Continuation
@@ -512,7 +512,7 @@ before additional nodes can provide durable failover.
 
 ## Logical usage counters
 
-[ADR-1355](adr/1355-owned-object-storage-usage-counters.md) adds a private signed
+[ADR-1566](adr/1566-owned-object-storage-usage-counters.md) adds a private signed
 GET on `/<physical-bucket>?gregale-inventory=bucket-counters`. The complete JSON
 response carries current object count and committed bytes, active/frozen multipart
 upload count, selected part count and bytes, bucket generation, catalog snapshot,
@@ -550,7 +550,7 @@ remain until the next startup rebuild, preserving bounded terminal transitions.
 
 ## Settled receipt and multipart tombstone collection
 
-[ADR-1350](adr/1350-owned-object-storage-recovery-retention.md) adds an explicit
+[ADR-1561](adr/1561-owned-object-storage-recovery-retention.md) adds an explicit
 maintenance path for historical recovery metadata. It is disabled by default.
 New gateway write and multipart IDs are canonical UUIDv7. First use must be
 within 30 days of their encoded issue time, with at most five minutes of future
@@ -607,7 +607,7 @@ These are fields within the existing backend configuration. In each process
 loading it, explicitly set `FAAS_OBJECT_NODE_ENABLED=1`,
 `FAAS_OBJECT_NODE_BACKENDS_ENABLED=1` and
 `FAAS_OBJECT_NODE_SETTLEMENTS_ENABLED=1` as well.
-[ADR-1351](adr/1351-owned-object-storage-settlement-outbox.md) adds durable
+[ADR-1562](adr/1562-owned-object-storage-settlement-outbox.md) adds durable
 acknowledgement delivery. Apply its additive PostgreSQL migration before
 deploying the new writers and apid worker, then enable the switch after all
 gateways, apid writers and recovery workers are upgraded. New opted-in admissions save their
@@ -665,7 +665,7 @@ settlement, never merely from a node receipt or an elapsed timeout. Repeating
 an exact acknowledgement preserves its original time.
 
 On an already opted-in format-5 primary, the daemon runs indexed cleanup by
-default. [ADR-1352](adr/1352-owned-object-storage-indexed-recovery-cleanup.md)
+default. [ADR-1563](adr/1563-owned-object-storage-indexed-recovery-cleanup.md)
 adds a local `.recovery-index.db` B+tree, not a new node format. It indexes exact
 acknowledged UUIDv7 terminal proofs. Every retirement still rechecks the sealed
 proofs, retention window and current object under the catalog lock. Legacy IDs,
@@ -1759,7 +1759,7 @@ and waits for changes when idle; compare it with the earlier polling worker usin
 the same configuration and actual workflow/sample counts. Use measurements to select an optimization,
 without assigning arbitrary hardware-independent performance pass thresholds.
 
-Before publication preparation (ADR-1343), a 2026-10-16 comparison of the polling
+Before publication preparation (ADR-1554), a 2026-10-16 comparison of the polling
 and change-wait loops ran two sequential matched pairs: four workers,
 two cycles, four workflows per cycle, a 30-second admission ceiling, 64 KiB
 objects and seed 1. The same daemon/runner binaries were used; a Go source overlay
@@ -1808,7 +1808,7 @@ go test -race ./pkg/objectqualification -run '^TestQualificationBuiltProcesses$'
 ### Qualify settlement delivery and indexed cleanup protection
 
 Add `--recovery-retention` to a local or SSH qualification run to opt its fresh
-fixtures into format 5. [ADR-1353](adr/1353-owned-object-storage-retention-qualification.md)
+fixtures into format 5. [ADR-1564](adr/1564-owned-object-storage-retention-qualification.md)
 adds this profile without changing the default format-4 run. It enables the
 isolated gateway's settlement outbox and requires current matching binaries on
 both participants. It never opens existing node data or changes a live backend.
@@ -1943,7 +1943,7 @@ document version 1; the existing agent protocol 2 and qualification report 3
 remain unchanged. Preflight itself does not alter node storage formats. Normal reports add optional preflight
 evidence and `require_dedicated_storage` configuration.
 
-See [ADR-1349](adr/1349-owned-object-storage-host-storage-preflight.md) for the
+See [ADR-1560](adr/1560-owned-object-storage-host-storage-preflight.md) for the
 observation bounds and refusal conditions. Independent-host execution is pending
 test hosts with configured access and known backing data mounts.
 
@@ -2112,7 +2112,7 @@ from pauses. Shared-host measurements do not establish production capacity or
 independent-host durability. Use the [write admission controls](#write-admission-under-storage-pressure)
 below to protect headroom while retained history grows.
 
-See [ADR-1347](adr/1347-owned-object-storage-replication-profiling.md) for the page
+See [ADR-1558](adr/1558-owned-object-storage-replication-profiling.md) for the page
 bounds, capability negotiation, profiling semantics and validation contract.
 
 ### Development replication measurements
@@ -2221,7 +2221,7 @@ reachability and applied reports, then safe compaction progress and disk usage.
 Restore required replica/report progress or add disk capacity to relieve
 pressure; do not delete journal files or retire a required follower to reopen.
 
-See [ADR-1348](adr/1348-owned-object-storage-write-admission.md) for reservation
+See [ADR-1559](adr/1559-owned-object-storage-write-admission.md) for reservation
 and gateway uncertainty semantics.
 
 ### Development admission measurements

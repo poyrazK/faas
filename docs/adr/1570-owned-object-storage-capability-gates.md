@@ -1,8 +1,8 @@
-# ADR-1359: Separate private object-storage capability gates
+# ADR-1570: Separate private object-storage capability gates
 
 - Status: Accepted; private development only, no customer enrollment.
 - Date: 2026-10-17
-- Refines: [ADR-1358](1358-owned-object-storage-development-gate.md)
+- Refines: [ADR-1569](1569-owned-object-storage-development-gate.md)
 
 ## Context
 
@@ -48,7 +48,7 @@ deployment defaults. No deployment or customer enrollment is enabled.
 Qualification removes inherited private flags and credentials. It explicitly
 sets only master and server for its disposable daemon children; follower/control
 children and SSH clients receive no private flags. Programmatic registries
-remain internal test/qualification fixtures as in ADR-1358. Offline operator
+remain internal test/qualification fixtures as in ADR-1569. Offline operator
 maintenance and recovery tools remain available with serving disabled.
 
 ## Validation

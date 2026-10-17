@@ -1,8 +1,8 @@
-# ADR-1358: Keep self-hosted object storage behind a development gate
+# ADR-1569: Keep self-hosted object storage behind a development gate
 
 - Status: Accepted; private development only, no customer enrollment.
 - Date: 2026-10-17
-- Related: [ADR-1331](1331-owned-object-storage-first-node.md), [ADR-1341](1341-owned-object-storage-local-qualification.md)
+- Related: [ADR-1542](1542-owned-object-storage-first-node.md), [ADR-1552](1552-owned-object-storage-local-qualification.md)
 
 ## Context
 

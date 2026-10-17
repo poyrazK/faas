@@ -19,7 +19,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// adr: 1346
+// adr: 1557
 func TestSoakBounds(t *testing.T) {
 	base := DefaultSoakOptions()
 	base.Daemon, base.Control, base.Directory = "/bin/true", "/bin/true", filepath.Join(t.TempDir(), "new")

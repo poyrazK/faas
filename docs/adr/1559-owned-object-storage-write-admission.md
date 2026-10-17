@@ -1,8 +1,8 @@
-# ADR-1348: Admit new object writes within retention and disk headroom
+# ADR-1559: Admit new object writes within retention and disk headroom
 
 - Status: Accepted for development qualification; no production enrollment.
 - Date: 2026-10-17
-- Related: [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1339](1339-owned-object-storage-replica-durability.md), [ADR-1340](1340-owned-object-storage-journal-compaction.md), [ADR-1345](1345-owned-object-storage-automatic-compaction.md), [ADR-1347](1347-owned-object-storage-replication-profiling.md)
+- Related: [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1550](1550-owned-object-storage-replica-durability.md), [ADR-1551](1551-owned-object-storage-journal-compaction.md), [ADR-1556](1556-owned-object-storage-automatic-compaction.md), [ADR-1558](1558-owned-object-storage-replication-profiling.md)
 
 ## Context
 

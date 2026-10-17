@@ -1,8 +1,8 @@
-# ADR-1333: Durable multipart uploads on the owned object node
+# ADR-1544: Durable multipart uploads on the owned object node
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-15
-- Related: [ADR-1331](1331-owned-object-storage-first-node.md), [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-544](544-durable-s3-multipart-completion-identities.md), [ADR-1038](1038-durable-s3-multipart-checksums.md)
+- Related: [ADR-1542](1542-owned-object-storage-first-node.md), [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-544](544-durable-s3-multipart-completion-identities.md), [ADR-1038](1038-durable-s3-multipart-checksums.md)
 
 ## Context
 
@@ -55,7 +55,7 @@ the existing explicit checksum policies: composite SHA1/SHA256 and CRC checksums
 and full-object CRC32/CRC32C/CRC64NVME. Selected checksum parts must be consecutive
 as required by the shared checksum contract.
 
-Publish the assembled object through ADR-1332's write-ahead receipt protocol.
+Publish the assembled object through ADR-1543's write-ahead receipt protocol.
 Multipart receipts have a separate kind, the public session marker and the
 completion-manifest hash. They cannot establish single-PUT proof. After the
 terminal receipt is durable, mark the session completed/rejected and reclaim

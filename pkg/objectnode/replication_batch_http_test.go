@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-1347: corrupt advertised pages cannot fall back to single-entry reads.
+// ADR-1558: corrupt advertised pages cannot fall back to single-entry reads.
 func TestReplicaBatchHTTPRejectsMalformedPageWithoutDowngrade(t *testing.T) {
 	for _, kind := range []string{"too many", "too large", "noncanonical"} {
 		t.Run(kind, func(t *testing.T) {

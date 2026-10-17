@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectnode"
 )
 
-// ADR-1347: older sources stay on single-entry reads; advertised pages retain
+// ADR-1558: older sources stay on single-entry reads; advertised pages retain
 // authentication and the same applied-only replica confirmation boundary.
 func TestDiskReplicationEntryBatchesAndLegacySource(t *testing.T) {
 	for _, legacy := range []bool{false, true} {

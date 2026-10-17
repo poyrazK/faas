@@ -18,7 +18,7 @@ func (s blockedProfileSource) Entry(ctx context.Context, _ string, _ int64) (Jou
 	return JournalEntry{}, ctx.Err()
 }
 
-// ADR-1347: failed attempts must retain timing without becoming applied proof.
+// ADR-1558: failed attempts must retain timing without becoming applied proof.
 func TestReplicationProfileIncludesFailedFetch(t *testing.T) {
 	primary, directory := replicationPair(t)
 	putText(t, primary, "key", "data")

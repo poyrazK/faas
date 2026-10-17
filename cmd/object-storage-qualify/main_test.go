@@ -85,7 +85,7 @@ func TestDedicatedQualificationRequiresRemoteBeforeCreatingData(t *testing.T) {
 	}
 }
 
-// adr: 1346
+// adr: 1557
 func TestSoakCommandDefaultsAndExplicitOverrides(t *testing.T) {
 	for _, overrides := range [][]string{nil, {"--duration", "12s", "--cycles", "2", "--max-workflows", "24", "--compaction-records", "16"}} {
 		root := t.TempDir()

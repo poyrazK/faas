@@ -1,10 +1,10 @@
-# ADR-1355: Journal-backed logical usage counters on owned object nodes
+# ADR-1566: Journal-backed logical usage counters on owned object nodes
 
 Status: Accepted
 
 ## Context
 
-ADR-1354 indexes S3 listings and multipart expiry. Ordinary gateway accounting
+ADR-1565 indexes S3 listings and multipart expiry. Ordinary gateway accounting
 still enumerates every object, and fenced capacity recovery uses the same source
 inventory protocol. Repeated scans become expensive as catalogs grow. Fast usage
 observations must preserve generation fencing, multipart accounting, outstanding
@@ -27,7 +27,7 @@ object, and idempotent replay does not double charge. Session completion, reject
 abort and expiry remove all of that session's logical usage in one aggregate
 update. Unreachable part-index entries can remain until the next startup rebuild;
 terminal IDs cannot be reused. This avoids scanning thousands of parts inside a
-terminal session transition. Physical part reclamation retains ADR-1354's separate
+terminal session transition. Physical part reclamation retains ADR-1565's separate
 bounded queue and does not change logical totals a second time.
 
 A projection error preserves an already durable source mutation and disables

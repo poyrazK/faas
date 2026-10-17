@@ -1,8 +1,8 @@
-# ADR-1340: Owned-node journal retention and compaction
+# ADR-1551: Owned-node journal retention and compaction
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-1336](1336-owned-object-storage-backups.md), [ADR-1337](1337-owned-object-storage-replication-journal.md), [ADR-1338](1338-owned-object-storage-primary-switchover.md), [ADR-1339](1339-owned-object-storage-replica-durability.md)
+- Related: [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-1547](1547-owned-object-storage-backups.md), [ADR-1548](1548-owned-object-storage-replication-journal.md), [ADR-1549](1549-owned-object-storage-primary-switchover.md), [ADR-1550](1550-owned-object-storage-replica-durability.md)
 
 ## Context
 

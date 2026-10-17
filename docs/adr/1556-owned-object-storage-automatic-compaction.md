@@ -1,8 +1,8 @@
-# ADR-1345: Bounded automatic journal compaction
+# ADR-1556: Bounded automatic journal compaction
 
 - Status: Accepted for development qualification; no production enrollment.
 - Date: 2026-10-17
-- Related: [ADR-1340](1340-owned-object-storage-journal-compaction.md), [ADR-1342](1342-owned-object-storage-replication-waits.md), [ADR-1343](1343-owned-object-storage-publication-preparation.md), [ADR-1344](1344-owned-object-storage-ssh-qualification.md)
+- Related: [ADR-1551](1551-owned-object-storage-journal-compaction.md), [ADR-1553](1553-owned-object-storage-replication-waits.md), [ADR-1554](1554-owned-object-storage-publication-preparation.md), [ADR-1555](1555-owned-object-storage-ssh-qualification.md)
 
 ## Context
 

@@ -1,8 +1,8 @@
-# ADR-1337: Owned-node mutation journal and asynchronous follower catch-up
+# ADR-1548: Owned-node mutation journal and asynchronous follower catch-up
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-1336](1336-owned-object-storage-backups.md)
+- Related: [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-1547](1547-owned-object-storage-backups.md)
 
 ## Context
 
@@ -125,7 +125,7 @@ head sampled at the beginning of that step; it is not a live availability claim.
 Limits live in `pkg/api/limits.go`: 1,000,000 journal records, 2 MiB per record,
 4 MiB per HTTP blob range, at most 32 applied records and 64 MiB transferred blob
 bytes per step and a 30-second request timeout. The original one-second follow
-polling is superseded by [ADR-1342](1342-owned-object-storage-replication-waits.md).
+polling is superseded by [ADR-1553](1553-owned-object-storage-replication-waits.md).
 Metadata and local hash verification are additional I/O; a final payload check
 reads its full contents. The existing free-space floor applies to retained
 payloads, records, transfers and live replay copies.

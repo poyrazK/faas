@@ -1,11 +1,11 @@
-# ADR-1352: Indexed online recovery cleanup on the owned object node
+# ADR-1563: Indexed online recovery cleanup on the owned object node
 
 Status: Accepted
 
 ## Context
 
-ADR-1350 makes acknowledged historical receipts and terminal multipart sessions
-collectible after 30 days. ADR-1351 durably delivers acknowledgements. The offline
+ADR-1561 makes acknowledged historical receipts and terminal multipart sessions
+collectible after 30 days. ADR-1562 durably delivers acknowledgements. The offline
 collector still scans both catalog directories for every maintenance page and
 holds the catalog lock for the page. It cannot provide bounded online work as
 the receipt catalog grows.

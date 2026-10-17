@@ -1,10 +1,10 @@
-# ADR-1357: Source coverage during concurrent object mutations
+# ADR-1568: Source coverage during concurrent object mutations
 
 Status: Accepted
 
 ## Context
 
-ADR-1356 bounds publication pauses but restarts its whole audit on every catalog
+ADR-1567 bounds publication pauses but restarts its whole audit on every catalog
 mutation. A busy node can never finish that cycle and eventually loses fresh
 counter evidence. Preserving a directory cookie alone cannot prove coverage when
 entries are inserted or removed behind it.

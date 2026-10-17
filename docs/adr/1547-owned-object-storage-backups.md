@@ -1,8 +1,8 @@
-# ADR-1336: Verified offline backups and restores for the owned object node
+# ADR-1547: Verified offline backups and restores for the owned object node
 
 - Status: Accepted for the local prototype; no production enrollment.
 - Date: 2026-10-16
-- Related: [ADR-1331](1331-owned-object-storage-first-node.md), [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-1335](1335-owned-object-storage-scrubbing.md)
+- Related: [ADR-1542](1542-owned-object-storage-first-node.md), [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-1546](1546-owned-object-storage-scrubbing.md)
 
 ## Context
 

@@ -1,8 +1,8 @@
-# ADR-1346: Bounded object-storage soak qualification
+# ADR-1557: Bounded object-storage soak qualification
 
 - Status: Accepted for development qualification; independent-host evidence pending.
 - Date: 2026-10-17
-- Related: [ADR-1341](1341-owned-object-storage-local-qualification.md), [ADR-1344](1344-owned-object-storage-ssh-qualification.md), [ADR-1345](1345-owned-object-storage-automatic-compaction.md)
+- Related: [ADR-1552](1552-owned-object-storage-local-qualification.md), [ADR-1555](1555-owned-object-storage-ssh-qualification.md), [ADR-1556](1556-owned-object-storage-automatic-compaction.md)
 
 ## Context
 

@@ -1,10 +1,10 @@
-# ADR-1356: Bounded, resumable source inventory audits
+# ADR-1567: Bounded, resumable source inventory audits
 
 Status: Accepted
 
 ## Context
 
-ADR-1355 makes ordinary logical usage observations constant work, but its
+ADR-1566 makes ordinary logical usage observations constant work, but its
 background health evidence still comes from a complete source scan under the
 catalog read lock. The scan can delay publication for up to its 45-second
 deadline and repeatedly time out as a catalog grows.

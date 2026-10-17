@@ -1,4 +1,4 @@
-# ADR-1331: First Gregale-owned object storage node
+# ADR-1542: First Gregale-owned object storage node
 
 - Status: Accepted for a local prototype; no production enrollment.
 - Date: 2026-10-15
@@ -73,10 +73,10 @@ recovery and backups. Distributed operation additionally needs explicit logical
 shards, placement epochs, replication, fencing, repair and safe rebalancing. No
 node-count or durability guarantee is implied by this prototype.
 
-[ADR-1332](1332-owned-object-storage-write-receipts.md) adds durable write
+[ADR-1543](1543-owned-object-storage-write-receipts.md) adds durable write
 receipts and the explicit private recovery protocol. Multipart remains deferred.
 
-[ADR-1333](1333-owned-object-storage-multipart.md) subsequently adds durable
+[ADR-1544](1544-owned-object-storage-multipart.md) subsequently adds durable
 multipart uploads, completion recovery and safe expiry/abort.
 
 ## Validation

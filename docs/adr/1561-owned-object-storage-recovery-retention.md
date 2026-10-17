@@ -1,8 +1,8 @@
-# ADR-1350: Settled recovery proof collection on the owned object node
+# ADR-1561: Settled recovery proof collection on the owned object node
 
 - Status: Accepted for opt-in development qualification.
 - Date: 2026-10-17
-- Related: [ADR-1332](1332-owned-object-storage-write-receipts.md), [ADR-1333](1333-owned-object-storage-multipart.md), [ADR-1336](1336-owned-object-storage-backups.md), [ADR-1340](1340-owned-object-storage-journal-compaction.md)
+- Related: [ADR-1543](1543-owned-object-storage-write-receipts.md), [ADR-1544](1544-owned-object-storage-multipart.md), [ADR-1547](1547-owned-object-storage-backups.md), [ADR-1551](1551-owned-object-storage-journal-compaction.md)
 
 ## Context
 
