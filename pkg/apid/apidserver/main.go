@@ -40,6 +40,8 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
@@ -63,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -845,6 +848,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerControls.Start(ctx, log)  // ADR-1315
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
+		srv.startIssueTrackerAutoSync(ctx)
+		srv.startIssueTrackerReminders(ctx)
+		srv.startIssueApplicationReminders(ctx)
+		srv.startIssueSlackDelivery(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
 		// side (DELETE /v1/account, POST /v1/account/restore) is here
@@ -1434,6 +1441,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// resolved config rides on *server via WithOAuthConfig so the
 	// handlers, /v1/auth/capabilities, and renderLoginForm share one
 	// source of truth (no os.Getenv at request time).
+	slackOAuthCfg, err := issueslack.LoadOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Slack OAuth configuration: %w", err)
+	}
+	linearOAuthCfg, err := issuetracker.LoadLinearOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Linear OAuth configuration: %w", err)
+	}
 	oauthCfg, err := auth.LoadSignInConfigFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid OAuth configuration: %w", err)
@@ -1460,6 +1475,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.linearOAuthConfig = linearOAuthCfg
+	srv.issueSlackOAuthConfig = slackOAuthCfg
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

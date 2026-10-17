@@ -1129,6 +1129,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
 	defer primeRecoveryT.Stop()
 	l.dispatchPrimeRecovery(ctx)
+	workerStartupT := time.NewTimer(workerStartupReconcileDelay)
+	defer workerStartupT.Stop()
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1230,6 +1232,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-workflowRetentionFirst:
 			l.runWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
+		case <-workerStartupT.C:
+			l.dispatchWorkerStartupReconcile(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
 			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:

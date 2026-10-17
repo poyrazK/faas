@@ -807,9 +807,25 @@
       "exception_type",
       "route_prefix",
       "rule_order",
-      "source_kind"
+      "source_kind",
+      "source_path_prefix",
+      "tag_filter",
+      "assignee_team_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "app_issue_saved_views",
+    "columns": [
+      "app_id",
+      "created_at",
+      "filters",
+      "name",
+      "updated_at",
+      "updated_by_account_id",
+      "view_key"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_issues",
@@ -831,7 +847,8 @@
       "resolved_at",
       "split_source_issue_id",
       "state",
-      "title"
+      "title",
+      "assignee_team_id"
     ],
     "kind": "operational"
   },
@@ -5622,6 +5639,21 @@
       "id",
       "issue_id",
       "resolved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_source_map_artifacts",
+    "columns": [
+      "app_id",
+      "canonical_manifest",
+      "created_at",
+      "created_by_account_id",
+      "deployment_id",
+      "manifest_sha256",
+      "map_count",
+      "retired_at",
+      "retired_by_account_id"
     ],
     "kind": "operational"
   },
@@ -12277,6 +12309,571 @@
       "recipient_id",
       "status",
       "workflow_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_teams",
+    "columns": [
+      "id",
+      "app_id",
+      "team_key",
+      "name",
+      "created_at",
+      "updated_at",
+      "updated_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_team_members",
+    "columns": [
+      "team_id",
+      "account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_links",
+    "columns": [
+      "id",
+      "issue_id",
+      "provider",
+      "external_key",
+      "url",
+      "title",
+      "created_at",
+      "updated_at",
+      "created_by_account_id",
+      "updated_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_frequency_alert_policies",
+    "columns": [
+      "app_id",
+      "revision",
+      "rules"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_escalation_policies",
+    "columns": [
+      "app_id",
+      "delay_minutes",
+      "enabled",
+      "revision",
+      "team_id",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_reminder_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "interval_minutes",
+      "repeat_limit",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_reminders",
+    "columns": [
+      "created_at",
+      "escalation_policy_revision",
+      "id",
+      "issue_id",
+      "kind",
+      "outcome",
+      "policy_revision",
+      "response_id",
+      "responsibility_team_id",
+      "sequence",
+      "target_team_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_application_slack_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "events",
+      "fallback_team_id",
+      "revision",
+      "skipped_deliveries",
+      "unrouted_alerts"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_application_triage",
+    "columns": [
+      "acknowledged_at",
+      "acknowledged_by",
+      "escalated_at",
+      "escalation_attempted_at",
+      "escalation_team_id",
+      "first_reminded_at",
+      "incident_id",
+      "issue_id",
+      "last_reminded_at",
+      "reminder_count",
+      "reminder_started_at",
+      "revision",
+      "snooze_reason",
+      "snoozed_by",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_application_triage_activity",
+    "columns": [
+      "action",
+      "actor_id",
+      "created_at",
+      "id",
+      "incident_id",
+      "issue_id",
+      "reason",
+      "revision",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_frequency_alert_receipts",
+    "columns": [
+      "app_id",
+      "issue_id",
+      "last_alert_at",
+      "rule_hash",
+      "rule_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_action_messages",
+    "columns": [
+      "consumed_at",
+      "delivery_id",
+      "message_ts",
+      "policy_revision",
+      "response_id",
+      "response_revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_identities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expires_at",
+      "mfa_enrolled_at",
+      "mfa_required",
+      "policy_revision",
+      "slack_user_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "issue_slack_installations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bot_user_id",
+      "installed_at",
+      "revision",
+      "slack_app_id",
+      "status",
+      "token_sealed",
+      "workspace_id",
+      "workspace_name"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_slack_interaction_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "revision",
+      "secret_sealed",
+      "slack_app_id",
+      "workspace_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_slack_link_challenges",
+    "columns": [
+      "app_id",
+      "consumed_at",
+      "delivery_id",
+      "expires_at",
+      "policy_revision",
+      "request_key",
+      "slack_user_id",
+      "token"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_oauth_flows",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expected_revision",
+      "expires_at",
+      "phase",
+      "sealed",
+      "state_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_slack_routing_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "installation_revision",
+      "revision",
+      "rules"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_team_slack_deliveries",
+    "columns": [
+      "activity_id",
+      "application_policy_revision",
+      "assigned_account_id",
+      "assigned_team_id",
+      "attempt",
+      "channel_id",
+      "claim_id",
+      "claim_until",
+      "created_at",
+      "delivery_seq",
+      "destination_id",
+      "destination_revision",
+      "expires_at",
+      "id",
+      "incident_id",
+      "last_error",
+      "next_attempt_at",
+      "notification_id",
+      "recipient_account_ids",
+      "reminder_id",
+      "response_code",
+      "routing_revision",
+      "routing_rule_key",
+      "status",
+      "total_attempts",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_team_slack_destinations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "channel_id",
+      "claim_id",
+      "claim_until",
+      "enabled",
+      "id",
+      "next_send_at",
+      "oauth_revision",
+      "revision",
+      "team_id",
+      "token_sealed",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_team_slack_threads",
+    "columns": [
+      "channel_id",
+      "destination_id",
+      "destination_revision",
+      "incident_id",
+      "root_ts"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_auto_sync",
+    "columns": [
+      "account_id",
+      "app_id",
+      "baseline",
+      "binding_fingerprint",
+      "claim_id",
+      "claim_until",
+      "direction",
+      "enabled",
+      "last_checked_at",
+      "last_successful_at",
+      "linear_open_state_id",
+      "linear_resolved_state_id",
+      "link_id",
+      "next_check_at",
+      "observed_state",
+      "outcome",
+      "pending_source_revision",
+      "pending_state",
+      "reason",
+      "revision",
+      "source_issue_id",
+      "source_revision",
+      "source_state",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_callback_diagnostics",
+    "columns": [
+      "account_id",
+      "app_id",
+      "connection_revision",
+      "delivery_conflict",
+      "invalid_payload",
+      "invalid_signature",
+      "last_rejected_at",
+      "last_verified_at",
+      "stale_delivery",
+      "wrong_scope"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_callbacks",
+    "columns": [
+      "app_id",
+      "connection_revision",
+      "delivery_id",
+      "installation_id",
+      "payload_hash",
+      "processed_at",
+      "provider",
+      "received_at",
+      "repository_id",
+      "scope_key",
+      "team_id",
+      "ticket_id",
+      "ticket_url",
+      "workspace_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_inbound_guards",
+    "columns": [
+      "app_id",
+      "revision",
+      "source_revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_linear_connections",
+    "columns": [
+      "access_token_expires_at",
+      "account_id",
+      "app_id",
+      "auth_method",
+      "connected",
+      "credential_generation",
+      "oauth_status",
+      "refresh_claim_id",
+      "refresh_claim_until",
+      "refresh_started_at",
+      "revision",
+      "sealed_credential",
+      "team_id",
+      "updated_at",
+      "viewer_id",
+      "webhook_enabled",
+      "workspace_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_linear_oauth_flows",
+    "columns": [
+      "account_id",
+      "app_id",
+      "expected_revision",
+      "expires_at",
+      "issue_id",
+      "phase",
+      "sealed_state",
+      "state_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_source_guards",
+    "columns": [
+      "issue_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_escalation_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "delay_minutes",
+      "enabled",
+      "revision",
+      "team_id",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_sync_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "claim_id",
+      "created_at",
+      "direction",
+      "event_type",
+      "id",
+      "link_id",
+      "observed_state",
+      "outcome",
+      "pending_state",
+      "policy_revision",
+      "reason",
+      "source_issue_id",
+      "source_state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_incidents",
+    "columns": [
+      "announced_kind",
+      "escalated_at",
+      "escalation_team_id",
+      "failures",
+      "first_reminded_at",
+      "incident_id",
+      "issue_id",
+      "last_reminded_at",
+      "link_id",
+      "opened_at",
+      "recipient_account_ids",
+      "reminder_count",
+      "settings_revision",
+      "team_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_notification_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "failure_threshold",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_sync_notifications",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "incident_id",
+      "issue_id",
+      "kind",
+      "link_id",
+      "outcome",
+      "payload",
+      "reason",
+      "recipient_account_ids",
+      "reminder_sequence",
+      "team_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_reminder_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "interval_minutes",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_tracker_sync_triage",
+    "columns": [
+      "acknowledged_by",
+      "claimed_by",
+      "incident_id",
+      "link_id",
+      "revision",
+      "snooze_reason",
+      "snoozed_by",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_sync_triage_activity",
+    "columns": [
+      "action",
+      "actor_id",
+      "created_at",
+      "id",
+      "incident_id",
+      "reason",
+      "revision",
+      "snoozed_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_issue_ticket_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "claim_id",
+      "created_at",
+      "issue_id",
+      "link_id",
+      "provider_id",
+      "recover_after",
+      "request_hash",
+      "request_id",
+      "state",
+      "ticket_url",
+      "updated_at"
     ],
     "kind": "operational"
   }

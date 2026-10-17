@@ -159,6 +159,7 @@ type WritePreviewDestroyComment = WritePreviewDestroyCommentFunc
 // silently downgrading to full fan-out.
 type Service struct {
 	Log                              *slog.Logger
+	IssueCallbacks                   state.IssueTrackerCallbackStore
 	Bindings                         AppBindingStore
 	Installs                         InstallsLookup
 	Source                           SourceFetcher
@@ -258,6 +259,8 @@ func webhookDeliveryID(ctx context.Context) string {
 // worker from drifting into push-only behavior.
 func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body []byte) error {
 	switch eventType {
+	case "issues":
+		return s.handleIssueCallback(ctx, body)
 	case "push":
 		event, err := DecodePush(body)
 		if err != nil {

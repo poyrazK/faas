@@ -630,6 +630,10 @@ from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
 from .build_response_status import BuildResponseStatus
+from .bulk_issue_action_request import BulkIssueActionRequest
+from .bulk_issue_action_response import BulkIssueActionResponse
+from .bulk_issue_lifecycle_action import BulkIssueLifecycleAction
+from .bulk_issue_lifecycle_action_action import BulkIssueLifecycleActionAction
 from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
@@ -845,6 +849,8 @@ from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .create_mirror_rule_request import CreateMirrorRuleRequest
+from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
+from .create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
@@ -1966,6 +1972,9 @@ from .issue_action_request import IssueActionRequest
 from .issue_action_request_action import IssueActionRequestAction
 from .issue_activity import IssueActivity
 from .issue_activity_details import IssueActivityDetails
+from .issue_breadcrumb import IssueBreadcrumb
+from .issue_breadcrumb_category import IssueBreadcrumbCategory
+from .issue_breadcrumb_level import IssueBreadcrumbLevel
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .issue_cause import IssueCause
 from .issue_cause_frame_order import IssueCauseFrameOrder
@@ -1974,7 +1983,11 @@ from .issue_event import IssueEvent
 from .issue_event_frame_order import IssueEventFrameOrder
 from .issue_event_grouping_strategy import IssueEventGroupingStrategy
 from .issue_event_response import IssueEventResponse
+from .issue_event_symbolication_strategy import IssueEventSymbolicationStrategy
+from .issue_event_tags import IssueEventTags
 from .issue_frame import IssueFrame
+from .issue_frequency_alert_policy import IssueFrequencyAlertPolicy
+from .issue_frequency_alert_rule import IssueFrequencyAlertRule
 from .issue_grouping_explanation import IssueGroupingExplanation
 from .issue_grouping_explanation_basis import IssueGroupingExplanationBasis
 from .issue_grouping_explanation_discriminator_kind import IssueGroupingExplanationDiscriminatorKind
@@ -1989,6 +2002,17 @@ from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
 from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
+from .issue_release_comparison import IssueReleaseComparison
+from .issue_release_health import IssueReleaseHealth
+from .issue_release_health_request_coverage import IssueReleaseHealthRequestCoverage
+from .issue_saved_view import IssueSavedView
+from .issue_saved_view_filters import IssueSavedViewFilters
+from .issue_saved_view_filters_sort import IssueSavedViewFiltersSort
+from .issue_saved_view_filters_state import IssueSavedViewFiltersState
+from .issue_source_map_artifact import IssueSourceMapArtifact
+from .issue_source_map_manifest import IssueSourceMapManifest
+from .issue_source_map_manifest_version import IssueSourceMapManifestVersion
+from .issue_source_maps_metadata import IssueSourceMapsMetadata
 from .issue_split_matcher import IssueSplitMatcher
 from .issue_split_matcher_source_kind import IssueSplitMatcherSourceKind
 from .issue_split_preview import IssueSplitPreview
@@ -1997,6 +2021,21 @@ from .issue_split_rule import IssueSplitRule
 from .issue_split_rule_undo_request import IssueSplitRuleUndoRequest
 from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
+from .issue_symbolication_result import IssueSymbolicationResult
+from .issue_team import IssueTeam
+from .issue_tracker_auto_sync import IssueTrackerAutoSync
+from .issue_tracker_auto_sync_direction import IssueTrackerAutoSyncDirection
+from .issue_tracker_auto_sync_observed_state import IssueTrackerAutoSyncObservedState
+from .issue_tracker_auto_sync_outcome import IssueTrackerAutoSyncOutcome
+from .issue_tracker_auto_sync_pending_state import IssueTrackerAutoSyncPendingState
+from .issue_tracker_auto_sync_provider_state import IssueTrackerAutoSyncProviderState
+from .issue_tracker_auto_sync_source_state import IssueTrackerAutoSyncSourceState
+from .issue_tracker_linear_connection import IssueTrackerLinearConnection
+from .issue_tracker_link import IssueTrackerLink
+from .issue_tracker_link_provider import IssueTrackerLinkProvider
+from .issue_tracker_provider_status import IssueTrackerProviderStatus
+from .issue_tracker_provider_status_provider import IssueTrackerProviderStatusProvider
+from .issue_tracker_provider_status_state import IssueTrackerProviderStatusState
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
@@ -2100,6 +2139,9 @@ from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
+from .list_issue_saved_views_response import ListIssueSavedViewsResponse
+from .list_issue_teams_response import ListIssueTeamsResponse
+from .list_issue_tracker_links_response import ListIssueTrackerLinksResponse
 from .list_issues_response import ListIssuesResponse
 from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
@@ -2479,6 +2521,10 @@ from .mirror_replay_request_item_method import MirrorReplayRequestItemMethod
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
+from .native_issue_ticket_result import NativeIssueTicketResult
+from .native_issue_ticket_result_state import NativeIssueTicketResultState
+from .native_issue_tracker_status import NativeIssueTrackerStatus
+from .native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
 from .o_auth_provider_capability import OAuthProviderCapability
 from .o_auth_token_exchange_error import OAuthTokenExchangeError
 from .o_auth_token_exchange_error_error import OAuthTokenExchangeErrorError
@@ -3856,6 +3902,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_issue_source_maps_request import PublishIssueSourceMapsRequest
 from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
@@ -3873,6 +3920,9 @@ from .put_billing_run_schedule_request import PutBillingRunScheduleRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
+from .put_issue_saved_view_request import PutIssueSavedViewRequest
+from .put_issue_team_request import PutIssueTeamRequest
+from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
@@ -4737,7 +4787,14 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_frequency_alert_policy_request import UpdateIssueFrequencyAlertPolicyRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
+from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+from .update_issue_tracker_auto_sync_request_direction import UpdateIssueTrackerAutoSyncRequestDirection
+from .update_issue_tracker_auto_sync_request_expected_issue_state import (
+    UpdateIssueTrackerAutoSyncRequestExpectedIssueState,
+)
+from .update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
@@ -4750,6 +4807,12 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
     UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
+from .update_native_issue_tracker_status_request import UpdateNativeIssueTrackerStatusRequest
+from .update_native_issue_tracker_status_request_desired_state import UpdateNativeIssueTrackerStatusRequestDesiredState
+from .update_native_linear_issue_tracker_status_request import UpdateNativeLinearIssueTrackerStatusRequest
+from .update_native_linear_issue_tracker_status_request_desired_state import (
+    UpdateNativeLinearIssueTrackerStatusRequestDesiredState,
+)
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
@@ -5681,6 +5744,10 @@ __all__ = (
     "BuildResponseFailureClass",
     "BuildResponseKind",
     "BuildResponseStatus",
+    "BulkIssueActionRequest",
+    "BulkIssueActionResponse",
+    "BulkIssueLifecycleAction",
+    "BulkIssueLifecycleActionAction",
     "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
@@ -5882,6 +5949,8 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMirrorRuleRequest",
+    "CreateNativeIssueTicketRequest",
+    "CreateNativeLinearIssueTicketRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
     "CreateObjectS3CredentialRequest",
@@ -6951,6 +7020,9 @@ __all__ = (
     "IssueActionRequestAction",
     "IssueActivity",
     "IssueActivityDetails",
+    "IssueBreadcrumb",
+    "IssueBreadcrumbCategory",
+    "IssueBreadcrumbLevel",
     "IssueBrowserCSRFTokenAction",
     "IssueCause",
     "IssueCauseFrameOrder",
@@ -6959,7 +7031,11 @@ __all__ = (
     "IssueEventFrameOrder",
     "IssueEventGroupingStrategy",
     "IssueEventResponse",
+    "IssueEventSymbolicationStrategy",
+    "IssueEventTags",
     "IssueFrame",
+    "IssueFrequencyAlertPolicy",
+    "IssueFrequencyAlertRule",
     "IssueGroupingExplanation",
     "IssueGroupingExplanationBasis",
     "IssueGroupingExplanationDiscriminatorKind",
@@ -6974,6 +7050,17 @@ __all__ = (
     "IssueOwnershipRules",
     "IssueOwnershipRuleSourceKind",
     "IssueRelease",
+    "IssueReleaseComparison",
+    "IssueReleaseHealth",
+    "IssueReleaseHealthRequestCoverage",
+    "IssueSavedView",
+    "IssueSavedViewFilters",
+    "IssueSavedViewFiltersSort",
+    "IssueSavedViewFiltersState",
+    "IssueSourceMapArtifact",
+    "IssueSourceMapManifest",
+    "IssueSourceMapManifestVersion",
+    "IssueSourceMapsMetadata",
     "IssueSplitMatcher",
     "IssueSplitMatcherSourceKind",
     "IssueSplitPreview",
@@ -6982,6 +7069,21 @@ __all__ = (
     "IssueSplitRuleUndoRequest",
     "IssueSplitRuleUpdate",
     "IssueState",
+    "IssueSymbolicationResult",
+    "IssueTeam",
+    "IssueTrackerAutoSync",
+    "IssueTrackerAutoSyncDirection",
+    "IssueTrackerAutoSyncObservedState",
+    "IssueTrackerAutoSyncOutcome",
+    "IssueTrackerAutoSyncPendingState",
+    "IssueTrackerAutoSyncProviderState",
+    "IssueTrackerAutoSyncSourceState",
+    "IssueTrackerLinearConnection",
+    "IssueTrackerLink",
+    "IssueTrackerLinkProvider",
+    "IssueTrackerProviderStatus",
+    "IssueTrackerProviderStatusProvider",
+    "IssueTrackerProviderStatusState",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
@@ -7075,8 +7177,11 @@ __all__ = (
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
+    "ListIssueSavedViewsResponse",
     "ListIssuesResponse",
     "ListIssuesSort",
+    "ListIssueTeamsResponse",
+    "ListIssueTrackerLinksResponse",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
@@ -7408,6 +7513,10 @@ __all__ = (
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
+    "NativeIssueTicketResult",
+    "NativeIssueTicketResultState",
+    "NativeIssueTrackerStatus",
+    "NativeLinearIssueTrackerStatus",
     "OAuthProviderCapability",
     "OAuthTokenExchangeError",
     "OAuthTokenExchangeErrorError",
@@ -8629,6 +8738,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishIssueSourceMapsRequest",
     "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
@@ -8646,6 +8756,9 @@ __all__ = (
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
+    "PutIssueSavedViewRequest",
+    "PutIssueTeamRequest",
+    "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
     "PutOutboundAIPolicyRequest",
@@ -9476,7 +9589,12 @@ __all__ = (
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueFrequencyAlertPolicyRequest",
     "UpdateIssueImpactAlertPolicyRequest",
+    "UpdateIssueTrackerAutoSyncRequest",
+    "UpdateIssueTrackerAutoSyncRequestDirection",
+    "UpdateIssueTrackerAutoSyncRequestExpectedIssueState",
+    "UpdateIssueTrackerLinearConnectionRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
@@ -9485,6 +9603,10 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequestAuthMode",
     "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
+    "UpdateNativeIssueTrackerStatusRequest",
+    "UpdateNativeIssueTrackerStatusRequestDesiredState",
+    "UpdateNativeLinearIssueTrackerStatusRequest",
+    "UpdateNativeLinearIssueTrackerStatusRequestDesiredState",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateOutboundBindingPolicyRequest",
     "UpdatePlatformTenantWebhookRequest",

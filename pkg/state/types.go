@@ -3914,6 +3914,9 @@ const (
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
 	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
 	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
+	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
+	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
+	AppWebhookEventIssueFrequencyThresholdReached          AppWebhookEvent = "issue.frequency_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3965,6 +3968,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
 	AppWebhookEventRouteRequirementsRecovered,
+	AppWebhookEventIssueTrackerSyncAttention,
+	AppWebhookEventIssueTrackerSyncRecovered,
 	AppWebhookEventIssueCreated,
 	AppWebhookEventIssueAssigned,
 	AppWebhookEventIssueResolved,
@@ -3972,7 +3977,19 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryPollingStatus, AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
+	AppWebhookEventRecoveryPollingStatus,
+	AppWebhookEventRecoveryHealthAlert,
+	AppWebhookEventRecoveryHealthRecovered,
+	AppWebhookEventRecoveryQueueBlocked,
+	AppWebhookEventRecoveryPolicyPaused,
+	AppWebhookEventRecoveryReviewFinished,
+	AppWebhookEventRecoveryReviewReady,
+	AppWebhookEventRecoveryCompleted,
+	AppWebhookEventRecoveryCancelled,
+	AppWebhookEventRecoveryExpired,
+	AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventRecoveryExecutionAttention,
+	AppWebhookEventIssueFrequencyThresholdReached,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }
