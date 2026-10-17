@@ -74,6 +74,26 @@ func (c *InternalSafeDeployClient) AdvanceCanary(ctx context.Context, id string,
 	return out, err
 }
 
+// AdvanceCanaryWithDecision advances one step and records the circuit-breaker
+// evidence that allowed it (ADR-1447).
+func (c *InternalSafeDeployClient) AdvanceCanaryWithDecision(ctx context.Context, id string, expectedStep int, decision RolloutDecision) (CanaryAdvanceResponse, error) {
+	var out CanaryAdvanceResponse
+	err := c.canary.do(ctx, http.MethodPost,
+		"/v1/internal/safe-deploy/deployments/"+url.PathEscape(id)+"/canary/advance",
+		AdvanceCanaryRequest{ExpectedStep: expectedStep, Decision: &decision}, &out)
+	return out, err
+}
+
+// RecordRolloutHold records why the canary at expectedStep is held
+// (ADR-1447). APID deduplicates repeated holds.
+func (c *InternalSafeDeployClient) RecordRolloutHold(ctx context.Context, id string, expectedStep int, decision RolloutDecision) (RecordRolloutHoldResponse, error) {
+	var out RecordRolloutHoldResponse
+	err := c.canary.do(ctx, http.MethodPost,
+		"/v1/internal/safe-deploy/deployments/"+url.PathEscape(id)+"/canary/hold",
+		RecordRolloutHoldRequest{ExpectedStep: expectedStep, Decision: decision}, &out)
+	return out, err
+}
+
 func (c *InternalSafeDeployClient) RecoverRollout(ctx context.Context, slug, action, reason string) (RolloutTransitionResponse, error) {
 	return c.RecoverRolloutAndIdempotencyKey(ctx, slug, action, reason, "")
 }
@@ -94,6 +114,21 @@ func (c *InternalSafeDeployClient) RecoverDeploymentRolloutAndIdempotencyKey(ctx
 			Action:                          action,
 			Reason:                          reason,
 			ExpectedPredecessorDeploymentID: predecessorDeploymentID,
+		}, &out, key)
+	return out, err
+}
+
+// RecoverDeploymentRolloutWithDecision is the exact abort with the
+// circuit-breaker evidence that decided it (ADR-1447).
+func (c *InternalSafeDeployClient) RecoverDeploymentRolloutWithDecision(ctx context.Context, deploymentID, predecessorDeploymentID, action, reason, key string, decision RolloutDecision) (RolloutTransitionResponse, error) {
+	var out RolloutTransitionResponse
+	err := c.action.doWithIdempotencyKey(ctx, http.MethodPost,
+		"/v1/internal/safe-deploy/deployments/"+url.PathEscape(deploymentID)+"/rollouts/recover",
+		RecoverDeploymentRolloutRequest{
+			Action:                          action,
+			Reason:                          reason,
+			ExpectedPredecessorDeploymentID: predecessorDeploymentID,
+			Decision:                        &decision,
 		}, &out, key)
 	return out, err
 }

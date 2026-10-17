@@ -11,7 +11,6 @@ pytest.importorskip("aiobotocore")
 pytest.importorskip("fastapi")
 
 from async_storage_fixture import SignedS3, finish_stream, load_example, open_stream, projection
-
 from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
 from faas_sdk.object_storage_runtime import ObjectStorageBindingError
 from faas_sdk.secret_reload_runtime import SecretReloadError

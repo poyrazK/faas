@@ -71,7 +71,7 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 		SimpleAppPlan: &simpleapp.Plan{
 			ResourceProfile: "small", ExecutionMode: api.ExecutionModeRequest, ScaleToZero: true,
 		},
-		Release: "safe · balanced 1% -> 10% -> 50% -> 100% · automatic rollback",
+		Release: "safe · adaptive 1% -> 10% -> 50% -> 100% · automatic rollback",
 	})
 
 	for _, want := range []string{
@@ -84,7 +84,7 @@ func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 		"listener:      :8000 · health GET /healthz",
 		"resources:     small · request · scale-to-zero",
 		"environment:   production",
-		"release:       safe · balanced 1% -> 10% -> 50% -> 100% · automatic rollback",
+		"release:       safe · adaptive 1% -> 10% -> 50% -> 100% · automatic rollback",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("preflight missing %q in:\n%s", want, out.String())

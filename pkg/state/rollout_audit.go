@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -80,6 +81,49 @@ func addRolloutRecoveryAuditFences(data []byte, predecessorID string, fences []B
 	}
 	fields["predecessor_deployment_id"], fields["binding_fences"] = predecessor, checked
 	return json.Marshal(fields)
+}
+
+// rolloutAuditDataWithDecision is rolloutAuditData carrying the
+// api.RolloutDecision behind the transition (ADR-1447).
+func rolloutAuditDataWithDecision(action, reason string, decision json.RawMessage) []byte {
+	return withAuditDecision(rolloutAuditData(action, reason), decision)
+}
+
+// withAuditDecision adds {"decision": ...} to an audit payload object. An
+// empty decision, or a payload that is not an object, is returned unchanged:
+// the decision is evidence, and losing it must never roll back the transition.
+func withAuditDecision(data []byte, decision json.RawMessage) []byte {
+	if len(decision) == 0 || !json.Valid(decision) {
+		return data
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return data
+	}
+	fields["decision"] = decision
+	merged, err := json.Marshal(fields)
+	if err != nil {
+		return data
+	}
+	return merged
+}
+
+// WithAuditDecision lets APID add the decision to the advance audit payload
+// it builds before calling AdvanceCanary.
+func WithAuditDecision(data []byte, decision json.RawMessage) []byte {
+	return withAuditDecision(data, decision)
+}
+
+// leaseExpiredRolloutDecision is the record for the emergency abort taken when
+// meterd's Safe Deploy lease expires during an active canary (ADR-1447).
+func leaseExpiredRolloutDecision(reason string, dep Deployment, at time.Time) json.RawMessage {
+	decision := api.ManualRolloutDecision(api.RolloutRuleAbortLeaseExpired,
+		safetext.Truncate(reason, api.RolloutDecisionSummaryMaxBytes), dep.CanaryStep, dep.TrafficPercent, at)
+	encoded, err := json.Marshal(decision)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 // RolloutAuditDataForTest exposes rolloutAuditData to the external state_test

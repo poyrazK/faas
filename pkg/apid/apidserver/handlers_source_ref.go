@@ -39,6 +39,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -121,6 +122,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return

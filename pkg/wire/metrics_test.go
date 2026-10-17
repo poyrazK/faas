@@ -220,6 +220,7 @@ func TestOpsMetrics_CanaryCircuitBreakerEventsAreClosed(t *testing.T) {
 		`meterd_canary_progression_circuit_breaker_total{event="abort_5xx"} 1`,
 		`meterd_canary_progression_circuit_breaker_total{event="abort_dependency_errors"} 0`,
 		`meterd_canary_progression_circuit_breaker_total{event="hold_insufficient_samples"} 0`,
+		`meterd_canary_progression_circuit_breaker_total{event="advance_low_traffic"} 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing circuit-breaker metric line %q in:\n%s", want, body)

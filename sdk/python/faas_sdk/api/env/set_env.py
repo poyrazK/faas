@@ -17,11 +17,14 @@ def _get_kwargs(
     key: str,
     *,
     body: PutAppEnvRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     params: dict[str, Any] = {}
+
+    params["guard"] = guard
 
     params["scope"] = scope
 
@@ -100,6 +103,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppEnvRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppEnvResponse | Problem]:
     """Set an env var.
@@ -120,6 +124,7 @@ def sync_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppEnvRequest): Set an env var: plaintext value (persisted verbatim in app_envs,
             non-sensitive by contract).
@@ -136,6 +141,7 @@ def sync_detailed(
         slug=slug,
         key=key,
         body=body,
+        guard=guard,
         scope=scope,
     )
 
@@ -152,6 +158,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppEnvRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppEnvResponse | Problem | None:
     """Set an env var.
@@ -172,6 +179,7 @@ def sync(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppEnvRequest): Set an env var: plaintext value (persisted verbatim in app_envs,
             non-sensitive by contract).
@@ -189,6 +197,7 @@ def sync(
         key=key,
         client=client,
         body=body,
+        guard=guard,
         scope=scope,
     ).parsed
 
@@ -199,6 +208,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppEnvRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppEnvResponse | Problem]:
     """Set an env var.
@@ -219,6 +229,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppEnvRequest): Set an env var: plaintext value (persisted verbatim in app_envs,
             non-sensitive by contract).
@@ -235,6 +246,7 @@ async def asyncio_detailed(
         slug=slug,
         key=key,
         body=body,
+        guard=guard,
         scope=scope,
     )
 
@@ -249,6 +261,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppEnvRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppEnvResponse | Problem | None:
     """Set an env var.
@@ -269,6 +282,7 @@ async def asyncio(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppEnvRequest): Set an env var: plaintext value (persisted verbatim in app_envs,
             non-sensitive by contract).
@@ -287,6 +301,7 @@ async def asyncio(
             key=key,
             client=client,
             body=body,
+            guard=guard,
             scope=scope,
         )
     ).parsed

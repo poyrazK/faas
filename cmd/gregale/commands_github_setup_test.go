@@ -52,7 +52,7 @@ func TestGithubActionDefaultPinIsValidSHA(t *testing.T) {
 func TestRenderGithubSetupWorkflowSafeRollout(t *testing.T) {
 	workflow := renderGithubSetupWorkflow("api", "acme/api", "main", githubSetupRolloutSafe, nil, "", false)
 	for _, want := range []string{
-		"# Balanced health-gated rollout; available on Pro/Scale.",
+		"# Balanced health-gated rollout; available on every plan.",
 		`rollout: "safe"`,
 		`wait: "true"`,
 	} {

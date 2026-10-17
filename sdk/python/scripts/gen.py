@@ -168,7 +168,6 @@ WRAPPER_MODULES = (
     "_binding_creation.py",
     "_binding_runner.py",
     "_binding_runner_diagnostics.py",
-
     "realtime_workers.py",
     "realtime_activity.py",
     "realtime_presence.py",

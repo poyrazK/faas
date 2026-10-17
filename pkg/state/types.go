@@ -354,6 +354,9 @@ const (
 	// closes. Not wired yet; the schema CHECK accepts it so the
 	// caller can stamp it without a migration.
 	AutoRollbackReasonFirstWindowExpired AutoRollbackReason = "first_window_expired"
+	// AutoRollbackReasonPostReleaseRegression is stamped when the
+	// post-release watch rolls a completed release back (ADR-1445).
+	AutoRollbackReasonPostReleaseRegression AutoRollbackReason = "post_release_regression"
 )
 
 // IsValidAutoRollbackReason reports whether r is one of the
@@ -362,7 +365,7 @@ const (
 // on a stray value before the SQL UPDATE surfaces a 23514.
 func (r AutoRollbackReason) IsValid() bool {
 	switch r {
-	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired:
+	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired, AutoRollbackReasonPostReleaseRegression:
 		return true
 	default:
 		return false
@@ -2000,6 +2003,11 @@ type AppManifest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "" / "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): GET paths the default rollout probe checks
+	// instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -2044,7 +2052,8 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -2712,6 +2721,9 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the api.RolloutDecision recorded with the latest
+	// rollout transition (ADR-1447), or nil. Holds never write it.
+	RolloutDecision json.RawMessage `json:"rollout_decision,omitempty"`
 	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
 	// barriers for zero-step service rollouts. Empty for ordinary canaries and
 	// stable deployments.
@@ -5804,6 +5816,10 @@ const (
 	DeployMCPTaskHoldCancelled  DeploymentAuditKind = "deploy.mcp_task_hold_cancelled"
 	DeployWorkerDrainStarted    DeploymentAuditKind = "deploy.worker_drain_started"
 	DeployWorkerDrainCompleted  DeploymentAuditKind = "deploy.worker_drain_completed"
+	// DeployRolloutHeld records why a canary step is held (ADR-1447). Its
+	// data is {"decision": api.RolloutDecision}; repeats of the same rule are
+	// deduplicated for api.RolloutHoldRefreshInterval.
+	DeployRolloutHeld DeploymentAuditKind = "deploy.rollout_held"
 )
 
 // DeploymentAudit is one row of the deployment_audit table

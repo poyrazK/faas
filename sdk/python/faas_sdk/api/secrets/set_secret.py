@@ -17,11 +17,14 @@ def _get_kwargs(
     key: str,
     *,
     body: PutAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     params: dict[str, Any] = {}
+
+    params["guard"] = guard
 
     params["scope"] = scope
 
@@ -100,6 +103,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppSecretResponse | Problem]:
     """Set a sealed secret.
@@ -112,6 +116,7 @@ def sync_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
             immediately, plaintext discarded after seal). secret_class is optional; omission preserves
@@ -131,6 +136,7 @@ def sync_detailed(
         slug=slug,
         key=key,
         body=body,
+        guard=guard,
         scope=scope,
     )
 
@@ -147,6 +153,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppSecretResponse | Problem | None:
     """Set a sealed secret.
@@ -159,6 +166,7 @@ def sync(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
             immediately, plaintext discarded after seal). secret_class is optional; omission preserves
@@ -179,6 +187,7 @@ def sync(
         key=key,
         client=client,
         body=body,
+        guard=guard,
         scope=scope,
     ).parsed
 
@@ -189,6 +198,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppSecretResponse | Problem]:
     """Set a sealed secret.
@@ -201,6 +211,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
             immediately, plaintext discarded after seal). secret_class is optional; omission preserves
@@ -220,6 +231,7 @@ async def asyncio_detailed(
         slug=slug,
         key=key,
         body=body,
+        guard=guard,
         scope=scope,
     )
 
@@ -234,6 +246,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: PutAppSecretRequest,
+    guard: bool | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppSecretResponse | Problem | None:
     """Set a sealed secret.
@@ -246,6 +259,7 @@ async def asyncio(
     Args:
         slug (str):
         key (str):
+        guard (bool | Unset):
         scope (str | Unset):
         body (PutAppSecretRequest): Set a secret: key name and plaintext (sealed at rest
             immediately, plaintext discarded after seal). secret_class is optional; omission preserves
@@ -267,6 +281,7 @@ async def asyncio(
             key=key,
             client=client,
             body=body,
+            guard=guard,
             scope=scope,
         )
     ).parsed

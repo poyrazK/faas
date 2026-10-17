@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,9 +15,13 @@ import (
 )
 
 // RouteProbeTarget is an app with probe selectors and an in-flight canary
-// (ADR-847).
+// (ADR-847). StableID is set only for ADR-1446 default probe targets; ADR-847
+// targets read the predecessor from the route health report. ProbePaths are
+// the app's release_probe_paths for a default target (ADR-1449); empty means
+// "/".
 type RouteProbeTarget struct {
-	AccountID, AppID, Slug, CandidateID string
+	AccountID, AppID, Slug, CandidateID, StableID string
+	ProbePaths                                    []string
 }
 
 // RouteProbeObservation is one minute of probe results for one deployment
@@ -42,6 +48,78 @@ var (
 	_ RouteProbeStore = (*PgStore)(nil)
 	_ RouteProbeStore = (*MemStore)(nil)
 )
+
+// RouteProbeTotal is the probe evidence for one deployment over a window.
+type RouteProbeTotal struct {
+	Requests, ServerErrors, Unauthenticated int64
+}
+
+// DefaultRouteProbeStore backs the ADR-1446 default probe: canaries of
+// safe-policy request apps that apid probes without a route health gate, and
+// the per-deployment totals meterd's circuit breaker reads.
+type DefaultRouteProbeStore interface {
+	ListDefaultRouteProbeTargets(ctx context.Context) ([]RouteProbeTarget, error)
+	RouteProbeTotals(ctx context.Context, appID, candidateID, stableID string, since, until time.Time) (candidate, stable RouteProbeTotal, err error)
+}
+
+var (
+	_ DefaultRouteProbeStore = (*PgStore)(nil)
+	_ DefaultRouteProbeStore = (*MemStore)(nil)
+)
+
+func (s *PgStore) ListDefaultRouteProbeTargets(ctx context.Context) ([]RouteProbeTarget, error) {
+	rows, err := sqlc.New().ListDefaultRouteProbeTargets(ctx, s.pool, int32(api.RouteMonitorBatchSize))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RouteProbeTarget, 0, len(rows))
+	for _, r := range rows {
+		var paths []string
+		if err := json.Unmarshal(r.ProbePaths, &paths); err != nil || len(paths) == 0 {
+			// No paths, or a manifest that fails to decode, keeps the default
+			// probe of "/" (nil, as MemStore reports it).
+			paths = nil
+		}
+		out = append(out, RouteProbeTarget{AccountID: r.AccountID, AppID: r.AppID, Slug: r.Slug, CandidateID: r.CandidateID, StableID: r.StableID, ProbePaths: paths})
+	}
+	return singleCanaryProbeTargets(out), nil
+}
+
+func (s *PgStore) RouteProbeTotals(ctx context.Context, appID, candidateID, stableID string, since, until time.Time) (RouteProbeTotal, RouteProbeTotal, error) {
+	rows, err := sqlc.New().RouteProbeTotalsByDeployment(ctx, s.pool, sqlc.RouteProbeTotalsByDeploymentParams{
+		AppID: appID, CandidateID: candidateID, StableID: stableID, Since: NewPgtypeTime(since), Until: NewPgtypeTime(until),
+	})
+	if err != nil {
+		return RouteProbeTotal{}, RouteProbeTotal{}, err
+	}
+	var candidate, stable RouteProbeTotal
+	for _, r := range rows {
+		total := RouteProbeTotal{Requests: r.Requests, ServerErrors: r.ServerErrors, Unauthenticated: r.Unauthenticated}
+		switch r.DeploymentID {
+		case candidateID:
+			candidate = total
+		case stableID:
+			stable = total
+		}
+	}
+	return candidate, stable, nil
+}
+
+// singleCanaryProbeTargets keeps apps with exactly one candidate and one
+// serving predecessor; the circuit breaker cannot compare anything else.
+func singleCanaryProbeTargets(rows []RouteProbeTarget) []RouteProbeTarget {
+	perApp := map[string]int{}
+	for _, r := range rows {
+		perApp[r.AppID]++
+	}
+	out := make([]RouteProbeTarget, 0, len(rows))
+	for _, r := range rows {
+		if perApp[r.AppID] == 1 {
+			out = append(out, r)
+		}
+	}
+	return out
+}
 
 func (s *PgStore) ListRouteProbeTargets(ctx context.Context) ([]RouteProbeTarget, error) {
 	rows, err := sqlc.New().ListRouteProbeTargets(ctx, s.pool, int32(api.RouteMonitorBatchSize))
@@ -202,6 +280,59 @@ func (m *MemStore) ListRouteProbeTargets(_ context.Context) ([]RouteProbeTarget,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AppID+out[i].CandidateID < out[j].AppID+out[j].CandidateID })
 	return out, nil
+}
+
+func (m *MemStore) ListDefaultRouteProbeTargets(_ context.Context) ([]RouteProbeTarget, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inScope := func(d Deployment, appID string) bool {
+		return d.AppID == appID && d.Status == DeployLive && d.TrafficPercent > 0 && (d.Scope == "" || d.Scope == "default")
+	}
+	out := []RouteProbeTarget{}
+	for appID, app := range m.apps {
+		if app.Status == AppDeleted || app.PreviewOfSlug != "" || app.Manifest.ReleasePolicy == api.ReleasePolicyImmediate ||
+			(app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest) {
+			continue
+		}
+		for _, d := range m.deployments {
+			if !inScope(d, appID) || d.CanaryTotalSteps <= 0 || d.CanaryStep >= d.CanaryTotalSteps {
+				continue
+			}
+			for _, stable := range m.deployments {
+				if stable.ID != d.ID && inScope(stable, appID) {
+					out = append(out, RouteProbeTarget{AccountID: app.AccountID, AppID: appID, Slug: app.Slug, CandidateID: d.ID, StableID: stable.ID,
+						ProbePaths: append([]string(nil), app.Manifest.ReleaseProbePaths...)})
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AppID+out[i].CandidateID < out[j].AppID+out[j].CandidateID })
+	return singleCanaryProbeTargets(out), nil
+}
+
+func (m *MemStore) RouteProbeTotals(_ context.Context, appID, candidateID, stableID string, since, until time.Time) (RouteProbeTotal, RouteProbeTotal, error) {
+	p := m.routeProbes()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var candidate, stable RouteProbeTotal
+	for key, o := range p.observations {
+		if !strings.HasPrefix(key, appID+"\x00") || o.WindowStart.Before(since) || !o.WindowStart.Before(until) {
+			continue
+		}
+		var total *RouteProbeTotal
+		switch o.DeploymentID {
+		case candidateID:
+			total = &candidate
+		case stableID:
+			total = &stable
+		default:
+			continue
+		}
+		total.Requests += o.Requests
+		total.ServerErrors += o.ServerErrors
+		total.Unauthenticated += o.Unauthenticated
+	}
+	return candidate, stable, nil
 }
 
 func (m *MemStore) ClaimRouteProbeRound(_ context.Context, appID string, windowStart time.Time) (bool, error) {

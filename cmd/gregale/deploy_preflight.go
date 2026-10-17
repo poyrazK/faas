@@ -118,7 +118,7 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 	var release string
 	switch {
 	case safe:
-		release = "safe · balanced 1% -> 10% -> 50% -> 100% · automatic rollback"
+		release = "safe · adaptive 1% -> 10% -> 50% -> 100% · automatic rollback"
 	case canaryPreset != "" && canaryPreset != "none":
 		release = "canary · " + canaryPreset
 	case trafficPercent >= 0:

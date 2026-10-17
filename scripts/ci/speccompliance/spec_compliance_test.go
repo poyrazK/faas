@@ -84,7 +84,10 @@ const (
 	executionWorkflowManagedFile     = "execution_workflow_managed.go" // ADR-171 — server-managed sequential workflow DTOs
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
-	imageRunsFile                    = "image_runs.go" // ADR-1161 — docker-run-shaped image run DTOs
+	imageRunsFile                    = "image_runs.go"       // ADR-1161 — docker-run-shaped image run DTOs
+	rolloutDecisionFile              = "rollout_decision.go" // ADR-1447 explained rollout decisions
+	releaseRollbackFile              = "release_rollback.go" // ADR-1448 releases that change the database
+	configRevisionsFile              = "config_revisions.go" // ADR-1451 guarded, reversible config changes
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -495,6 +498,8 @@ var dtoExclude = map[string]bool{
 	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
 	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
 	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldRequest":          true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":         true, // ADR-1447 loopback-only meterd ↔ apid hold route
 	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
 	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
@@ -1463,6 +1468,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
 		filepath.Join(root, "pkg", "api", "outbound_ai.go"), // ADR-990/991 AI gateway prices, routes, guardrails, keys, alerts and request log
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
+		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
+		filepath.Join(root, "pkg", "api", releaseRollbackFile),
+		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

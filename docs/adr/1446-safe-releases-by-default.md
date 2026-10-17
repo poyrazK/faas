@@ -1,0 +1,255 @@
+# ADR-1446 · Safe releases by default
+
+- **Status:** accepted; drills passed on the n2 metal node 2026-10-10 (see Rollout)
+- **Date:** 2026-10-09
+- **Amends:** [ADR-200](200-auto-rollback-on-every-plan.md) ("the opt-in stays off by default"), [ADR-122](122-safe-releases.md) canary progression, [ADR-847](847-synthetic-route-probes.md) (probes are opt-in)
+- **Follows:** [ADR-199](199-rollouts-on-every-plan.md), [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md)
+- **Decision:** A production release of an app that already serves traffic rolls out behind the balanced health-gated canary with first-wake 5xx rollback unless the deploy or the app says otherwise. A canary stage held only because too few requests arrived is judged on synthetic probes of `/` against the candidate and its predecessor, and otherwise advances after a bounded wait when no negative evidence was observed.
+- **Why:** The API-hosting roadmap names "one opinionated production path with automatic health gates and rollback enabled by default" as the highest-priority release-safety gap. Every piece already exists (canary ladder, always-on circuit breaker, ADR-625 rollback), but only customers who know to type `--safe` get them, and GitHub App pushes could not ask for them at all.
+- **Rejected alternatives:** A CLI-only default leaves GitHub pushes, the API, Terraform, and the Action unprotected. Rejecting a deploy when the canary worker is down turns a safety default into an outage during the incidents where a hotfix matters most. Keeping the unbounded sample-size hold would strand most scale-to-zero apps at 1% forever.
+
+## Context
+
+`gregale deploy --safe` stamps `canary.preset=balanced` and
+`rollback_on_5xx=true`. The meterd circuit breaker
+([`pkg/canary/circuit_breaker.go`](../../pkg/canary/circuit_breaker.go))
+compares the candidate with its stable predecessor on 5xx rate, p95 and
+cold-boot latency, CPU per request, managed dependency errors, and OOM kills.
+It aborts a clear regression through APID's exact rollout recovery.
+
+Two things kept this from being the default:
+
+1. **It was opt-in everywhere.** ADR-200 deliberately left `rollback_on_5xx`
+   off by default, and GitHub App push deploys
+   ([`pkg/apid/apidserver/githubd_bridge.go`](../../pkg/apid/apidserver/githubd_bridge.go)) carried
+   no rollout fields at all.
+2. **Low-traffic apps never finished.** The breaker holds until both sides
+   have `CircuitBreakerMinRequests` (20) requests. At a 1% stage that needs
+   roughly 2,000 requests in the window. A scale-to-zero API that serves a
+   few requests a minute held at 1% indefinitely, which is why a safe
+   default could not ship before this ADR.
+
+## Decision
+
+### Default release policy
+
+apid fills in rollout fields a deploy request left unset
+([`pkg/apid/release/default_policy.go`](../../pkg/apid/release/default_policy.go)).
+It never overrides an explicit value. The default applies when all hold:
+
+- the app's `release_policy` is `safe` (the unset value);
+- the app is request-mode and not a PR preview app (services keep schedd's
+  readiness-gated rollout; workers and jobs serve no request traffic);
+- the deploy targets the default scope (named project environments are
+  unchanged);
+- the app already has a live deployment in that scope. A first deploy has
+  nothing to compare with or roll back to.
+
+Then:
+
+- an unset `rollback_on_5xx` becomes `true`;
+- an unset rollout (no `canary` and no `traffic_percent`) becomes the
+  `balanced` canary, if the safe-release worker lease is ready.
+
+Each piece is filled in only when the plan gate that later validates it
+(`RollbackOn5xxAllowed`, `TrafficSplitAllowed`) allows it. Both are true on
+every plan today (ADR-199/200); if an operator re-tiers either, the default
+quietly drops that piece rather than turning flag-free deploys into 403s.
+
+Every deploy entry point applies it: image, multipart source, source-ref,
+source tarball, resumable upload sessions, and GitHub App push deploys.
+
+### Opting out
+
+- Per deploy: `--canary-preset none` (or `canary: {"preset": "none"}`) skips
+  the canary; `--rollback-on-5xx=false` skips the rollback; an explicit
+  `--traffic-percent` is honoured as written.
+- Per app: `gregale app <slug> --release-policy immediate`
+  (`PATCH /v1/apps/{slug}` with `{"release_policy":"immediate"}`) restores
+  the pre-ADR behaviour for every deploy of that app. The field lives in the
+  app manifest JSON; no migration is required.
+
+### Fail open when the canary worker is unavailable
+
+An explicit canary still fails with `safe_release_unavailable` when meterd's
+safe-release lease is not ready. A defaulted canary instead falls back to an
+immediate cutover, keeps the rollback opt-in (evaluated by apid from request
+telemetry per ADR-625, independent of meterd), and logs the fallback. A
+default must never fail a deploy that would have succeeded without it.
+
+### Dependency on the hosting smoke verifier
+
+imaged requires the post-readiness public hosting smoke for every canary
+deployment (`smokeRequired` in `pkg/imaged/handler.go`). Production compute
+nodes configure it through the `compute_only_service` drop-in
+(`FAAS_API_HOSTING_SMOKE_URL`, `FAAS_API_HOSTING_SMOKE_REQUIRED=1`). An
+installation without that verifier — a single-box or development host —
+fails every canary deployment with `public hosting smoke verifier is
+required but not configured`, so the default would turn flag-free deploys
+into failures there. Such hosts must either configure
+`FAAS_API_HOSTING_SMOKE_URL` on imaged or set
+`FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid. The safe-release metal
+drill found this and runs with the verifier wired, as production does.
+
+### Plain rollback is promoted unfenced
+
+The safe default leans on the first-wake 5xx auto-rollback, which reuses the
+plain rollback path (`rollbackAppCore` → `PrepareDeploymentRollback`). imaged
+fences automatic promotion of image, GitHub, and preview deployments against
+newer revisions and re-checks a GitHub source branch's head; both rejected
+every rollback target, because an older revision is the point of a rollback.
+The safe-release drill found that a plain rollback, manual or automatic,
+left the target `superseded` and the bad release serving while the
+auto-rollback was still recorded.
+
+`deployments.rollback_prepared_at` marks a target prepared by
+`PrepareDeploymentRollback`. imaged treats a marked target like a checked
+rollback: unfenced `MarkDeploymentLive`, no source-branch freshness check.
+Promotion clears the marker in the same transaction, so a refused or failed
+activation keeps it for the next attempt. Automatic promotion of a fresh
+deployment is unchanged.
+
+### Verified rollback outcomes
+
+A plain rollback was recorded when requested — the 5xx worker marked the
+release auto-rolled-back and logged "release rolled back" as soon as the
+readiness request was queued — so a rollback that never served looked like
+one that did. That is how the fence bug above stayed invisible.
+
+Each plain rollback now opens a `deployment_rollbacks` row (`preparing`,
+with its trigger: `manual`, `alert`, or `auto_5xx`). apid's outcome worker
+([`pkg/apid/release/rollback_outcomes.go`](../../pkg/apid/release/rollback_outcomes.go))
+resolves it every `RollbackOutcomeCheckInterval` (5 s):
+
+- `complete` when the target's `rollout_completed_at` is stamped after the
+  request (promotion stamps it; preparation clears it), with the recovery
+  time measured on the database clock from request to promotion and a
+  `deploy.rolled_back` audit row whose id is the receipt;
+- `failed` when the target returns to `superseded`, `failed`, or
+  `cancelled` without serving, is deleted, or has not served within
+  `RollbackOutcomeTimeout` (10 min).
+
+A newer rollback of the same target fails the older preparing row
+(`rollback_superseded`). The finish is conditional on `preparing`, so
+concurrent apid replicas resolve a row once. Outcomes are exported as
+`apid_rollback_outcomes_total{trigger,outcome}` and
+`apid_rollback_recovery_seconds{trigger}`; `FaasRollbackNotRestored` pages on
+any failed outcome and `FaasRollbackRecoverySlow` warns when p95 recovery
+exceeds the 60 s scorecard bar. The receipt is served by the existing
+`GET /v1/apps/{slug}/rollbacks/{id}` endpoint in the checked-rollback shape,
+and `gregale rollback APP` waits for it by default (`--no-wait` restores the
+request-only behaviour). Customer release-webhook events for rollback
+outcomes are a follow-up.
+
+### Bounded low-traffic hold
+
+`api.CanaryLowTrafficMaxHold` (5 minutes) bounds a hold that exists only
+because of sample size. When a stage's dwell time plus that bound has passed
+and the breaker's only objection is "insufficient request samples" or
+"insufficient CPU/request samples", the stage advances if:
+
+- the candidate returned zero 5xx responses in the window, and
+- the OOM signal is readable and recorded zero kills.
+
+Unavailable signals (OOM, CPU/request, dependency errors) still hold
+indefinitely, and a regression with enough samples still aborts. The
+advance is exported as
+`meterd_canary_progression_circuit_breaker_total{event="advance_low_traffic"}`.
+The bound applies to every canary, explicit or defaulted: holding a
+zero-traffic stage longer produces no evidence.
+
+### Crash-loop gate
+
+A release that keeps failing its liveness probe may serve almost no traffic,
+so it would pass the sample-size checks above. The breaker therefore also
+reads `liveness_restarts_total` (liveness-driven destroy and cold boot) for
+the candidate and its predecessor over the rollout window:
+
+- an unexported metric family (no always-present sentinel series) holds the
+  stage with `hold_signal_unavailable`, the same as a missing OOM signal;
+- at least `CircuitBreakerMinCrashLoopRestarts` (2) candidate restarts that
+  also exceed twice the predecessor's restarts abort with
+  `abort_crash_loop`, without waiting for request samples;
+- the bounded low-traffic advance additionally requires zero candidate
+  restarts and a readable signal.
+
+The factor keeps a predecessor that already flaps from turning every release
+into an abort. Readiness-probe withdrawals do not restart the VM and stay
+out of this gate: the instance is withdrawn from routing, which the 5xx and
+latency signals already observe.
+
+After the final stage the release keeps its ADR-625 first-wake 5xx window,
+which opens when the release first sees traffic. A low-traffic app is
+therefore still protected when its traffic does arrive.
+
+### Probe-backed low-traffic stages
+
+The bounded advance moves a quiet release on the absence of errors, which on
+a scale-to-zero app usually means no evidence at all. While a canary of a
+request-mode, non-preview app on the `safe` release policy is in flight in
+the default scope, apid therefore probes it with the ADR-847 machinery, no
+route health gate required:
+
+- **What.** `GET /` (`release.DefaultProbePath`), the path the
+  post-readiness hosting smoke already checks once, sent
+  `RouteHealthProbeRequestsPerMinute` (10) times a minute to the candidate
+  and to its one serving predecessor. Probes go through the public edge with
+  exact-deployment routing and the upstream-only response proof, keep every
+  customer auth gate, never reach request telemetry or usage, and are
+  recorded in `route_probe_observations` under path `/`. An app that already
+  probes `GET /` through ADR-847 is not probed twice.
+- **Evidence.** meterd adds the stage's probe responses (the default probe
+  and any ADR-847 route probes) to the 5xx sample only while organic traffic
+  is below `CircuitBreakerMinRequests` on either side. Responses the app
+  rejected with 401 or 403 are excluded, and a side where at least half the
+  probes were rejected contributes nothing (the ADR-847 "unknown" rule).
+  Probes never feed latency, cold-boot, CPU, or dependency comparisons.
+- **Abort.** The 5xx rules run on organic plus probe responses: the decisive
+  small-sample rule, and the rate regression rule once both sides reach the
+  floor. The abort records `abort_5xx` and the usual 5xx rollout reason;
+  meterd logs the decision with a reason ending in "synthetic probes
+  included".
+- **Advance.** When organic plus probe responses meet the floor on both sides
+  with no 5xx regression, and the OOM and liveness signals are readable and
+  clean, the stage advances at its boundary instead of after
+  `CanaryLowTrafficMaxHold`, exported as `advance_probe_evidence`. The
+  bounded no-news advance stays as the fallback (no probe origin, an
+  auth-gated app, probes the gateway could not attribute) and now also
+  requires zero candidate probe 5xx.
+- **Off.** `release_policy: immediate`, a deploy with `canary: none`, or the
+  operator kill switch `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` turns the
+  default probe off. Without `FAAS_ROUTE_PROBE_URL` no probes run at all.
+
+Probes wake the candidate and its predecessor for the canary's duration, and
+that running time is billed like any request-triggered wake (ADR-847). On the
+balanced ladder a quiet release now finishes in about 8 to 10 minutes rather
+than about 21, so the added time is at most that window for two deployments:
+about 0.09 GB-h for a 256 MB Hobby app.
+
+## Consequences
+
+- A flag-free `gregale deploy` of a live app returns once the candidate is
+  live at 1% and names the opt-outs; `gregale deployment wait --rollout`
+  follows it. A healthy low-traffic release reaches 100% in roughly
+  `3 × (2 + 1)` minutes on probe evidence, or `3 × (2 + 5)` minutes through
+  the bounded advance when probes are unavailable, instead of never.
+- Each in-flight rollout uses the ADR-199 `RolloutConcurrencyGrant` (+1
+  instance) for its duration. That cost already existed for `--safe`.
+- Progressive rollouts move to `beta` in the product registry on the
+  2026-10-10 drill evidence (`docs/drills/2026-10-10-safe-release-drill.md`,
+  `cmd/e2e/safe_release_drill_metal_test.go`).
+
+## Rollout
+
+Enable in staging first, then run and record, under `docs/drills/`:
+
+1. a bad release (5xx and latency regression) aborts and restores the
+   predecessor;
+2. a low-traffic app reaches 100% through `advance_probe_evidence` (or
+   `advance_low_traffic` without probes), and a quiet release that starts
+   failing `/` after its hosting smoke aborts on probe evidence;
+3. a defaulted deploy with meterd stopped falls back to an immediate cutover;
+4. rollback recovery p95 ≤ 60 s (API-hosting scorecard).
+
+Promote progressive rollouts toward `beta` in the product registry only with
+that evidence, per the capability promotion rule.

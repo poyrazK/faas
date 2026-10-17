@@ -78,6 +78,10 @@ func renderDeploymentSummary(summary api.DeploymentSummaryResponse) int {
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "rollback_target: %s\n", summary.RollbackTargetID)
 	}
+	renderRolloutDecisions(osStdout, summary.Deployment)
+	if line := releaseSummaryLine(summary.Deployment.Release); line != "" {
+		_, _ = fmt.Fprintln(osStdout, line)
+	}
 	if len(summary.Changes) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "changes: none")
 		return 0

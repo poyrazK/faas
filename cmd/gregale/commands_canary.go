@@ -59,7 +59,7 @@ func cmdCanarySimulate(args []string) int {
 		return 1
 	}
 	if !canary.AllowedCanaryPreset(*preset) || *preset == "none" || *preset == "custom" {
-		return printErr("Invalid --canary-preset", fmt.Errorf("--canary-preset must be one of: slow, balanced, aggressive, 1-10-50-100; got %q", *preset))
+		return printErr("Invalid --canary-preset", fmt.Errorf("--canary-preset must be one of: slow, balanced, aggressive, 1-10-50-100, adaptive; got %q", *preset))
 	}
 
 	client, err := authedClient()

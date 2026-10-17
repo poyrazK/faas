@@ -1,9 +1,10 @@
 from typing import Literal
 
-DeploymentResponseCanaryPreset = Literal["1-10-50-100", "aggressive", "balanced", "none", "slow"]
+DeploymentResponseCanaryPreset = Literal["1-10-50-100", "adaptive", "aggressive", "balanced", "none", "slow"]
 
 DEPLOYMENT_RESPONSE_CANARY_PRESET_VALUES: set[DeploymentResponseCanaryPreset] = {
     "1-10-50-100",
+    "adaptive",
     "aggressive",
     "balanced",
     "none",

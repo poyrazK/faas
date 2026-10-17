@@ -136,7 +136,7 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 	})
 
 	t.Run("coverage permits exact deployment OOM query", func(t *testing.T) {
-		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 30, 6, 80, 1}}
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 0, 0, 1, 30, 6, 80, 1}}
 		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
 		if err != nil {
 			t.Fatalf("CircuitBreakerObservation: %v", err)
@@ -148,14 +148,43 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 			got.Stable.DependencyCalls != 80 || got.Stable.DependencyErrors != 1 {
 			t.Fatalf("dependency observation = available:%v candidate:%+v stable:%+v", got.DependencySignalAvailable, got.Candidate, got.Stable)
 		}
-		if len(prom.queries) != 7 || !strings.Contains(prom.queries[1], candidateID) ||
-			!strings.Contains(prom.queries[4], candidateID) || !strings.Contains(prom.queries[6], stableID) {
-			t.Fatalf("queries = %q, want OOM coverage/candidate plus dependency coverage and candidate/stable counters", prom.queries)
+		if !got.LivenessSignalAvailable || got.CandidateLivenessRestarts != 0 || got.StableLivenessRestarts != 0 {
+			t.Fatalf("liveness observation = available:%v candidate:%g stable:%g, want available/zero", got.LivenessSignalAvailable, got.CandidateLivenessRestarts, got.StableLivenessRestarts)
+		}
+		if len(prom.queries) != 10 || !strings.Contains(prom.queries[1], candidateID) ||
+			!strings.Contains(prom.queries[3], candidateID) || !strings.Contains(prom.queries[4], stableID) ||
+			!strings.Contains(prom.queries[7], candidateID) || !strings.Contains(prom.queries[9], stableID) {
+			t.Fatalf("queries = %q, want OOM, liveness, and dependency coverage plus per-deployment counters", prom.queries)
+		}
+	})
+
+	t.Run("missing liveness metric family is unavailable", func(t *testing.T) {
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 0}}
+		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
+		if err != nil {
+			t.Fatalf("CircuitBreakerObservation: %v", err)
+		}
+		if !got.OOMSignalAvailable || got.LivenessSignalAvailable {
+			t.Fatalf("signal availability = OOM:%v liveness:%v, want OOM available and liveness unavailable", got.OOMSignalAvailable, got.LivenessSignalAvailable)
+		}
+		if len(prom.queries) != 3 || !strings.Contains(prom.queries[2], "liveness_restarts_total") {
+			t.Fatalf("queries = %q, want no per-deployment liveness queries when family is missing", prom.queries)
+		}
+	})
+
+	t.Run("liveness restarts are read for candidate and predecessor", func(t *testing.T) {
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 3, 1, 0}}
+		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
+		if err != nil {
+			t.Fatalf("CircuitBreakerObservation: %v", err)
+		}
+		if !got.LivenessSignalAvailable || got.CandidateLivenessRestarts != 3 || got.StableLivenessRestarts != 1 {
+			t.Fatalf("liveness observation = available:%v candidate:%g stable:%g, want 3 and 1", got.LivenessSignalAvailable, got.CandidateLivenessRestarts, got.StableLivenessRestarts)
 		}
 	})
 
 	t.Run("missing dependency metric family is unavailable", func(t *testing.T) {
-		prom := &canaryHealthPromQL{values: []float64{1, 0, 0}}
+		prom := &canaryHealthPromQL{values: []float64{1, 0, 1, 0, 0, 0}}
 		got, err := (&canaryStoreAdapter{store: store, promQL: prom}).CircuitBreakerObservation(context.Background(), row, now.Add(-2*time.Minute), now)
 		if err != nil {
 			t.Fatalf("CircuitBreakerObservation: %v", err)
@@ -163,8 +192,8 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 		if !got.OOMSignalAvailable || got.DependencySignalAvailable {
 			t.Fatalf("signal availability = OOM:%v dependency:%v, want OOM available and dependency unavailable", got.OOMSignalAvailable, got.DependencySignalAvailable)
 		}
-		if len(prom.queries) != 3 {
-			t.Fatalf("queries = %q, want no per-deployment queries when family is missing", prom.queries)
+		if len(prom.queries) != 6 {
+			t.Fatalf("queries = %q, want no per-deployment dependency queries when family is missing", prom.queries)
 		}
 	})
 
@@ -174,4 +203,54 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 			t.Fatalf("CircuitBreakerObservation error = %v, want metric-coverage error", err)
 		}
 	})
+}
+
+// adr: 1446
+// Probe totals join the breaker input only when both sides were probed and
+// fewer than half of either side's probes hit the app's own auth.
+func TestCanaryHealthAddsProbeEvidence(t *testing.T) {
+	since := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	until := since.Add(3 * time.Minute)
+	tests := []struct {
+		name                      string
+		candidate, stable         state.RouteProbeObservation
+		wantCandidate, wantStable [2]int64
+	}{
+		{name: "both sides probed",
+			candidate:     state.RouteProbeObservation{Requests: 20, ServerErrors: 3, Unauthenticated: 2},
+			stable:        state.RouteProbeObservation{Requests: 20},
+			wantCandidate: [2]int64{18, 3}, wantStable: [2]int64{20, 0}},
+		{name: "auth-rejected probes are unknown",
+			candidate: state.RouteProbeObservation{Requests: 20, Unauthenticated: 10},
+			stable:    state.RouteProbeObservation{Requests: 20}},
+		{name: "an unprobed predecessor adds nothing",
+			candidate: state.RouteProbeObservation{Requests: 20, ServerErrors: 20}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			appID, candidateID, stableID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			rows := []state.RouteProbeObservation{}
+			for id, o := range map[string]state.RouteProbeObservation{candidateID: tc.candidate, stableID: tc.stable} {
+				if o.Requests > 0 {
+					o.DeploymentID, o.Method, o.Path, o.WindowStart = id, "GET", "/", since
+					rows = append(rows, o)
+				}
+			}
+			if err := store.RecordRouteProbeObservations(context.Background(), uuid.NewString(), appID, rows); err != nil {
+				t.Fatal(err)
+			}
+			out := canary.CircuitBreakerObservation{StableDeploymentID: stableID}
+			adapter := &canaryStoreAdapter{store: store}
+			if err := adapter.addProbeEvidence(context.Background(), canary.CanaryRow{ID: candidateID, AppID: appID}, since, until, &out); err != nil {
+				t.Fatal(err)
+			}
+			if got := [2]int64{out.Candidate.ProbeRequests, out.Candidate.ProbeServerErrors}; got != tc.wantCandidate {
+				t.Fatalf("candidate probe evidence = %v, want %v", got, tc.wantCandidate)
+			}
+			if got := [2]int64{out.Stable.ProbeRequests, out.Stable.ProbeServerErrors}; got != tc.wantStable {
+				t.Fatalf("stable probe evidence = %v, want %v", got, tc.wantStable)
+			}
+		})
+	}
 }

@@ -126,7 +126,7 @@ func TestCmdCheckedRollbackPostsOnceAndWaitsWithGET(t *testing.T) {
 	}
 }
 func TestCmdCheckedRollbackInvalidFlagsMakeNoWrites(t *testing.T) {
-	for _, args := range [][]string{{"demo", "--to", "v1", "--expected-current="}, {"demo", "--wait"}, {"demo", "--expected-current", "v2"}, {"demo", "--to", "v1", "--expected-current", "v2", "--timeout", "0s"}, {"demo", "--to", "v1", "--reason", "test"}} {
+	for _, args := range [][]string{{"demo", "--to", "v1", "--expected-current="}, {"demo", "--wait", "--no-wait"}, {"demo", "--expected-current", "v2"}, {"demo", "--to", "v1", "--expected-current", "v2", "--timeout", "0s"}, {"demo", "--to", "v1", "--reason", "test"}} {
 		if code := cmdRollback(args); code != 1 {
 			t.Fatalf("args %s accepted: %d", strings.Join(args, " "), code)
 		}

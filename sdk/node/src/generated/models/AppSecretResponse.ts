@@ -2,11 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 /**
  * A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row.
  */
 export type AppSecretResponse = {
+  /**
+   * Present on writes: the config revision recorded and the config guard watching it (ADR-1451).
+   */
+  config_change?: ConfigChangeReceipt;
   key: string;
   scope: string;
   /**

@@ -4,9 +4,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from test_object_storage_runtime import values
-
 from faas_sdk.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
+from test_object_storage_runtime import values
 
 
 class Client:

@@ -396,8 +396,9 @@ def test_async_stop_during_admission_resumes_committed_resource(task_cancel):
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("fault", ["budget_after_admit", "capacity"])
 def test_budget_backpressure_with_wrapped_client(asynchronous, fault):
-    from faas_sdk import FaaSClient, FaaSClientOptions, RetryOptions
     from faas_sdk._rfc7807 import FaasProblemError
+
+    from faas_sdk import FaaSClient, FaaSClientOptions, RetryOptions
 
     f = Fixture({"actions": ["probe", "queue-canary"], "graph": True, "fault": fault})
     client = FaaSClient(

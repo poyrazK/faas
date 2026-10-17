@@ -157,7 +157,7 @@ func (s *PgStore) CommitAlertRollback(ctx context.Context, r api.AlertRollback) 
 		return current, tx.Commit(ctx)
 	}
 	audit := alertRollbackAudit(ctx, current)
-	_, auditID, err := s.recoverRolloutTx(ctx, tx, current.AppID, current.CandidateDeploymentID, current.PredecessorDeploymentID, "abort", current.Reason, nil, &audit)
+	_, auditID, err := s.recoverRolloutTx(ctx, tx, current.AppID, current.CandidateDeploymentID, current.PredecessorDeploymentID, "abort", current.Reason, nil, &audit, nil)
 	if err != nil {
 		return r, err
 	}

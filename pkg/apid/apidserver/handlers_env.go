@@ -298,6 +298,7 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 	var activityOutboxID int64
 	activityOutboxed := false
 	var persistErr error
+	change := s.beginConfigChange(r, acct, app, scope, "")
 	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
 		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
 			activityOutboxID, persistErr = mutationStore.UpsertAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, req.Value, prepared)
@@ -309,12 +310,14 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
 	}
 	if persistErr != nil {
+		s.abandonConfigChange(r.Context(), change)
 		if writeEnvironmentGitOpsOwnershipProblem(w, persistErr) {
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not persist env var"))
 		return
 	}
+	revision := s.finishConfigChange(r.Context(), change, state.ConfigSourceEnvSet, key, false)
 	// A snapshot contains the guest process environment in its memory image.
 	// Invalidate snapshots in this scope before acknowledging the mutation;
 	// default-scope values overlay every environment and invalidate all scopes.
@@ -436,9 +439,10 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 	}
 	s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, "set", scope, key)
 	writeJSON(w, http.StatusOK, struct {
-		Key   string `json:"key"`
-		Scope string `json:"scope"`
-	}{Key: key, Scope: scope})
+		Key          string                   `json:"key"`
+		Scope        string                   `json:"scope"`
+		ConfigChange *api.ConfigChangeReceipt `json:"config_change,omitempty"`
+	}{Key: key, Scope: scope, ConfigChange: configChangeReceipt(change, revision)})
 }
 
 // checkEnvQuota returns nil when a PUT for (app, scope, key) is
@@ -516,6 +520,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var activityOutboxID int64
 	activityOutboxed := false
 	var deleteErr error
+	change := s.beginConfigChange(r, acct, app, scope, "")
 	if mutationStore, ok := s.store.(state.OrgActivityEnvMutationStore); ok {
 		if prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity); prepareErr == nil {
 			activityOutboxID, deleteErr = mutationStore.DeleteAppEnvInScopeWithActivity(r.Context(), acct.ID, app.ID, scope, key, prepared)
@@ -527,6 +532,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
 	}
 	if deleteErr != nil {
+		s.abandonConfigChange(r.Context(), change)
 		if writeEnvironmentGitOpsOwnershipProblem(w, deleteErr) {
 			return
 		}
@@ -537,6 +543,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not delete env var"))
 		return
 	}
+	s.finishConfigChange(r.Context(), change, state.ConfigSourceEnvDelete, key, false)
 	invalidated, err := state.InvalidateAppSnapshotsInScope(r.Context(), s.store, app.ID, scope)
 	if err != nil {
 		s.log.Error("env delete: invalidate snapshots", "app", app.Slug, "err", err)

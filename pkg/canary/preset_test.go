@@ -283,6 +283,7 @@ func TestProgressionOnce_CircuitBreakerAbortsExactCandidate(t *testing.T) {
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			DependencySignalAvailable: true,
 		},
 	}
@@ -318,7 +319,7 @@ func TestProgressionOnce_CircuitBreakerHoldsLowTrafficAndExportsEvent(t *testing
 			CanaryPreset:      "balanced",
 			CanaryStep:        0,
 			CanaryTotalSteps:  4,
-			CanaryStepStarted: now.Add(-time.Hour),
+			CanaryStepStarted: now.Add(-(2*time.Minute + api.CanaryLowTrafficMaxHold - time.Second)),
 			RolloutState:      "rolling_out",
 		}}},
 		observation: CircuitBreakerObservation{
@@ -327,6 +328,7 @@ func TestProgressionOnce_CircuitBreakerHoldsLowTrafficAndExportsEvent(t *testing
 			StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			DependencySignalAvailable: true,
 		},
 	}
@@ -343,6 +345,102 @@ func TestProgressionOnce_CircuitBreakerHoldsLowTrafficAndExportsEvent(t *testing
 	}
 	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("hold_insufficient_samples")); got != 1 {
 		t.Fatalf("hold_insufficient_samples metric = %g, want 1", got)
+	}
+}
+
+// ADR-1446: a sample-size hold is bounded. Past the dwell time plus
+// CanaryLowTrafficMaxHold, a stage with no negative evidence advances, while
+// any candidate 5xx keeps holding.
+func TestProgressionOnce_CircuitBreakerBoundsLowTrafficHold(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		candidate5xx int64
+		wantAdvanced int
+		wantSkipped  int
+		wantEvent    string
+	}{
+		{name: "clean low-traffic stage advances", wantAdvanced: 1, wantEvent: "advance_low_traffic"},
+		{name: "candidate 5xx keeps holding", candidate5xx: 1, wantSkipped: 1, wantEvent: "hold_insufficient_samples"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &observedCircuitBreakerStore{
+				stubStore: &stubStore{rows: []CanaryRow{{
+					ID:                "00000000-0000-0000-0000-000000000001",
+					AppID:             "00000000-0000-0000-0000-000000000002",
+					CanaryPreset:      "balanced",
+					CanaryStep:        0,
+					CanaryTotalSteps:  4,
+					CanaryStepStarted: now.Add(-(2*time.Minute + api.CanaryLowTrafficMaxHold)),
+					RolloutState:      "rolling_out",
+				}}},
+				observation: CircuitBreakerObservation{
+					Candidate:                 HealthWindow{Requests: 3, ServerErrors: tc.candidate5xx},
+					Stable:                    HealthWindow{Requests: 4},
+					StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
+					HasStable:                 true,
+					OOMSignalAvailable:        true,
+					LivenessSignalAvailable:   true,
+					DependencySignalAvailable: true,
+				},
+			}
+			ops := wire.NewOpsMetrics("meterd")
+			progression := NewProgression(store, &stubAPID{}, ops, slog.Default())
+			progression.Now = func() time.Time { return now }
+
+			stats, err := progression.Once(context.Background())
+			if err != nil {
+				t.Fatalf("Once: %v", err)
+			}
+			if stats.LowTrafficAdvanced != tc.wantAdvanced || stats.SkippedCircuitBreaker != tc.wantSkipped {
+				t.Fatalf("stats = %+v; want low-traffic advances=%d holds=%d", stats, tc.wantAdvanced, tc.wantSkipped)
+			}
+			if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal(tc.wantEvent)); got != 1 {
+				t.Fatalf("%s metric = %g, want 1", tc.wantEvent, got)
+			}
+		})
+	}
+}
+
+// adr: 1446
+// Clean probe evidence advances a quiet stage at its boundary instead of
+// after api.CanaryLowTrafficMaxHold.
+func TestProgressionOnce_ProbeEvidenceAdvancesAtStageBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	store := &observedCircuitBreakerStore{
+		stubStore: &stubStore{rows: []CanaryRow{{
+			ID:                "00000000-0000-0000-0000-000000000001",
+			AppID:             "00000000-0000-0000-0000-000000000002",
+			CanaryPreset:      "balanced",
+			CanaryStep:        0,
+			CanaryTotalSteps:  4,
+			CanaryStepStarted: now.Add(-(2*time.Minute + time.Second)),
+			RolloutState:      "rolling_out",
+		}}},
+		observation: CircuitBreakerObservation{
+			Candidate:                 HealthWindow{Requests: 1, ProbeRequests: 20},
+			Stable:                    HealthWindow{Requests: 2, ProbeRequests: 20},
+			StableDeploymentID:        "00000000-0000-0000-0000-000000000003",
+			HasStable:                 true,
+			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
+			DependencySignalAvailable: true,
+		},
+	}
+	ops := wire.NewOpsMetrics("meterd")
+	progression := NewProgression(store, &stubAPID{}, ops, slog.Default())
+	progression.Now = func() time.Time { return now }
+
+	stats, err := progression.Once(context.Background())
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if stats.ProbeEvidenceAdvanced != 1 || stats.LowTrafficAdvanced != 0 || stats.SkippedCircuitBreaker != 0 {
+		t.Fatalf("stats = %+v; want one probe-evidence advance at the stage boundary", stats)
+	}
+	if got := testutil.ToFloat64(ops.CanaryProgressionCircuitBreakerTotal("advance_probe_evidence")); got != 1 {
+		t.Fatalf("advance_probe_evidence metric = %g, want 1", got)
 	}
 }
 
@@ -400,6 +498,7 @@ func TestProgressionOnce_CircuitBreakerColdBootAbortHasSpecificReason(t *testing
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			DependencySignalAvailable: true,
 		},
 	}
@@ -441,6 +540,7 @@ func TestProgressionOnce_CircuitBreakerCPUPerRequestAbortHasSpecificReason(t *te
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			CPURequestSignalAvailable: true,
 			DependencySignalAvailable: true,
 		},
@@ -483,6 +583,7 @@ func TestProgressionOnce_CircuitBreakerDependencyErrorAbortHasSpecificReason(t *
 			StableDeploymentID:        stableID,
 			HasStable:                 true,
 			OOMSignalAvailable:        true,
+			LivenessSignalAvailable:   true,
 			CPURequestSignalAvailable: true,
 			DependencySignalAvailable: true,
 		},
