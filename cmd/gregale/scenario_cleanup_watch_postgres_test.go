@@ -286,6 +286,12 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 		t.Fatal(err)
 	}
 	waitCleanupWatchCondition(t, func() bool { state, _ := probeTestCampaignProcess(watchReceipt.Owner); return state == "stopped" })
+	if strings.HasPrefix(mode, "wait-") {
+		testCleanupWatchWaitClean(t, strings.TrimPrefix(mode, "wait-"), d, env, args, root, manifest, work, watcher, setOutage)
+		assertConsumerAcceptanceKey(t, b, journals[2].Faults.Consumers["customer"].AppID, key, false)
+		testCleanupWatchPublicStatus(t, d, env, root, manifest, work, "cleanup_recorded_complete")
+		return
+	}
 	testCleanupWatchPublicStatus(t, d, env, root, manifest, work, "active")
 	if err := watcher.cmd.Process.Signal(syscall.SIGCONT); err != nil {
 		t.Fatal(err)
@@ -382,9 +388,13 @@ func testConsumerPostgresCleanupWatch(t *testing.T, mode string, b *consumerAcce
 	testCleanupWatchPublicStatus(t, d, env, root, manifest, work, "cleanup_recorded_complete")
 }
 
-func waitCleanupWatchCondition(t *testing.T, condition func() bool) {
+func waitCleanupWatchCondition(t *testing.T, condition func() bool, budget ...time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	timeout := 10 * time.Second
+	if len(budget) > 0 {
+		timeout = budget[0]
+	}
+	deadline := time.Now().Add(timeout)
 	for !condition() {
 		if time.Now().After(deadline) {
 			t.Fatal("process ownership condition timed out")

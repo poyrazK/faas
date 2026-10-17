@@ -239,6 +239,7 @@ type consumerAcceptanceDelivery struct {
 	key                            api.ConsumerKeyResponse
 	lostConsumerID                 string
 	puts, keys, cancels            int
+	completedReads                 map[string]int
 	requests                       int
 	mutations                      int
 }
@@ -246,6 +247,17 @@ type consumerAcceptanceDelivery struct {
 func (d *consumerAcceptanceDelivery) releaseCreation() { d.releaseOnce.Do(func() { close(d.release) }) }
 
 func (d *consumerAcceptanceDelivery) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		defer func() {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if d.completedReads == nil {
+				d.completedReads = map[string]int{}
+			}
+			d.completedReads[r.URL.RequestURI()]++
+		}()
+	}
+
 	d.mu.Lock()
 	d.requests++
 	if r.Method != "GET" && r.Method != "HEAD" {
@@ -390,9 +402,17 @@ func testConsumerPostgresPortableRecovery(t *testing.T, createFirst, restart boo
 	}
 	delayed := journals[1].Faults.Consumers["customer"]
 	req := api.ScenarioTestConsumerRequest{AppID: delayed.AppID, ExpiresAt: delayed.ExpiresAt}
+	lateClient := client
+	if outage == "watch:wait-database-unavailable" {
+		// This request is intentionally parked across a full 30s verification
+		// attempt. Keep it alive until the real cancellation fence is committed;
+		// the fixture context still bounds it and status retains production limits.
+		lateClient = api.NewClient(proxy.URL, backend.token)
+		lateClient.HTTPClient().Timeout = 90 * time.Second
+	}
 	late := make(chan error, 1)
 	go func() {
-		_, err := client.EnsureScenarioTestConsumer(ctx, journals[1].RunID, "customer", req)
+		_, err := lateClient.EnsureScenarioTestConsumer(ctx, journals[1].RunID, "customer", req)
 		late <- err
 	}()
 	select {

@@ -574,3 +574,26 @@ Only the final report is emitted to stdout and optional JSON/HTML exports. Its
 At deadline, exit 4 means the final attempt verified resources remain non-clean;
 exit 5 means verification is incomplete (also used for cancellation). Exit 0 requires a clean observation
 before the deadline. Execution and policy gates remain separate.
+
+### Cleanup CI workflow acceptance
+
+The PostgreSQL recovery gate requires `TestScenarioConsumerPostgresWaitClean`
+and all six cases: present-to-clean, API outage recovery, database outage
+recovery, watcher restart, deadline, and changed evidence. Separate processes run
+the public watcher and status commands through the production API and PostgreSQL.
+The same portable three-generation fixture checks durable cancellation, the real
+credential SQL oracle, resource removal, no repeated provisioning, and immutable
+parent evidence. These tests require no KVM and do not qualify VM fault behavior.
+
+While the watcher is stopped between attempts, status must make fresh reads
+without mutations or evidence writes. Successful cases then allow the watcher to
+finish while the status process continues polling. Failure cases verify exit 4
+for resources still present at deadline and exit 5 for changed immutable evidence;
+both retain JSON and HTML diagnostics without awarding execution coverage.
+The gate rejects missing or skipped cases and now requires 27 PostgreSQL test
+results, including top-level suite results.
+
+The database-outage case also covers exhaustion of a single live-verification
+attempt's 30-second budget followed by recovery within a 60-second overall
+wait. Only the fixture's deliberately parked creation request receives a longer
+client timeout; production read budgets and the status command are unchanged.

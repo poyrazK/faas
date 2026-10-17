@@ -68,6 +68,10 @@ POSTGRES_REQUIRED |= {
     "TestScenarioConsumerPostgresCleanupWatch" + suffix
     for suffix in ("", "/api-unavailable", "/database-unavailable", "/restart", "/restart-in-flight", "/restart-twice", "/missing-receipt", "/changed-progress", "/changed-checkpoint", "/changed-handoff", "/concurrent")
 }
+POSTGRES_REQUIRED |= {
+    "TestScenarioConsumerPostgresWaitClean" + suffix
+    for suffix in ("", "/present-to-clean", "/api-unavailable", "/database-unavailable", "/restart", "/deadline", "/changed-evidence")
+}
 GCFLAGS = "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"
 STATE_GCFLAGS = "-gcflags=github.com/onebox-faas/faas/pkg/state=-c=1 -dwarf=false"
 
@@ -260,8 +264,8 @@ def main():
                     return 1
                 env["GREGALE_CONSUMER_ACCEPTANCE_BINARY"] = str(server)
                 acceptance = run("postgres-acceptance", [go, "test", "-p=1", STATE_GCFLAGS, GCFLAGS,
-                    "-json", "-count=1", "-timeout=8m", "-run", "^TestScenarioConsumerPostgres(PortableRecovery|RestartRecovery|OutageRecovery|CleanupWatch)$", PACKAGE],
-                    timeout=600, stdout="postgres-acceptance.json")
+                    "-json", "-count=1", "-timeout=12m", "-run", "^TestScenarioConsumerPostgres(PortableRecovery|RestartRecovery|OutageRecovery|CleanupWatch|WaitClean)$", PACKAGE],
+                    timeout=900, stdout="postgres-acceptance.json")
                 acceptance["tests"] = test_events(output / "postgres-acceptance.json", POSTGRES_REQUIRED)
                 acceptance["passed"] = acceptance["passed"] and not acceptance["tests"]["errors"]
                 save()
