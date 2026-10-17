@@ -124,8 +124,12 @@ func (s *Service) prepareObjectURLCredentialWithLimit(r *http.Request, b state.O
 		c.URL.APIKeyID = p.Key.ID
 	}
 	if req.Method == http.MethodPut {
-		c.URL.ReceiptID = uuid.NewString()
-		receipt = state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: req.Key, Bytes: *req.SizeBytes, ContentType: req.ContentType, Status: "pending", Origin: "gateway", Protection: protection, Encryption: encryption}
+		enroll, err := s.objectNodeSettlementEnrollment(b)
+		if err != nil {
+			return c, receipt, "", err
+		}
+		c.URL.ReceiptID = objectstorage.NewWriteReceiptID()
+		receipt = state.ObjectUploadCompletion{ID: c.URL.ReceiptID, AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: c.ID, Key: req.Key, Bytes: *req.SizeBytes, ContentType: req.ContentType, Status: "pending", Origin: "gateway", QueueNodeSettlement: enroll, Protection: protection, Encryption: encryption}
 	}
 	return c, receipt, secret, nil
 }

@@ -111,6 +111,14 @@ func (s *PgStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, to
 	if err = q.ObjectMultipartReleaseTrackedParts(ctx, tx, mustPgUUID(id)); err != nil {
 		return err
 	}
+	u, err := objectMultipartFromSQL(row)
+	if err != nil {
+		return err
+	}
+	u.State = ObjectMultipartAborted
+	if err = settleMultipartNodeTx(ctx, tx, u); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

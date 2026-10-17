@@ -7,6 +7,10 @@ snapshot/image-layer usage.
 Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-storage.md).
 Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
 
+For the local prototype that begins storing bytes on Gregale-owned disks, see
+[Building Gregale-owned object storage](owned-object-storage.md). It reuses the
+existing S3 driver and does not change the preview's provider qualification gates.
+
 ## Enable a qualified backend
 
 1. Apply database migrations through the normal Gregale deployment process.
