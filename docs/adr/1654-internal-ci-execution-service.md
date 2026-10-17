@@ -1,8 +1,8 @@
-# ADR-1339: Disabled internal CI execution service
+# ADR-1654: Disabled internal CI execution service
 
 - Status: implemented behind default-off flags; native/provider qualification pending
 - Date: 2026-10-15
-- Extends: ADR-1573, ADR-1574, ADR-1336, ADR-1337 and ADR-1338
+- Extends: ADR-1573, ADR-1574, ADR-1651, ADR-1652 and ADR-1653
 
 ## Decision
 
@@ -72,7 +72,7 @@ leases, persisted retry timing, restart identity, policy removal, authenticated
 HTTPS service admission/cancellation, source trailer validation, log cursors and
 artifact publication. Synthetic source/provider/native receipts execute no steps.
 
-The ADR-1338 native harness now uses HTTPS revision/binding/execution admission,
+The ADR-1653 native harness now uses HTTPS revision/binding/execution admission,
 status, logs, cancellation and artifact routes. A subprocess apid worker alone
 advances normal execution. A marker-scoped synthetic githubd gRPC fixture supplies
 the archive; actual GitHub App authorization remains a separate gate. Provider

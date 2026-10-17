@@ -2,7 +2,7 @@
 
 - Status: implemented behind existing default-off internal gates
 - Date: 2026-10-16
-- Extends: ADR-1337, ADR-1339, ADR-1342 and ADR-1577
+- Extends: ADR-1652, ADR-1654, ADR-1657 and ADR-1577
 
 ## Decision
 
@@ -101,7 +101,7 @@ with archived identity retained it is bounded by 480 retry receipts/account
 across 160 Jobs execution identities. Archive does not replenish retry budgets.
 
 Account deletion cascades archive receipts with execution identity. Managed
-storage tombstones continue to survive as designed in ADR-1337. Database
+storage tombstones continue to survive as designed in ADR-1652. Database
 rollback refuses any archived data because removed detail cannot be restored.
 Older binaries fail closed when decoding compact snapshots and cannot reuse
 the retained idempotency keys.

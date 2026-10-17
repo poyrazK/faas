@@ -2,7 +2,7 @@
 
 - Status: implemented behind existing default-off CI gates; native qualification pending
 - Date: 2026-10-17
-- Extends: ADR-1573, ADR-1339, ADR-1340, ADR-1578 and ADR-1583
+- Extends: ADR-1573, ADR-1654, ADR-1655, ADR-1578 and ADR-1583
 
 ## Decision
 

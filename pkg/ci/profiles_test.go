@@ -1,4 +1,4 @@
-// ADR-1340: saved profiles pin source/image authority and cannot enable compute.
+// ADR-1655: saved profiles pin source/image authority and cannot enable compute.
 package ci
 
 import (

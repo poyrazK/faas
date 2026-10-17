@@ -1,4 +1,4 @@
-// ADR-1340: profile commands preserve explicit immutable execution identity.
+// ADR-1655: profile commands preserve explicit immutable execution identity.
 package main
 
 import (

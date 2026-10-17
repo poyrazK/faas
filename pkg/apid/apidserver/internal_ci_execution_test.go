@@ -1,4 +1,4 @@
-// ADR-1339 / ADR-1340 / ADR-1341: authenticated admission and worker recovery.
+// ADR-1654 / ADR-1655 / ADR-1656: authenticated admission and worker recovery.
 package apidserver_test
 
 import (

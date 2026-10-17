@@ -1,8 +1,8 @@
-# ADR-1340: Internal CI execution profiles
+# ADR-1655: Internal CI execution profiles
 
 - Status: implemented behind existing default-off CI gates
 - Date: 2026-10-16
-- Extends: ADR-1339
+- Extends: ADR-1654
 
 ## Decision
 
@@ -72,5 +72,5 @@ redaction, admission gates and recovery after disable. The authenticated HTTPS
 service test submits through a saved profile, disables it, then checks that the
 existing worker still dispatches, recovers and cancels the original execution.
 These tests execute no repository steps and need no native host or real GitHub
-publication. The prepared ADR-1339 native qualification candidate stays frozen;
+publication. The prepared ADR-1654 native qualification candidate stays frozen;
 this implementation is a subsequent source revision.

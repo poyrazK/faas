@@ -1,10 +1,10 @@
-# ADR-1338: Opt-in CI native acceptance harness
+# ADR-1653: Opt-in CI native acceptance harness
 
 - Status: harness implemented; native and real GCS execution pending
 - Date: 2026-10-15
-- Extends: ADR-1573, ADR-1574, ADR-1336 and ADR-1337
+- Extends: ADR-1573, ADR-1574, ADR-1651 and ADR-1652
 
-Service-path extension: [ADR-1339](1339-internal-ci-execution-service.md) now wires
+Service-path extension: [ADR-1654](1654-internal-ci-execution-service.md) now wires
 HTTP execution admission and the bounded apid worker into this harness. The
 Go-only description below records the original implementation. Native acceptance
 remains pending.
@@ -47,7 +47,7 @@ or substituted runner fails qualification.
 The HTTPS fixture terminator preserves the configured host and forwards only
 CI routes to the isolated loopback apid, using its existing trusted local TLS
 termination contract. TLS verification is never disabled. A real private GCS
-bucket supplies source/log/artifact I/O under ADR-1337 policies. A 300 KiB guest
+bucket supplies source/log/artifact I/O under ADR-1652 policies. A 300 KiB guest
 artifact exceeds the driver's resumable chunk size, so provider acceptance
 exercises the real SDK upload path rather than only small multipart objects.
 Physical generation/tombstone fencing is checked again during cleanup.

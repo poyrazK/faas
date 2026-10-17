@@ -1,4 +1,4 @@
-// ADR-1341: only App-signed HTTP ingress can capture automated execution intent.
+// ADR-1656: only App-signed HTTP ingress can capture automated execution intent.
 package githubd
 
 import (

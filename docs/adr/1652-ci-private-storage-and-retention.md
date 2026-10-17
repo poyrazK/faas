@@ -1,8 +1,8 @@
-# ADR-1337: Disabled CI HTTPS transport, private storage and retention
+# ADR-1652: Disabled CI HTTPS transport, private storage and retention
 
 - Status: implemented for portable qualification; native and real GCS acceptance pending
 - Date: 2026-10-15
-- Extends: ADR-1573, ADR-1574 and ADR-1336
+- Extends: ADR-1573, ADR-1574 and ADR-1651
 
 ## Decision
 

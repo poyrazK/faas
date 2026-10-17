@@ -1,8 +1,8 @@
-# ADR-1342: Default-off GitHub Checks for internal CI executions
+# ADR-1657: Default-off GitHub Checks for internal CI executions
 
 - Status: implemented behind default-off gates
 - Date: 2026-10-16
-- Extends: ADR-1572, ADR-1339 and ADR-1341
+- Extends: ADR-1572, ADR-1654 and ADR-1656
 
 ## Decision
 

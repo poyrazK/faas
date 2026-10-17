@@ -1,5 +1,5 @@
 -- +goose Up
--- ADR-1339: bounded apid reconciliation; no native instance ownership changes.
+-- ADR-1654: bounded apid reconciliation; no native instance ownership changes.
 CREATE TABLE IF NOT EXISTS ci_dispatch_budget (lock_id boolean PRIMARY KEY CHECK(lock_id));
 INSERT INTO ci_dispatch_budget VALUES(true) ON CONFLICT (lock_id) DO NOTHING;
 ALTER TABLE ci_executions

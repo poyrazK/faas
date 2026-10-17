@@ -12045,7 +12045,7 @@ const (
 	CIGitHubCheckMaxPages         = 10
 )
 
-// Internal execution Check summaries contain states and counts only (ADR-1342).
+// Internal execution Check summaries contain states and counts only (ADR-1657).
 const CIExecutionCheckSummaryMaxBytes = 8 << 10
 
 // Operator recovery is bounded for each retained execution or skipped source

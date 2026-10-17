@@ -2,7 +2,7 @@
 
 - Status: implemented behind existing default-off gates
 - Date: 2026-10-16
-- Extends: ADR-1339 and ADR-1342
+- Extends: ADR-1654 and ADR-1657
 
 ## Decision
 
@@ -43,7 +43,7 @@ The delivery must be `dead`, have exhausted eight attempts, and have a safe
 publication/provider/abandoned-claim error. `ignored`, unrequested, pending,
 sending and sent records cannot be revived. Missing Check intent is never
 created by recovery. Existing policy/profile/binding disablement does not
-suppress an admitted execution's final result, consistent with ADR-1342.
+suppress an admitted execution's final result, consistent with ADR-1657.
 
 apid re-verifies current account/installation/repository authority through
 githubd before every request, including idempotent replays. It rechecks active
@@ -94,7 +94,7 @@ consecutive attempts under the existing backoff, lease and RPC bounds.
 Turning publication off pauses persisted requests. Re-enabling processes
 only requests for existing opted-in delivery records. GitHub's lack of
 conditional updates and idempotent creation remains the limitation described
-in ADR-1342; this operation does not weaken identity/version guards.
+in ADR-1657; this operation does not weaken identity/version guards.
 
 ## Verification
 

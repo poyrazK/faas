@@ -1,4 +1,4 @@
-// ADR-1340: profile setup, isolation and recovery use the internal CI boundary.
+// ADR-1655: profile setup, isolation and recovery use the internal CI boundary.
 package ciapi_test
 
 import (
@@ -79,7 +79,7 @@ func TestCIProfileAPISetupIsolationAndDisabledRecovery(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &profile); err != nil {
 		t.Fatal(err)
 	}
-	// ADR-1341: policy setup is dormant while every compute/automation gate is off.
+	// ADR-1656: policy setup is dormant while every compute/automation gate is off.
 	autoReq := ci.AutomationRequest{ProfileID: profile.ID, PushBranches: []string{"main"}}
 	if w := call(ciapi.Handler.PutAutomationPolicy, account, "", binding.ID, autoReq); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "private/") {
 		t.Fatalf("dormant automation setup: %d %s", w.Code, w.Body)

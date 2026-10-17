@@ -254,7 +254,7 @@ CREATE INDEX ci_managed_objects_attempt_idx ON ci_managed_objects(attempt_id);
 CREATE INDEX ci_managed_objects_retention_idx ON ci_managed_objects(state,expires_at,created_at);
 
 
--- ADR-1339: independent dispatcher accounting lock and durable scheduling.
+-- ADR-1654: independent dispatcher accounting lock and durable scheduling.
 CREATE TABLE ci_dispatch_budget (lock_id boolean PRIMARY KEY CHECK(lock_id));
 ALTER TABLE ci_executions ADD COLUMN next_reconcile_at timestamptz NOT NULL DEFAULT now(),
  ADD COLUMN reconcile_failures integer NOT NULL DEFAULT 0 CHECK(reconcile_failures BETWEEN 0 AND 16);

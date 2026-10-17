@@ -1,4 +1,4 @@
-// ADR-1341: automation configuration requires an explicit profile and branches.
+// ADR-1656: automation configuration requires an explicit profile and branches.
 package main
 
 import (

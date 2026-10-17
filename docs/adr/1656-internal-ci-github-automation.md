@@ -1,8 +1,8 @@
-# ADR-1341: Default-off GitHub push automation for internal CI
+# ADR-1656: Default-off GitHub push automation for internal CI
 
 - Status: implemented behind default-off gates
 - Date: 2026-10-16
-- Extends: ADR-1572, ADR-1339 and ADR-1340
+- Extends: ADR-1572, ADR-1654 and ADR-1655
 
 ## Decision
 

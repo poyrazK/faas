@@ -1,4 +1,4 @@
-# ADR-1336: Disabled CI scheduler boundary and incomplete-output recovery
+# ADR-1651: Disabled CI scheduler boundary and incomplete-output recovery
 
 - Status: implemented for portable qualification; native acceptance pending
 - Date: 2026-10-15

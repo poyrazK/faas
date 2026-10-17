@@ -141,5 +141,5 @@ These check the harness, ownership journal and compilation. They do not qualify
 native execution. This development workspace lacks KVM and configured GCS
 credentials; native/GCS execution remains pending. CI admission and dispatcher
 are implemented behind default-off flags. See
-[ADR-1338](../adr/1338-ci-native-acceptance-harness.md) and
-[ADR-1339](../adr/1339-internal-ci-execution-service.md).
+[ADR-1653](../adr/1653-ci-native-acceptance-harness.md) and
+[ADR-1654](../adr/1654-internal-ci-execution-service.md).

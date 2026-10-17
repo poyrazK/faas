@@ -225,7 +225,7 @@ Profiles do not enable automatic GitHub execution or change blocked receipts.
 PUT accepts `revision_id`, `binding_id` and a `templates` job-to-UUID object.
 The existing execution POST accepts `profile_id` plus `commit_sha` and the
 Idempotency-Key header, or its existing explicit configuration. See
-[ADR-1340](../adr/1340-internal-ci-execution-profiles.md).
+[ADR-1655](../adr/1655-internal-ci-execution-profiles.md).
 
 ### Pass artifacts to dependent jobs
 
@@ -458,7 +458,7 @@ intent and storage reservations for retry; do not delete journals or clear lease
 `make test-ci-service` runs portable dispatcher/API/CLI checks with PostgreSQL and
 synthetic compute. `make test-apid RUN='^TestInternalCI' RACE=1` checks authenticated
 route/worker wiring. These are separate from native qualification. See
-[ADR-1339](../adr/1339-internal-ci-execution-service.md).
+[ADR-1654](../adr/1654-internal-ci-execution-service.md).
 
 ## Automation path filters (disabled)
 
@@ -570,7 +570,7 @@ PUT accepts `profile_id`, `push_branches`, `pull_request_branches` and the push
 `latest_only` setting. No template overrides or remote
 pipeline configuration are accepted. Events admitted to execution do not receive
 the separate blocked-admission Check. See
-[ADR-1341](../adr/1341-internal-ci-github-automation.md).
+[ADR-1656](../adr/1656-internal-ci-github-automation.md).
 
 ### Branch concurrency and latest-only policies
 
@@ -763,7 +763,7 @@ read remote identity/version before updates. GitHub has no conditional update
 or idempotent create API, so late requests after process/network loss remain a
 provider limitation. Portable tests use PostgreSQL and fake GitHub HTTP. Real
 App publication and native compute qualification remain separate verification.
-See [ADR-1342](../adr/1342-internal-ci-execution-checks.md).
+See [ADR-1657](../adr/1657-internal-ci-execution-checks.md).
 
 ### Structured JUnit test reports
 
@@ -1356,7 +1356,7 @@ The scheduler hook is wired with every CI gate off and its origin empty. CI
 admission and execution reconciliation workers remain absent. Transfer routes,
 private storage and retirement have independent disabled configuration. Do not
 enable any gate until the native, provider and operational prerequisites pass. See
-[ADR-1336](../adr/1336-disabled-ci-scheduler-boundary.md).
+[ADR-1651](../adr/1651-disabled-ci-scheduler-boundary.md).
 
 Native qualification is pending in the managed development container: `/dev/kvm`
 is absent, and `leakcheck` cannot inspect sysfs loop entries without matching
@@ -1453,7 +1453,7 @@ Real GCS IAM/policy, resumable uploads and failure/restart qualification remain
 pending because this environment has no configured cloud credentials. Native
 acceptance and image materialization/lifetime remain before any compute pilot. No image, bucket or fleet configuration
 is published here. See
-[ADR-1337](../adr/1337-ci-private-storage-and-retention.md).
+[ADR-1652](../adr/1652-ci-private-storage-and-retention.md).
 
 ## Opt-in native acceptance harness
 

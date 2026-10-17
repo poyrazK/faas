@@ -1,4 +1,4 @@
-// ADR-1341: only fresh authenticated pushes can admit profile-owned execution.
+// ADR-1656: only fresh authenticated pushes can admit profile-owned execution.
 package ci
 
 import (
