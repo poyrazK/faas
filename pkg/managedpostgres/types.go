@@ -23,6 +23,19 @@ var (
 	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
+// ChangeRejectedError is a provider's final refusal of an in-place change:
+// asking again for the same change cannot succeed. Code is a stable
+// snake_case reason, such as upgrade_refused (pg_upgrade's check refused
+// the cluster, which stays on its major) or upgrade_failed (the database
+// needs a point-in-time restore). It is an ErrConflict.
+type ChangeRejectedError struct {
+	Code string
+}
+
+func (e *ChangeRejectedError) Error() string { return "managed postgres: change rejected: " + e.Code }
+
+func (e *ChangeRejectedError) Unwrap() error { return ErrConflict }
+
 type State string
 
 const (

@@ -127,6 +127,9 @@ func (unavailableScheduler) DatabaseUsage(context.Context, *scheddpb.DatabaseUsa
 func (unavailableScheduler) ResizeDatabase(context.Context, *scheddpb.ResizeDatabaseRequest, ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
 	return nil, errDescribeOnly
 }
+func (unavailableScheduler) UpgradeDatabase(context.Context, *scheddpb.UpgradeDatabaseRequest, ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	return nil, errDescribeOnly
+}
 
 func (unavailableScheduler) ImportDatabase(context.Context, *scheddpb.ImportDatabaseRequest, ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
 	return nil, errDescribeOnly

@@ -26,7 +26,7 @@ const (
 	// StateMoving: the parked database's volume is being copied to
 	// VM.MoveNode (move.go). It cannot wake, park or be deleted meanwhile.
 	StateMoving State = "moving"
-	// StateUpgrading: the database's VM runs pg_upgrade to VM.UpgradeMajor
+	// StateUpgrading: the database's VM runs pg_upgrade to VM.Upgrade.To
 	// (upgrade.go). It cannot wake, park or move meanwhile.
 	StateUpgrading State = "upgrading"
 	StateDeleting  State = "deleting"
@@ -124,10 +124,11 @@ type VM struct {
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.
 	RestoreUntilEnd bool
-	// UpgradeMajor is the major an upgrading database is being upgraded
-	// to, under the lease UpgradeLeaseUntil (upgrade.go). MajorHistory is
-	// the majors it ran before, oldest first.
-	UpgradeMajor      int
+	// Upgrade is the database's current or last in-place major upgrade
+	// (upgrade.go); an upgrading database holds the lease
+	// UpgradeLeaseUntil. MajorHistory is the majors it ran before, oldest
+	// first.
+	Upgrade           Upgrade
 	UpgradeLeaseUntil time.Time
 	MajorHistory      []MajorSpan
 	// UpgradeFrom boots the volume's cluster of that older major and
@@ -141,6 +142,23 @@ type VM struct {
 	// NodeTarget is the node's vmmd dial target. The scheduler fills it on
 	// Wake and Get; stores do not persist it.
 	NodeTarget string
+}
+
+// Upgrade results.
+const (
+	UpgradeOK      = "ok"
+	UpgradeRefused = "refused"
+	UpgradeFailed  = "failed"
+)
+
+// Upgrade is a database's current or last in-place major upgrade.
+type Upgrade struct {
+	// Operation names it: apid's journaled request, a lowercase UUID.
+	Operation string
+	From, To  int
+	// Result is empty while it runs, then UpgradeOK, UpgradeRefused or
+	// UpgradeFailed.
+	Result string
 }
 
 // MajorSpan is a major a database ran until an upgrade.
@@ -260,11 +278,12 @@ type Store interface {
 	Delete(ctx context.Context, id string) error
 
 	// Major upgrades (upgrade.go). BeginUpgrade marks a parked, bootstrapped
-	// database upgrading to major under the upgrade's lease if its node's
-	// RAM ceiling admits its VM (else ErrNoCapacity; an unavailable node
-	// is ErrNodeUnavailable). A database on major or a later one is
-	// ErrInvalid; one resize- or promotion-pending is ErrConflict.
-	BeginUpgrade(ctx context.Context, id string, major int, lease time.Duration) (VM, error)
+	// database upgrading to major as operation, under the upgrade's lease,
+	// if its node's RAM ceiling admits its VM (else ErrNoCapacity; an
+	// unavailable node is ErrNodeUnavailable). A database on major or a
+	// later one is ErrInvalid; one resize- or promotion-pending is
+	// ErrConflict.
+	BeginUpgrade(ctx context.Context, id string, major int, operation string, lease time.Duration) (VM, error)
 	// ClaimUpgrade renews the lease held, or takes one that lapsed (held
 	// zero), returning the new lease; otherwise ErrConflict.
 	ClaimUpgrade(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
@@ -273,9 +292,9 @@ type Store interface {
 	// (parked or running). backupAt is its first base backup on the new
 	// major, zero when none was taken. Only the lease holder can.
 	FinishUpgrade(ctx context.Context, id string, held time.Time, to State, until, backupAt time.Time) error
-	// AbortUpgrade ends an upgrade on the database's old major, in to
-	// (parked or failed): by the lease holder, or by anyone once the lease
-	// lapsed (held zero).
+	// AbortUpgrade ends an upgrade on the database's old major, in to:
+	// parked (UpgradeRefused) or failed (UpgradeFailed). By the lease
+	// holder, or by anyone once the lease lapsed (held zero).
 	AbortUpgrade(ctx context.Context, id string, held time.Time, to State, lastError string) error
 
 	// Standbys (standby.go). Place gives a replicated database a standby
@@ -463,6 +482,15 @@ func admitWakeOn(node Node, usage nodeUsage, memMiB int) error {
 		return ErrBootSlotsBusy
 	}
 	return nil
+}
+
+// upgradeResultFor is the result of an upgrade that ended in to, on the
+// database's old major.
+func upgradeResultFor(to State) string {
+	if to == StateParked {
+		return UpgradeRefused
+	}
+	return UpgradeFailed
 }
 
 // admitUpgradeOn checks an upgrade of vm to major against its node's

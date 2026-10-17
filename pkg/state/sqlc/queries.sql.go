@@ -100,24 +100,26 @@ func (q *Queries) AbortDatabaseVMMove(ctx context.Context, db DBTX, arg AbortDat
 
 const abortDatabaseVMUpgrade = `-- name: AbortDatabaseVMUpgrade :execrows
 UPDATE database_vms
-SET upgrade_major = NULL, upgrade_lease_until = NULL, state = $1::text, state_changed_at = now(),
-    last_error = $2
-WHERE database_id = $3 AND state = 'upgrading'
-  AND (upgrade_lease_until = $4::timestamptz
-       OR ($4::timestamptz IS NULL AND upgrade_lease_until < now()))
+SET upgrade_result = $1::text, upgrade_lease_until = NULL, state = $2::text, state_changed_at = now(),
+    last_error = $3
+WHERE database_id = $4 AND state = 'upgrading'
+  AND (upgrade_lease_until = $5::timestamptz
+       OR ($5::timestamptz IS NULL AND upgrade_lease_until < now()))
 `
 
 type AbortDatabaseVMUpgradeParams struct {
-	ToState    string
-	LastError  pgtype.Text
-	DatabaseID pgtype.UUID
-	Held       pgtype.Timestamptz
+	UpgradeResult string
+	ToState       string
+	LastError     pgtype.Text
+	DatabaseID    pgtype.UUID
+	Held          pgtype.Timestamptz
 }
 
-// Ends an upgrade on the major the database had: by the lease holder, or
-// by anyone once the lease lapsed (held NULL).
+// Ends an upgrade on the major the database had, with its result: by the
+// lease holder, or by anyone once the lease lapsed (held NULL).
 func (q *Queries) AbortDatabaseVMUpgrade(ctx context.Context, db DBTX, arg AbortDatabaseVMUpgradeParams) (int64, error) {
 	result, err := db.Exec(ctx, abortDatabaseVMUpgrade,
+		arg.UpgradeResult,
 		arg.ToState,
 		arg.LastError,
 		arg.DatabaseID,
@@ -2076,22 +2078,30 @@ func (q *Queries) BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDat
 
 const beginDatabaseVMUpgrade = `-- name: BeginDatabaseVMUpgrade :execrows
 UPDATE database_vms
-SET state = 'upgrading', upgrade_major = $1::integer, state_changed_at = now(), last_error = NULL,
-    upgrade_lease_until = now() + make_interval(secs => $2::double precision)
-WHERE database_id = $3 AND state = 'parked' AND bootstrapped AND NOT resize_pending AND NOT promote_pending
+SET state = 'upgrading', upgrade_major = $1::integer, upgrade_from = postgres_major,
+    upgrade_operation = $2::text, upgrade_result = NULL, state_changed_at = now(), last_error = NULL,
+    upgrade_lease_until = now() + make_interval(secs => $3::double precision)
+WHERE database_id = $4 AND state = 'parked' AND bootstrapped AND NOT resize_pending AND NOT promote_pending
   AND postgres_major < $1::integer
 `
 
 type BeginDatabaseVMUpgradeParams struct {
-	UpgradeMajor int32
-	LeaseSeconds float64
-	DatabaseID   pgtype.UUID
+	UpgradeMajor     int32
+	UpgradeOperation string
+	LeaseSeconds     float64
+	DatabaseID       pgtype.UUID
 }
 
-// Marks a parked database upgrading to upgrade_major under the caller's
-// lease; the caller checked its node's room under the node's lock.
+// Marks a parked database upgrading to upgrade_major as the operation
+// under the caller's lease; the caller checked its node's room under the
+// node's lock.
 func (q *Queries) BeginDatabaseVMUpgrade(ctx context.Context, db DBTX, arg BeginDatabaseVMUpgradeParams) (int64, error) {
-	result, err := db.Exec(ctx, beginDatabaseVMUpgrade, arg.UpgradeMajor, arg.LeaseSeconds, arg.DatabaseID)
+	result, err := db.Exec(ctx, beginDatabaseVMUpgrade,
+		arg.UpgradeMajor,
+		arg.UpgradeOperation,
+		arg.LeaseSeconds,
+		arg.DatabaseID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -15211,7 +15221,7 @@ func (q *Queries) FinishDatabaseVMResize(ctx context.Context, db DBTX, databaseI
 const finishDatabaseVMUpgrade = `-- name: FinishDatabaseVMUpgrade :execrows
 UPDATE database_vms
 SET major_history = major_history || jsonb_build_array(jsonb_build_object('major', postgres_major, 'until', $1::timestamptz)),
-    postgres_major = upgrade_major, upgrade_major = NULL, upgrade_lease_until = NULL,
+    postgres_major = upgrade_major, upgrade_result = 'ok', upgrade_lease_until = NULL,
     last_backup_at = $2::timestamptz,
     state = $3::text, state_changed_at = now(), last_error = NULL,
     last_active_at = CASE WHEN $3::text = 'running' THEN now() ELSE last_active_at END
@@ -17796,7 +17806,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17833,6 +17843,9 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.PromotePending,
 		&i.DropStandbySlot,
 		&i.UpgradeMajor,
+		&i.UpgradeFrom,
+		&i.UpgradeOperation,
+		&i.UpgradeResult,
 		&i.UpgradeLeaseUntil,
 		&i.MajorHistory,
 	)
@@ -30830,7 +30843,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30873,6 +30886,9 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.PromotePending,
 			&i.DropStandbySlot,
 			&i.UpgradeMajor,
+			&i.UpgradeFrom,
+			&i.UpgradeOperation,
+			&i.UpgradeResult,
 			&i.UpgradeLeaseUntil,
 			&i.MajorHistory,
 		); err != nil {

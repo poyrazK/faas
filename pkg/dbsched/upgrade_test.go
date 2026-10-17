@@ -33,7 +33,7 @@ func TestUpgradeParkedDatabase(t *testing.T) {
 	ctx := context.Background()
 	vm := provisionMajor(t, s, 14)
 	before := time.Now()
-	got, err := s.Upgrade(ctx, vm.DatabaseID, 17)
+	got, err := s.Upgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestUpgradeRunningDatabaseRunsOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	stops := vmm.callCount("stop")
-	got, err := s.Upgrade(ctx, vm.DatabaseID, 16)
+	got, err := s.Upgrade(ctx, vm.DatabaseID, 16, uuid.NewString())
 	if err != nil || got.State != StateRunning || got.Major != 16 || !vmm.running[vm.DatabaseID] || vmm.runMajor[vm.DatabaseID] != 16 {
 		t.Fatalf("upgrade of a database in use = %+v, %v", got, err)
 	}
@@ -85,12 +85,12 @@ func TestUpgradeRefusedStaysOnItsMajor(t *testing.T) {
 	withMetrics(s)
 	vm := provisionMajor(t, s, 14)
 	vmm.upgradeCode = dbguest.ErrCodeUpgradeRefused
-	got, err := s.Upgrade(ctx, vm.DatabaseID, 17)
+	got, err := s.Upgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
 	if !errors.Is(err, ErrUpgradeRefused) || got.State != StateParked || got.Major != 14 || got.LastError != dbguest.ErrCodeUpgradeRefused ||
 		got.MajorHistory != nil || vmm.running[vm.DatabaseID] {
 		t.Fatalf("refused upgrade = %+v, %v", got, err)
 	}
-	if n := testutil.ToFloat64(s.cfg.Metrics.upgrades.WithLabelValues(upgradeRefused)); n != 1 {
+	if n := testutil.ToFloat64(s.cfg.Metrics.upgrades.WithLabelValues(UpgradeRefused)); n != 1 {
 		t.Fatalf("refused upgrades counted %v", n)
 	}
 	vmm.upgradeCode = ""
@@ -104,7 +104,7 @@ func TestUpgradeFailedNeedsRestore(t *testing.T) {
 	ctx := context.Background()
 	vm := provisionMajor(t, s, 14)
 	vmm.upgradeCode = dbguest.ErrCodeUpgradeFailed
-	got, err := s.Upgrade(ctx, vm.DatabaseID, 17)
+	got, err := s.Upgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
 	if !errors.Is(err, ErrUpgradeFailed) || got.State != StateFailed || got.Major != 14 || got.LastError != dbguest.ErrCodeUpgradeFailed || vmm.running[vm.DatabaseID] {
 		t.Fatalf("broken upgrade = %+v, %v", got, err)
 	}
@@ -118,16 +118,16 @@ func TestUpgradeValidation(t *testing.T) {
 	ctx := context.Background()
 	seedNodes(t, store, Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 1, Majors: []int{14, 16}, Lifecycle: NodeActive})
 	vm := provisionMajor(t, s, 16)
-	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 16); !errors.Is(err, ErrInvalid) {
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 16, uuid.NewString()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("upgrade to the same major = %v", err)
 	}
-	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 15); !errors.Is(err, ErrInvalid) {
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 15, uuid.NewString()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("downgrade = %v", err)
 	}
-	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 19); !errors.Is(err, ErrInvalid) {
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 19, uuid.NewString()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("upgrade to an unknown major = %v", err)
 	}
-	if _, err := s.StartUpgrade(ctx, uuid.NewString(), 17); !errors.Is(err, ErrNotFound) {
+	if _, err := s.StartUpgrade(ctx, uuid.NewString(), 17, uuid.NewString()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("upgrade of a missing database = %v", err)
 	}
 	// db-b offers 14 and 16 only.
@@ -138,22 +138,29 @@ func TestUpgradeValidation(t *testing.T) {
 	if err := store.Transition(ctx, on14.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.StartUpgrade(ctx, on14.DatabaseID, 17); !errors.Is(err, ErrInvalid) {
+	if _, err := s.StartUpgrade(ctx, on14.DatabaseID, 17, uuid.NewString()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("upgrade to a major the node lacks = %v", err)
 	}
 
 	// While it upgrades it cannot wake, move or resize; asking again for
 	// the same major returns it, for another is ErrConflict.
 	vmm.upgradeHold = make(chan struct{})
-	upgrading, err := s.StartUpgrade(ctx, vm.DatabaseID, 17)
-	if err != nil || upgrading.State != StateUpgrading || upgrading.UpgradeMajor != 17 {
+	operation := uuid.NewString()
+	upgrading, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, operation)
+	if err != nil || upgrading.State != StateUpgrading || upgrading.Upgrade != (Upgrade{Operation: operation, From: 16, To: 17}) {
 		t.Fatalf("start = %+v, %v", upgrading, err)
 	}
-	if again, err := s.StartUpgrade(ctx, vm.DatabaseID, 17); err != nil || again.State != StateUpgrading {
+	if again, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, operation); err != nil || again.State != StateUpgrading {
 		t.Fatalf("start again = %+v, %v", again, err)
 	}
-	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 18); !errors.Is(err, ErrConflict) {
-		t.Fatalf("start to another major = %v", err)
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 18, operation); !errors.Is(err, ErrConflict) {
+		t.Fatalf("the operation again to another major = %v", err)
+	}
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("another upgrade while one runs = %v", err)
+	}
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, "Not-A-UUID"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("an upgrade without a valid operation = %v", err)
 	}
 	if _, err := s.Wake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("wake while upgrading = %v", err)
@@ -166,8 +173,14 @@ func TestUpgradeValidation(t *testing.T) {
 	}
 	close(vmm.upgradeHold)
 	s.upgradeWG.Wait()
-	if got, _ := store.Get(ctx, vm.DatabaseID); got.State != StateParked || got.Major != 17 {
+	if got, _ := store.Get(ctx, vm.DatabaseID); got.State != StateParked || got.Major != 17 || got.Upgrade.Result != UpgradeOK {
 		t.Fatalf("after the held upgrade = %+v", got)
+	}
+	// The finished operation again reports its outcome; it never upgrades
+	// twice.
+	starts := vmm.callCount("start")
+	if again, err := s.Upgrade(ctx, vm.DatabaseID, 17, operation); err != nil || again.Major != 17 || again.Upgrade.Result != UpgradeOK || vmm.callCount("start") != starts {
+		t.Fatalf("the finished operation again = %+v, %v (%d boots)", again, err, vmm.callCount("start")-starts)
 	}
 }
 
@@ -176,7 +189,7 @@ func TestDeleteDuringUpgrade(t *testing.T) {
 	ctx := context.Background()
 	vm := provisionMajor(t, s, 14)
 	vmm.upgradeHold = make(chan struct{})
-	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17); err != nil {
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Delete(ctx, vm.DatabaseID); err != nil {
@@ -197,7 +210,7 @@ func TestResumeUpgrade(t *testing.T) {
 	ctx := context.Background()
 	vm := provisionMajor(t, s, 14)
 	// The stopped replica's upgrade: marked, booted, then abandoned.
-	upgrading, err := store.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Millisecond)
+	upgrading, err := store.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +253,7 @@ func TestUpgradeRetriesThenGivesUp(t *testing.T) {
 	s.cfg.UpgradeLease, s.cfg.UpgradeTimeout = 30*time.Millisecond, time.Hour
 	vm := provisionMajor(t, s, 14)
 	vmm.startErr = errors.New("jailer exploded")
-	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17); err != nil {
+	if _, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}
 	s.upgradeWG.Wait()
@@ -289,7 +302,7 @@ func TestUpgradeReplicatedDatabase(t *testing.T) {
 		t.Fatalf("standby never synchronized: %+v", got)
 	}
 	vmm.upgradeHold = make(chan struct{})
-	upgrading, err := s.StartUpgrade(ctx, vm.DatabaseID, 17)
+	upgrading, err := s.StartUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString())
 	if err != nil || upgrading.StandbySynced || upgrading.StandbyRunning {
 		t.Fatalf("upgrading = %+v, %v; want the standby stopped and not synchronized", upgrading, err)
 	}
@@ -316,7 +329,7 @@ func TestRestoreAcrossAnUpgrade(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	beforeUpgrade := time.Now()
 	time.Sleep(20 * time.Millisecond)
-	upgraded, err := s.Upgrade(ctx, source.DatabaseID, 17)
+	upgraded, err := s.Upgrade(ctx, source.DatabaseID, 17, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}

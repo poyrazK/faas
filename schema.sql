@@ -17698,6 +17698,9 @@ CREATE TABLE public.database_vms (
     promote_pending boolean DEFAULT false NOT NULL,
     drop_standby_slot boolean DEFAULT false NOT NULL,
     upgrade_major integer,
+    upgrade_from integer,
+    upgrade_operation text,
+    upgrade_result text,
     upgrade_lease_until timestamp with time zone,
     major_history jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT database_vms_last_error_check CHECK (((last_error IS NULL) OR (last_error ~ '^[a-z_]{1,64}$'::text))),
@@ -17709,7 +17712,8 @@ CREATE TABLE public.database_vms (
     CONSTRAINT database_vms_restore_window_seconds_check CHECK ((restore_window_seconds >= 0)),
     CONSTRAINT database_vms_standby CHECK ((((standby_node IS NULL) OR (replicated AND (standby_node <> node_id))) AND ((NOT standby_running) OR (standby_node IS NOT NULL)) AND ((NOT standby_synced) OR (standby_node IS NOT NULL)) AND ((move_node IS NULL) OR (standby_node IS NULL) OR (move_node <> standby_node)) AND (NOT (drop_standby_slot AND replicated)))),
     CONSTRAINT database_vms_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'parked'::text, 'waking'::text, 'running'::text, 'parking'::text, 'moving'::text, 'upgrading'::text, 'deleting'::text, 'failed'::text]))),
-    CONSTRAINT database_vms_upgrade CHECK ((((state = 'upgrading'::text) = (upgrade_major IS NOT NULL)) AND ((upgrade_major IS NULL) OR ((upgrade_major > postgres_major) AND (upgrade_major <= 18) AND (upgrade_lease_until IS NOT NULL))))),
+    CONSTRAINT database_vms_upgrade CHECK (((((upgrade_major IS NULL) = (upgrade_from IS NULL)) AND ((upgrade_major IS NULL) = (upgrade_operation IS NULL)) AND ((upgrade_major IS NULL) OR ((upgrade_from >= 14) AND (upgrade_major > upgrade_from) AND (upgrade_major <= 18))) AND ((upgrade_operation IS NULL) OR (upgrade_operation ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)) AND ((state = 'upgrading'::text) = (upgrade_lease_until IS NOT NULL)) AND ((state <> 'upgrading'::text) OR ((upgrade_major IS NOT NULL) AND (upgrade_result IS NULL) AND (upgrade_from = postgres_major))) AND ((state = 'upgrading'::text) OR (upgrade_major IS NULL) OR (upgrade_result IS NOT NULL)) AND ((upgrade_result IS NULL) OR (upgrade_result <> 'ok'::text) OR (postgres_major = upgrade_major)) AND ((upgrade_result IS NULL) OR (upgrade_result = 'ok'::text) OR (postgres_major = upgrade_from))))),
+    CONSTRAINT database_vms_upgrade_result_check CHECK ((upgrade_result = ANY (ARRAY['ok'::text, 'refused'::text, 'failed'::text]))),
     CONSTRAINT database_vms_vcpu_count_check CHECK (((vcpu_count >= 1) AND (vcpu_count <= 32))),
     CONSTRAINT database_vms_volume_bytes_check CHECK ((volume_bytes > 0))
 );

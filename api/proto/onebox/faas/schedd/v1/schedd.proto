@@ -340,6 +340,13 @@ service Schedd {
   // (the production class). A running database restarts on the new
   // shape. Repeating the request resumes an interrupted resize. apid only.
   rpc ResizeDatabase(ResizeDatabaseRequest) returns (DatabaseRuntime);
+  // UpgradeDatabase upgrades a database in place to a later PostgreSQL
+  // major with pg_upgrade (ADR-1027). It returns once the upgrade is
+  // recorded, with the database upgrading; schedd runs it in the
+  // background, parking a running database for it. operation_id names
+  // the upgrade: repeating it reports the upgrade's progress or outcome in
+  // DatabaseRuntime.upgrade and never upgrades twice. apid only.
+  rpc UpgradeDatabase(UpgradeDatabaseRequest) returns (DatabaseRuntime);
   // ImportDatabase starts copying another PostgreSQL database into an
   // empty database of this one (ADR-1027 migration off Neon), waking it.
   // A running or finished import is reported, not restarted. apid only.
@@ -1238,7 +1245,8 @@ message SetDatabaseAlwaysOnRequest {
 message DatabaseRuntime {
   string database_id = 1;
   string node_id = 2;
-  // provisioning, parked, waking, running, parking, deleting or failed.
+  // provisioning, parked, waking, running, parking, moving, upgrading,
+  // deleting or failed.
   string state = 3;
   bool bootstrapped = 4;
   // Stable error code of the last failed transition.
@@ -1269,6 +1277,27 @@ message DatabaseRuntime {
   bool standby_synced = 19;
   // When the database was placed.
   google.protobuf.Timestamp created_at = 20;
+  // The database's current or last in-place major upgrade; absent if it
+  // never had one.
+  DatabaseUpgrade upgrade = 21;
+}
+
+message UpgradeDatabaseRequest {
+  string database_id = 1;
+  int32 postgres_major = 2;
+  // The upgrade's name, a lowercase UUID: the managed-Postgres driver
+  // derives it from apid's journaled request.
+  string operation_id = 3;
+}
+
+message DatabaseUpgrade {
+  string operation_id = 1;
+  int32 from_major = 2;
+  int32 to_major = 3;
+  // running, ok, refused (pg_upgrade's check refused the cluster, which
+  // stays on from_major) or failed (the database needs a point-in-time
+  // restore).
+  string state = 4;
 }
 
 // ImportDatabaseRequest names the source: its endpoint (a public address

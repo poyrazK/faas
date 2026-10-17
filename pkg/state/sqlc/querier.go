@@ -18,8 +18,8 @@ type Querier interface {
 	// Ends a move with the database parked where it was: by the lease holder,
 	// or by anyone once the lease has lapsed (held NULL).
 	AbortDatabaseVMMove(ctx context.Context, db DBTX, arg AbortDatabaseVMMoveParams) (int64, error)
-	// Ends an upgrade on the major the database had: by the lease holder, or
-	// by anyone once the lease lapsed (held NULL).
+	// Ends an upgrade on the major the database had, with its result: by the
+	// lease holder, or by anyone once the lease lapsed (held NULL).
 	AbortDatabaseVMUpgrade(ctx context.Context, db DBTX, arg AbortDatabaseVMUpgradeParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AbortProfileGatedCanary(ctx context.Context, db DBTX, arg AbortProfileGatedCanaryParams) (int64, error)
@@ -129,8 +129,9 @@ type Querier interface {
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
 	BeginClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg BeginClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDatabaseVMMoveParams) (int64, error)
-	// Marks a parked database upgrading to upgrade_major under the caller's
-	// lease; the caller checked its node's room under the node's lock.
+	// Marks a parked database upgrading to upgrade_major as the operation
+	// under the caller's lease; the caller checked its node's room under the
+	// node's lock.
 	BeginDatabaseVMUpgrade(ctx context.Context, db DBTX, arg BeginDatabaseVMUpgradeParams) (int64, error)
 	BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error)
 	// ADR-581: persist an irreversible accounting obligation before provider I/O.

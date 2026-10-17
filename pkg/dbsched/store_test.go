@@ -543,22 +543,22 @@ func TestStoreMajorUpgrade(t *testing.T) {
 				return vm
 			}
 			vm, other := parked(14), parked(14)
-			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 14, time.Minute); !errors.Is(err, ErrInvalid) {
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 14, uuid.NewString(), time.Minute); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("upgrade to the same major = %v, want ErrInvalid", err)
 			}
 			// The other database's VM fills the node's RAM.
 			if _, err := s.AdmitWake(ctx, other.DatabaseID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Minute); !errors.Is(err, ErrNoCapacity) {
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Minute); !errors.Is(err, ErrNoCapacity) {
 				t.Fatalf("upgrade on a full node = %v, want ErrNoCapacity", err)
 			}
 			if err := s.Transition(ctx, other.DatabaseID, []State{StateWaking}, StateParked, TransitionOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			started := time.Now()
-			upgrading, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Minute)
-			if err != nil || upgrading.State != StateUpgrading || upgrading.UpgradeMajor != 17 || upgrading.Major != 14 || upgrading.UpgradeLeaseUntil.IsZero() {
+			upgrading, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Minute)
+			if err != nil || upgrading.State != StateUpgrading || upgrading.Upgrade.To != 17 || upgrading.Upgrade.From != 14 || upgrading.Upgrade.Result != "" || upgrading.Major != 14 || upgrading.UpgradeLeaseUntil.IsZero() {
 				t.Fatalf("begin = %+v, %v", upgrading, err)
 			}
 			if loads, _ := s.Loads(ctx); loads["db-a"].ActiveMB != billableMB(384) {
@@ -570,7 +570,7 @@ func TestStoreMajorUpgrade(t *testing.T) {
 			if _, err := s.AdmitWake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
 				t.Fatalf("wake of an upgrading database = %v, want ErrConflict", err)
 			}
-			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Minute); !errors.Is(err, ErrConflict) {
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Minute); !errors.Is(err, ErrConflict) {
 				t.Fatalf("second begin = %v, want ErrConflict", err)
 			}
 
@@ -597,7 +597,7 @@ func TestStoreMajorUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := s.Get(ctx, vm.DatabaseID)
-			if err != nil || got.State != StateParked || got.Major != 17 || got.UpgradeMajor != 0 || !got.UpgradeLeaseUntil.IsZero() ||
+			if err != nil || got.State != StateParked || got.Major != 17 || got.Upgrade.To != 17 || got.Upgrade.Result != UpgradeOK || !got.UpgradeLeaseUntil.IsZero() ||
 				!got.LastBackupAt.Equal(backup) || len(got.MajorHistory) != 1 || got.MajorHistory[0].Major != 14 || !got.MajorHistory[0].Until.Equal(until) {
 				t.Fatalf("after the upgrade = %+v, %v", got, err)
 			}
@@ -610,23 +610,23 @@ func TestStoreMajorUpgrade(t *testing.T) {
 
 			// A lapsed lease ends the next upgrade by anyone; a failed
 			// database is not upgraded.
-			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 18, time.Millisecond); err != nil {
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 18, uuid.NewString(), time.Millisecond); err != nil {
 				t.Fatal(err)
 			}
 			time.Sleep(20 * time.Millisecond)
 			if err := s.AbortUpgrade(ctx, vm.DatabaseID, time.Time{}, StateFailed, "upgrade_failed"); err != nil {
 				t.Fatal(err)
 			}
-			if got, _ := s.Get(ctx, vm.DatabaseID); got.State != StateFailed || got.Major != 17 || got.LastError != "upgrade_failed" || got.UpgradeMajor != 0 {
+			if got, _ := s.Get(ctx, vm.DatabaseID); got.State != StateFailed || got.Major != 17 || got.LastError != "upgrade_failed" || got.Upgrade.Result != UpgradeFailed || got.Upgrade.From != 17 || got.Upgrade.To != 18 {
 				t.Fatalf("after the abort = %+v", got)
 			}
-			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 18, time.Minute); !errors.Is(err, ErrConflict) {
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 18, uuid.NewString(), time.Minute); !errors.Is(err, ErrConflict) {
 				t.Fatalf("upgrade of a failed database = %v, want ErrConflict", err)
 			}
 
 			// Finishing running opens compute and records no backup when
 			// none was taken.
-			second, err := s.BeginUpgrade(ctx, other.DatabaseID, 16, time.Minute)
+			second, err := s.BeginUpgrade(ctx, other.DatabaseID, 16, uuid.NewString(), time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}

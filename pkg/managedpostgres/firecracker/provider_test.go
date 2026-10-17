@@ -55,6 +55,42 @@ type fakeScheduler struct {
 	importRequired int64
 	// snapshots are held snapshots by database/name.
 	snapshots map[string]*scheddpb.DatabaseSnapshot
+	// upgrades are the upgrade requests; upgradeOutcome is what a running
+	// upgrade ends in when asked again (empty: it keeps running).
+	upgrades       []*scheddpb.UpgradeDatabaseRequest
+	upgradeOutcome string
+}
+
+// UpgradeDatabase models schedd's: a new operation starts an upgrade, the
+// same one reports it, ending it in upgradeOutcome.
+func (f *fakeScheduler) UpgradeDatabase(_ context.Context, in *scheddpb.UpgradeDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upgrades = append(f.upgrades, in)
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	up := rt.GetUpgrade()
+	switch {
+	case up.GetOperationId() == in.GetOperationId() && up.GetState() == "running" && f.upgradeOutcome != "":
+		up.State, rt.State = f.upgradeOutcome, "parked"
+		switch f.upgradeOutcome {
+		case "ok":
+			rt.PostgresMajor = up.GetToMajor()
+		case "failed":
+			rt.State = "failed"
+		}
+	case up.GetOperationId() == in.GetOperationId():
+	case rt.GetState() == "upgrading":
+		return nil, status.Error(codes.FailedPrecondition, "dbsched: database is in another state")
+	case in.GetPostgresMajor() <= rt.GetPostgresMajor():
+		return nil, status.Error(codes.InvalidArgument, "dbsched: invalid request")
+	default:
+		rt.State = "upgrading"
+		rt.Upgrade = &scheddpb.DatabaseUpgrade{OperationId: in.GetOperationId(), FromMajor: rt.GetPostgresMajor(), ToMajor: in.GetPostgresMajor(), State: "running"}
+	}
+	return rt, nil
 }
 
 func (f *fakeScheduler) ImportDatabase(_ context.Context, in *scheddpb.ImportDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error) {
@@ -915,6 +951,66 @@ func TestResourceUUIDIsStable(t *testing.T) {
 // TestUpdateResizesClassAndStorage: a class or storage change becomes one
 // schedd resize with the class's fixed shape; storage never shrinks; the
 // fixed fields never change; a pending resize observes as pending.
+// An upgrade changes only the major, under an operation named by the
+// change's idempotency key: repeats read its progress and outcome, and a
+// refusal or a broken cluster is a final rejection.
+func TestUpdateUpgradesTheMajor(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	spec := devSpec()
+	spec.PostgresMajor = 14
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	target := spec
+	target.PostgresMajor = 17
+	req := managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: spec, Spec: target, Generation: 2, IdempotencyKey: "resize-0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e"}
+	obs, err := p.Update(ctx, req)
+	if err != nil || obs.Status != managedpostgres.ProviderStatusPending || obs.Spec != spec {
+		t.Fatalf("upgrade = %+v, %v; want pending on the old major", obs, err)
+	}
+	first := sched.upgrades[0]
+	if first.GetPostgresMajor() != 17 || first.GetDatabaseId() != resourceUUID(testDatabaseID) || uuid.MustParse(first.GetOperationId()).String() != first.GetOperationId() {
+		t.Fatalf("upgrade request = %v", first)
+	}
+	if _, err := p.Update(ctx, req); err != nil || sched.upgrades[1].GetOperationId() != first.GetOperationId() {
+		t.Fatalf("a repeat named another upgrade: %v, %v", sched.upgrades, err)
+	}
+	sched.upgradeOutcome = "ok"
+	if obs, err := p.Update(ctx, req); err != nil || obs.Status != managedpostgres.ProviderStatusReady || obs.Spec != target {
+		t.Fatalf("finished upgrade = %+v, %v", obs, err)
+	}
+
+	for name, mutate := range map[string]func(*managedpostgres.UpdateRequest){
+		"with a class change": func(r *managedpostgres.UpdateRequest) { r.Spec.Class = managedpostgres.ClassBurstable },
+		"to an earlier major": func(r *managedpostgres.UpdateRequest) { r.Spec.PostgresMajor = 16 },
+		"without a key":       func(r *managedpostgres.UpdateRequest) { r.IdempotencyKey = "" },
+	} {
+		bad := managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: target, Generation: 3, IdempotencyKey: "resize-x"}
+		bad.Spec.PostgresMajor = 18
+		mutate(&bad)
+		if _, err := p.Update(ctx, bad); !errors.Is(err, managedpostgres.ErrUnsupported) {
+			t.Errorf("upgrade %s = %v, want ErrUnsupported", name, err)
+		}
+	}
+
+	for _, outcome := range []string{"refused", "failed"} {
+		sched.vms[resourceUUID(testDatabaseID)].State = "parked"
+		sched.upgradeOutcome = ""
+		next := managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: target, Generation: 4, IdempotencyKey: "resize-" + outcome}
+		next.Spec.PostgresMajor = 18
+		if _, err := p.Update(ctx, next); err != nil {
+			t.Fatal(err)
+		}
+		sched.upgradeOutcome = outcome
+		_, err := p.Update(ctx, next)
+		var rejected *managedpostgres.ChangeRejectedError
+		if !errors.As(err, &rejected) || rejected.Code != "upgrade_"+outcome || !errors.Is(err, managedpostgres.ErrConflict) {
+			t.Fatalf("%s upgrade = %v", outcome, err)
+		}
+	}
+}
+
 func TestUpdateResizesClassAndStorage(t *testing.T) {
 	p, sched, _ := newTestProvider(t)
 	ctx := context.Background()

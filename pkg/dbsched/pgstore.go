@@ -91,7 +91,8 @@ func vmFromRow(r sqlc.DatabaseVm) (VM, error) {
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
 		Replicated: r.Replicated, StandbyNode: r.StandbyNode.String, StandbyRunning: r.StandbyRunning, StandbySynced: r.StandbySynced,
 		PromotePending: r.PromotePending, DropStandbySlot: r.DropStandbySlot,
-		UpgradeMajor: int(r.UpgradeMajor.Int32), UpgradeLeaseUntil: r.UpgradeLeaseUntil.Time,
+		Upgrade: Upgrade{Operation: r.UpgradeOperation.String, From: int(r.UpgradeFrom.Int32), To: int(r.UpgradeMajor.Int32), Result: r.UpgradeResult.String},
+		UpgradeLeaseUntil: r.UpgradeLeaseUntil.Time,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
@@ -752,7 +753,7 @@ func (s *PgStore) AbortMove(ctx context.Context, id string, held time.Time, last
 	return nil
 }
 
-func (s *PgStore) BeginUpgrade(ctx context.Context, id string, major int, lease time.Duration) (VM, error) {
+func (s *PgStore) BeginUpgrade(ctx context.Context, id string, major int, operation string, lease time.Duration) (VM, error) {
 	key, err := pgUUID(id)
 	if err != nil {
 		return VM{}, err
@@ -778,7 +779,7 @@ func (s *PgStore) BeginUpgrade(ctx context.Context, id string, major int, lease 
 			return VM{}, err
 		}
 		n, err := s.q.BeginDatabaseVMUpgrade(ctx, tx, sqlc.BeginDatabaseVMUpgradeParams{
-			DatabaseID: key, UpgradeMajor: int32(major), LeaseSeconds: lease.Seconds(), //nolint:gosec // majors are 14-18
+			DatabaseID: key, UpgradeMajor: int32(major), UpgradeOperation: operation, LeaseSeconds: lease.Seconds(), //nolint:gosec // majors are 14-18
 		})
 		if err := s.changed(ctx, tx, id, n, err); err != nil {
 			return VM{}, err
@@ -845,7 +846,7 @@ func (s *PgStore) AbortUpgrade(ctx context.Context, id string, held time.Time, t
 	}
 	n, err := s.q.AbortDatabaseVMUpgrade(ctx, s.pool, sqlc.AbortDatabaseVMUpgradeParams{
 		DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: !held.IsZero()}, ToState: string(to),
-		LastError: pgtype.Text{String: lastError, Valid: lastError != ""},
+		UpgradeResult: upgradeResultFor(to), LastError: pgtype.Text{String: lastError, Valid: lastError != ""},
 	})
 	if err != nil {
 		return fmt.Errorf("dbsched: abort upgrade of %s: %w", id, err)

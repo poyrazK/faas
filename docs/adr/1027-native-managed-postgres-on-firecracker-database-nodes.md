@@ -1220,9 +1220,14 @@ through, and a plain 17 boot then served it.
 
 **Orchestration (schedd).** `Scheduler.StartUpgrade` parks a running
 database and marks it `upgrading` (migration
-`20261017134138512_database_vm_major_upgrades`): `upgrade_major` is the
-target, under `upgrade_lease_until`, a lease on the database's clock that
-the running replica renews. While upgrading, a database cannot wake, park,
+`20261017134138512_database_vm_major_upgrades`). The upgrade is recorded
+as `upgrade_from`, `upgrade_major` (the target) and `upgrade_operation`,
+its name. It runs under `upgrade_lease_until`, a lease on the database's
+clock that the running replica renews. The upgrade's outcome is kept in
+`upgrade_result` (`ok`, `refused` or `failed`) after it ends. Starting
+the same operation again therefore returns its progress or outcome and
+never upgrades twice. A CHECK constraint ties these fields to each other
+and to the database's state and major. While upgrading, a database cannot wake, park,
 move, resize or restart. It can be deleted. The upgrade's VM counts
 against its node's RAM ceiling (`BeginUpgrade` admits it), but no compute
 is metered for it.
@@ -1276,9 +1281,28 @@ point after that commit and before the upgrade came back on 14 with the
 commit (recovered to the commit's instant, to the end of the old archive).
 A restore after the upgrade came back on 17 with the rows written on 17.
 
-Not yet done: the operator intent and CLI (`gregalectl database-nodes
-upgrade`), the customer API, and keeping the customer catalog's
-`postgres_major` in step with schedd's.
+**The driver.** schedd's `UpgradeDatabase` RPC (apid only) starts or
+reports an upgrade by operation id, and `DatabaseRuntime.upgrade` carries
+the last upgrade. The native provider's `Update` takes a spec whose major
+alone grew as an upgrade. The operation id is derived (UUIDv5) from the
+change's idempotency key, so every retry of one journaled change names
+the same upgrade. The observation stays pending while the database
+upgrades, and is ready on the new major once it is done. A refusal or a
+broken cluster is a `managedpostgres.ChangeRejectedError` (an
+`ErrConflict`; codes `upgrade_refused` and `upgrade_failed`). Asking again
+reads the same outcome, so a retry never parks the database a second
+time.
+
+An upgrade must change apid's catalog too. A major changed only in schedd
+would read as `spec_mismatch` to the health collector and block resizes,
+so there is no schedd-only operator path.
+
+Not yet done: the customer surface. That is apid's journaled compute
+change (`managed_postgres_resizes`) with a target major and a final
+`failed` state for `ChangeRejectedError` (the journal now knows only
+`pending` and `succeeded`, retried hourly), a `MajorUpgrade` capability,
+the API and CLI, and docs. Operators would use the same path on a
+customer's behalf.
 
 ### Spares
 

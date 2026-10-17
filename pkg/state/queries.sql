@@ -18481,7 +18481,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
@@ -18489,7 +18489,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
-    upgrade_major, upgrade_lease_until, major_history
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -18646,10 +18646,12 @@ WHERE database_id = sqlc.arg(database_id) AND state = 'moving'
   AND (move_lease_until = sqlc.narg(held)::timestamptz OR (sqlc.narg(held)::timestamptz IS NULL AND move_lease_until < now()));
 
 -- name: BeginDatabaseVMUpgrade :execrows
--- Marks a parked database upgrading to upgrade_major under the caller's
--- lease; the caller checked its node's room under the node's lock.
+-- Marks a parked database upgrading to upgrade_major as the operation
+-- under the caller's lease; the caller checked its node's room under the
+-- node's lock.
 UPDATE database_vms
-SET state = 'upgrading', upgrade_major = sqlc.arg(upgrade_major)::integer, state_changed_at = now(), last_error = NULL,
+SET state = 'upgrading', upgrade_major = sqlc.arg(upgrade_major)::integer, upgrade_from = postgres_major,
+    upgrade_operation = sqlc.arg(upgrade_operation)::text, upgrade_result = NULL, state_changed_at = now(), last_error = NULL,
     upgrade_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
 WHERE database_id = sqlc.arg(database_id) AND state = 'parked' AND bootstrapped AND NOT resize_pending AND NOT promote_pending
   AND postgres_major < sqlc.arg(upgrade_major)::integer;
@@ -18671,17 +18673,17 @@ RETURNING upgrade_lease_until;
 -- backup on the new major; NULL when none was taken.
 UPDATE database_vms
 SET major_history = major_history || jsonb_build_array(jsonb_build_object('major', postgres_major, 'until', sqlc.arg(until)::timestamptz)),
-    postgres_major = upgrade_major, upgrade_major = NULL, upgrade_lease_until = NULL,
+    postgres_major = upgrade_major, upgrade_result = 'ok', upgrade_lease_until = NULL,
     last_backup_at = sqlc.narg(backup_at)::timestamptz,
     state = sqlc.arg(to_state)::text, state_changed_at = now(), last_error = NULL,
     last_active_at = CASE WHEN sqlc.arg(to_state)::text = 'running' THEN now() ELSE last_active_at END
 WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading' AND upgrade_lease_until = sqlc.arg(held)::timestamptz;
 
 -- name: AbortDatabaseVMUpgrade :execrows
--- Ends an upgrade on the major the database had: by the lease holder, or
--- by anyone once the lease lapsed (held NULL).
+-- Ends an upgrade on the major the database had, with its result: by the
+-- lease holder, or by anyone once the lease lapsed (held NULL).
 UPDATE database_vms
-SET upgrade_major = NULL, upgrade_lease_until = NULL, state = sqlc.arg(to_state)::text, state_changed_at = now(),
+SET upgrade_result = sqlc.arg(upgrade_result)::text, upgrade_lease_until = NULL, state = sqlc.arg(to_state)::text, state_changed_at = now(),
     last_error = sqlc.narg(last_error)
 WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading'
   AND (upgrade_lease_until = sqlc.narg(held)::timestamptz

@@ -516,7 +516,7 @@ func (m *MemStore) AbortMove(_ context.Context, id string, held time.Time, lastE
 	return nil
 }
 
-func (m *MemStore) BeginUpgrade(_ context.Context, id string, major int, lease time.Duration) (VM, error) {
+func (m *MemStore) BeginUpgrade(_ context.Context, id string, major int, operation string, lease time.Duration) (VM, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm, ok := m.vms[id]
@@ -535,7 +535,7 @@ func (m *MemStore) BeginUpgrade(_ context.Context, id string, major int, lease t
 	}
 	now := m.now()
 	vm.State, vm.StateChangedAt, vm.LastError = StateUpgrading, now, ""
-	vm.UpgradeMajor, vm.UpgradeLeaseUntil = major, now.Add(lease)
+	vm.Upgrade, vm.UpgradeLeaseUntil = Upgrade{Operation: operation, From: vm.Major, To: major}, now.Add(lease)
 	m.vms[id] = vm
 	return vm, nil
 }
@@ -561,7 +561,7 @@ func (m *MemStore) FinishUpgrade(_ context.Context, id string, held time.Time, t
 	}
 	now := m.now()
 	vm.MajorHistory = append(slices.Clone(vm.MajorHistory), MajorSpan{Major: vm.Major, Until: until})
-	vm.Major, vm.UpgradeMajor, vm.UpgradeLeaseUntil, vm.LastBackupAt = vm.UpgradeMajor, 0, time.Time{}, backupAt
+	vm.Major, vm.Upgrade.Result, vm.UpgradeLeaseUntil, vm.LastBackupAt = vm.Upgrade.To, UpgradeOK, time.Time{}, backupAt
 	vm.State, vm.StateChangedAt, vm.LastError = to, now, ""
 	if to == StateRunning {
 		vm.LastActiveAt = now
@@ -578,7 +578,7 @@ func (m *MemStore) AbortUpgrade(_ context.Context, id string, held time.Time, to
 	if !ok || vm.State != StateUpgrading || !m.leaseHeldLocked(vm.UpgradeLeaseUntil, held) || (to != StateParked && to != StateFailed) {
 		return ErrConflict
 	}
-	vm.UpgradeMajor, vm.UpgradeLeaseUntil = 0, time.Time{}
+	vm.Upgrade.Result, vm.UpgradeLeaseUntil = upgradeResultFor(to), time.Time{}
 	vm.State, vm.StateChangedAt, vm.LastError = to, m.now(), lastError
 	m.vms[id] = vm
 	return nil

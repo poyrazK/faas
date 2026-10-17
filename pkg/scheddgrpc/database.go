@@ -38,6 +38,7 @@ type DatabaseScheduler interface {
 	Usage(ctx context.Context, id string, from, to time.Time) (dbsched.Usage, error)
 	RecordEgress(ctx context.Context, id string, bytes int64) error
 	Resize(ctx context.Context, id string, shape dbsched.Shape) (dbsched.VM, error)
+	StartUpgrade(ctx context.Context, id string, major int, operation string) (dbsched.VM, error)
 	Import(ctx context.Context, id string, spec dbsched.ImportSpec) (dbguest.ImportStatus, error)
 	ImportStatus(ctx context.Context, id string) (dbguest.ImportStatus, error)
 	CaptureSnapshot(ctx context.Context, id, name string, point time.Time) (dbsched.Snapshot, error)
@@ -96,6 +97,13 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 	}
 	if !vm.CreatedAt.IsZero() {
 		rt.CreatedAt = timestamppb.New(vm.CreatedAt)
+	}
+	if up := vm.Upgrade; up.Operation != "" {
+		state := up.Result
+		if state == "" {
+			state = "running"
+		}
+		rt.Upgrade = &scheddpb.DatabaseUpgrade{OperationId: up.Operation, FromMajor: int32(up.From), ToMajor: int32(up.To), State: state} //nolint:gosec // majors are 14-18
 	}
 	return rt
 }
@@ -210,6 +218,20 @@ func (s *Server) ResizeDatabase(ctx context.Context, req *scheddpb.ResizeDatabas
 	vm, err := d.Resize(ctx, req.GetDatabaseId(), shape)
 	if err != nil {
 		return nil, s.databaseStatus("resize", err)
+	}
+	return databaseRuntime(vm), nil
+}
+
+// UpgradeDatabase starts, or reports, an in-place major upgrade for the
+// managed-Postgres driver.
+func (s *Server) UpgradeDatabase(ctx context.Context, req *scheddpb.UpgradeDatabaseRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	vm, err := d.StartUpgrade(ctx, req.GetDatabaseId(), int(req.GetPostgresMajor()), req.GetOperationId())
+	if err != nil {
+		return nil, s.databaseStatus("upgrade", err)
 	}
 	return databaseRuntime(vm), nil
 }

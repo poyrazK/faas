@@ -295,14 +295,15 @@ its major, parked with `last_error = upgrade_refused`, and is counted
    recovers on the old major, from that major's backups and WAL: guest-init
    archived the old cluster's last WAL before pg_upgrade ran. The node must
    still have the old major's base.
-3. Retry the upgrade once the cause is fixed. There is no operator
-   command for it yet: `gregalectl database-nodes upgrade` comes with the
-   operator surface. A `refused` upgrade needs whatever pg_upgrade's check
-   reported removed first (a `reg*` column, an extension without a build
-   for the new major).
+3. Retry the upgrade once the cause is fixed, as a new upgrade request:
+   one request never upgrades twice. Upgrades go through apid's catalog so
+   it stays in step; that customer surface is not built yet. A `refused`
+   upgrade needs whatever pg_upgrade's check reported removed first (a
+   `reg*` column, an extension without a build for the new major).
 
 An upgrade still in progress shows as `state = 'upgrading'` in
-`database_vms`, with its lease in `upgrade_lease_until`. Any schedd replica
+`database_vms`, with its lease in `upgrade_lease_until`; `upgrade_operation`
+and `upgrade_result` keep the last upgrade's name and outcome. Any schedd replica
 resumes one whose lease lapsed; do not stop its VM, which may be inside
 pg_upgrade.
 

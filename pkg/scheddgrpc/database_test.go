@@ -88,6 +88,14 @@ func (f *fakeDatabases) Resize(_ context.Context, _ string, shape dbsched.Shape)
 	vm.VcpuCount, vm.MemMiB, vm.VolumeBytes = shape.VcpuCount, shape.MemMiB, shape.VolumeBytes
 	return vm, f.err
 }
+func (f *fakeDatabases) StartUpgrade(_ context.Context, _ string, major int, operation string) (dbsched.VM, error) {
+	vm := f.vm
+	if f.err == nil && vm.Upgrade.Operation != operation {
+		vm.State, vm.Upgrade = dbsched.StateUpgrading, dbsched.Upgrade{Operation: operation, From: vm.Major, To: major}
+		f.vm = vm
+	}
+	return vm, f.err
+}
 func (f *fakeDatabases) Usage(_ context.Context, _ string, from, to time.Time) (dbsched.Usage, error) {
 	f.usageWindow = [2]time.Time{from, to}
 	return f.usage, f.err
@@ -341,6 +349,34 @@ func TestResizeDatabaseRelaysTheShape(t *testing.T) {
 	f.err = dbsched.ErrNoCapacity
 	if _, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 1024, VolumeBytes: 4 << 30}); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("no capacity = %v", err)
+	}
+}
+
+// The upgrade RPC is apid's only, relays the operation, and reports the
+// upgrade's progress and outcome.
+func TestUpgradeDatabaseRelaysTheOperation(t *testing.T) {
+	f := &fakeDatabases{vm: dbsched.VM{DatabaseID: testDBID, State: dbsched.StateParked, Major: 14}}
+	s := New(nil, nil, nil).WithDatabases(f)
+	op := "3c1f0a2b-7d4e-4f5a-8b6c-9d0e1f2a3b4c"
+	req := &scheddpb.UpgradeDatabaseRequest{DatabaseId: testDBID, PostgresMajor: 17, OperationId: op}
+	if _, err := s.UpgradeDatabase(asCaller(callerPgproxy), req); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("pgproxyd upgrade = %v, want PermissionDenied", err)
+	}
+	rt, err := s.UpgradeDatabase(asCaller(callerAPID), req)
+	want := &scheddpb.DatabaseUpgrade{OperationId: op, FromMajor: 14, ToMajor: 17, State: "running"}
+	if err != nil || rt.GetState() != "upgrading" || !proto.Equal(rt.GetUpgrade(), want) {
+		t.Fatalf("upgrade = %v, %v", rt, err)
+	}
+	f.vm.State, f.vm.Major, f.vm.Upgrade.Result = dbsched.StateParked, 17, dbsched.UpgradeOK
+	if rt, err := s.UpgradeDatabase(asCaller(callerAPID), req); err != nil || rt.GetUpgrade().GetState() != "ok" || rt.GetPostgresMajor() != 17 {
+		t.Fatalf("the finished upgrade again = %v, %v", rt, err)
+	}
+	if rt := databaseRuntime(dbsched.VM{DatabaseID: testDBID}); rt.GetUpgrade() != nil {
+		t.Fatalf("a database never upgraded reports %v", rt.GetUpgrade())
+	}
+	f.err = dbsched.ErrInvalid
+	if _, err := s.UpgradeDatabase(asCaller(callerAPID), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("invalid upgrade = %v", err)
 	}
 }
 

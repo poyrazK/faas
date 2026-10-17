@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
@@ -43,13 +45,6 @@ var (
 	ErrUpgradeFailed = errors.New("dbsched: the upgrade failed; restore the database to a point before it")
 )
 
-// Upgrade results (the metric's label).
-const (
-	upgradeOK      = "ok"
-	upgradeRefused = "refused"
-	upgradeFailed  = "failed"
-)
-
 // upgradePoll is how often an upgrade polls its guest and Upgrade its
 // record.
 const upgradePoll = 200 * time.Millisecond
@@ -59,13 +54,12 @@ type upgradeRun struct {
 	done chan struct{}
 }
 
-// Upgrade upgrades a database in place to major and returns it once the
-// upgrade ended: ErrUpgradeRefused or ErrUpgradeFailed when it did not
-// succeed. ctx bounds only the wait; the upgrade runs on in the background
-// and Get reports it upgrading until it ends. Upgrading a database already
-// upgrading to major waits for that upgrade.
-func (s *Scheduler) Upgrade(ctx context.Context, id string, major int) (VM, error) {
-	if _, err := s.StartUpgrade(ctx, id, major); err != nil {
+// Upgrade upgrades a database in place to major as operation and returns
+// it once the upgrade ended: ErrUpgradeRefused or ErrUpgradeFailed when it
+// did not succeed. ctx bounds only the wait; the upgrade runs on in the
+// background and Get reports it upgrading until it ends.
+func (s *Scheduler) Upgrade(ctx context.Context, id string, major int, operation string) (VM, error) {
+	if _, err := s.StartUpgrade(ctx, id, major, operation); err != nil {
 		return VM{}, err
 	}
 	if run, ok := s.upgrades.Load(id); ok {
@@ -78,7 +72,7 @@ func (s *Scheduler) Upgrade(ctx context.Context, id string, major int) (VM, erro
 	for {
 		vm, err := s.Get(ctx, id)
 		if err != nil || vm.State != StateUpgrading {
-			return vm, errors.Join(err, upgradeOutcome(vm, major))
+			return vm, errors.Join(err, upgradeOutcome(vm, operation))
 		}
 		select {
 		case <-ctx.Done():
@@ -89,50 +83,61 @@ func (s *Scheduler) Upgrade(ctx context.Context, id string, major int) (VM, erro
 }
 
 // upgradeOutcome reads an ended upgrade's outcome from its record.
-func upgradeOutcome(vm VM, major int) error {
-	switch {
-	case vm.DatabaseID == "" || vm.Major == major:
+func upgradeOutcome(vm VM, operation string) error {
+	if vm.DatabaseID == "" {
 		return nil
-	case vm.LastError == dbguest.ErrCodeUpgradeRefused:
+	}
+	switch {
+	case vm.Upgrade.Operation != operation:
+		return fmt.Errorf("%w: another upgrade replaced %s", ErrConflict, operation)
+	case vm.Upgrade.Result == UpgradeRefused:
 		return ErrUpgradeRefused
-	case vm.LastError == dbguest.ErrCodeUpgradeFailed:
+	case vm.Upgrade.Result == UpgradeFailed:
 		return ErrUpgradeFailed
 	}
-	return fmt.Errorf("%w: the upgrade ended with the database %s on PostgreSQL %d", ErrConflict, vm.State, vm.Major)
+	return nil
 }
 
-// StartUpgrade begins an in-place upgrade of a database to major and
-// returns it upgrading once that is durable; the upgrade runs in the
-// background, so an operator's intent is answered within its claim. A
-// running database is parked first. Starting an upgrade already running
-// returns the database.
-func (s *Scheduler) StartUpgrade(ctx context.Context, id string, major int) (VM, error) {
+// StartUpgrade begins an in-place upgrade of a database to major, named
+// operation (a lowercase UUID: apid's journaled request), and returns it
+// upgrading once that is durable; the upgrade runs in the background. A
+// running database is parked first. Starting the same operation again
+// returns the database with the upgrade's progress or outcome in
+// VM.Upgrade, and resumes it if its lease lapsed; it never upgrades twice.
+func (s *Scheduler) StartUpgrade(ctx context.Context, id string, major int, operation string) (VM, error) {
 	if major < dbguest.MinMajor || major > dbguest.MaxMajor {
 		return VM{}, fmt.Errorf("%w: unsupported postgres major %d", ErrInvalid, major)
 	}
-	vm, held, err := s.beginUpgrade(ctx, id, major)
+	if parsed, err := uuid.Parse(operation); err != nil || parsed.String() != operation {
+		return VM{}, fmt.Errorf("%w: the upgrade's operation is a lowercase UUID", ErrInvalid)
+	}
+	vm, held, err := s.beginUpgrade(ctx, id, major, operation)
 	if err != nil {
 		return vm, err
 	}
-	s.resumeUpgrade(ctx, id, held)
+	if vm.State == StateUpgrading {
+		s.resumeUpgrade(ctx, id, held)
+	}
 	return s.withTarget(ctx, vm), nil
 }
 
 // beginUpgrade parks the database if it runs and marks it upgrading,
-// returning the lease it took (zero: the upgrade was already running). A
-// failure leaves the database as it was.
-func (s *Scheduler) beginUpgrade(ctx context.Context, id string, major int) (VM, time.Time, error) {
+// returning the lease it took (zero: the operation was already recorded).
+// A failure leaves the database as it was.
+func (s *Scheduler) beginUpgrade(ctx context.Context, id string, major int, operation string) (VM, time.Time, error) {
 	unlock := s.lock(id)
 	defer unlock()
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
 		return vm, time.Time{}, err
 	}
-	if vm.State == StateUpgrading {
-		if vm.UpgradeMajor != major {
-			return vm, time.Time{}, fmt.Errorf("%w: the database is upgrading to PostgreSQL %d", ErrConflict, vm.UpgradeMajor)
-		}
+	switch {
+	case vm.Upgrade.Operation == operation && vm.Upgrade.To != major:
+		return vm, time.Time{}, fmt.Errorf("%w: operation %s upgraded to PostgreSQL %d", ErrConflict, operation, vm.Upgrade.To)
+	case vm.Upgrade.Operation == operation:
 		return vm, time.Time{}, nil
+	case vm.State == StateUpgrading:
+		return vm, time.Time{}, fmt.Errorf("%w: the database is upgrading to PostgreSQL %d", ErrConflict, vm.Upgrade.To)
 	}
 	if err := s.upgradable(ctx, vm, major); err != nil {
 		return vm, time.Time{}, err
@@ -143,7 +148,7 @@ func (s *Scheduler) beginUpgrade(ctx context.Context, id string, major int) (VM,
 			return vm, time.Time{}, err
 		}
 	}
-	upgrading, err := s.markUpgrading(ctx, vm, major)
+	upgrading, err := s.markUpgrading(ctx, vm, major, operation)
 	if err != nil {
 		if wake {
 			_, _ = s.wakeLocked(context.WithoutCancel(ctx), id) // back up where it was
@@ -178,13 +183,13 @@ func (s *Scheduler) upgradable(ctx context.Context, vm VM, major int) error {
 
 // markUpgrading records the parked database upgrading. Its standby stays
 // on the old major, so it must not take over first.
-func (s *Scheduler) markUpgrading(ctx context.Context, vm VM, major int) (VM, error) {
+func (s *Scheduler) markUpgrading(ctx context.Context, vm VM, major int, operation string) (VM, error) {
 	if vm.Replicated {
 		if err := s.store.MarkStandbySynced(ctx, vm.DatabaseID, false); err != nil {
 			return vm, err
 		}
 	}
-	return s.store.BeginUpgrade(ctx, vm.DatabaseID, major, s.cfg.UpgradeLease)
+	return s.store.BeginUpgrade(ctx, vm.DatabaseID, major, operation, s.cfg.UpgradeLease)
 }
 
 // ResumeUpgrades takes over upgrades whose lease lapsed: their replica
@@ -284,7 +289,7 @@ func (s *Scheduler) runUpgrade(ctx context.Context, id string, held time.Time) {
 // it, and waits until the guest serves the new major or fails.
 func (s *Scheduler) bootUpgrade(ctx context.Context, node Node, vm VM) (dbguest.Response, error) {
 	boot := vm
-	boot.Major, boot.UpgradeFrom = vm.UpgradeMajor, vm.Major
+	boot.Major, boot.UpgradeFrom = vm.Upgrade.To, vm.Major
 	// A VM still running from an earlier attempt counts as started.
 	if err := s.vmm.Start(ctx, node, boot); err != nil {
 		return dbguest.Response{}, fmt.Errorf("boot: %w", err)
@@ -324,8 +329,8 @@ func (s *Scheduler) finishUpgrade(ctx context.Context, node Node, vm VM, lease *
 	if err := s.store.FinishUpgrade(ctx, id, lease.get(), to, until, backupAt); err != nil {
 		return fmt.Errorf("record: %w", err)
 	}
-	s.cfg.Metrics.upgraded(upgradeOK)
-	s.log.Info("dbsched: upgraded", "database_id", id, "from", vm.Major, "to", vm.UpgradeMajor, "took", s.now().Sub(vm.StateChangedAt),
+	s.cfg.Metrics.upgraded(UpgradeOK)
+	s.log.Info("dbsched: upgraded", "database_id", id, "from", vm.Major, "to", vm.Upgrade.To, "took", s.now().Sub(vm.StateChangedAt),
 		"backed_up", ok, "state", to)
 	switch {
 	case to == StateParked:
@@ -349,10 +354,7 @@ func (s *Scheduler) endUpgrade(ctx context.Context, node Node, vm VM, held time.
 		return
 	}
 	s.freed.signal(vm.NodeID)
-	result := upgradeFailed
-	if to == StateParked {
-		result = upgradeRefused
-	}
+	result := upgradeResultFor(to)
 	s.cfg.Metrics.upgraded(result)
-	s.log.Warn("dbsched: upgrade ended", "database_id", vm.DatabaseID, "from", vm.Major, "to", vm.UpgradeMajor, "result", result, "err", cause)
+	s.log.Warn("dbsched: upgrade ended", "database_id", vm.DatabaseID, "from", vm.Major, "to", vm.Upgrade.To, "result", result, "err", cause)
 }

@@ -1953,6 +1953,9 @@ type DatabaseVm struct {
 	PromotePending       bool
 	DropStandbySlot      bool
 	UpgradeMajor         pgtype.Int4
+	UpgradeFrom          pgtype.Int4
+	UpgradeOperation     pgtype.Text
+	UpgradeResult        pgtype.Text
 	UpgradeLeaseUntil    pgtype.Timestamptz
 	MajorHistory         []byte
 }

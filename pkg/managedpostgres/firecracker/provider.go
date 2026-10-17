@@ -43,6 +43,7 @@ type Scheduler interface {
 	RestoreDatabase(ctx context.Context, in *scheddpb.RestoreDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	DatabaseUsage(ctx context.Context, in *scheddpb.DatabaseUsageRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseUsageResponse, error)
 	ResizeDatabase(ctx context.Context, in *scheddpb.ResizeDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+	UpgradeDatabase(ctx context.Context, in *scheddpb.UpgradeDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	ImportDatabase(ctx context.Context, in *scheddpb.ImportDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error)
 	DatabaseImportStatus(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error)
 	CaptureDatabaseSnapshot(ctx context.Context, in *scheddpb.CaptureDatabaseSnapshotRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
@@ -334,6 +335,8 @@ func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.Observ
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateActive
 	case rt.GetState() == "waking", rt.GetState() == "parking":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateWaking
+	case rt.GetState() == "moving", rt.GetState() == "upgrading":
+		obs.Status = managedpostgres.ProviderStatusPending
 	case rt.GetState() == "deleting":
 		obs.Status = managedpostgres.ProviderStatusDeleting
 	case rt.GetState() == "failed":
@@ -360,8 +363,8 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 }
 
 // Update changes a database's class, storage limit or compute policy in
-// place. The major, region and restore window are fixed, and storage only
-// grows. A class or storage change resizes the VM through schedd, which
+// place, or upgrades it to a later major (upgrade). The region and restore
+// window are fixed, and storage only grows. A class or storage change resizes the VM through schedd, which
 // restarts a running database on the new shape; the observation stays
 // pending until that is done, and repeating the request resumes it.
 // Moving into the production class gives the database a synchronous
@@ -372,6 +375,9 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
 	if req.ResourceID == "" || (req.DataResourceID != "" && req.DataResourceID != req.ResourceID) {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
+	}
+	if req.Spec.PostgresMajor != req.PreviousSpec.PostgresMajor {
+		return p.upgrade(ctx, req)
 	}
 	changeable := req.PreviousSpec
 	changeable.ScaleToZero, changeable.Class, changeable.StorageLimitBytes = req.Spec.ScaleToZero, req.Spec.Class, req.Spec.StorageLimitBytes
@@ -395,6 +401,42 @@ func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest
 		if err != nil {
 			return managedpostgres.ObservedDatabase{}, providerError(err)
 		}
+	}
+	return p.observed(rt), nil
+}
+
+// upgradeNamespace derives an upgrade's operation id from the request's
+// idempotency key, so every retry of one journaled change names the same
+// upgrade.
+var upgradeNamespace = uuid.MustParse("9e2b7c41-5d3a-4f86-b1c0-7a4e6d2f8b35")
+
+// upgrade upgrades the database in place to a later major with pg_upgrade
+// (ADR-1027). Nothing else changes with it. Schedd parks the database for
+// it and reports it pending until the new major serves. The idempotency key
+// names the upgrade, so repeating the request reads its progress or
+// outcome and never upgrades twice: a refusal or a broken cluster is a
+// *ChangeRejectedError.
+func (p *Provider) upgrade(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
+	rest := req.Spec
+	rest.PostgresMajor = req.PreviousSpec.PostgresMajor
+	if rest != req.PreviousSpec || req.Spec.PostgresMajor <= req.PreviousSpec.PostgresMajor || req.IdempotencyKey == "" {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+	}
+	if err := p.supports(req.Spec); err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	operation := uuid.NewSHA1(upgradeNamespace, []byte(req.IdempotencyKey)).String()
+	rt, err := p.scheduler.UpgradeDatabase(ctx, &scheddpb.UpgradeDatabaseRequest{
+		DatabaseId: resourceUUID(req.ResourceID), PostgresMajor: int32(req.Spec.PostgresMajor), OperationId: operation, //nolint:gosec // majors are validated
+	})
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, providerError(err)
+	}
+	switch rt.GetUpgrade().GetState() {
+	case "refused":
+		return managedpostgres.ObservedDatabase{}, &managedpostgres.ChangeRejectedError{Code: "upgrade_refused"}
+	case "failed":
+		return managedpostgres.ObservedDatabase{}, &managedpostgres.ChangeRejectedError{Code: "upgrade_failed"}
 	}
 	return p.observed(rt), nil
 }

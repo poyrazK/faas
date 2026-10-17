@@ -83,7 +83,7 @@ func TestMetalMajorUpgradeThroughScheduler(t *testing.T) {
 	time.Sleep(time.Second) // vmmd notices the exit
 
 	started := time.Now()
-	upgraded, err := s.Upgrade(ctx, id, 17)
+	upgraded, err := s.Upgrade(ctx, id, 17, uuid.NewString())
 	if err != nil || upgraded.Major != 17 || len(upgraded.MajorHistory) != 1 || upgraded.LastBackupAt.IsZero() {
 		t.Fatalf("upgrade = %+v, %v", upgraded, err)
 	}

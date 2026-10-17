@@ -53,6 +53,7 @@ const (
 	Schedd_RestoreDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
 	Schedd_DatabaseUsage_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
 	Schedd_ResizeDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ResizeDatabase"
+	Schedd_UpgradeDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/UpgradeDatabase"
 	Schedd_ImportDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ImportDatabase"
 	Schedd_DatabaseImportStatus_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/DatabaseImportStatus"
 	Schedd_CaptureDatabaseSnapshot_FullMethodName = "/onebox.faas.schedd.v1.Schedd/CaptureDatabaseSnapshot"
@@ -372,6 +373,13 @@ type ScheddClient interface {
 	// (the production class). A running database restarts on the new
 	// shape. Repeating the request resumes an interrupted resize. apid only.
 	ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// UpgradeDatabase upgrades a database in place to a later PostgreSQL
+	// major with pg_upgrade (ADR-1027). It returns once the upgrade is
+	// recorded, with the database upgrading; schedd runs it in the
+	// background, parking a running database for it. operation_id names
+	// the upgrade: repeating it reports the upgrade's progress or outcome in
+	// DatabaseRuntime.upgrade and never upgrades twice. apid only.
+	UpgradeDatabase(ctx context.Context, in *UpgradeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 	// ImportDatabase starts copying another PostgreSQL database into an
 	// empty database of this one (ADR-1027 migration off Neon), waking it.
 	// A running or finished import is reported, not restarted. apid only.
@@ -667,6 +675,16 @@ func (c *scheddClient) ResizeDatabase(ctx context.Context, in *ResizeDatabaseReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DatabaseRuntime)
 	err := c.cc.Invoke(ctx, Schedd_ResizeDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) UpgradeDatabase(ctx context.Context, in *UpgradeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_UpgradeDatabase_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1035,6 +1053,13 @@ type ScheddServer interface {
 	// (the production class). A running database restarts on the new
 	// shape. Repeating the request resumes an interrupted resize. apid only.
 	ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error)
+	// UpgradeDatabase upgrades a database in place to a later PostgreSQL
+	// major with pg_upgrade (ADR-1027). It returns once the upgrade is
+	// recorded, with the database upgrading; schedd runs it in the
+	// background, parking a running database for it. operation_id names
+	// the upgrade: repeating it reports the upgrade's progress or outcome in
+	// DatabaseRuntime.upgrade and never upgrades twice. apid only.
+	UpgradeDatabase(context.Context, *UpgradeDatabaseRequest) (*DatabaseRuntime, error)
 	// ImportDatabase starts copying another PostgreSQL database into an
 	// empty database of this one (ADR-1027 migration off Neon), waking it.
 	// A running or finished import is reported, not restarted. apid only.
@@ -1139,6 +1164,9 @@ func (UnimplementedScheddServer) DatabaseUsage(context.Context, *DatabaseUsageRe
 }
 func (UnimplementedScheddServer) ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResizeDatabase not implemented")
+}
+func (UnimplementedScheddServer) UpgradeDatabase(context.Context, *UpgradeDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpgradeDatabase not implemented")
 }
 func (UnimplementedScheddServer) ImportDatabase(context.Context, *ImportDatabaseRequest) (*DatabaseImportProgress, error) {
 	return nil, status.Error(codes.Unimplemented, "method ImportDatabase not implemented")
@@ -1601,6 +1629,24 @@ func _Schedd_ResizeDatabase_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_UpgradeDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpgradeDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).UpgradeDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_UpgradeDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).UpgradeDatabase(ctx, req.(*UpgradeDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Schedd_ImportDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ImportDatabaseRequest)
 	if err := dec(in); err != nil {
@@ -1785,6 +1831,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResizeDatabase",
 			Handler:    _Schedd_ResizeDatabase_Handler,
+		},
+		{
+			MethodName: "UpgradeDatabase",
+			Handler:    _Schedd_UpgradeDatabase_Handler,
 		},
 		{
 			MethodName: "ImportDatabase",
