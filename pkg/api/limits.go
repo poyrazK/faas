@@ -9717,7 +9717,7 @@ const FunctionInterpreterMaxWorkers = 4
 const FunctionPostgresMaxPools = 16
 
 // FunctionCancellationGrace is the cleanup acknowledgement budget shared by
-// the runner and the host's execution-ownership watchdog (ADR-1572).
+// the runner and the host's execution-ownership watchdog (ADR-1659).
 const FunctionCancellationGrace = 5 * time.Second
 
 // FunctionExecutionLeaseDuration bounds an abandoned runner's full execution.

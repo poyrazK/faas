@@ -1,9 +1,9 @@
-# ADR-1578 · Reconstruct measured function handoffs at scheduler startup
+# ADR-1665 · Reconstruct measured function handoffs at scheduler startup
 
 - **Status:** implementation for qualification; native execution pending; production off
 - **Date:** 2026-10-17
 - **Decision:** Before ledger seeding and admission, the destination schedd reads
-  its durable ready and committed ADR-1577 handoffs and completes their existing
+  its durable ready and committed ADR-1664 handoffs and completes their existing
   ownership protocol. It does not resume an issued restore or reattach a guest.
 - **Why:** A scheduler process can disappear after native readiness or after
   ownership commits. Its replacement must not depend on the departed process's
@@ -52,7 +52,7 @@ systemd schedd service, kill vmmd, emulate PostgreSQL failover or qualify HA.
 Native execution of the prior eight-case baseline and these four restart cases
 remains required on designated physical x86_64 KVM hosts. Portable tests and
 native compilation supply no native acceptance. Unknown VM ownership after a
-vmmd restart stays quarantined under ADR-1577. Production capabilities, complete
+vmmd restart stays quarantined under ADR-1664. Production capabilities, complete
 failure-matrix qualification and release activation remain off.
 
 Local validation and its limits are recorded in the

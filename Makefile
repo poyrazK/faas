@@ -501,7 +501,7 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
 .PHONY: test-function-background-native
-test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-1572)
+test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-1659)
 	@test "$$(id -u)" = 0 || (echo "requires root on the isolated native KVM acceptance host" >&2; exit 1)
 	@test -c /dev/kvm || (echo "/dev/kvm missing; native qualification cannot skip" >&2; exit 1)
 	@test -r /etc/faas/builder-acceptance-host || (echo "requires the designated isolated acceptance host" >&2; exit 1)
@@ -516,7 +516,7 @@ test-function-background-native: ## Strict Node execution lifetime/capture/thaw 
 	$(MAKE) leakcheck
 
 .PHONY: test-function-migration-native
-test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-1578)
+test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-1665)
 	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
 	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
 	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"

@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Parent revision: `9b87313c0b6fd53776c3d4cf27739fb278f473e2`.
 Scope: controlled reply-boundary cases for
-[ADR-1352](../../../adr/1577-function-migration-destination.md).
+[ADR-1352](../../../adr/1664-function-migration-destination.md).
 
 The fault cases and portable guard tests are implemented. No native migration or
 native fault case was executed in this workspace. Production remains off.

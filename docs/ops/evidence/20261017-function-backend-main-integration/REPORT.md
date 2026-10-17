@@ -3,8 +3,8 @@
 This review increment integrates main at `5f10b1f27616c7543680df4c31b79018312911e1`.
 It preserves the shipped `PostgresPoolBinding` API, its secret-adoption and
 starter checkpoint behavior, and the generic migration source journal. The
-function decisions are [ADR-1571](../../../adr/1571-function-background-completion-protocol.md)
-through [ADR-1578](../../../adr/1578-function-migration-scheduler-restart.md).
+function decisions are [ADR-1658](../../../adr/1658-function-background-completion-protocol.md)
+through [ADR-1665](../../../adr/1665-function-migration-scheduler-restart.md).
 The existing cancellation decision remains ADR-1540.
 
 ## Integration contracts

@@ -1,9 +1,9 @@
-# ADR-1576 · Admit function migration capture and source recovery
+# ADR-1663 · Admit function migration capture and source recovery
 
 - **Status:** implementation for qualification; native execution pending; production off
 - **Date:** 2026-10-17
 - **Decision:** Issue distinct, short-lived capture and recovery permissions for
-  an ADR-1575 Node source with a measured runtime receipt. Keep destination
+  an ADR-1662 Node source with a measured runtime receipt. Keep destination
   adoption and production activation gated.
 - **Why:** The serving receipt identifies the physical VM but does not grant
   fresh checkpoint or resume authority. Pool drainage and recovery must be

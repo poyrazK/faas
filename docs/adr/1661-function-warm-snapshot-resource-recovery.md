@@ -1,8 +1,8 @@
-# ADR-1574 · Recover Node resources after warm capture
+# ADR-1661 · Recover Node resources after warm capture
 
 - **Status:** implemented for qualification; native execution pending; production off
 - **Date:** 2026-10-17
-- **Decision:** Extend ADR-1573's qualified Node path to recover the continuing
+- **Decision:** Extend ADR-1660's qualified Node path to recover the continuing
   source VM under its existing destruction-joined capture flight. Migration
   capture remains refused.
 - **Why:** Draining PostgreSQL pools makes terminal snapshots safe, but a source
@@ -96,6 +96,6 @@ activation change. See the [acceptance procedure](../ops/function-backend-concur
 and [evidence](../ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
 
 
-Follow-up: [ADR-1575](1575-function-migration-source-rollback.md) adds a separate
+Follow-up: [ADR-1662](1662-function-migration-source-rollback.md) adds a separate
 qualification-only source prepare/rollback path. Ordinary and measured migration
 capture and destination adoption retain their gates.

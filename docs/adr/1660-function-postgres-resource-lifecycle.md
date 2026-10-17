@@ -1,8 +1,8 @@
-# ADR-1573 · Automatic PostgreSQL ownership in Node functions
+# ADR-1660 · Automatic PostgreSQL ownership in Node functions
 
 - **Status:** accepted implementation; native qualification pending; production off
 - **Date:** 2026-10-17
-- **Decision:** Extend ADR-1572's qualified Node adapter with automatic registration
+- **Decision:** Extend ADR-1659's qualified Node adapter with automatic registration
   of SDK PostgreSQL pools, all-interpreter checkpoint drainage and fresh restore
   probes. Keep activation restricted to `metal,function_background_native` builds.
 - **Why:** Broadcasting a customer callback does not establish that every pool
@@ -62,11 +62,11 @@ caller omitted the optional flag. Admission remains governed by the existing
 host boot/capture flight and runner cleanup fence.
 
 The acceptance build supports terminal capture with the before-checkpoint flag.
-ADR-1574 adds continuing-VM recovery for qualified warm captures; migration
+ADR-1661 adds continuing-VM recovery for qualified warm captures; migration
 capture remains refused. Existing
 artifacts lacking the automatic hook manifest must be rebuilt; a qualified host
 does not infer successful drainage for an old artifact. Snapshot reuse still
-establishes idle admission before teardown through ADR-1572's freeze barrier.
+establishes idle admission before teardown through ADR-1659's freeze barrier.
 
 The existing SDK budgets and query cancellation remain in force. A successful
 pool close is not proof that the database did not commit a prior mutation.

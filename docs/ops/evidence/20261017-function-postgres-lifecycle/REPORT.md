@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Branch: `codex/function-postgres-lifecycle`, based on
 `c16418b10a40d2b69a75e6d23ce8fd3cfcd492dd`. Scope:
-[ADR-1348](../../../adr/1573-function-postgres-resource-lifecycle.md). This
+[ADR-1348](../../../adr/1660-function-postgres-resource-lifecycle.md). This
 report is committed with the implementation; Git history identifies the revision.
 PR #4768 remains closed and unmerged and its merge automation remains paused.
 No deployment, production activation or performance-parity claim is made.

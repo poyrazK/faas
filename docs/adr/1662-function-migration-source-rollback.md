@@ -1,4 +1,4 @@
-# ADR-1575 · Recover a function migration source after rollback
+# ADR-1662 · Recover a function migration source after rollback
 
 - **Status:** implementation for qualification; native execution pending; production off
 - **Date:** 2026-10-17
@@ -61,7 +61,7 @@ are unchanged. SQL and application requests are never replayed. Native KVM,
 real-vsock failure/restart, private-environment, leak and performance acceptance
 remain required before any activation change.
 
-Follow-up: [ADR-1576](1576-function-migration-admission.md) adds dedicated capture
+Follow-up: [ADR-1663](1663-function-migration-admission.md) adds dedicated capture
 and recovery permissions for measured sources in the qualification build. It
 supersedes the measured-source refusal above while retaining the destination,
 native acceptance and production activation gates.

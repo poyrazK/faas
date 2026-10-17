@@ -1,9 +1,9 @@
-# ADR-1577 · Restore and publish a measured function migration destination
+# ADR-1664 · Restore and publish a measured function migration destination
 
 - **Status:** implementation for qualification; native execution pending; production off
 - **Date:** 2026-10-17
 - **Decision:** Add a dedicated destination grant, measured restore and durable
-  readiness/ownership phases to ADR-1576. Preserve ordinary snapshot clone
+  readiness/ownership phases to ADR-1663. Preserve ordinary snapshot clone
   identity rules and the original immutable admission capture and boot history.
 - **Why:** Source rollback alone cannot move a SQL backend between hosts. The
   destination needs current authority, verified captured bytes and a successful
@@ -122,7 +122,7 @@ with independent PostgreSQL, persistent all-worker callback counts and physical
 host witnesses. These after-effect error injections do not establish real
 network packet loss, PostgreSQL failover or guest vsock loss. Version 3 reports
 retain all eight reply/baseline pairs and add four coordinator process-loss
-cases under [ADR-1578](1578-function-migration-scheduler-restart.md). They reject older scopes,
+cases under [ADR-1665](1665-function-migration-scheduler-restart.md). They reject older scopes,
 changed native epochs, replaced SQL sessions or callback replay. The suite
 rejects skipped cases and incomplete cleanup, and always reports the complete
 failure matrix and production readiness as unqualified. The fixture and

@@ -2946,7 +2946,7 @@ type Querier interface {
 	LockExpiredRevisionPinApps(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockFeatureFlagProject(ctx context.Context, db DBTX, arg LockFeatureFlagProjectParams) (pgtype.UUID, error)
-	// ADR-1576: lock current native inputs/instance first, then the parent lease and source.
+	// ADR-1663: lock current native inputs/instance first, then the parent lease and source.
 	LockFunctionMigrationAdmissionLease(ctx context.Context, db DBTX, arg LockFunctionMigrationAdmissionLeaseParams) (MigrationLease, error)
 	LockFunctionMigrationDestination(ctx context.Context, db DBTX, arg LockFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
 	LockFunctionMigrationSource(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceParams) (FunctionMigrationSource, error)
@@ -4249,7 +4249,7 @@ type Querier interface {
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
-	// ADR-1575: schedd fences rollback before vmmd can reopen a function source.
+	// ADR-1662: schedd fences rollback before vmmd can reopen a function source.
 	RegisterFunctionMigrationSource(ctx context.Context, db DBTX, arg RegisterFunctionMigrationSourceParams) (int64, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	RegisterInvocationWorkEnvironmentDomain(ctx context.Context, db DBTX, arg RegisterInvocationWorkEnvironmentDomainParams) (pgtype.UUID, error)
