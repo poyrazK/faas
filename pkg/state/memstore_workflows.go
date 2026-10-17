@@ -1520,6 +1520,7 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
 			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
 			delete(m.workflowRuns, id)
+			delete(m.automationLiveVerifications, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)
 			for key := range m.workflowStepAttempts {

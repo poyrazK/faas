@@ -1477,7 +1477,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 
 Provision or attach object storage and inject sealed S3 settings
 
-`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--wait-timeout <DURATION>]`
+`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--wait-timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3452,14 +3452,69 @@ Inspect, replay, or acknowledge a local delivery health alert queue
 | `--replay` | replay pending JSON lines |  |
 | `--ack-alerts <PATH>` | exact acknowledgements JSON |  |
 
+### events delivery-retry
+
+Retry a deferred delivery using its current secret token
+
+`gregale events delivery-retry [--request-file <PATH>] <app> <invocation-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-file <PATH>` | protected JSON file containing token and non-sensitive reason |  |
+
+### events delivery-dead-letter
+
+Dead-letter a deferred delivery using its current secret token
+
+`gregale events delivery-dead-letter [--request-file <PATH>] <app> <invocation-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-file <PATH>` | protected JSON file containing token and non-sensitive reason |  |
+
+### events deadline-alert-investigate
+
+Inspect current deadline identities and optional blockers for a saved Go alert
+
+`gregale events deadline-alert-investigate [--alert-file <PATH>] [--limit <N>] [--cursor <CURSOR>] [--explain] <app>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--alert-file <PATH>` | single Go/CLI lifecycle alert JSON object (maximum 64 KiB) |  |
+| `--limit <N>` | current recipients per page (default 50; 1..100, or 1..50 with explain) |  |
+| `--cursor <CURSOR>` | opaque next_cursor for the same app, alert selection and limit |  |
+| `--explain` | read acceptance-guarded blocker explanations for this page |  |
+
 ### events subscription-delivery-health
 
 Inspect routing, executions, retry jobs, and pending blockers
 
-`gregale events subscription-delivery-health [--lineage-stalled-threshold <N>] [--lineage-retention-risk-threshold <N>] [--lineage-paused-threshold <DURATION>] [--receipt-budget-full-threshold <DURATION>] [--receipt-budget-remaining-threshold <N>] [--receipt-budget-low-sustain <DURATION>] [--receipt-budget-recovery-threshold <N>] [--receipt-budget-recovery-sustain <DURATION>] [--window <WINDOW>] [--watch] [--alerts-json] [--confirmation-progress] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
+`gregale events subscription-delivery-health [--deadline-expired-ratio-threshold <PERCENT>] [--deadline-expired-ratio-recovery <PERCENT>] [--deadline-expired-ratio-min-recipients <N>] [--deadline-window <DURATION>] [--deadline-upcoming-threshold <N>] [--deadline-expired-threshold <N>] [--deadline-upcoming-recovery <N>] [--deadline-expired-recovery <N>] [--deadline-upcoming-reason <REASON=N>] [--deadline-expired-reason <REASON=N>] [--deadline-upcoming-reason-recovery <REASON=N>] [--deadline-expired-reason-recovery <REASON=N>] [--deadline-sustain <DURATION>] [--deadline-recovery-sustain <DURATION>] [--renewal-rejection-threshold <FRACTION>] [--lease-expiry-rate-threshold <RATE>] [--renewal-min-samples <N>] [--processing-window-sustain <DURATION>] [--processing-metrics-recording-since <RFC3339>] [--processing-oldest-threshold <DURATION>] [--processing-lease-risk-threshold <DURATION>] [--processing-expired-threshold <DURATION>] [--lineage-stalled-threshold <N>] [--lineage-retention-risk-threshold <N>] [--lineage-paused-threshold <DURATION>] [--receipt-budget-full-threshold <DURATION>] [--receipt-budget-remaining-threshold <N>] [--receipt-budget-low-sustain <DURATION>] [--receipt-budget-recovery-threshold <N>] [--receipt-budget-recovery-sustain <DURATION>] [--window <WINDOW>] [--watch] [--alerts-json] [--confirmation-progress] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--deadline-expired-ratio-threshold <PERCENT>` | expired percentage warning, 0.01..100 (two decimal places); zero disables |  |
+| `--deadline-expired-ratio-recovery <PERCENT>` | inclusive percentage below warning; default warning minus 0.01 percentage points |  |
+| `--deadline-expired-ratio-min-recipients <N>` | required minimum pending recipients with deadlines, 1..9007199254740991 |  |
+| `--deadline-window <DURATION>` | upcoming horizon, whole milliseconds 100ms-24h; required for deadline alerts |  |
+| `--deadline-upcoming-threshold <N>` | upcoming deadline count warning; zero disables |  |
+| `--deadline-expired-threshold <N>` | all expired deadline count warning; zero disables |  |
+| `--deadline-upcoming-recovery <N>` | inclusive recovery count below upcoming warning; default warning minus one |  |
+| `--deadline-expired-recovery <N>` | inclusive recovery count below expired warning; default warning minus one |  |
+| `--deadline-upcoming-reason <REASON=N>` | repeatable upcoming reason count warning |  |
+| `--deadline-expired-reason <REASON=N>` | repeatable expired reason count warning |  |
+| `--deadline-upcoming-reason-recovery <REASON=N>` | repeatable inclusive recovery count for enabled upcoming reason |  |
+| `--deadline-expired-reason-recovery <REASON=N>` | repeatable inclusive recovery count for enabled expired reason |  |
+| `--deadline-sustain <DURATION>` | deadline warning confirmation, 100ms-24h; default 1m |  |
+| `--deadline-recovery-sustain <DURATION>` | deadline recovery confirmation, 100ms-24h; default 1m |  |
+| `--renewal-rejection-threshold <FRACTION>` | recorded renewal rejection fraction threshold (0..1) |  |
+| `--lease-expiry-rate-threshold <RATE>` | recorded lease expiry transitions per second |  |
+| `--renewal-min-samples <N>` | minimum recorded renewal attempts (default 10) |  |
+| `--processing-window-sustain <DURATION>` | breach and recovery confirmation duration (at least 1m) |  |
+| `--processing-metrics-recording-since <RFC3339>` | manual recording coverage override; default uses verified server inventory |  |
+| `--processing-oldest-threshold <DURATION>` | oldest active processing attempt age; confirms for 30s |  |
+| `--processing-lease-risk-threshold <DURATION>` | sustained nonzero leases in their final third (capped at 30s) |  |
+| `--processing-expired-threshold <DURATION>` | sustained expired processing leases |  |
 | `--lineage-stalled-threshold <N>` | stalled pending retry-job count threshold |  |
 | `--lineage-retention-risk-threshold <N>` | active retry-job retention-risk count threshold |  |
 | `--lineage-paused-threshold <DURATION>` | sustained nonzero paused retry-job backlog |  |
@@ -3471,7 +3526,7 @@ Inspect routing, executions, retry jobs, and pending blockers
 | `--window <WINDOW>` | 5m\|15m\|1h\|6h\|24h |  |
 | `--watch` | watch configured local health thresholds |  |
 | `--alerts-json` | lifecycle alert JSON lines on stderr |  |
-| `--confirmation-progress` | live receipt-budget confirmation details on text stdout; omit with --json |  |
+| `--confirmation-progress` | live delivery-health confirmation details on text stdout; omit with --json |  |
 | `--interval <DURATION>` | poll interval (100ms-1m) |  |
 | `--timeout <DURATION>` | watch deadline (up to 24h) |  |
 | `--max-age <DURATION>` | maximum sample age |  |
@@ -6187,6 +6242,194 @@ gregale automations restore --app billing --name paid-invoice --revision 42 --ex
 gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes
 ```
 
+### automations live
+
+Start, observe and check saved cases against real execution
+
+#### automations live baseline
+
+Manage named baselines and inspect audit history
+
+`gregale automations live baseline <retire|list|show|history|promote>`
+
+##### automations live baseline retire
+
+Permanently retire a baseline with audit history and revision protection
+
+`gregale automations live baseline retire --app <SLUG> --name <NAME> --baseline-name <NAME> --retirement-id <UUID> --expected-revision <N> --confirm-retirement`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--retirement-id <UUID>` | stable retirement UUID; preserve for retries | required |
+| `--expected-revision <N>` | current positive baseline revision | required |
+| `--confirm-retirement` | confirm permanent retirement; release slot and evidence pin | required |
+
+##### automations live baseline list
+
+Discover active baseline heads and read retained evidence health; never execute
+
+`gregale automations live baseline list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+
+##### automations live baseline show
+
+Read the current immutable promotion receipt
+
+`gregale automations live baseline show --app <SLUG> --name <NAME> --baseline-name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+
+##### automations live baseline history
+
+Read up to 100 recent promotions
+
+`gregale automations live baseline history --app <SLUG> --name <NAME> --baseline-name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+
+##### automations live baseline promote
+
+Promote passing evidence with revision protection; never execute workflows
+
+`gregale automations live baseline promote --app <SLUG> --name <NAME> --baseline-name <NAME> --suite <UUID> --promotion-id <UUID> --expected-revision <N> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --policy <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--suite <UUID>` | passing retained suite UUID | required |
+| `--promotion-id <UUID>` | stable promotion UUID; preserve for retries | required |
+| `--expected-revision <N>` | current baseline revision; explicit 0 creates | required |
+| `--expected-version <N>` | expected candidate saved version | required |
+| `--expected-published-version <N>` | expected published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate deployment UUID | required |
+| `--policy <FILE>` | version 2 coverage and age policy JSON | required |
+
+#### automations live gate
+
+Require passing retained suite evidence for an explicit candidate target; read-only
+
+`gregale automations live gate --app <SLUG> --name <NAME> [--policy <FILE>] [--baseline <UUID>] [--baseline-name <NAME>] --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--policy <FILE>` | versioned required-case coverage policy JSON |  |
+| `--baseline <UUID>` | retained baseline suite UUID; exclusive with baseline-name |  |
+| `--baseline-name <NAME>` | resolve a named baseline; exclusive with baseline |  |
+| `--candidate <UUID>` | distinct retained candidate suite UUID | required |
+| `--expected-version <N>` | expected candidate saved automation version | required |
+| `--expected-published-version <N>` | expected candidate published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate live default deployment UUID | required |
+
+#### automations live suite
+
+Run selected live cases sequentially with resumable private progress
+
+`gregale automations live suite [--app <SLUG>] [--name <NAME>] [--case <NAME>] [--expected-version <N>] [--expected-published-version <N>] [--expected-deployment-id <UUID>] [--idempotency-key <KEY>] [--journal <PATH>] [--resume <PATH>] [--share] --confirm-real-actions [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for a new suite |  |
+| `--name <NAME>` | automation name for a new suite |  |
+| `--case <NAME>` | explicit case selection; repeat in execution order, at most 32 |  |
+| `--expected-version <N>` | saved automation version for a new suite |  |
+| `--expected-published-version <N>` | published revision for a new suite |  |
+| `--expected-deployment-id <UUID>` | live default deployment UUID for a new suite |  |
+| `--idempotency-key <KEY>` | stable suite key for a new suite |  |
+| `--journal <PATH>` | new private progress file; required for a new suite |  |
+| `--resume <PATH>` | continue the original selection from this suite journal |  |
+| `--share` | save a new suite in shared dashboard history; persisted for resume |  |
+| `--confirm-real-actions` | confirm execution of remaining selected cases | required |
+| `--timeout <DURATION>` | total invocation deadline (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+#### automations live list
+
+Read current target IDs and recent live verifications
+
+`gregale automations live list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+
+#### automations live start
+
+Explicitly start one saved case against real handlers
+
+`gregale automations live start --app <SLUG> --name <NAME> --case <NAME> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --idempotency-key <KEY> --confirm-real-actions [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--case <NAME>` | saved case with live expectations | required |
+| `--expected-version <N>` | current saved automation version | required |
+| `--expected-published-version <N>` | published automation revision | required |
+| `--expected-deployment-id <UUID>` | live default deployment UUID | required |
+| `--idempotency-key <KEY>` | stable key; retry only with the original start flags | required |
+| `--confirm-real-actions` | confirm this case can perform real actions | required |
+| `--wait` | wait and require a current passing assertion verdict |  |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+#### automations live show
+
+Read one verification without requiring a verdict
+
+`gregale automations live show --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+
+#### automations live check
+
+Check a terminal verification and require a current passing verdict
+
+`gregale automations live check --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+
+#### automations live wait
+
+Observe an existing run, check assertions and require a current passing verdict
+
+`gregale automations live wait --app <SLUG> --name <NAME> --run <UUID> [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | automation name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
 ### automations diff
 
 Compare draft and published definition fields without exposing values
@@ -7341,13 +7584,21 @@ List delayed tasks for an app
 
 Show one delayed task
 
-`gregale delayed-task get <id>`
+`gregale delayed-task get [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | require the task to belong to this app |  |
 
 ### delayed-task info
 
 Alias for get
 
-`gregale delayed-task info <id>`
+`gregale delayed-task info [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | require the task to belong to this app |  |
 
 ### delayed-task cancel
 
@@ -9509,11 +9760,12 @@ gregale edge-rules update RULE_ID --kind validate --validate-mode observe
 
 Delete one edge rule
 
-`gregale edge-rules rm [--yes] <id>`
+`gregale edge-rules rm [--yes] [--app <slug>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | skip the typed confirmation (alias: --quiet) |  |
+| `--app <slug>` | require the rule to belong to this app |  |
 
 ### edge-rules history
 

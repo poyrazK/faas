@@ -294,7 +294,7 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 		if _, hopByHop := connectionHeaders[lower]; hopByHop {
 			continue
 		}
-		if lower == "authorization" || lower == "cookie" || lower == "content-length" ||
+		if lower == "x-gregale-event-acknowledgment-token" || lower == "authorization" || lower == "cookie" || lower == "content-length" ||
 			lower == "host" || api.IsReservedOperationHeader(lower) || (strings.HasPrefix(lower, "x-faas-") && !api.IsOutboundWebhookHeader(lower)) || lower == "x-gregale-dev-session-context" || strings.HasPrefix(lower, "x-gregale-dev-bridge-") || isHopByHopHeader(canonical) {
 			continue
 		}

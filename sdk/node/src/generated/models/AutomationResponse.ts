@@ -2,11 +2,15 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutomationTestReport } from './AutomationTestReport.js';
+import type { AutomationTestSuite } from './AutomationTestSuite.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * Saved draft, publication, ownership and opaque revision of one automation.
  */
 export type AutomationResponse = {
+  test_suite?: AutomationTestSuite;
+  test_report?: AutomationTestReport;
   /**
    * Runtime failure guard blocks automatic admissions independently of configured enabled intent.
    */

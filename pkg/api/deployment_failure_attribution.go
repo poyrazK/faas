@@ -17,6 +17,7 @@ var customerCausedDeploymentFailureCodes = []string{
 	CodeAppRuntimeOOM,
 	CodeDepInstallFailed,
 	CodeAppStartupCrash,
+	CodeExecutionModeConflict,
 	CodeStatelessOnlyViolation,
 	CodeSecurityScanBlocked,
 	CodeAPIContractBreakingChange,

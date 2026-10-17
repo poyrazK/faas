@@ -34,7 +34,7 @@ type BudgetSpec struct {
 // ValidateBudget checks the semantic contract. Store/API adapters separately
 // enforce operational bounds from pkg/api/limits.go and account ownership.
 func ValidateBudget(p BudgetSpec) error {
-	if strings.TrimSpace(p.Name) == "" || p.Currency != "EUR" || p.LimitMillicents < 0 || p.DrainSeconds < 0 {
+	if strings.TrimSpace(p.Name) == "" || p.Currency != BillingCurrency || p.LimitMillicents < 0 || p.DrainSeconds < 0 {
 		return fmt.Errorf("%w: budget name, currency, amount or drain", ErrInvalid)
 	}
 	switch p.Scope.Kind {

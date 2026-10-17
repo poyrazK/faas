@@ -6526,6 +6526,7 @@ BEGIN
             'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
             'source', s.source, 'type', s.type, 'filter', s.filter,
             'routing_retry_policy', s.routing_retry_policy,
+            'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
@@ -8889,6 +8890,7 @@ SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
  WHEN b.state_data->>'state'='draining' AND (b.state_data->>'recovery_window')::timestamptz+interval '1 second'>observed_at
  AND (b.state_data->>'recovery_count')::integer>=least((b.policy->>'recovery_max_rate_per_second')::integer,
  power(2,least(7,greatest(0,floor(extract(epoch FROM observed_at-(b.state_data->>'changed_at')::timestamptz)/10))))::integer) THEN 'circuit_recovery_rate_limited'
+ WHEN c.rate_enabled AND (c.rate_refilled_at>observed_at OR c.rate_credit_ms+greatest(0,floor(extract(epoch FROM observed_at-c.rate_refilled_at)*1000))<c.rate_interval_ms) THEN 'subscription_rate_limited'
  WHEN c.rate_per_second>0 AND c.window_count>=c.rate_per_second AND c.window_started_at+interval '1 second'>observed_at THEN 'subscription_rate_limited' ELSE '' END
  FROM event_subscription_delivery_controls c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
  LEFT JOIN event_subscription_circuit_breakers b ON b.subscription_id=c.subscription_id AND b.account_id=c.account_id AND b.app_id=c.app_id
@@ -26539,6 +26541,118 @@ CREATE TABLE public.environment_workload_serving_routes (
 
 
 --
+-- Name: event_acknowledgment_metric_buckets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_metric_buckets (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    kind text NOT NULL,
+    occurrences bigint NOT NULL,
+    saturated boolean DEFAULT false NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_metric_buckets_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_trunc('minute'::text, bucket_start, 'UTC'::text)))),
+    CONSTRAINT event_acknowledgment_metric_buckets_check CHECK ((isfinite(retain_until) AND (retain_until > bucket_start))),
+    CONSTRAINT event_acknowledgment_metric_buckets_kind_check CHECK ((kind = ANY (ARRAY['renewed'::text, 'renewal_rejected'::text, 'expired'::text]))),
+    CONSTRAINT event_acknowledgment_metric_buckets_occurrences_check CHECK (((occurrences >= 1) AND (occurrences <= 2147483647)))
+);
+
+
+--
+-- Name: event_acknowledgment_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_outcomes (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    replay_generation bigint NOT NULL,
+    kind text NOT NULL,
+    first_at timestamp with time zone NOT NULL,
+    last_at timestamp with time zone NOT NULL,
+    occurrences bigint NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_outcomes_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT event_acknowledgment_outcomes_check CHECK ((last_at >= first_at)),
+    CONSTRAINT event_acknowledgment_outcomes_kind_check CHECK ((kind = ANY (ARRAY['accepted'::text, 'renewed'::text, 'renewal_rejected'::text, 'completed'::text, 'expired'::text, 'retry_requested'::text, 'dead_letter_requested'::text]))),
+    CONSTRAINT event_acknowledgment_outcomes_occurrences_check CHECK (((occurrences >= 1) AND (occurrences <= 2147483647))),
+    CONSTRAINT event_acknowledgment_outcomes_replay_generation_check CHECK ((replay_generation >= 0))
+);
+
+
+--
+-- Name: event_acknowledgment_recording_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_recording_coverage (
+    singleton boolean NOT NULL,
+    inventory_revision text NOT NULL,
+    continuous_since timestamp with time zone,
+    verified_through timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_recording_coverag_inventory_revision_check CHECK (((inventory_revision = ''::text) OR (inventory_revision ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT event_acknowledgment_recording_coverage_check CHECK (((continuous_since IS NULL) = (verified_through IS NULL))),
+    CONSTRAINT event_acknowledgment_recording_coverage_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: event_acknowledgment_writers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_writers (
+    session_id uuid NOT NULL,
+    role text NOT NULL,
+    slot text NOT NULL,
+    capability_version integer NOT NULL,
+    inventory jsonb NOT NULL,
+    inventory_revision text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    seen_at timestamp with time zone NOT NULL,
+    continuous_since timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_writers_capability_version_check CHECK ((capability_version >= 0)),
+    CONSTRAINT event_acknowledgment_writers_check CHECK ((seen_at >= started_at)),
+    CONSTRAINT event_acknowledgment_writers_check1 CHECK (((continuous_since >= started_at) AND (continuous_since <= seen_at))),
+    CONSTRAINT event_acknowledgment_writers_check2 CHECK ((expires_at > seen_at)),
+    CONSTRAINT event_acknowledgment_writers_inventory_check CHECK (((jsonb_typeof(inventory) = 'array'::text) AND (jsonb_array_length(inventory) <= 128))),
+    CONSTRAINT event_acknowledgment_writers_inventory_revision_check CHECK (((inventory_revision = ''::text) OR (inventory_revision ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT event_acknowledgment_writers_role_check CHECK ((role = ANY (ARRAY['apid'::text, 'schedd'::text]))),
+    CONSTRAINT event_acknowledgment_writers_slot_check CHECK ((slot ~ '^[A-Za-z0-9_.:-]{1,128}$'::text))
+);
+
+
+--
+-- Name: event_delivery_acknowledgments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_delivery_acknowledgments (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    replay_generation bigint NOT NULL,
+    token_digest bytea NOT NULL,
+    phase text NOT NULL,
+    completion_digest bytea,
+    lease_seconds integer NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    max_attempts integer NOT NULL,
+    retry_delay_ms bigint NOT NULL,
+    rejection_status jsonb,
+    CONSTRAINT event_delivery_acknowledgments_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT event_delivery_acknowledgments_check CHECK (((phase = ANY (ARRAY['completed'::text, 'rejected'::text])) = (completion_digest IS NOT NULL))),
+    CONSTRAINT event_delivery_acknowledgments_completion_digest_check CHECK (((completion_digest IS NULL) OR (octet_length(completion_digest) = 32))),
+    CONSTRAINT event_delivery_acknowledgments_lease_seconds_check CHECK (((lease_seconds >= 1) AND (lease_seconds <= 300))),
+    CONSTRAINT event_delivery_acknowledgments_max_attempts_check CHECK ((max_attempts > 0)),
+    CONSTRAINT event_delivery_acknowledgments_phase_check CHECK ((phase = ANY (ARRAY['offered'::text, 'awaiting'::text, 'completed'::text, 'rejected'::text]))),
+    CONSTRAINT event_delivery_acknowledgments_rejection_check CHECK (((phase = 'rejected'::text) = (rejection_status IS NOT NULL))),
+    CONSTRAINT event_delivery_acknowledgments_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT event_delivery_acknowledgments_retry_delay_ms_check CHECK ((retry_delay_ms > 0)),
+    CONSTRAINT event_delivery_acknowledgments_token_digest_check CHECK ((octet_length(token_digest) = 32))
+);
+
+
+--
 -- Name: event_delivery_capacity; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27339,9 +27453,44 @@ CREATE TABLE public.event_subscription_delivery_controls (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     paused_at timestamp with time zone,
     max_pending_deliveries integer DEFAULT 0 NOT NULL,
+    rate_enabled boolean DEFAULT false NOT NULL,
+    rate_interval_ms bigint DEFAULT 1000 NOT NULL,
+    rate_burst bigint DEFAULT 1 NOT NULL,
+    rate_credit_ms bigint DEFAULT 1000 NOT NULL,
+    rate_refilled_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    rate_revision bigint DEFAULT 0 NOT NULL,
+    rate_sequence bigint DEFAULT 0 NOT NULL,
     CONSTRAINT event_subscription_delivery_contro_max_pending_deliveries_check CHECK ((max_pending_deliveries >= 0)),
+    CONSTRAINT event_subscription_delivery_controls_check CHECK (((rate_credit_ms >= 0) AND (rate_credit_ms <= (rate_interval_ms * rate_burst)))),
+    CONSTRAINT event_subscription_delivery_controls_rate_burst_check CHECK (((rate_burst >= 1) AND (rate_burst <= 100))),
+    CONSTRAINT event_subscription_delivery_controls_rate_interval_ms_check CHECK (((rate_interval_ms >= 10) AND (rate_interval_ms <= 3600000))),
     CONSTRAINT event_subscription_delivery_controls_rate_per_second_check CHECK (((rate_per_second >= 0) AND (rate_per_second <= 100))),
+    CONSTRAINT event_subscription_delivery_controls_rate_refilled_at_check CHECK (isfinite(rate_refilled_at)),
+    CONSTRAINT event_subscription_delivery_controls_rate_revision_check CHECK ((rate_revision >= 0)),
+    CONSTRAINT event_subscription_delivery_controls_rate_sequence_check CHECK ((rate_sequence >= 0)),
     CONSTRAINT event_subscription_delivery_controls_window_count_check CHECK ((window_count >= 0))
+);
+
+
+--
+-- Name: event_subscription_rate_commands; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_subscription_rate_commands (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    command_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    request jsonb NOT NULL,
+    receipt jsonb NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_subscription_rate_commands_check CHECK ((isfinite(retain_until) AND (retain_until > recorded_at))),
+    CONSTRAINT event_subscription_rate_commands_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT event_subscription_rate_commands_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT event_subscription_rate_commands_request_check CHECK ((jsonb_typeof(request) = 'object'::text)),
+    CONSTRAINT event_subscription_rate_commands_sequence_check CHECK ((sequence > 0))
 );
 
 
@@ -27378,6 +27527,8 @@ CREATE TABLE public.event_subscriptions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     routing_retry_policy jsonb,
     schema_versions text[] DEFAULT '{}'::text[] NOT NULL,
+    acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL,
+    CONSTRAINT event_subscriptions_acknowledgment_lease_seconds_check CHECK (((acknowledgment_lease_seconds >= 0) AND (acknowledgment_lease_seconds <= 300))),
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
     CONSTRAINT event_subscriptions_schema_versions_check CHECK (public.valid_event_subscription_schema_versions(schema_versions)),
@@ -27779,7 +27930,7 @@ CREATE TABLE public.financial_budget_policies (
     CONSTRAINT financial_budget_policies_check CHECK ((updated_at >= created_at)),
     CONSTRAINT financial_budget_policies_check1 CHECK (((deleted_at IS NULL) OR (deleted_at >= created_at))),
     CONSTRAINT financial_budget_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
-    CONSTRAINT financial_budget_policies_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = 'EUR'::text) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 2)) AND ((spec -> 'meters'::text) <@ '["compute", "egress"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
+    CONSTRAINT financial_budget_policies_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = ANY (ARRAY['EUR'::text, 'USD'::text])) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 2)) AND ((spec -> 'meters'::text) <@ '["compute", "egress"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
 );
 
 
@@ -28724,7 +28875,7 @@ CREATE TABLE public.invoices (
     tax_cents bigint DEFAULT 0 NOT NULL,
     total_cents bigint DEFAULT 0 NOT NULL,
     amount_paid_cents bigint DEFAULT 0 NOT NULL,
-    currency text DEFAULT 'eur'::text NOT NULL,
+    currency text DEFAULT 'usd'::text NOT NULL,
     pdf_available boolean DEFAULT false NOT NULL,
     hosted_url text DEFAULT ''::text NOT NULL,
     raw jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -28742,7 +28893,7 @@ CREATE TABLE public.invoices (
     CONSTRAINT invoices_amount_refund_pending_cents_check CHECK ((amount_refund_pending_cents >= 0)),
     CONSTRAINT invoices_amount_refunded_cents_check CHECK ((amount_refunded_cents >= 0)),
     CONSTRAINT invoices_credits_applied_cents_check CHECK (((credits_applied_cents >= 0) AND (credits_applied_cents <= amount_refunded_cents))),
-    CONSTRAINT invoices_currency_check CHECK ((currency = 'eur'::text)),
+    CONSTRAINT invoices_currency_check CHECK ((currency = ANY (ARRAY['eur'::text, 'usd'::text]))),
     CONSTRAINT invoices_detail_lifecycle_object_check CHECK ((jsonb_typeof(detail_lifecycle) = 'object'::text)),
     CONSTRAINT invoices_detail_lifecycle_records_check CHECK (((NOT (detail_lifecycle ? 'records'::text)) OR ((jsonb_typeof((detail_lifecycle -> 'records'::text)) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(detail_lifecycle, '$."records".keyvalue()'::jsonpath)) <= 20002)))),
     CONSTRAINT invoices_details_object_check CHECK ((jsonb_typeof(details) = 'object'::text)),
@@ -38221,12 +38372,16 @@ CREATE TABLE public.workflow_automation_definitions (
     published_version bigint DEFAULT 0 NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    test_suite jsonb,
+    test_report jsonb,
     CONSTRAINT workflow_automation_definitions_check CHECK (((jsonb_typeof(draft) = 'object'::text) AND ((draft ->> 'name'::text) = name))),
     CONSTRAINT workflow_automation_definitions_check1 CHECK (((published IS NULL) OR ((jsonb_typeof(published) = 'object'::text) AND ((published ->> 'name'::text) = name)))),
     CONSTRAINT workflow_automation_definitions_check2 CHECK (((published_version >= 0) AND (published_version <= version))),
     CONSTRAINT workflow_automation_definitions_check3 CHECK (((published IS NULL) = (published_version = 0))),
     CONSTRAINT workflow_automation_definitions_name_check CHECK ((length(name) > 0)),
-    CONSTRAINT workflow_automation_definitions_version_check CHECK ((version > 0))
+    CONSTRAINT workflow_automation_definitions_version_check CHECK ((version > 0)),
+    CONSTRAINT workflow_automation_test_report_shape CHECK (((test_report IS NULL) OR (jsonb_typeof(test_report) = 'object'::text))),
+    CONSTRAINT workflow_automation_test_suite_shape CHECK (((test_suite IS NULL) OR (jsonb_typeof(test_suite) = 'object'::text)))
 );
 
 
@@ -38288,6 +38443,103 @@ CREATE TABLE public.workflow_automation_failure_policies (
     CONSTRAINT workflow_automation_failure_policies_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
     CONSTRAINT workflow_automation_failure_policies_version_check CHECK ((version > 0)),
     CONSTRAINT workflow_automation_failure_policies_window_seconds_check CHECK (((window_seconds >= 60) AND (window_seconds <= 86400)))
+);
+
+
+--
+-- Name: workflow_automation_live_baseline_promotions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_live_baseline_promotions (
+    promotion_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    baseline_name text NOT NULL,
+    revision bigint NOT NULL,
+    suite_id uuid NOT NULL,
+    receipt jsonb NOT NULL,
+    promoted_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_automation_live_baseline_promotion_baseline_name_check CHECK ((((octet_length(baseline_name) >= 1) AND (octet_length(baseline_name) <= 63)) AND (baseline_name ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT workflow_automation_live_baseline_promotions_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_baseline_promotions_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT workflow_automation_live_baseline_promotions_promoted_at_check CHECK (isfinite(promoted_at)),
+    CONSTRAINT workflow_automation_live_baseline_promotions_promotion_id_check CHECK ((promotion_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_baseline_promotions_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 32768))),
+    CONSTRAINT workflow_automation_live_baseline_promotions_revision_check CHECK ((revision > 0)),
+    CONSTRAINT workflow_automation_live_baseline_promotions_suite_id_check CHECK ((suite_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: workflow_automation_live_baseline_retirements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_live_baseline_retirements (
+    retirement_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    baseline_name text NOT NULL,
+    receipt jsonb NOT NULL,
+    CONSTRAINT workflow_automation_live_baseline_retiremen_baseline_name_check CHECK ((((octet_length(baseline_name) >= 1) AND (octet_length(baseline_name) <= 63)) AND (baseline_name ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text))),
+    CONSTRAINT workflow_automation_live_baseline_retiremen_retirement_id_check CHECK ((retirement_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_baseline_retirements_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_baseline_retirements_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT workflow_automation_live_baseline_retirements_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length((receipt)::text) <= 32768)))
+);
+
+
+--
+-- Name: workflow_automation_live_suites; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_live_suites (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    automation_version bigint NOT NULL,
+    published_version bigint NOT NULL,
+    deployment_id uuid NOT NULL,
+    cases jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    managed boolean DEFAULT false NOT NULL,
+    CONSTRAINT workflow_automation_live_suites_automation_version_check CHECK ((automation_version > 0)),
+    CONSTRAINT workflow_automation_live_suites_cases_check CHECK (((jsonb_typeof(cases) = 'array'::text) AND ((jsonb_array_length(cases) >= 1) AND (jsonb_array_length(cases) <= 32)) AND (octet_length((cases)::text) <= 16384))),
+    CONSTRAINT workflow_automation_live_suites_check CHECK (((published_version > 0) AND (published_version <= automation_version))),
+    CONSTRAINT workflow_automation_live_suites_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_suites_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_suites_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128)))
+);
+
+
+--
+-- Name: workflow_automation_live_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_live_verifications (
+    run_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    case_name text NOT NULL,
+    automation_version bigint NOT NULL,
+    published_version bigint NOT NULL,
+    deployment_id uuid NOT NULL,
+    inputs_hash text NOT NULL,
+    live_test jsonb NOT NULL,
+    idempotency_key text NOT NULL,
+    request_fingerprint bytea NOT NULL,
+    report jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_automation_live_verification_request_fingerprint_check CHECK ((octet_length(request_fingerprint) = 32)),
+    CONSTRAINT workflow_automation_live_verifications_automation_version_check CHECK ((automation_version > 0)),
+    CONSTRAINT workflow_automation_live_verifications_case_name_check CHECK (((octet_length(case_name) >= 1) AND (octet_length(case_name) <= 128))),
+    CONSTRAINT workflow_automation_live_verifications_check CHECK (((published_version > 0) AND (published_version <= automation_version))),
+    CONSTRAINT workflow_automation_live_verifications_deployment_id_check CHECK ((deployment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT workflow_automation_live_verifications_idempotency_key_check CHECK (((octet_length(idempotency_key) >= 1) AND (octet_length(idempotency_key) <= 255))),
+    CONSTRAINT workflow_automation_live_verifications_inputs_hash_check CHECK ((inputs_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT workflow_automation_live_verifications_live_test_check CHECK ((jsonb_typeof(live_test) = 'object'::text)),
+    CONSTRAINT workflow_automation_live_verifications_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
+    CONSTRAINT workflow_automation_live_verifications_report_check CHECK (((report IS NULL) OR (jsonb_typeof(report) = 'object'::text)))
 );
 
 
@@ -41664,6 +41916,46 @@ ALTER TABLE ONLY public.environment_workload_serving_routes
 
 
 --
+-- Name: event_acknowledgment_metric_buckets event_acknowledgment_metric_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_metric_buckets
+    ADD CONSTRAINT event_acknowledgment_metric_buckets_pkey PRIMARY KEY (account_id, app_id, subscription_id, bucket_start, kind);
+
+
+--
+-- Name: event_acknowledgment_outcomes event_acknowledgment_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_outcomes
+    ADD CONSTRAINT event_acknowledgment_outcomes_pkey PRIMARY KEY (invocation_id, attempt, replay_generation, kind);
+
+
+--
+-- Name: event_acknowledgment_recording_coverage event_acknowledgment_recording_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_recording_coverage
+    ADD CONSTRAINT event_acknowledgment_recording_coverage_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: event_acknowledgment_writers event_acknowledgment_writers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_writers
+    ADD CONSTRAINT event_acknowledgment_writers_pkey PRIMARY KEY (session_id);
+
+
+--
+-- Name: event_delivery_acknowledgments event_delivery_acknowledgments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_acknowledgments
+    ADD CONSTRAINT event_delivery_acknowledgments_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: event_delivery_capacity event_delivery_capacity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -41901,6 +42193,22 @@ ALTER TABLE ONLY public.event_subscription_circuit_breakers
 
 ALTER TABLE ONLY public.event_subscription_delivery_controls
     ADD CONSTRAINT event_subscription_delivery_controls_pkey PRIMARY KEY (subscription_id);
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_pkey PRIMARY KEY (subscription_id, command_id);
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_subscription_id_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_subscription_id_sequence_key UNIQUE (subscription_id, sequence);
 
 
 --
@@ -46688,6 +46996,62 @@ ALTER TABLE ONLY public.workflow_automation_failure_policies
 
 
 --
+-- Name: workflow_automation_live_baseline_promotions workflow_automation_live_base_app_id_name_baseline_name_rev_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_baseline_promotions
+    ADD CONSTRAINT workflow_automation_live_base_app_id_name_baseline_name_rev_key UNIQUE (app_id, name, baseline_name, revision);
+
+
+--
+-- Name: workflow_automation_live_baseline_retirements workflow_automation_live_baseline_app_id_name_baseline_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_baseline_retirements
+    ADD CONSTRAINT workflow_automation_live_baseline_app_id_name_baseline_name_key UNIQUE (app_id, name, baseline_name);
+
+
+--
+-- Name: workflow_automation_live_baseline_promotions workflow_automation_live_baseline_promotions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_baseline_promotions
+    ADD CONSTRAINT workflow_automation_live_baseline_promotions_pkey PRIMARY KEY (promotion_id);
+
+
+--
+-- Name: workflow_automation_live_baseline_retirements workflow_automation_live_baseline_retirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_baseline_retirements
+    ADD CONSTRAINT workflow_automation_live_baseline_retirements_pkey PRIMARY KEY (retirement_id);
+
+
+--
+-- Name: workflow_automation_live_suites workflow_automation_live_suites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_suites
+    ADD CONSTRAINT workflow_automation_live_suites_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifi_app_id_name_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifi_app_id_name_idempotency_key_key UNIQUE (app_id, name, idempotency_key);
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: workflow_automation_publish_policies workflow_automation_publish_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49495,6 +49859,41 @@ CREATE INDEX environment_workload_retirements_source ON public.environment_workl
 
 
 --
+-- Name: event_acknowledgment_metric_buckets_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_metric_buckets_app ON public.event_acknowledgment_metric_buckets USING btree (app_id);
+
+
+--
+-- Name: event_acknowledgment_metric_buckets_retention; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_metric_buckets_retention ON public.event_acknowledgment_metric_buckets USING btree (retain_until);
+
+
+--
+-- Name: event_acknowledgment_outcomes_retention; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_outcomes_retention ON public.event_acknowledgment_outcomes USING btree (retain_until);
+
+
+--
+-- Name: event_acknowledgment_writers_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_writers_expiry ON public.event_acknowledgment_writers USING btree (expires_at);
+
+
+--
+-- Name: event_acknowledgment_writers_seen; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_writers_seen ON public.event_acknowledgment_writers USING btree (seen_at);
+
+
+--
 -- Name: event_delivery_slots_consumer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -49912,6 +50311,13 @@ CREATE INDEX event_subscription_circuit_breakers_app_idx ON public.event_subscri
 --
 
 CREATE INDEX event_subscription_delivery_controls_app_idx ON public.event_subscription_delivery_controls USING btree (app_id);
+
+
+--
+-- Name: event_subscription_rate_commands_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_subscription_rate_commands_expiry_idx ON public.event_subscription_rate_commands USING btree (retain_until);
 
 
 --
@@ -53986,6 +54392,20 @@ CREATE INDEX webhook_deliveries_expires_idx ON public.webhook_deliveries USING b
 --
 
 CREATE INDEX workflow_automation_failure_finished_idx ON public.workflow_runs USING btree (app_id, workflow_name, finished_at) WHERE ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'dead'::text])) AND (cancelled_at IS NULL) AND (operation_id IS NULL));
+
+
+--
+-- Name: workflow_automation_live_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_automation_live_history ON public.workflow_automation_live_verifications USING btree (app_id, name, created_at DESC, run_id DESC);
+
+
+--
+-- Name: workflow_automation_live_suite_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_automation_live_suite_history ON public.workflow_automation_live_suites USING btree (app_id, name, created_at DESC, id DESC);
 
 
 --
@@ -63044,6 +63464,38 @@ ALTER TABLE ONLY public.environment_workload_serving_routes
 
 
 --
+-- Name: event_acknowledgment_metric_buckets event_acknowledgment_metric_buckets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_metric_buckets
+    ADD CONSTRAINT event_acknowledgment_metric_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_acknowledgment_metric_buckets event_acknowledgment_metric_buckets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_metric_buckets
+    ADD CONSTRAINT event_acknowledgment_metric_buckets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_acknowledgment_outcomes event_acknowledgment_outcomes_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_outcomes
+    ADD CONSTRAINT event_acknowledgment_outcomes_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_delivery_acknowledgments event_delivery_acknowledgments_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_acknowledgments
+    ADD CONSTRAINT event_delivery_acknowledgments_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: event_delivery_capacity event_delivery_capacity_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63329,6 +63781,30 @@ ALTER TABLE ONLY public.event_subscription_delivery_controls
 
 ALTER TABLE ONLY public.event_subscription_delivery_controls
     ADD CONSTRAINT event_subscription_delivery_controls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE;
 
 
 --
@@ -69241,6 +69717,62 @@ ALTER TABLE ONLY public.workflow_automation_failure_history
 
 ALTER TABLE ONLY public.workflow_automation_failure_policies
     ADD CONSTRAINT workflow_automation_failure_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_baseline_promotions workflow_automation_live_baseline_promotions_app_id_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_baseline_promotions
+    ADD CONSTRAINT workflow_automation_live_baseline_promotions_app_id_name_fkey FOREIGN KEY (app_id, name) REFERENCES public.workflow_automation_definitions(app_id, name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_baseline_retirements workflow_automation_live_baseline_retirements_app_id_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_baseline_retirements
+    ADD CONSTRAINT workflow_automation_live_baseline_retirements_app_id_name_fkey FOREIGN KEY (app_id, name) REFERENCES public.workflow_automation_definitions(app_id, name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_suites workflow_automation_live_suites_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_suites
+    ADD CONSTRAINT workflow_automation_live_suites_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_suites workflow_automation_live_suites_app_id_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_suites
+    ADD CONSTRAINT workflow_automation_live_suites_app_id_name_fkey FOREIGN KEY (app_id, name) REFERENCES public.workflow_automation_definitions(app_id, name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_app_id_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_app_id_name_fkey FOREIGN KEY (app_id, name) REFERENCES public.workflow_automation_definitions(app_id, name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_verifications workflow_automation_live_verifications_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_verifications
+    ADD CONSTRAINT workflow_automation_live_verifications_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
 
 
 --

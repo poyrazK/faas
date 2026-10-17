@@ -1,0 +1,23 @@
+{{define "automation-live-editor"}}
+<details id="automation-live-editor" open><summary>Live expectations for this case</summary>
+<p>Choose separate checks for real execution. Editing or saving expectations does not start a run. Apply case changes, then save test data.</p>
+<input type="hidden" name="test_live_source" value="guided"><input type="hidden" name="test_live_index" value="{{.Data.TestLiveIndex}}">
+{{with .Data.TestEditor.Live}}
+{{if .Enabled}}
+<label for="test-live-run-status">Expected live run state</label><select id="test-live-run-status" name="test_live_run_status"><option value="" {{if eq .RunStatus ""}}selected{{end}}>Default: succeeded</option><option value="succeeded" {{if eq .RunStatus "succeeded"}}selected{{end}}>succeeded</option><option value="failed" {{if eq .RunStatus "failed"}}selected{{end}}>failed</option><option value="dead" {{if eq .RunStatus "dead"}}selected{{end}}>dead</option>{{if and (ne .RunStatus "") (ne .RunStatus "succeeded") (ne .RunStatus "failed") (ne .RunStatus "dead")}}<option value="{{.RunStatus}}" selected>Unsupported: {{.RunStatus}}</option>{{end}}</select>
+<p class="muted">Cancellation always fails verification, even when failure is expected.</p>
+{{if .Assertions}}<label for="test-live-select">Live step assertion</label><select id="test-live-select" name="test_live_select">{{range .Assertions}}<option value="{{.Index}}" {{if eq .Index $.Data.TestLiveIndex}}selected{{end}}>{{.Label}}</option>{{end}}</select><button type="submit" formaction="{{$.Data.BaseURL}}/select-live-assertion">Open live assertion</button>{{end}}
+{{else}}<p>No live expectations configured. Add an assertion to configure checks for this case.</p>{{end}}
+<div class="actions"><button type="submit" formaction="{{$.Data.BaseURL}}/add-live-assertion" {{if not .CanAddAssertion}}disabled{{end}}>Add live assertion</button>{{if .HasAssertion}}<button type="submit" formaction="{{$.Data.BaseURL}}/remove-live-assertion">Remove live assertion</button>{{end}}{{if .Enabled}}<button type="submit" formaction="{{$.Data.BaseURL}}/disable-live-test">Disable live verification for this case</button>{{end}}</div>
+{{if .HasAssertion}}
+<label for="test-live-step">Live workflow step</label><select id="test-live-step" name="test_live_step">{{range .Targets}}<option value="{{.}}" {{if eq . $.Data.TestEditor.Live.Step}}selected{{end}}>{{.}}</option>{{end}}</select>
+<label for="test-live-item-index">Live loop item index</label><input id="test-live-item-index" type="text" name="test_live_item_index" inputmode="numeric" value="{{.ItemIndex}}"><p class="muted">For an /action step, choose the item from 0 to {{.MaxItemIndex}}. Root steps ignore this field.</p>
+<label for="test-live-state">Expected live step state</label><select id="test-live-state" name="test_live_state"><option value="" {{if eq .State ""}}selected{{end}}>Do not check state</option><option value="succeeded" {{if eq .State "succeeded"}}selected{{end}}>succeeded</option><option value="failed" {{if eq .State "failed"}}selected{{end}}>failed</option><option value="dead" {{if eq .State "dead"}}selected{{end}}>dead</option><option value="skipped" {{if eq .State "skipped"}}selected{{end}}>skipped</option>{{if and (ne .State "") (ne .State "succeeded") (ne .State "failed") (ne .State "dead") (ne .State "skipped")}}<option value="{{.State}}" selected>Unsupported: {{.State}}</option>{{end}}</select>
+<label class="check"><input type="checkbox" name="test_live_assert_output" value="yes" {{if .AssertOutput}}checked{{end}}>Check expected live output</label>
+<label for="test-live-output">Expected live output (JSON)</label><textarea id="test-live-output" name="test_live_output" rows="4" spellcheck="false">{{.Output}}</textarea><p class="muted">Use <code>null</code> to check for a null output. Uncheck the box to omit this assertion.</p>
+<label for="test-live-attempt-count">Expected live attempt count</label><input id="test-live-attempt-count" type="text" name="test_live_attempt_count" inputmode="numeric" value="{{.AttemptCount}}"><p class="muted">Leave blank to omit this check. Zero checks that no attempts occurred. Counts include resumed attempts, up to {{.MaxAttempts}}.</p>
+<p class="muted">Choose at least one state, output, or attempt check for each live assertion before starting verification.</p>
+{{end}}{{end}}
+<p class="muted">Use Advanced test JSON to edit the complete <code>live</code> object. Mock expectations below remain separate.</p>
+</details>
+{{end}}

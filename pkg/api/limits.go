@@ -1369,10 +1369,10 @@ type PlanResourceShape struct {
 // PlanResourceShapes is the single joint RAM/vCPU table used by API
 // validation and documentation. Keep this ordered with Plans.
 var PlanResourceShapes = []PlanResourceShape{
-	{Plan: PlanFree, RAMMB: 128, VCPU: 2},
-	{Plan: PlanHobby, RAMMB: 256, VCPU: 2},
-	{Plan: PlanPro, RAMMB: 512, VCPU: 2},
-	{Plan: PlanScale, RAMMB: 1024, VCPU: 4},
+	{Plan: PlanFree, RAMMB: 256, VCPU: 2},
+	{Plan: PlanHobby, RAMMB: 512, VCPU: 2},
+	{Plan: PlanPro, RAMMB: 1024, VCPU: 2},
+	{Plan: PlanScale, RAMMB: 2048, VCPU: 4},
 }
 
 // VCPUPerPlan exposes the plan-derived guest topology to SDK and CLI callers.
@@ -1627,7 +1627,8 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1320). Every plan currently leaves it zero.
+	// (ADR-1320). Plans include stored bytes per ADR-1430; request and egress
+	// allowances wait for exporters that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
@@ -3180,7 +3181,7 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
-		RAMMB:          128,
+		RAMMB:          256,
 		// ConcurrencyPerVMBound (issue #559): Free allows four
 		// concurrent requests per VM. This keeps the demo tier useful
 		// for small bursts while MaxConcurrency (= 1) still limits a
@@ -3190,13 +3191,15 @@ var planLimits = map[Plan]Limits{
 		// layer build ... Free 256 MB") and the limits table both read 256
 		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
 		// alignment comment; the value was 256 before this audit too.
-		AppLayerMaxMB:                  256,
-		SourceTarballMaxMB:             100,
-		VCPU:                           2,
-		IdleTimeoutS:                   60,
-		RequestBudgetMaxMs:             30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
-		CertExpiryWarningDays:          30,
-		IncludedGBHours:                5,
+		AppLayerMaxMB:         256,
+		SourceTarballMaxMB:    100,
+		VCPU:                  2,
+		IdleTimeoutS:          60,
+		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
+		CertExpiryWarningDays: 30,
+		IncludedGBHours:       20,
+		// ADR-1430: 1 GiB included and Free's hard stop.
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -3529,7 +3532,7 @@ var planLimits = map[Plan]Limits{
 		ConcurrentTailsPerInstance: 4,
 		// Liveness (issue #554 / ADR-078): Free is gated off — a
 		// wedged Free VM is already bounded by the §13 M7
-		// free-stop path at 5 GB-h, so the liveness probe adds no
+		// free-stop path at its GB-h allowance, so the liveness probe adds no
 		// safety on the abuse-floor tier. The zero-valued fields
 		// (Period=0, Consecutive=0, Cooldown=0, MaxRestarts=0,
 		// Window=0) cause `Plan.LivenessAllowed()` to return false
@@ -3582,15 +3585,17 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
-		RAMMB:                 256,
+		RAMMB:                 512,
 		AppLayerMaxMB:         512,
 		SourceTarballMaxMB:    100,
 		VCPU:                  2,
 		IdleTimeoutS:          60,
 		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
-		IncludedGBHours:       50,
-		PriceMillicents:       900_000, // €9.00
+		IncludedGBHours:       200,
+		// ADR-1430: 10 GiB included; usage above it is priced at month close.
+		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
+		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound:          5,
@@ -3884,7 +3889,7 @@ var planLimits = map[Plan]Limits{
 		// Warm-snapshot (issue #470 / ADR-055): Hobby is gated off
 		// for the same cost-shape reason as Free — doubling the
 		// parked per-app snapshot footprint doesn't fit the
-		// €9/month Hobby price point. Pro/Scale customers pay
+		// $10/month Hobby price point. Pro/Scale customers pay
 		// enough that the +130 MB per warm-tier app is comfortably
 		// inside the 452 GB parked budget.
 		WarmSnapshotEnabled:            false,
@@ -4002,15 +4007,17 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
-		RAMMB:                 512,
+		RAMMB:                 1024,
 		AppLayerMaxMB:         1024,
 		SourceTarballMaxMB:    250,
 		VCPU:                  2,
 		IdleTimeoutS:          300,
 		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
-		IncludedGBHours:       250,
-		PriceMillicents:       2_900_000, // €29.00
+		IncludedGBHours:       1000,
+		// ADR-1430: 50 GiB included; usage above it is priced at month close.
+		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
+		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
@@ -4384,15 +4391,17 @@ var planLimits = map[Plan]Limits{
 		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
-		RAMMB:                 1024,
+		RAMMB:                 2048,
 		AppLayerMaxMB:         2048,
 		SourceTarballMaxMB:    250,
 		VCPU:                  4,
 		IdleTimeoutS:          600,
 		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
-		IncludedGBHours:       1500,
-		PriceMillicents:       9_900_000, // €99.00
+		IncludedGBHours:       3000,
+		// ADR-1430: 200 GiB included; usage above it is priced at month close.
+		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
+		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
 		// body cites this number directly). 80 concurrent requests
@@ -4906,7 +4915,7 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
+	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -6578,11 +6587,48 @@ const (
 	AutomationPublishCheckMaxExclusions         = 256
 	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
 
-	AutomationSimulationRequestMaxBytes         int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes        int64 = 4 << 20
-	AutomationSimulationMaxSteps                      = 128
-	AutomationSimulationMaxTraceEntries               = 1024
-	AutomationDefinitionMaxBytes                int64 = 1 << 20
+	AutomationSimulationRequestMaxBytes      int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes     int64 = 4 << 20
+	AutomationSimulationMaxSteps                   = 128
+	AutomationSimulationMaxTraceEntries            = 1024
+	AutomationDefinitionMaxBytes             int64 = 1 << 20
+	AutomationTestSuiteMaxBytes              int64 = AutomationSimulationRequestMaxBytes + AutomationPublishCheckMaxBytes
+	AutomationTestSuiteRequestMaxBytes       int64 = AutomationTestSuiteMaxBytes + 4096
+	AutomationTestReportMaxBytes             int64 = AutomationPublishCheckMaxBytes
+	AutomationLiveMaxExpectations                  = AutomationSimulationMaxSteps
+	AutomationLiveSpecMaxBytes               int64 = AutomationSimulationRequestMaxBytes
+	AutomationLiveStartMaxBytes              int64 = 4096
+	AutomationLiveHistoryLimit                     = 20
+	AutomationLiveReportMaxBytes             int64 = 128 << 10
+	AutomationLiveMaxAttempts                      = WorkflowRetryMaxAttempts * (WorkflowRunMaxResumes + 1)
+	AutomationLiveProgressPollInterval             = 3 * time.Second
+	AutomationLiveProgressRequestTimeout           = 10 * time.Second
+	AutomationLiveProgressMaxRequests              = 100
+	AutomationLiveProgressFormMaxBytes       int64 = 4096
+	AutomationLiveCLIWaitDefault                   = 5 * time.Minute
+	AutomationLiveCLIWaitMax                       = time.Hour
+	AutomationLiveCLIPollMin                       = time.Second
+	AutomationLiveCLIPollMax                       = time.Minute
+	AutomationLiveSuiteMaxCases                    = AutomationPublishCheckMaxScenarios
+	AutomationLiveBaselineNameMaxBytes             = 63
+	AutomationLiveBaselineLimit                    = 20
+	AutomationLiveBaselineLifetimeNameLimit        = 100
+	AutomationLiveBaselineHistoryLimit             = 100
+	AutomationLiveBaselineRequestMaxBytes    int64 = 20 << 10
+	AutomationLiveBaselineReceiptMaxBytes    int64 = 32 << 10
+	AutomationLiveGatePolicyMaxBytes         int64 = 16 << 10
+	AutomationLiveSuiteComparisonMaxCases          = 2 * AutomationLiveSuiteMaxCases
+	AutomationLiveSuiteJournalMaxBytes       int64 = (AutomationLiveReportMaxBytes+AutomationLiveStartMaxBytes)*AutomationLiveSuiteMaxCases + (64 << 10)
+	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
+	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
+	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
+	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
+	AutomationLiveSuiteRetainedLimit               = 100
+	AutomationTestCaseNameMaxBytes                 = 128
+	AutomationTestStepResultsMax                   = AutomationSimulationMaxTraceEntries
+	// Browser forms percent-encode the definition, sample, cases, and selected
+	// case simulation/output controls.
+	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes+AutomationLiveSpecMaxBytes) + 4096
 	AutomationNameMaxBytes                            = 128
 	WorkflowRunInputMaxBytes                    int64 = 1 << 20
 	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10
@@ -11053,6 +11099,9 @@ const (
 	EventDeliveryHealthWatchCountMax        int64 = 9007199254740991
 )
 
+// EventDeadlineInvestigationAlertFileMaxBytes bounds one saved CLI alert object.
+const EventDeadlineInvestigationAlertFileMaxBytes = 64 << 10
+
 // EventDeliveryHealthAlertQueueMax bounds pending notifications plus closing reservations.
 const EventDeliveryHealthAlertQueueMax = 1024
 
@@ -11388,6 +11437,89 @@ const (
 	MCPConnectionHealthPageSize           = 50
 	MCPConnectionHealthMaxOffset          = 10000
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
+)
+
+// Deferred event processing remains bounded independently of dispatch timeout.
+const (
+	EventAcknowledgmentLeaseMaxSeconds = 300
+	EventAcknowledgmentLifetime        = time.Hour
+	EventAcknowledgmentSweepBatch      = 100
+)
+const EventAcknowledgmentResultMaxBytes = 1 << 20
+
+const EventProcessingNearExpiry = 30 * time.Second
+const EventProcessingAlertSustain = 30 * time.Second
+
+// Outcome history coalesces repeated operations per attempt and outcome kind.
+const EventAcknowledgmentHistoryLimit = 100
+const EventAcknowledgmentHistoryRetention = 7 * 24 * time.Hour
+
+const EventAcknowledgmentHistoryCursorMaxBytes = 2048
+const EventAcknowledgmentHistoryCursorLifetime = time.Hour
+
+const EventAcknowledgmentMetricBucket = time.Minute
+const EventAcknowledgmentMetricRetention = 48 * time.Hour
+const EventAcknowledgmentMetricCountMax int64 = 1<<31 - 1
+
+const EventProcessingWindowAlertMinimumSamples int64 = 10
+const EventProcessingWindowAlertSustain = time.Minute
+const EventProcessingWindowAlertMinimumWindows = 2
+
+const EventAcknowledgmentWriterHeartbeat = 10 * time.Second
+const EventAcknowledgmentWriterLease = 30 * time.Second
+const EventAcknowledgmentWriterRetention = 48 * time.Hour
+const EventAcknowledgmentWriterRosterMax = 128
+const EventAcknowledgmentWriterLiveMax = 256
+const EventAcknowledgmentWriterSlotMaxBytes = 128
+const EventAcknowledgmentWriterRosterMaxBytes = 16 << 10
+const EventAcknowledgmentWriterCapabilityVersion = 1
+
+const EventAcknowledgmentFailureReasonMaxBytes = 128
+const EventAcknowledgmentFailureRequestMaxBytes = 4096
+
+// Subscription token-bucket configuration bounds; independent of plan quotas.
+const (
+	EventSubscriptionRateIntervalMinMillis  int64 = 10
+	EventSubscriptionRateIntervalMaxMillis  int64 = 3600000
+	EventSubscriptionRateBurstMax           int64 = 100
+	EventSubscriptionRateCommandRetention         = 30 * 24 * time.Hour
+	EventSubscriptionRateCommandMaxReceipts       = 128
+	EventSubscriptionRateCommandPageSize          = 50
+	EventSubscriptionRateRequestMaxBytes          = 4 << 10
+)
+
+const (
+	EventSubscriptionRatePreviewSampleMax = 1000
+	EventSubscriptionRatePreviewRiskMax   = 100
+)
+
+const (
+	EventDeliveryRateRiskSustainDefault            = time.Minute
+	EventDeliveryRateRiskRecoveryDefault           = time.Minute
+	EventDeliveryRateContributorMaxBytes           = 512
+	EventDeliveryDeadlineRatioBasisPointsMax int64 = 10000
+)
+
+// Full pending-summary reads have a fixed resource budget, independent of row count.
+const (
+	EventSubscriptionPendingSummaryTimeout               = 5 * time.Second
+	EventSubscriptionPendingSummaryStatementMillis       = 4000
+	EventSubscriptionPendingSummaryCountMax        int64 = 9007199254740991
+)
+
+// Deadline triage is a bounded live listing, with no cursor-backed reservation.
+const (
+	EventSubscriptionDeadlinePageDefault     = 50
+	EventSubscriptionDeadlinePageMax         = 100
+	EventSubscriptionDeadlineCursorMaxBytes  = 4096
+	EventSubscriptionDeadlineCursorLifetime  = 15 * time.Minute
+	EventSubscriptionDeadlineReadTimeout     = EventSubscriptionPendingSummaryTimeout
+	EventSubscriptionDeadlineStatementMillis = EventSubscriptionPendingSummaryStatementMillis
+)
+
+const (
+	EventSubscriptionDeadlineWindowMinMillis int64 = 100
+	EventSubscriptionDeadlineWindowMaxMillis int64 = 24 * 60 * 60 * 1000
 )
 
 // ServiceMapMaxEdges caps the caller → target edges returned by

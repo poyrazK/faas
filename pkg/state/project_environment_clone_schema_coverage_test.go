@@ -18,6 +18,11 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,
+		"workflow_automation_live_baseline_retirements": CloneSchemaOperational,
+		"workflow_automation_live_suites":               CloneSchemaOperational,
+		"workflow_automation_live_verifications":        CloneSchemaOperational,
+
 		"workflow_initial_recovery_reviews":       CloneSchemaOperational,
 		"profile_deployment_policies":             CloneSchemaConfiguration,
 		"profile_investigations":                  CloneSchemaOperational,

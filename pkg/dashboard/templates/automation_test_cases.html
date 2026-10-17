@@ -1,0 +1,26 @@
+{{define "automation-test-cases"}}
+<div id="automation-test-data">
+<p>Save a named set of test cases with this automation to reuse them after reopening. Saved data includes your sample input, mock outcomes, and expected results. Use synthetic data and keep credentials in managed integrations.</p>
+<p>{{if .Data.TestSuiteSaved}}Test data is saved with this draft.{{else}}The sample and test cases in the editor have not been saved.{{end}} Editing the definition or test data makes earlier results outdated.</p>
+<div class="actions"><button type="submit" formaction="{{.Data.BaseURL}}/save-tests" {{if not .Data.Version}}disabled{{end}}>Save test data</button><button type="submit" formaction="{{.Data.BaseURL}}/run-tests" {{if not .Data.TestSuiteSaved}}disabled{{end}}>Run saved test cases</button></div>
+{{if .Data.TestSuiteSaved}}<details><summary>Remove saved test data</summary><label class="check"><input type="checkbox" name="confirm_clear_tests" value="yes">Remove the saved sample, cases, and results.</label><button type="submit" formaction="{{.Data.BaseURL}}/clear-tests">Clear saved test data</button></details>{{end}}
+{{with .Data.TestReport}}<section id="automation-test-report" aria-label="Saved test results"><h3>Saved test results</h3><p role="status"><span id="automation-test-freshness" aria-live="polite">{{if $.Data.TestReportFresh}}Results are current for the displayed definition and test data.{{else}}Results are outdated. Save your changes and rerun the test cases.{{end}}</span> {{if .Passed}}All saved cases passed.{{else}}Some saved cases failed.{{end}}</p><p class="muted">Checked at {{.CheckedAt.UTC.Format "2006-01-02 15:04:05 UTC"}} against draft revision {{.CheckedVersion}}. Publication runs fresh server checks.</p>
+{{range .Cases}}<article class="card"><h4>{{.Name}}: {{if .Passed}}passed{{else}}failed{{end}}</h4>{{if .Issue}}<p>Issue: <code>{{.Issue}}</code></p>{{end}}{{if .Steps}}<div class="table-scroll"><table><tr><th>Step</th><th>Observed state</th><th>Assertion</th></tr>{{range .Steps}}<tr><td>{{.Step}}{{if .Loop}} ({{.Loop}} item {{.ItemIndex}}){{end}}</td><td>{{if .State}}{{.State}}{{else}}Not observed{{end}}</td><td>{{if .Passed}}passed{{else}}failed{{if .Mismatches}}<ul>{{range .Mismatches}}<li>{{template "automation-test-mismatch" .}}</li>{{end}}</ul>{{else}}<p>Rerun cases for detailed failure information.</p>{{end}}{{end}}</td></tr>{{end}}</table></div>{{end}}{{if .StepsTruncated}}<p>Step results were truncated. The case result includes every assertion.</p>{{end}}</article>{{end}}</section>{{end}}
+</div>
+{{if .Data.TestReport}}<script nonce="{{.Nonce}}">
+(() => {
+  const status = document.getElementById('automation-test-freshness');
+  const form = document.getElementById('automation-definition').form;
+  function changed(event) {
+    const target = event.target;
+    if (target.matches('textarea, input[name="editor_mode"], [id^="report-"], [id^="webhook-"]') || target.closest('#automation-test-editor')) {
+      status.textContent = 'Results are outdated. Save your changes and rerun the test cases.';
+    }
+  }
+  form.addEventListener('input', changed);
+  form.addEventListener('change', changed);
+})();
+</script>{{end}}
+{{end}}
+
+{{define "automation-test-mismatch"}}{{if eq . "step"}}Step was missing or ambiguous.{{else if eq . "state"}}Expected state did not match.{{else if eq . "reason"}}Expected reason did not match.{{else if eq . "when_matched"}}Expected condition result did not match.{{else if eq . "output"}}Expected output did not match.{{else if eq . "attempt_count"}}Expected attempt count did not match.{{else if eq . "attempts"}}Expected retry outcomes did not match.{{else}}Assertion did not match.{{end}}{{end}}
