@@ -1,8 +1,8 @@
-# ADR-1543: Read-only GitOps promotion proposals
+# ADR-20261017190803: Read-only GitOps promotion proposals
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-16
-- **Related:** ADR-568, ADR-1155, ADR-1541, ADR-1542
+- **Related:** ADR-568, ADR-1155, ADR-20261017190801, ADR-20261017190802
 
 ## Context
 

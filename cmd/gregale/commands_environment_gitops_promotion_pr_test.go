@@ -193,7 +193,7 @@ func TestProjectsGitOpsPromotionPRRejectsInvalidFlagsBeforeRequests(t *testing.T
 	}
 }
 
-// adr: 1550, 1551 — review commands consume exactly one project/environment pair.
+// adr: 20261017190810, 20261017190811 — review commands consume exactly one project/environment pair.
 func TestGitOpsReviewPRRejectsUnexpectedPositionalsBeforeRequests(t *testing.T) {
 	for _, command := range []string{"promotion-pr", "rollback-pr"} {
 		for _, positional := range [][]string{nil, {"shop"}, {"shop", "production", "unexpected"}} {

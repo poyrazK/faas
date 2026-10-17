@@ -1,4 +1,4 @@
--- ADR-1547: bounded artifact recovery protection from reviewed Git intent.
+-- ADR-20261017190807: bounded artifact recovery protection from reviewed Git intent.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

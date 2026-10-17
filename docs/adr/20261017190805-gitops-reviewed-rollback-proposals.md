@@ -1,8 +1,8 @@
-# ADR-1545: Reviewed GitOps rollback proposals
+# ADR-20261017190805: Reviewed GitOps rollback proposals
 
 - **Status:** accepted (implementation preview; dedicated native acceptance pending)
 - **Date:** 2026-10-17
-- **Related:** ADR-1331, ADR-1543, ADR-1544
+- **Related:** ADR-1331, ADR-20261017190803, ADR-20261017190804
 
 ## Context
 
@@ -26,7 +26,7 @@ additional workloads remain intact. Missing workloads or changed app identity
 block export; rollback does not recover retired identities implicitly. Scheduled
 Jobs and sidecars are excluded initially.
 
-Reuse ADR-1544 artifact references for source, Dockerfile and function code.
+Reuse ADR-20261017190804 artifact references for source, Dockerfile and function code.
 Allow distinct deployments in the same app/environment to borrow an original
 producer. Artifact selection explicitly clears the derived `source_revision` to
 null while retaining its ownership; it does not enable general pruning. The

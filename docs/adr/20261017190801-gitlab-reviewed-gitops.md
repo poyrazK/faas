@@ -1,4 +1,4 @@
-# ADR-1541: Provider-bound GitLab review and workload provenance
+# ADR-20261017190801: Provider-bound GitLab review and workload provenance
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-15

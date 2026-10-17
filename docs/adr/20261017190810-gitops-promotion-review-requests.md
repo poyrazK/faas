@@ -1,8 +1,8 @@
-# ADR-1550: Reviewed GitOps promotion pull and merge requests
+# ADR-20261017190810: Reviewed GitOps promotion pull and merge requests
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-17
-- **Related:** ADR-1543, ADR-1544, ADR-1548, ADR-1549
+- **Related:** ADR-20261017190803, ADR-20261017190804, ADR-20261017190808, ADR-20261017190809
 
 ## Context
 
@@ -35,7 +35,7 @@ operators to repeat repository selection, stale-base checks and retry handling.
    retry an uncertain write automatically. A fresh plan is required for a new base.
 5. Read the manifest at the immutable target commit. Verify the Git blob identity
    and ordinary non-executable file mode. Validate the complete base definition
-   digest using ADR-1543's exporter. Preserve target YAML nodes/comments outside
+   digest using ADR-20261017190803's exporter. Preserve target YAML nodes/comments outside
    changed source contracts; JSON remains canonical JSON. Parse and verify the
    resulting complete proposed digest. Configuration and secret-reference values
    stay out of review descriptions and CLI receipts.

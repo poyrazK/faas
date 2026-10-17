@@ -1,6 +1,6 @@
 package state
 
-// adr: 1544. A borrowed layer keeps its producer's identity and signature scope.
+// adr: 20261017190804. A borrowed layer keeps its producer's identity and signature scope.
 
 import (
 	"encoding/json"

@@ -1,4 +1,4 @@
-# ADR-1549: Reuse signed builds for unchanged isolated GitOps contexts
+# ADR-20261017190809: Reuse signed builds for unchanged isolated GitOps contexts
 
 Status: Accepted for implementation; native acceptance remains pending.
 

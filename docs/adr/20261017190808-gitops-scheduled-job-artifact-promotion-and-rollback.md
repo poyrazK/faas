@@ -1,8 +1,8 @@
-# ADR-1548: Signed artifact promotion and rollback for scheduled Jobs
+# ADR-20261017190808: Signed artifact promotion and rollback for scheduled Jobs
 
 - **Status:** accepted (implementation preview; native acceptance pending)
 - **Date:** 2026-10-17
-- **Related:** ADR-1542, ADR-1544, ADR-1545, ADR-1546, ADR-1547
+- **Related:** ADR-20261017190802, ADR-20261017190804, ADR-20261017190805, ADR-20261017190806, ADR-20261017190807
 
 ## Context
 
@@ -12,7 +12,7 @@ This prevents one reviewed release workflow from covering services and Jobs.
 
 ## Decision
 
-1. Allow source and Dockerfile scheduled workloads to select ADR-1544's producer
+1. Allow source and Dockerfile scheduled workloads to select ADR-20261017190804's producer
    ID and input hash. Keep the same account, project, mapped app, recipe and
    provider/repository trust scope. Cross-app transfer, sidecars, function
    schedules and Job queue bindings remain unsupported.

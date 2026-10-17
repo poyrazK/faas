@@ -3869,7 +3869,7 @@ CREATE FUNCTION public.application_standard_source_runtime_producer(a public.app
 DECLARE f source_build_rootfs%ROWTYPE; origin build_export_publications%ROWTYPE;
  base jsonb; b base_image_producers%ROWTYPE; runtime text; kind text; borrowed_id uuid;
 BEGIN
- -- ADR-1544: validate the target's pin before following its immutable producer.
+ -- ADR-20261017190804: validate the target's pin before following its immutable producer.
  IF d.environment_workload_runtime ? 'built_artifact' THEN
   borrowed_id:=(d.environment_workload_runtime->'built_artifact'->>'id')::uuid;
   IF NOT environment_build_artifact_valid(d,true) THEN RAISE EXCEPTION 'borrowed source runtime changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;

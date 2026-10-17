@@ -38,7 +38,7 @@ project was reviewed nor whether the authenticated account can still read it.
    require separate qualification before enforcement can be enabled.
 
 The protected-branch evidence and workload preparation extension is specified
-in [ADR-1541](1541-gitlab-reviewed-gitops.md). Its provider-bound trust contract
+in [ADR-20261017190801](20261017190801-gitlab-reviewed-gitops.md). Its provider-bound trust contract
 supersedes the initial report/manual/prune restriction; production gates remain.
 
 ## Consequences

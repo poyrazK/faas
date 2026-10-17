@@ -1,8 +1,8 @@
-# ADR-1542: Reviewed source-backed scheduled Jobs
+# ADR-20261017190802: Reviewed source-backed scheduled Jobs
 
 - **Status:** accepted
 - **Date:** 2026-10-16
-- **Related:** ADR-568, ADR-099, ADR-1541
+- **Related:** ADR-568, ADR-099, ADR-20261017190801
 
 ## Context
 

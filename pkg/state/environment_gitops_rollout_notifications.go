@@ -1,4 +1,4 @@
-// adr: 1553 — durable, evidence-bound rollout outcome notifications.
+// adr: 20261017190813 — durable, evidence-bound rollout outcome notifications.
 package state
 
 import (

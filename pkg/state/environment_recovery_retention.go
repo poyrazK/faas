@@ -1,6 +1,6 @@
 package state
 
-// adr: 1547. Policy selection is count/time/byte bounded. Reads never acquire pins.
+// adr: 20261017190807. Policy selection is count/time/byte bounded. Reads never acquire pins.
 import (
 	"encoding/json"
 	"fmt"

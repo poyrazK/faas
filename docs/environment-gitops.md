@@ -74,7 +74,7 @@ Timeout receipts describe the last observation, not a fresh readiness guarantee.
 Inspect current blockers with gitops explain and rerun with the same explicit
 commit if appropriate. Neither waiting nor its exit code grants deployment
 authority or enables production gates. Exclusive native VM/leak acceptance
-remains pending. See [ADR-1552](adr/1552-gitops-wait-for-serving-commit.md) and the
+remains pending. See [ADR-20261017190812](adr/20261017190812-gitops-wait-for-serving-commit.md) and the
 [post-merge CI examples](../examples/gitops-ci/README.md#wait-after-merge).
 
 ## Try review and reporting
@@ -139,7 +139,7 @@ approvals and per-MR overrides disabled. Every matching branch rule must deny
 direct pushes and force pushes. Missing or unsupported evidence blocks automatic
 approval; manual report mode remains available. Review evidence binds the latest
 MR diff and its approving humans to the exact merged definition. See
-[ADR-1541](adr/1541-gitlab-reviewed-gitops.md) for the supported profile.
+[ADR-20261017190801](adr/20261017190801-gitlab-reviewed-gitops.md) for the supported profile.
 
 Source/Dockerfile/function candidates use the approved GitLab commit and the
 same archive checks as GitHub. Their provenance also includes the immutable
@@ -292,7 +292,7 @@ materializer APIs cannot publish them. Schedd verifies frozen source provenance,
 layer identity and the active release before boot and before releasing the held
 command. A changed artifact increments the schedule revision. Serving still
 requires a matching successful occurrence after activation. See
-[ADR-1542](adr/1542-gitops-source-scheduled-jobs.md).
+[ADR-20261017190802](adr/20261017190802-gitops-source-scheduled-jobs.md).
 
 At scheduled execution, schedd requires the VM client's explicit held-start
 release capability before booting a managed Job. It persists the Job's runtime
@@ -373,8 +373,8 @@ missing/deleting artifacts, changed recipes and cross-app reuse are rejected.
 Source and Dockerfile scheduled Jobs support these references with explicit matching
 app mappings and schedules on both origin and target. Target cron/timezone,
 production argv, smoke command and configuration remain unchanged. Sidecars and
-function schedules remain unsupported. See [ADR-1544](adr/1544-gitops-built-artifact-reuse.md)
-and [ADR-1548](adr/1548-gitops-scheduled-job-artifact-promotion-and-rollback.md).
+function schedules remain unsupported. See [ADR-20261017190804](adr/20261017190804-gitops-built-artifact-reuse.md)
+and [ADR-20261017190808](adr/20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md).
 
 For example, a reviewed production source can pin the producer returned by the
 promotion plan (use the actual ID/hash, not these placeholders):
@@ -420,7 +420,7 @@ stale evidence causes a normal build. Each commit still gets its own held
 candidate, current provenance and signature, target conversion and fresh
 qualification. `gitops explain` reports the recorded cache decision; it does not
 turn a cache hit into serving proof. This optimization uses the node-local cache.
-An explicit artifact pin takes precedence. See [ADR-1549](adr/1549-gitops-unchanged-build-context-reuse.md).
+An explicit artifact pin takes precedence. See [ADR-20261017190809](adr/20261017190809-gitops-unchanged-build-context-reuse.md).
 
 Review the plan and reuse its `plan_hash` in a fresh request before exporting:
 
@@ -445,7 +445,7 @@ Release, artifact, binding, ownership or target intent changes invalidate a save
 observation. Neither a proposal nor its hash authorizes deployment. Target review
 and fresh environment-specific qualification remain required; production
 enforcement and dedicated native acceptance retain their existing gates. See
-[ADR-1543](adr/1543-gitops-promotion-proposals.md).
+[ADR-20261017190803](adr/20261017190803-gitops-promotion-proposals.md).
 
 ### Open a promotion pull or merge request
 
@@ -493,7 +493,7 @@ retention. Normal Git review/approval, current artifact trust and fresh target
 qualification, activation and serving evidence remain required. Use `rollback-pr`
 below for retained-release recovery with its own reviewed rollback plan.
 Native acceptance and production execution gates remain unchanged. See
-[ADR-1550](adr/1550-gitops-promotion-review-requests.md).
+[ADR-20261017190810](adr/20261017190810-gitops-promotion-review-requests.md).
 
 ## Prepare a reviewed code rollback
 
@@ -522,7 +522,7 @@ policy reduction/removal, or explicit source detachment can release protection
 earlier. Suspension preserves it. Existing trust checks and fresh target
 qualification remain mandatory. Approval cannot resurrect an artifact claimed
 by garbage collection, and protected provenance cannot be erased by cleanup.
-See [ADR-1547](adr/1547-gitops-bounded-recovery-retention.md).
+See [ADR-20261017190807](adr/20261017190807-gitops-bounded-recovery-retention.md).
 
 Find retained releases and current eligibility for your target manifest:
 
@@ -541,7 +541,7 @@ is listed; expired release compatibility windows remain visible. The release
 window is a routing deadline, not an artifact retention guarantee. Listing grants
 no pins or execution authority. Blockers explain current artifact trust, mapping,
 source freshness and ownership failures. Request a fresh individual plan before
-reviewing/exporting. See [ADR-1546](adr/1546-gitops-recovery-catalog.md).
+reviewing/exporting. See [ADR-20261017190806](adr/20261017190806-gitops-recovery-catalog.md).
 
 Select a release previously served by this Git source in this environment. The read-only plan identifies its manifest commit, graph, exact
 image/build artifact and historical serving time:
@@ -584,8 +584,8 @@ fresh Job qualification and a successful post-activation occurrence; completed
 executions are never replayed or reused as proof. Schedd rechecks current publisher
 trust before boot and before releasing the held command. Unscheduled Jobs and
 sidecars remain excluded. Native VM/leak acceptance and production gates remain
-unchanged. See [ADR-1545](adr/1545-gitops-reviewed-rollback-proposals.md) and
-[ADR-1548](adr/1548-gitops-scheduled-job-artifact-promotion-and-rollback.md).
+unchanged. See [ADR-20261017190805](adr/20261017190805-gitops-reviewed-rollback-proposals.md) and
+[ADR-20261017190808](adr/20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md).
 
 ### Open a recovery pull or merge request
 
@@ -633,7 +633,7 @@ Recovery does not restore data or undo database migrations. Completed Jobs are
 never replayed; scheduled Jobs require fresh qualification and a successful
 post-activation occurrence for future runs. Production execution gates and
 exclusive native acceptance requirements remain unchanged. See
-[ADR-1551](adr/1551-gitops-rollback-review-requests.md).
+[ADR-20261017190811](adr/20261017190811-gitops-rollback-review-requests.md).
 
 ## Receive drift, source and rollout notifications
 
@@ -696,7 +696,7 @@ commit atomically. No migration or separate notification worker is required.
 Deliveries are signed and **at least once**. Deduplicate retries using the
 payload's `transition_id`; all receivers for one outcome share that ID. New
 receivers receive future outcomes without replaying already recorded ones.
-See [ADR-1553](adr/1553-gitops-rollout-outcome-notifications.md).
+See [ADR-20261017190813](adr/20261017190813-gitops-rollout-outcome-notifications.md).
 
 ## Isolated enforcement acceptance
 
