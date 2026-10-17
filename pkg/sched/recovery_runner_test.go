@@ -105,8 +105,8 @@ func TestRecoveryRunnerRecreatesUnavailableBootWithoutCompletingNode(t *testing.
 	store := state.NewMemStore()
 	node, err := store.CreateComputeNode(ctx, state.ComputeNode{
 		Name:      "recovery-runner-unavailable",
-		Lifecycle: state.NodeLifecycleUnavailable,
-		Active:    false,
+		Lifecycle: state.NodeLifecycleActive,
+		Active:    true,
 	})
 	if err != nil {
 		t.Fatalf("create unavailable node: %v", err)
@@ -114,6 +114,9 @@ func TestRecoveryRunnerRecreatesUnavailableBootWithoutCompletingNode(t *testing.
 	instance, err := store.CreateInstance(ctx, "app-recovery-runner", "dep-recovery-runner", string(state.StateColdBooting), 128, node.ID, "wake-recovery-runner")
 	if err != nil {
 		t.Fatalf("create instance: %v", err)
+	}
+	if err := store.NodeSetLifecycle(ctx, node.ID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatal(err)
 	}
 	recreated := 0
 	arbiter := NewArbiter(nil, recoveryRecreateFunc(func(ctx context.Context, id string) error {
@@ -154,8 +157,8 @@ func TestRecoveryRunnerMigratesTwoNodeWorkload(t *testing.T) {
 	store := state.NewMemStore()
 	source, err := store.CreateComputeNode(ctx, state.ComputeNode{
 		Name:      "recovery-workload-source",
-		Lifecycle: state.NodeLifecycleUnavailable,
-		Active:    false,
+		Lifecycle: state.NodeLifecycleActive,
+		Active:    true,
 	})
 	if err != nil {
 		t.Fatalf("create source node: %v", err)
@@ -182,6 +185,9 @@ func TestRecoveryRunnerMigratesTwoNodeWorkload(t *testing.T) {
 		t.Fatalf("create parked instance: %v", err)
 	}
 
+	if err := store.NodeSetLifecycle(ctx, source.ID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatal(err)
+	}
 	migrated := 0
 	var migratedMu sync.Mutex // the arbiter dispatches a node's migrations concurrently
 	arbiter := NewArbiter(MigrationDispatcherFunc(func(ctx context.Context, instanceID string) error {
@@ -252,8 +258,8 @@ func TestRecoveryRunnerTwoNodeWorkloadSoakNoStuckRows(t *testing.T) {
 	store := state.NewMemStore()
 	source, err := store.CreateComputeNode(ctx, state.ComputeNode{
 		Name:      "recovery-soak-source",
-		Lifecycle: state.NodeLifecycleUnavailable,
-		Active:    false,
+		Lifecycle: state.NodeLifecycleActive,
+		Active:    true,
 	})
 	if err != nil {
 		t.Fatalf("create source node: %v", err)
@@ -286,9 +292,17 @@ func TestRecoveryRunnerTwoNodeWorkloadSoakNoStuckRows(t *testing.T) {
 	runner := NewRecoveryRunner(store, arbiter, nil, testLog())
 
 	for cycle := 0; cycle < 100; cycle++ {
+		if cycle > 0 {
+			if err := store.NodeSetLifecycle(ctx, source.ID, state.NodeLifecycleUnavailable, state.NodeLifecycleActive); err != nil {
+				t.Fatal(err)
+			}
+		}
 		instance, createErr := store.CreateInstance(ctx, "app-recovery-soak", "dep-recovery-soak", string(state.StateRunning), 128, source.ID, fmt.Sprintf("wake-recovery-soak-%d", cycle))
 		if createErr != nil {
 			t.Fatalf("cycle %d create instance: %v", cycle, createErr)
+		}
+		if err := store.NodeSetLifecycle(ctx, source.ID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+			t.Fatal(err)
 		}
 		if tickErr := runner.Tick(ctx); tickErr != nil {
 			t.Fatalf("cycle %d recovery tick: %v", cycle, tickErr)

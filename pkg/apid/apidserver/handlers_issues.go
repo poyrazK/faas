@@ -51,6 +51,9 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events", s.ingestIssueEvent)
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events/otlp/{signal}", s.ingestIssueOTLP)
 	mux.HandleFunc("GET /v1/apps/{slug}/issues", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssues)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-lifecycle-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueLifecycleAlertPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-lifecycle-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueLifecycleAlertPolicy))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previewIssueLifecycleAlert)))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-frequency-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueFrequencyAlertPolicy)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-frequency-alert-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueFrequencyAlertPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-impact-alert-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueImpactAlertPolicy)))
@@ -108,6 +111,8 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	}
 
 	switch {
+	case errors.Is(err, state.ErrIssueLifecycleAlertRevision):
+		api.WriteProblem(w, api.NewProblem(409, "issue_lifecycle_alert_policy_changed", "Policy changed", "reload the lifecycle alert policy before saving"))
 	case errors.Is(err, state.ErrIssueFrequencyAlertRevision):
 		api.WriteProblem(w, api.NewProblem(409, "issue_frequency_alert_revision_conflict", "Policy changed", "reload the frequency alert policy before saving"))
 	case errors.Is(err, state.ErrIssueTeamInUse):

@@ -1424,7 +1424,7 @@ export class PlatformTenantsService {
    * Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
    * Exports one finalized platform tenant statement revision to the
    * provider in the body (default stripe; connect it with
-   * PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+   * PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
    * Stripe gets a draft invoice and Paddle a draft manually collected
    * transaction; neither is finalized or sent. Lago issues a one-off
    * invoice at once, without charging it. Items are one per rate card and

@@ -57,7 +57,7 @@ class BillingRunItemResponse:
     reason: str | Unset = UNSET
     """Why the customer was held, skipped or failed, or why a retry is pending."""
     payment_status: BillingRunItemResponsePaymentStatus | Unset = UNSET
-    """Payment status of the invoice exported for the item's statement (ADR-1302)."""
+    """Payment status of the invoice exported for the item's statement (ADR-1504)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

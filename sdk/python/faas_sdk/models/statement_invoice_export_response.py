@@ -32,11 +32,11 @@ T = TypeVar("T", bound="StatementInvoiceExportResponse")
 
 @_attrs_define
 class StatementInvoiceExportResponse:
-    """A finalized statement's invoice in the account's billing provider (ADR-1300, ADR-1305)."""
+    """A finalized statement's invoice in the account's billing provider (ADR-1502, ADR-1507)."""
 
     statement_id: UUID
     provider: BillingProvider
-    """A billing provider statements export to (ADR-1305)."""
+    """A billing provider statements export to (ADR-1507)."""
     customer: str
     status: StatementInvoiceExportResponseStatus
     """creating means an earlier attempt stopped part-way; repeat the export to resume it."""
@@ -54,7 +54,7 @@ class StatementInvoiceExportResponse:
     completed_at: datetime.datetime | Unset = UNSET
     source_kind: StatementInvoiceExportResponseSourceKind | Unset = UNSET
     payment_status: StatementInvoiceExportResponsePaymentStatus | Unset = UNSET
-    """The provider invoice's status as last read by Gregale (ADR-1302, ADR-1305); deleted means the provider no
+    """The provider invoice's status as last read by Gregale (ADR-1504, ADR-1507); deleted means the provider no
     longer has it. Absent until the first sync."""
     amount_paid_minor: int | Unset = UNSET
     amount_remaining_minor: int | Unset = UNSET

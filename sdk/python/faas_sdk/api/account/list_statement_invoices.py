@@ -83,7 +83,7 @@ def sync_detailed(
     cursor: str | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Response[Problem | StatementInvoiceListResponse]:
-    """List invoices exported from usage statements, with their payment status (ADR-1302).
+    """List invoices exported from usage statements, with their payment status (ADR-1504).
 
     Args:
         status (ListStatementInvoicesStatus | Unset):
@@ -118,7 +118,7 @@ def sync(
     cursor: str | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Problem | StatementInvoiceListResponse | None:
-    """List invoices exported from usage statements, with their payment status (ADR-1302).
+    """List invoices exported from usage statements, with their payment status (ADR-1504).
 
     Args:
         status (ListStatementInvoicesStatus | Unset):
@@ -148,7 +148,7 @@ async def asyncio_detailed(
     cursor: str | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Response[Problem | StatementInvoiceListResponse]:
-    """List invoices exported from usage statements, with their payment status (ADR-1302).
+    """List invoices exported from usage statements, with their payment status (ADR-1504).
 
     Args:
         status (ListStatementInvoicesStatus | Unset):
@@ -181,7 +181,7 @@ async def asyncio(
     cursor: str | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Problem | StatementInvoiceListResponse | None:
-    """List invoices exported from usage statements, with their payment status (ADR-1302).
+    """List invoices exported from usage statements, with their payment status (ADR-1504).
 
     Args:
         status (ListStatementInvoicesStatus | Unset):

@@ -749,6 +749,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runHostingReconciler(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
@@ -842,8 +843,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
-		srv.billingRuns.Start(ctx, log)       // ADR-1301
-		srv.statementInvoices.Start(ctx, log) // ADR-1302
+		srv.billingRuns.Start(ctx, log)       // ADR-1503
+		srv.statementInvoices.Start(ctx, log) // ADR-1504
 		srv.consumerCredits.Start(ctx, log)   // ADR-1306
 		srv.consumerControls.Start(ctx, log)  // ADR-1315
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
@@ -1514,6 +1515,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
+	if err := srv.configureHosting(deps.getenv); err != nil {
+		return fmt.Errorf("apid internal hosting configuration: %w", err)
+	}
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}

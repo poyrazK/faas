@@ -21,7 +21,7 @@ func (s *Service) now() time.Time {
 }
 
 // Start follows exported invoices' payment status and sends the daily
-// overdue digest (ADR-1302) every StatementInvoiceSyncTickInterval.
+// overdue digest (ADR-1504) every StatementInvoiceSyncTickInterval.
 func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 	if _, ok := s.Host.Store().(state.StatementInvoicePaymentStore); !ok {
 		return

@@ -3658,7 +3658,7 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 		    and lease_token = $3`,
 		instanceID, originalNodeID, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: cancel instance migration: %w", err)
+		return fmt.Errorf("state: cancel instance migration: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -3756,7 +3756,7 @@ func (s *PgStore) ReinviteMigratingInstance(ctx context.Context, instanceID, lea
 		    and lease_token = $2`,
 		instanceID, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: reinvite migrating instance: %w", err)
+		return fmt.Errorf("state: reinvite migrating instance: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -3800,7 +3800,7 @@ func (s *PgStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseT
 		    and lease_token = $2`,
 		instanceID, leaseToken)
 	if err != nil {
-		return fmt.Errorf("state: abort migrating instance: %w", err)
+		return fmt.Errorf("state: abort migrating instance: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -5224,7 +5224,7 @@ func (s *PgStore) UpdateProjectBinding(ctx context.Context, accountID, projectID
 func (s *PgStore) DeleteProject(ctx context.Context, projectID string) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID)
 	if err != nil {
-		return fmt.Errorf("pgstore: delete project %q: %w", projectID, err)
+		return fmt.Errorf("pgstore: delete project %q: %w", projectID, hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -5446,7 +5446,7 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ProjectEnvironmentCleanupJob{}, ErrNotFound
@@ -17840,7 +17840,7 @@ func (s *PgStore) DeleteParkedInstancesOlderThan(ctx context.Context, threshold 
 func (s *PgStore) DeleteInstance(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from instances where id = $1`, id)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -18006,6 +18006,9 @@ func (s *PgStore) TouchInstancesWithRequestDelta(ctx context.Context, touches []
 // Tier (issue #470 / ADR-055): empty tier defaults to "init" for legacy
 // callers; new warm-tier capture code passes SnapshotTierWarm explicitly.
 func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, error) {
+	if snap.RecoveryGeneration != 0 {
+		return Snapshot{}, ErrInvalidArgument
+	}
 	return createSnapshotWithQuerier(ctx, s.pool, snap)
 }
 
@@ -18024,7 +18027,8 @@ func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) 
 		}
 	}
 	row, err := sqlc.New().CreateSnapshot(ctx, q, sqlc.CreateSnapshotParams{
-		DeploymentID: mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
+		RecoveryGeneration: snap.RecoveryGeneration,
+		DeploymentID:       mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
 		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
 		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
 	})
@@ -18341,7 +18345,7 @@ type SnapshotSize struct {
 // migration 00468 adds gateway_target_url for a 23-column projection;
 // migration 00579 adds lifecycle for a 24-column projection; the
 // timestamped private-network topology migration adds overlay_ip as the
-// 25th field. The
+// 25th field. ADR-1527 adds lifecycle_generation as the 26th field. The
 // earlier 22-column additions were public_ip / public_ip_set_at
 // (migration 00174 closure) + release_id / manifest_hash /
 // host_certificate / cert_fingerprint /
@@ -18356,7 +18360,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.LastHeartbeatAt, &n.CreatedAt, &n.Region, &n.Zone,
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
-		&n.Role, &n.Generation, &n.Lifecycle); err != nil {
+		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -18369,7 +18373,7 @@ func (s *PgStore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle
+		       lifecycle, lifecycle_generation
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -18401,7 +18405,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle
+		       lifecycle, lifecycle_generation
 		  from compute_nodes
 		 order by name
 	`)
@@ -18427,7 +18431,7 @@ func (s *PgStore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle
+		       lifecycle, lifecycle_generation
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -18445,7 +18449,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle
+		       lifecycle, lifecycle_generation
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -18477,6 +18481,13 @@ func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, 
 	`, nodeID, api.PerVMOverheadMB).Scan(&used)
 	if err != nil {
 		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
+	}
+	resources, err := s.migrationAdmissionResources(ctx, []string{nodeID})
+	if err != nil {
+		return 0, err
+	}
+	for _, resource := range resources {
+		used += resource.RamMb
 	}
 	return used, nil
 }
@@ -18518,6 +18529,13 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: iterate compute nodes used_mb: %w", err)
+	}
+	resources, err := s.migrationAdmissionResources(ctx, nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, resource := range resources {
+		used[resource.NodeID] += resource.RamMb
 	}
 	return used, nil
 }
@@ -18566,6 +18584,13 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: iterate compute nodes used_cpu_millicores: %w", err)
+	}
+	resources, err := s.migrationAdmissionResources(ctx, nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, resource := range resources {
+		used[resource.NodeID] += resource.CpuMillicores
 	}
 	return used, nil
 }
@@ -19037,7 +19062,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle
+		          lifecycle, lifecycle_generation
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19115,7 +19140,7 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle
+		          lifecycle, lifecycle_generation
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19193,7 +19218,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle
+		          lifecycle, lifecycle_generation
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -19316,7 +19341,7 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle
+		          lifecycle, lifecycle_generation
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -19562,7 +19587,7 @@ func validateRoleForState(role string) error {
 // index on active=true used by placement; this method is admin-only
 // and so pays the full-table scan cost only on operator dashboards).
 func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([]ComputeNode, error) {
-	// Column order is locked to scanComputeNode's 25-arg projection
+	// Column order is locked to scanComputeNode's 26-arg projection
 	// (pgstore.go:8346). PR-3a (issue #911 / ADR-110) widened it
 	// from 14 to 22 by adding public_ip / public_ip_set_at (migration
 	// 00174 closure) + release_id / manifest_hash / host_certificate
@@ -19577,7 +19602,7 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle
+		       lifecycle, lifecycle_generation
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -19613,7 +19638,7 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle
+		       lifecycle, lifecycle_generation
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -19703,6 +19728,7 @@ func nodeRowToComputeNode(r sqlc.NodeGetRow) ComputeNode {
 	}
 	// Lifecycle fields (Workstream B, 00579 + 00582).
 	n.Lifecycle = NodeLifecycle(r.Lifecycle)
+	n.LifecycleGeneration = r.LifecycleGeneration
 	n.DrainInitiatedAt = timestamptzToTimePtr(r.DrainInitiatedAt)
 	n.DrainCompletedAt = timestamptzToTimePtr(r.DrainCompletedAt)
 	n.RecoveryInitiatedAt = timestamptzToTimePtr(r.RecoveryInitiatedAt)
@@ -19855,47 +19881,20 @@ func (s *PgStore) NodeListDrainable(ctx context.Context) ([]ComputeNode, error) 
 	return out, nil
 }
 
-// NodeMarkDrainCompleted stamps drain_completed_at + holds lifecycle in
-// 'maintenance' (CAS on a draining state).
-func (s *PgStore) NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error {
-	uid, err := uuid.Parse(id)
-	if err != nil {
-		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+// NodeMarkDrainCompleted is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (s *PgStore) NodeMarkDrainCompleted(ctx context.Context, id string, _ time.Time) error {
+	if _, err := s.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	var p pgtype.UUID
-	copy(p.Bytes[:], uid[:])
-	p.Valid = true
-	rows, err := s.triggerQueries().NodeMarkDrainCompleted(ctx, s.pool, sqlc.NodeMarkDrainCompletedParams{
-		ID:               p,
-		DrainCompletedAt: pgtype.Timestamptz{Time: completedAt, Valid: true},
-	})
-	if err != nil {
-		return mapErr(err)
-	}
-	if rows == 0 {
-		return ErrConflict
-	}
-	return nil
+	return ErrConflict
 }
 
-// NodeMarkRecovered stamps last_recovery_outcome='succeeded' + flips
-// lifecycle to 'active' (CAS on 'recovering').
+// NodeMarkRecovered is an unfenced legacy setter. Use CompleteNodeLifecycle.
 func (s *PgStore) NodeMarkRecovered(ctx context.Context, id string) error {
-	uid, err := uuid.Parse(id)
-	if err != nil {
-		return fmt.Errorf("state: invalid uuid %q: %w", id, err)
+	if _, err := s.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	var p pgtype.UUID
-	copy(p.Bytes[:], uid[:])
-	p.Valid = true
-	rows, err := s.triggerQueries().NodeMarkRecovered(ctx, s.pool, p)
-	if err != nil {
-		return mapErr(err)
-	}
-	if rows == 0 {
-		return ErrConflict
-	}
-	return nil
+	return ErrConflict
 }
 
 // InstanceListByNodeForRecovery returns the live instances on a node
@@ -25635,6 +25634,7 @@ func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
 		BaseImageVersion: row.BaseImageVersion, MemBytes: row.MemBytes, DiskBytes: row.DiskBytes, StoredBytes: row.StoredBytes,
 		StorageKey: row.StorageKey, Tier: row.Tier, Stale: row.Stale, DeletePending: row.DeletePending, CreatedAt: row.CreatedAt.Time,
 		ApplicationStandardCaptureToken: pgUUIDString(row.ApplicationStandardCaptureToken),
+		RecoveryGeneration:              row.RecoveryGeneration,
 	}
 }
 
@@ -25692,6 +25692,14 @@ func mapErr(err error) error {
 	var admission *pgconn.PgError
 	if errors.As(err, &admission) {
 		switch admission.ConstraintName {
+		case "migration_admission_current", "migration_source_current":
+			return ErrConflict
+		case "migration_admission_capacity":
+			return ErrNodeCapacity
+		case "instance_node_admission_current":
+			return ErrNodeAdmissionStale
+		case "snapshots_recovery_generation_current":
+			return ErrSnapshotRuntimeStale
 		case "application_standard_runtime_stale", "application_standard_boot_receipt":
 			return ErrApplicationStandardRuntimeStale
 		case "application_standard_boot_conflict":

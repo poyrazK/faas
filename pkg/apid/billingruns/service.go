@@ -1,5 +1,5 @@
 // Package billingruns bills one ended UTC month for every customer in a
-// single request or on a monthly schedule (ADR-1301). A background worker
+// single request or on a monthly schedule (ADR-1503). A background worker
 // drafts, completeness-checks, finalizes and optionally exports each
 // customer's statement. Like the other apid domains (ADR-982), it reaches
 // apid only through Host; apidserver keeps the route table and wiring.
@@ -41,7 +41,7 @@ type Host interface {
 	DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string, start, end time.Time) (state.PlatformTenantStatement, *api.Problem)
 	FinalizeTenantStatement(ctx context.Context, acct state.Account, tenantID, statementID string) (state.PlatformTenantStatement, *api.Problem)
 	ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement, provider string) (state.StatementInvoiceExport, *api.Problem)
-	// SendEmail sends a plain-text notification (ADR-1302); messageID is the
+	// SendEmail sends a plain-text notification (ADR-1504); messageID is the
 	// provider idempotency key.
 	SendEmail(ctx context.Context, to, subject, body, messageID string) error
 }
@@ -109,7 +109,7 @@ func runOptions(sources []string, finalize *bool, export string, holdOnGaps *boo
 }
 
 // requireExportTarget rejects an export to a provider with no connected
-// key (ADR-1305).
+// key (ADR-1507).
 func (s *Service) requireExportTarget(ctx context.Context, acct state.Account, opts state.BillingRunOptions) *api.Problem {
 	if opts.Export == state.BillingRunExportNone {
 		return nil
@@ -127,7 +127,7 @@ func (s *Service) requireExportTarget(ctx context.Context, acct state.Account, o
 	return nil
 }
 
-// CreateRun starts a billing run for an ended month (ADR-1301).
+// CreateRun starts a billing run for an ended month (ADR-1503).
 func (s *Service) CreateRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.Host.ConsumerFeatureAllowed(w, acct) {
 		return

@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Statement invoice export constants (ADR-1300, ADR-1305).
+// Statement invoice export constants (ADR-1502, ADR-1507).
 const (
 	BillingProviderStripe = "stripe"
 	BillingProviderPaddle = "paddle"
@@ -27,7 +27,7 @@ const (
 )
 
 // Collection modes (ADR-1311): what the provider does with an exported
-// invoice. None leaves a draft for the operator (ADR-1300); send has the
+// invoice. None leaves a draft for the operator (ADR-1502); send has the
 // provider issue and email it; charge has the provider charge the
 // customer's saved payment method. Gregale never holds the money.
 const (
@@ -58,7 +58,7 @@ func ValidCollection(provider, mode string) bool {
 	return false
 }
 
-// BillingProviders are the providers statements export to (ADR-1305).
+// BillingProviders are the providers statements export to (ADR-1507).
 var BillingProviders = []string{BillingProviderStripe, BillingProviderPaddle, BillingProviderLago}
 
 // ValidBillingProvider reports whether p is a known export provider.
@@ -68,7 +68,7 @@ func ValidBillingProvider(p string) bool {
 
 // BillingConnection is an account's sealed payment-provider credential.
 // SealedSecret never leaves the server; KeyLast4 and Livemode identify it.
-// APIURL is set for Lago only (ADR-1305).
+// APIURL is set for Lago only (ADR-1507).
 type BillingConnection struct {
 	AccountID    string
 	Provider     string
@@ -111,7 +111,7 @@ type StatementInvoiceExport struct {
 	AutomaticTax bool
 	CreatedAt    time.Time
 	CompletedAt  *time.Time
-	// Payment fields mirror the provider invoice (ADR-1302); PaymentStatus is
+	// Payment fields mirror the provider invoice (ADR-1504); PaymentStatus is
 	// empty until the first sync, and NextStatusSyncAt is nil once final.
 	PaymentStatus        string
 	AmountPaidMinor      *int64

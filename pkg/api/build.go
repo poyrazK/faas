@@ -132,7 +132,7 @@ type BuildDone struct {
 	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
 	// SharedRuntime records, for a successful Node source build of an app,
 	// whether its runtime artifact could run on the shared runner base
-	// (docs/adr/20261017-shared-runtime-source-apps.md). It is informational
+	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational
 	// until imaged consumes it; older guests omit it.
 	SharedRuntime *SharedRuntimeVerdict `json:"shared_runtime,omitempty"`
 }
