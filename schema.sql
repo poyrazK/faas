@@ -27443,6 +27443,27 @@ CREATE TABLE public.hosting_previews (
 
 
 --
+-- Name: hosting_promotion_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_promotion_events (
+    site_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    previous_revision bigint NOT NULL,
+    release_id uuid NOT NULL,
+    previous_release_id uuid,
+    actor_account_id uuid NOT NULL,
+    actor_key_id uuid,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    provenance jsonb,
+    CONSTRAINT hosting_promotion_events_accepted_at_check CHECK (isfinite(accepted_at)),
+    CONSTRAINT hosting_promotion_events_check CHECK ((previous_revision = (revision - 1))),
+    CONSTRAINT hosting_promotion_events_provenance_check CHECK (((provenance IS NULL) OR ((jsonb_typeof(provenance) = 'object'::text) AND (octet_length((provenance)::text) <= 4096)))),
+    CONSTRAINT hosting_promotion_events_revision_check CHECK (((revision >= 2) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
 -- Name: hosting_releases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27457,11 +27478,13 @@ CREATE TABLE public.hosting_releases (
     retirement_published_at timestamp with time zone,
     artifact_bytes bigint NOT NULL,
     first_promoted_at timestamp with time zone,
+    provenance jsonb,
     CONSTRAINT hosting_releases_artifact_bytes_check CHECK (((artifact_bytes >= 0) AND (artifact_bytes <= 104857600))),
     CONSTRAINT hosting_releases_check CHECK (((state = ANY (ARRAY['retiring'::text, 'deleted'::text])) = (retired_at IS NOT NULL))),
     CONSTRAINT hosting_releases_check1 CHECK (((retirement_published_at IS NULL) OR ((state = ANY (ARRAY['retiring'::text, 'deleted'::text])) AND (retirement_generation > 0)))),
     CONSTRAINT hosting_releases_check2 CHECK (((first_promoted_at IS NULL) OR (isfinite(first_promoted_at) AND (first_promoted_at >= created_at)))),
     CONSTRAINT hosting_releases_manifest_check CHECK (((jsonb_typeof(manifest) = 'object'::text) AND (octet_length((manifest)::text) <= 1048576))),
+    CONSTRAINT hosting_releases_provenance_check CHECK (((provenance IS NULL) OR ((jsonb_typeof(provenance) = 'object'::text) AND (octet_length((provenance)::text) <= 4096)))),
     CONSTRAINT hosting_releases_retirement_generation_check CHECK ((retirement_generation >= 0)),
     CONSTRAINT hosting_releases_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text, 'retiring'::text, 'deleted'::text])))
 );
@@ -41444,6 +41467,14 @@ ALTER TABLE ONLY public.hosting_previews
 
 ALTER TABLE ONLY public.hosting_previews
     ADD CONSTRAINT hosting_previews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hosting_promotion_events hosting_promotion_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_promotion_events
+    ADD CONSTRAINT hosting_promotion_events_pkey PRIMARY KEY (site_id, revision);
 
 
 --
@@ -62557,6 +62588,14 @@ ALTER TABLE ONLY public.hosting_previews
 
 ALTER TABLE ONLY public.hosting_previews
     ADD CONSTRAINT hosting_previews_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_promotion_events hosting_promotion_events_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_promotion_events
+    ADD CONSTRAINT hosting_promotion_events_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
 
 
 --

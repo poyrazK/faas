@@ -4107,6 +4107,18 @@ type HostingPreview struct {
 	CreatedAt           pgtype.Timestamptz
 }
 
+type HostingPromotionEvent struct {
+	SiteID            pgtype.UUID
+	Revision          int64
+	PreviousRevision  int64
+	ReleaseID         pgtype.UUID
+	PreviousReleaseID pgtype.UUID
+	ActorAccountID    pgtype.UUID
+	ActorKeyID        pgtype.UUID
+	AcceptedAt        pgtype.Timestamptz
+	Provenance        []byte
+}
+
 type HostingRelease struct {
 	ID                    pgtype.UUID
 	SiteID                pgtype.UUID
@@ -4118,6 +4130,7 @@ type HostingRelease struct {
 	RetirementPublishedAt pgtype.Timestamptz
 	ArtifactBytes         int64
 	FirstPromotedAt       pgtype.Timestamptz
+	Provenance            []byte
 }
 
 type HostingRoutePublication struct {

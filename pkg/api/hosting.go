@@ -5,38 +5,44 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
-	PreviewsEnabled           bool   `json:"previews_enabled"`
-	PreviewsPerSite           int    `json:"previews_per_site"`
-	PreviewTTLDefaultSeconds  int64  `json:"preview_ttl_default_seconds"`
-	PreviewTTLMinSeconds      int64  `json:"preview_ttl_min_seconds"`
-	PreviewTTLMaxSeconds      int64  `json:"preview_ttl_max_seconds"`
-	StagedReleasesSupported   bool   `json:"staged_releases_supported"`
-	ConfigEnabled             bool   `json:"config_enabled"`
-	ConfigMaxBytes            int    `json:"config_max_bytes"`
-	ConfigRedirectsMax        int    `json:"config_redirects_max"`
-	ConfigHeaderRulesMax      int    `json:"config_header_rules_max"`
-	ConfigHeadersPerRuleMax   int    `json:"config_headers_per_rule_max"`
-	ConfigHeaderValueMaxBytes int    `json:"config_header_value_max_bytes"`
-	AnalyticsEnabled          bool   `json:"analytics_enabled"`
-	AccountStorageMaxBytes    int64  `json:"account_storage_max_bytes"`
-	AccountPendingUploadsMax  int64  `json:"account_pending_uploads_max"`
-	DomainsEnabled            bool   `json:"domains_enabled"`
-	DomainsPerSite            int    `json:"domains_per_site"`
-	DomainHostnameMaxBytes    int    `json:"domain_hostname_max_bytes"`
-	DomainCNAMETarget         string `json:"domain_cname_target,omitempty"`
-	UploadBaseURL             string `json:"upload_base_url"`
-	FilesMax                  int    `json:"files_max"`
-	FileMaxBytes              int64  `json:"file_max_bytes"`
-	ReleaseMaxBytes           int64  `json:"release_max_bytes"`
-	ManifestMaxBytes          int64  `json:"manifest_max_bytes"`
-	PathMaxBytes              int    `json:"path_max_bytes"`
-	ContentTypeMaxBytes       int    `json:"content_type_max_bytes"`
-	NameMaxBytes              int    `json:"name_max_bytes"`
-	SitesPerAccount           int    `json:"sites_per_account"`
-	ReleasesPerSite           int    `json:"releases_per_site"`
-	UploadTTLSeconds          int    `json:"upload_ttl_seconds"`
-	StorageTimeoutSeconds     int    `json:"storage_timeout_seconds"`
-	FinalizeTimeoutSeconds    int    `json:"finalize_timeout_seconds"`
+	HistoryEnabled                bool   `json:"history_enabled"`
+	HistoryPerSite                int    `json:"history_per_site"`
+	HistoryPageSize               int    `json:"history_page_size"`
+	ProvenanceRepositoryMaxBytes  int    `json:"provenance_repository_max_bytes"`
+	ProvenanceBranchMaxBytes      int    `json:"provenance_branch_max_bytes"`
+	ProvenanceDescriptionMaxBytes int    `json:"provenance_description_max_bytes"`
+	PreviewsEnabled               bool   `json:"previews_enabled"`
+	PreviewsPerSite               int    `json:"previews_per_site"`
+	PreviewTTLDefaultSeconds      int64  `json:"preview_ttl_default_seconds"`
+	PreviewTTLMinSeconds          int64  `json:"preview_ttl_min_seconds"`
+	PreviewTTLMaxSeconds          int64  `json:"preview_ttl_max_seconds"`
+	StagedReleasesSupported       bool   `json:"staged_releases_supported"`
+	ConfigEnabled                 bool   `json:"config_enabled"`
+	ConfigMaxBytes                int    `json:"config_max_bytes"`
+	ConfigRedirectsMax            int    `json:"config_redirects_max"`
+	ConfigHeaderRulesMax          int    `json:"config_header_rules_max"`
+	ConfigHeadersPerRuleMax       int    `json:"config_headers_per_rule_max"`
+	ConfigHeaderValueMaxBytes     int    `json:"config_header_value_max_bytes"`
+	AnalyticsEnabled              bool   `json:"analytics_enabled"`
+	AccountStorageMaxBytes        int64  `json:"account_storage_max_bytes"`
+	AccountPendingUploadsMax      int64  `json:"account_pending_uploads_max"`
+	DomainsEnabled                bool   `json:"domains_enabled"`
+	DomainsPerSite                int    `json:"domains_per_site"`
+	DomainHostnameMaxBytes        int    `json:"domain_hostname_max_bytes"`
+	DomainCNAMETarget             string `json:"domain_cname_target,omitempty"`
+	UploadBaseURL                 string `json:"upload_base_url"`
+	FilesMax                      int    `json:"files_max"`
+	FileMaxBytes                  int64  `json:"file_max_bytes"`
+	ReleaseMaxBytes               int64  `json:"release_max_bytes"`
+	ManifestMaxBytes              int64  `json:"manifest_max_bytes"`
+	PathMaxBytes                  int    `json:"path_max_bytes"`
+	ContentTypeMaxBytes           int    `json:"content_type_max_bytes"`
+	NameMaxBytes                  int    `json:"name_max_bytes"`
+	SitesPerAccount               int    `json:"sites_per_account"`
+	ReleasesPerSite               int    `json:"releases_per_site"`
+	UploadTTLSeconds              int    `json:"upload_ttl_seconds"`
+	StorageTimeoutSeconds         int    `json:"storage_timeout_seconds"`
+	FinalizeTimeoutSeconds        int    `json:"finalize_timeout_seconds"`
 }
 
 const (
@@ -95,16 +101,17 @@ type HostingSite struct {
 }
 
 type HostingRelease struct {
-	FirstPromotedAt       *time.Time      `json:"first_promoted_at,omitempty"`
-	ArtifactBytes         int64           `json:"artifact_bytes"`
-	ID                    string          `json:"id"`
-	SiteID                string          `json:"site_id"`
-	State                 string          `json:"state"`
-	Manifest              HostingManifest `json:"manifest"`
-	CreatedAt             time.Time       `json:"created_at"`
-	RetiredAt             *time.Time      `json:"retired_at,omitempty"`
-	RetirementGeneration  int64           `json:"retirement_generation,omitempty"`
-	RetirementPublishedAt *time.Time      `json:"retirement_published_at,omitempty"`
+	Provenance            *HostingReleaseProvenance `json:"provenance,omitempty"`
+	FirstPromotedAt       *time.Time                `json:"first_promoted_at,omitempty"`
+	ArtifactBytes         int64                     `json:"artifact_bytes"`
+	ID                    string                    `json:"id"`
+	SiteID                string                    `json:"site_id"`
+	State                 string                    `json:"state"`
+	Manifest              HostingManifest           `json:"manifest"`
+	CreatedAt             time.Time                 `json:"created_at"`
+	RetiredAt             *time.Time                `json:"retired_at,omitempty"`
+	RetirementGeneration  int64                     `json:"retirement_generation,omitempty"`
+	RetirementPublishedAt *time.Time                `json:"retirement_published_at,omitempty"`
 }
 
 type CreateHostingSiteRequest struct {

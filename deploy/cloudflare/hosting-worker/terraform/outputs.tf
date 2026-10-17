@@ -36,6 +36,7 @@ output "apid_environment" {
     FAAS_FRONTEND_HOSTING_ENABLED                  = "0"
     FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED  = "0"
     FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED          = "0"
+    FAAS_FRONTEND_HOSTING_HISTORY_ENABLED          = "0"
     FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED         = "0"
     FAAS_FRONTEND_HOSTING_CONFIG_ENABLED           = "0"
     FAAS_FRONTEND_HOSTING_DOMAINS_ZONE_ID          = var.configure_custom_domains ? var.zone_id : ""

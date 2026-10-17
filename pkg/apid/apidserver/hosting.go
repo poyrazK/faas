@@ -181,3 +181,11 @@ func (s *server) runHostingPreviewReconciler(ctx context.Context) {
 		}
 	}
 }
+
+func (h hostingHost) HostingHistoryEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingHistory, false)
+}
+func (h hostingHost) HostingHistoryStore() state.HostingHistoryStore {
+	store, _ := h.s.store.(state.HostingHistoryStore)
+	return store
+}

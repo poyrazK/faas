@@ -49,6 +49,10 @@ func ReviewRelease(site api.HostingSite, releases []api.HostingRelease, target s
 	if ValidateManifest(after.Manifest) != nil {
 		return out, invalid
 	}
+	if after.Provenance != nil {
+		p := *after.Provenance
+		out.Provenance = &p
+	}
 	out.AfterSettings = api.HostingReleaseSettings{SPAFallback: after.Manifest.SPAFallback, Config: after.Manifest.Config}
 	for _, f := range after.Manifest.Files {
 		out.AfterBytes += f.Size

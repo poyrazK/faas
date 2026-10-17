@@ -94,6 +94,7 @@ func validHostingSite(s api.HostingSite) bool {
 }
 
 func cloneHostingRelease(r api.HostingRelease) api.HostingRelease {
+	r.Provenance = cloneHostingProvenance(r.Provenance)
 	r.Manifest.Files = append([]api.HostingFile(nil), r.Manifest.Files...)
 	if r.Manifest.Config != nil {
 		cfg := *r.Manifest.Config

@@ -133,3 +133,5 @@ read-only review, immutable comparisons and browser upload behavior. Live
 DNS/TLS/CDN/Access and regional validation remain pending.
 
 Private immutable URLs for staged releases are documented in the [preview guide](internal-frontend-hosting-previews.md). They require separate default-off opt-ins.
+
+The [release source and history guide](internal-frontend-hosting-history.md) explains optional caller-provided source labels and bounded accepted-promotion history, behind a separate default-off opt-in.

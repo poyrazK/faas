@@ -1401,6 +1401,9 @@ type Querier interface {
 	HostingPreviewPurge(ctx context.Context, db DBTX, arg HostingPreviewPurgeParams) (int64, error)
 	HostingPreviewRevoke(ctx context.Context, db DBTX, arg HostingPreviewRevokeParams) (HostingPreview, error)
 	HostingProjectEnvironmentOwned(ctx context.Context, db DBTX, arg HostingProjectEnvironmentOwnedParams) (bool, error)
+	HostingPromotionList(ctx context.Context, db DBTX, arg HostingPromotionListParams) ([]HostingPromotionEvent, error)
+	HostingPromotionPrune(ctx context.Context, db DBTX, arg HostingPromotionPruneParams) error
+	HostingPromotionRecord(ctx context.Context, db DBTX, arg HostingPromotionRecordParams) error
 	HostingReleaseCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingReleaseCreate(ctx context.Context, db DBTX, arg HostingReleaseCreateParams) (HostingRelease, error)
 	HostingReleaseDeleted(ctx context.Context, db DBTX, arg HostingReleaseDeletedParams) (int64, error)
@@ -1410,6 +1413,7 @@ type Querier interface {
 	HostingReleasePromote(ctx context.Context, db DBTX, arg HostingReleasePromoteParams) (HostingSite, error)
 	HostingReleaseReady(ctx context.Context, db DBTX, arg HostingReleaseReadyParams) (HostingRelease, error)
 	HostingReleaseRetire(ctx context.Context, db DBTX, arg HostingReleaseRetireParams) (HostingRelease, error)
+	HostingReleaseSetProvenance(ctx context.Context, db DBTX, arg HostingReleaseSetProvenanceParams) (int64, error)
 	HostingRetirementAcknowledged(ctx context.Context, db DBTX, arg HostingRetirementAcknowledgedParams) error
 	HostingRouteAcknowledged(ctx context.Context, db DBTX, arg HostingRouteAcknowledgedParams) error
 	HostingRouteBacklog(ctx context.Context, db DBTX) (HostingRouteBacklogRow, error)

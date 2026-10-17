@@ -21,6 +21,7 @@ import (
 type testHost struct {
 	enabled, allowed, durable bool
 	analytics                 bool
+	history                   bool
 	previews                  bool
 	config                    bool
 	trafficReader             artifacts.TrafficReader
@@ -79,7 +80,7 @@ func (a *testArtifacts) Publish(context.Context, string, string, api.HostingMani
 func TestEveryHostingHandlerRequiresFlagAndOperator(t *testing.T) {
 	h := &testHost{store: state.NewMemStore(), artifacts: &testArtifacts{}}
 	s := Service{Host: h}
-	handlers := []httpkit.AccountHandler{s.ListPreviews, s.CreatePreview, s.RevokePreview, s.ListDomains, s.CreateDomain, s.DeleteDomain, s.Capabilities, s.Usage, s.GetTraffic, s.RecoverDomain, s.CreateSite, s.ListSites, s.GetSite, s.GetStatus, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
+	handlers := []httpkit.AccountHandler{s.ListHistory, s.ListPreviews, s.CreatePreview, s.RevokePreview, s.ListDomains, s.CreateDomain, s.DeleteDomain, s.Capabilities, s.Usage, s.GetTraffic, s.RecoverDomain, s.CreateSite, s.ListSites, s.GetSite, s.GetStatus, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
 	for index, handler := range handlers {
 		for _, check := range []struct {
 			enabled, allowed bool

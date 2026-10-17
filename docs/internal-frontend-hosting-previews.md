@@ -122,3 +122,5 @@ release GC safety, Worker warm/cold access/expiry/HEAD/304/isolation/configurati
 independent Terraform flags, CLI intent, and dashboard create/revoke flows with
 mocked APIs. Provider Access wildcard coverage, real R2 conditional writes,
 real DNS/TLS and all-edge behavior still require the deferred isolated live pilot.
+
+The [release source and history guide](internal-frontend-hosting-history.md) explains optional caller-provided source labels and bounded accepted-promotion history, behind a separate default-off opt-in.

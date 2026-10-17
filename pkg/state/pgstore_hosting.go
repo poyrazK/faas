@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hosting"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -45,6 +46,11 @@ func hostingReleaseRow(r sqlc.HostingRelease) (api.HostingRelease, error) {
 	if r.RetirementPublishedAt.Valid {
 		t := r.RetirementPublishedAt.Time
 		out.RetirementPublishedAt = &t
+	}
+	if len(r.Provenance) > 0 {
+		if err := json.Unmarshal(r.Provenance, &out.Provenance); err != nil {
+			return out, err
+		}
 	}
 	err := json.Unmarshal(r.Manifest, &out.Manifest)
 	return out, err
@@ -131,6 +137,12 @@ func (s *PgStore) ListHostingRoutes(ctx context.Context, after string, limit int
 }
 
 func (s *PgStore) CreateHostingRelease(ctx context.Context, account, site string, manifest api.HostingManifest) (api.HostingRelease, error) {
+	return s.CreateHostingReleaseWithProvenance(ctx, account, site, manifest, nil)
+}
+func (s *PgStore) CreateHostingReleaseWithProvenance(ctx context.Context, account, site string, manifest api.HostingManifest, provenance *api.HostingReleaseProvenance) (api.HostingRelease, error) {
+	if hosting.ValidateProvenance(provenance) != nil {
+		return api.HostingRelease{}, ErrInvalidArgument
+	}
 	if validateHostingManifest(manifest) != nil {
 		return api.HostingRelease{}, ErrInvalidArgument
 	}
@@ -177,6 +189,15 @@ func (s *PgStore) CreateHostingRelease(ctx context.Context, account, site string
 	body, _ := json.Marshal(manifest)
 	id, _ := parsePgUUID(uuid.NewString())
 	r, err := q.HostingReleaseCreate(ctx, tx, sqlc.HostingReleaseCreateParams{ID: id, SiteID: i, Manifest: body, ArtifactBytes: payload})
+	if err == nil && provenance != nil {
+		data, _ := json.Marshal(provenance)
+		var n int64
+		n, err = q.HostingReleaseSetProvenance(ctx, tx, sqlc.HostingReleaseSetProvenanceParams{ID: id, Provenance: data})
+		if err == nil && n != 1 {
+			err = ErrConflict
+		}
+		r.Provenance = data
+	}
 	if err != nil {
 		return api.HostingRelease{}, hostingStoreError(err)
 	}
@@ -253,6 +274,15 @@ func (s *PgStore) ReadyHostingRelease(ctx context.Context, account, site, id str
 }
 
 func (s *PgStore) PromoteHostingRelease(ctx context.Context, account, site, release string, expected int64) (api.HostingSite, error) {
+	return s.promoteHostingRelease(ctx, account, site, release, expected, nil)
+}
+func (s *PgStore) PromoteHostingReleaseRecorded(ctx context.Context, account, site, release string, expected int64, actor api.HostingPromotionActor) (api.HostingSite, error) {
+	if !validHostingActor(actor) {
+		return api.HostingSite{}, ErrInvalidArgument
+	}
+	return s.promoteHostingRelease(ctx, account, site, release, expected, &actor)
+}
+func (s *PgStore) promoteHostingRelease(ctx context.Context, account, site, release string, expected int64, actor *api.HostingPromotionActor) (api.HostingSite, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return api.HostingSite{}, err
@@ -262,7 +292,8 @@ func (s *PgStore) PromoteHostingRelease(ctx context.Context, account, site, rele
 	i, _ := parsePgUUID(site)
 	rid, _ := parsePgUUID(release)
 	q := sqlc.New()
-	if _, err = q.HostingSiteLock(ctx, tx, sqlc.HostingSiteLockParams{AccountID: a, ID: i}); err != nil {
+	previous, err := q.HostingSiteLock(ctx, tx, sqlc.HostingSiteLockParams{AccountID: a, ID: i})
+	if err != nil {
 		return api.HostingSite{}, hostingStoreError(err)
 	}
 	r, err := q.HostingReleasePromote(ctx, tx, sqlc.HostingReleasePromoteParams{AccountID: a, SiteID: i, ReleaseID: rid, ExpectedRevision: expected})
@@ -280,6 +311,21 @@ func (s *PgStore) PromoteHostingRelease(ctx context.Context, account, site, rele
 	}
 	if _, err = bumpHostingRoute(ctx, tx, i); err != nil {
 		return api.HostingSite{}, err
+	}
+	if actor != nil {
+		target, targetErr := q.HostingReleaseGet(ctx, tx, sqlc.HostingReleaseGetParams{AccountID: a, SiteID: i, ID: rid})
+		if targetErr != nil {
+			return api.HostingSite{}, targetErr
+		}
+		actorID, _ := parsePgUUID(actor.AccountID)
+		keyID, _ := parsePgUUID(actor.KeyID)
+		err = q.HostingPromotionRecord(ctx, tx, sqlc.HostingPromotionRecordParams{SiteID: i, Revision: r.Revision, PreviousRevision: previous.Revision, ReleaseID: rid, PreviousReleaseID: previous.ActiveReleaseID, ActorAccountID: actorID, ActorKeyID: keyID, Provenance: target.Provenance})
+		if err != nil {
+			return api.HostingSite{}, err
+		}
+		if err = q.HostingPromotionPrune(ctx, tx, sqlc.HostingPromotionPruneParams{SiteID: i, Retained: api.HostingHistoryPerSite}); err != nil {
+			return api.HostingSite{}, err
+		}
 	}
 	return hostingSiteRow(r), tx.Commit(ctx)
 }

@@ -237,3 +237,11 @@ run "private_previews_independent_gate" {
     error_message = "Preview serving must not enable API admission or the main worker gate."
   }
 }
+
+run "release_history_api_default_off" {
+  command = plan
+  assert {
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_HISTORY_ENABLED == "0"
+    error_message = "History/provenance admission must remain an explicit API opt-in."
+  }
+}

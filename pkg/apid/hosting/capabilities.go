@@ -46,5 +46,13 @@ func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 		out.PreviewTTLMinSeconds = int64(api.HostingPreviewTTLMin / time.Second)
 		out.PreviewTTLMaxSeconds = int64(api.HostingPreviewTTLMax / time.Second)
 	}
+	if h, ok := s.Host.(HistoryHost); ok && h.HostingHistoryEnabled() && h.HostingHistoryStore() != nil {
+		out.HistoryEnabled = true
+		out.HistoryPerSite = api.HostingHistoryPerSite
+		out.HistoryPageSize = api.HostingHistoryPageSize
+		out.ProvenanceRepositoryMaxBytes = api.HostingProvenanceRepositoryMaxBytes
+		out.ProvenanceBranchMaxBytes = api.HostingProvenanceBranchMaxBytes
+		out.ProvenanceDescriptionMaxBytes = api.HostingProvenanceDescriptionMaxBytes
+	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }

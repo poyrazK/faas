@@ -173,17 +173,17 @@ func (s Service) CreateRelease(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	var manifest api.HostingManifest
-	if err := httpkit.DecodeJSONSized(r, &manifest, api.HostingManifestMaxBytes); err != nil || artifacts.ValidateManifest(manifest) != nil {
-		api.WriteProblem(w, api.ErrValidation("a bounded static manifest with unique file paths, sizes, SHA-256 digests, content types, index.html, and valid optional release configuration is required"))
+	var req api.CreateHostingReleaseRequest
+	if err := httpkit.DecodeJSONSized(r, &req, api.HostingReleaseRequestMaxBytes); err != nil || artifacts.ValidateManifest(req.HostingManifest) != nil || artifacts.ValidateProvenance(req.Provenance) != nil {
+		api.WriteProblem(w, api.ErrValidation("a bounded static manifest with unique file paths, sizes, SHA-256 digests, content types, index.html, and valid optional configuration/provenance are required"))
 		return
 	}
+	manifest := req.HostingManifest
 	if !s.requireConfig(w, manifest) {
 		return
 	}
-	release, err := s.Host.HostingStore().CreateHostingRelease(r.Context(), acct.ID, site.ID, manifest)
-	if err != nil {
-		failure(w, err)
+	release, ok := s.createReleaseIntent(w, r, acct, site.ID, req)
+	if !ok {
 		return
 	}
 	s.Host.HostingAudit(r.Context(), acct.ID, "hosting_release_created", map[string]any{"site_id": site.ID, "release_id": release.ID})
@@ -279,7 +279,15 @@ func (s Service) Promote(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !s.requireConfig(w, release.Manifest) {
 		return
 	}
-	site, err = s.Host.HostingStore().PromoteHostingRelease(r.Context(), acct.ID, site.ID, req.ReleaseID, req.ExpectedRevision)
+	if s.historyEnabled() {
+		history, allowed := s.historyHost(w, acct)
+		if !allowed {
+			return
+		}
+		site, err = history.PromoteHostingReleaseRecorded(r.Context(), acct.ID, site.ID, req.ReleaseID, req.ExpectedRevision, hostingActor(r, acct))
+	} else {
+		site, err = s.Host.HostingStore().PromoteHostingRelease(r.Context(), acct.ID, site.ID, req.ReleaseID, req.ExpectedRevision)
+	}
 	if err != nil {
 		failure(w, err)
 		return

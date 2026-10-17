@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hosting"
 )
 
 var _ HostingStore = (*MemStore)(nil)
@@ -92,7 +93,13 @@ func (m *MemStore) ListHostingRoutes(_ context.Context, after string, limit int)
 	return rows, nil
 }
 
-func (m *MemStore) CreateHostingRelease(_ context.Context, account, site string, manifest api.HostingManifest) (api.HostingRelease, error) {
+func (m *MemStore) CreateHostingRelease(ctx context.Context, account, site string, manifest api.HostingManifest) (api.HostingRelease, error) {
+	return m.CreateHostingReleaseWithProvenance(ctx, account, site, manifest, nil)
+}
+func (m *MemStore) CreateHostingReleaseWithProvenance(_ context.Context, account, site string, manifest api.HostingManifest, provenance *api.HostingReleaseProvenance) (api.HostingRelease, error) {
+	if hosting.ValidateProvenance(provenance) != nil {
+		return api.HostingRelease{}, ErrInvalidArgument
+	}
 	if validateHostingManifest(manifest) != nil {
 		return api.HostingRelease{}, ErrInvalidArgument
 	}
@@ -121,7 +128,7 @@ func (m *MemStore) CreateHostingRelease(_ context.Context, account, site string,
 	if m.hostingReleases == nil {
 		m.hostingReleases = make(map[string]api.HostingRelease)
 	}
-	r := api.HostingRelease{ArtifactBytes: payload, ID: uuid.NewString(), SiteID: site, Manifest: manifest, State: "pending", CreatedAt: time.Now().UTC()}
+	r := api.HostingRelease{Provenance: cloneHostingProvenance(provenance), ArtifactBytes: payload, ID: uuid.NewString(), SiteID: site, Manifest: manifest, State: "pending", CreatedAt: time.Now().UTC()}
 	m.hostingReleases[r.ID] = cloneHostingRelease(r)
 	return cloneHostingRelease(r), nil
 }
@@ -174,6 +181,15 @@ func (m *MemStore) ReadyHostingRelease(_ context.Context, account, site, id stri
 }
 
 func (m *MemStore) PromoteHostingRelease(_ context.Context, account, site, id string, expected int64) (api.HostingSite, error) {
+	return m.promoteHostingRelease(account, site, id, expected, nil)
+}
+func (m *MemStore) PromoteHostingReleaseRecorded(_ context.Context, account, site, id string, expected int64, actor api.HostingPromotionActor) (api.HostingSite, error) {
+	if !validHostingActor(actor) {
+		return api.HostingSite{}, ErrInvalidArgument
+	}
+	return m.promoteHostingRelease(account, site, id, expected, &actor)
+}
+func (m *MemStore) promoteHostingRelease(account, site, id string, expected int64, actor *api.HostingPromotionActor) (api.HostingSite, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.hostingSites[site]
@@ -189,6 +205,17 @@ func (m *MemStore) PromoteHostingRelease(_ context.Context, account, site, id st
 		r.FirstPromotedAt = &at
 	}
 	m.hostingReleases[id] = r
+	if actor != nil {
+		event := api.HostingPromotionEvent{SiteID: site, Revision: s.Revision + 1, PreviousRevision: s.Revision, ReleaseID: id, PreviousReleaseID: s.ActiveReleaseID, Actor: *actor, AcceptedAt: time.Now().UTC(), Provenance: cloneHostingProvenance(r.Provenance)}
+		if m.hostingHistory == nil {
+			m.hostingHistory = make(map[string][]api.HostingPromotionEvent)
+		}
+		events := append([]api.HostingPromotionEvent{event}, m.hostingHistory[site]...)
+		if len(events) > api.HostingHistoryPerSite {
+			events = events[:api.HostingHistoryPerSite]
+		}
+		m.hostingHistory[site] = events
+	}
 	s.Revision++
 	s.ActiveReleaseID = id
 	m.hostingSites[site] = s
@@ -314,6 +341,7 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 			delete(m.hostingReleases, id)
 		}
 	}
+	delete(m.hostingHistory, site)
 	delete(m.hostingSites, site)
 	delete(m.hostingPublications, site)
 	return nil

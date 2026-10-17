@@ -11330,3 +11330,15 @@ const (
 )
 
 const HostingPreviewConcurrency = 2
+
+// Internal deployment provenance and bounded, paginated accepted-intent history.
+const (
+	HostingProvenanceRepositoryMaxBytes  = 256
+	HostingProvenanceBranchMaxBytes      = 128
+	HostingProvenanceDescriptionMaxBytes = 280
+	HostingProvenanceMaxBytes            = 4096
+	HostingHistoryPerSite                = 1000
+	HostingHistoryPageSize               = 50
+)
+
+const HostingReleaseRequestMaxBytes = HostingManifestMaxBytes + HostingProvenanceMaxBytes

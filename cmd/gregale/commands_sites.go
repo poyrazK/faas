@@ -26,8 +26,11 @@ func cmdSites(args []string) int {
 		return printErr("Internal frontend hosting is disabled", errors.New("set FAAS_FRONTEND_HOSTING_ENABLED=1 on an operator workstation; the server must also enable the feature"))
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|deploy|releases|diff|previews|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
+		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|deploy|releases|diff|history|previews|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
 		return 1
+	}
+	if args[0] == "history" {
+		return cmdSitesHistory(args[1:])
 	}
 	if args[0] == "previews" {
 		return cmdSitesPreviews(args[1:])
@@ -96,6 +99,10 @@ func cmdSitesDeploy(args []string) int {
 	siteID := flags.String("site", "", "site UUID (required)")
 	dir := flags.String("path", "dist", "already-built static directory")
 	spa := flags.Bool("spa", false, "serve index.html for extensionless HTML navigations")
+	repository := flags.String("source-repository", "", "caller-provided repository label (unverified)")
+	commit := flags.String("source-commit", "", "caller-provided full lowercase Git commit SHA (unverified)")
+	branch := flags.String("source-branch", "", "caller-provided source branch (unverified)")
+	description := flags.String("description", "", "caller-provided deployment description")
 	noPromote := flags.Bool("no-promote", false, "verify and stage the release without making it routable")
 	wait := flags.Bool("wait", false, "wait for durable publication after promotion")
 	timeout := flags.Duration("wait-timeout", api.HostingPublicationWaitDefault, "bounded publication wait")
@@ -107,6 +114,16 @@ func cmdSitesDeploy(args []string) int {
 	}
 	if err := validateHostingWait(*wait, *timeout); err != nil {
 		return printErr("Invalid wait options", err)
+	}
+	var provenance *api.HostingReleaseProvenance
+	if *repository != "" || *commit != "" || *branch != "" || *description != "" {
+		provenance = &api.HostingReleaseProvenance{Repository: *repository, CommitSHA: *commit, Branch: *branch, Description: *description}
+		if !hostingHistoryWorkstationEnabled() {
+			return printErr("Release provenance is disabled", errors.New("set FAAS_FRONTEND_HOSTING_HISTORY_ENABLED=1 before sending provenance"))
+		}
+		if err := hosting.ValidateProvenance(provenance); err != nil {
+			return printErr("Invalid release provenance", err)
+		}
 	}
 	manifest, err := staticHostingManifest(*dir, *spa)
 	if err != nil {
@@ -125,16 +142,24 @@ func cmdSitesDeploy(args []string) int {
 	if *wait && !site.DurableRouting {
 		return printErr("Publication waiting unavailable", errors.New("leased sites have no durable publication receipt; no release was created"))
 	}
-	if *noPromote {
+	if *noPromote || provenance != nil {
 		caps, err := client.GetHostingCapabilities(ctx)
 		if err != nil {
 			return printErr("Hosting capabilities unavailable", err)
 		}
-		if !caps.StagedReleasesSupported {
+		if *noPromote && !caps.StagedReleasesSupported {
 			return printErr("Staging unavailable", errors.New("upgrade all API writers and publishers before using staged deployment"))
 		}
+		if provenance != nil && !caps.HistoryEnabled {
+			return printErr("Release provenance unavailable", errors.New("enable the API history feature before creating a release"))
+		}
 	}
-	release, err := client.CreateHostingRelease(ctx, site.ID, manifest)
+	var release api.HostingRelease
+	if provenance != nil {
+		release, err = client.CreateHostingReleaseWithProvenance(ctx, site.ID, manifest, provenance)
+	} else {
+		release, err = client.CreateHostingRelease(ctx, site.ID, manifest)
+	}
 	if err != nil {
 		return printErr("Create release failed", err)
 	}

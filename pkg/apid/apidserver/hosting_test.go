@@ -1,6 +1,7 @@
 package apidserver_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestHostingRoutesDefaultOffAndOperatorOnly(t *testing.T) {
 			root := "/v1/internal/hosting/sites"
 			site := root + "/11111111-1111-4111-8111-111111111111"
 			release := site + "/releases/22222222-2222-4222-8222-222222222222"
-			for _, route := range []struct{ method, path string }{{"GET", "/v1/internal/hosting/capabilities"}, {"GET", "/v1/internal/hosting/usage"}, {"GET", root}, {"POST", root}, {"GET", site}, {"GET", site + "/status"}, {"GET", site + "/traffic"}, {"GET", site + "/previews"}, {"POST", site + "/previews"}, {"DELETE", site + "/previews/33333333-3333-4333-8333-333333333333"}, {"GET", site + "/domains"}, {"POST", site + "/domains"}, {"DELETE", site + "/domains/33333333-3333-4333-8333-333333333333"}, {"POST", site + "/domains/33333333-3333-4333-8333-333333333333/recover"}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
+			for _, route := range []struct{ method, path string }{{"GET", "/v1/internal/hosting/capabilities"}, {"GET", "/v1/internal/hosting/usage"}, {"GET", root}, {"POST", root}, {"GET", site}, {"GET", site + "/status"}, {"GET", site + "/traffic"}, {"GET", site + "/history"}, {"GET", site + "/previews"}, {"POST", site + "/previews"}, {"DELETE", site + "/previews/33333333-3333-4333-8333-333333333333"}, {"GET", site + "/domains"}, {"POST", site + "/domains"}, {"DELETE", site + "/domains/33333333-3333-4333-8333-333333333333"}, {"POST", site + "/domains/33333333-3333-4333-8333-333333333333/recover"}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
 				response := env.Do(t, route.method, route.path, map[string]any{}, nil)
 				want := 503
 				code := "frontend_hosting_disabled"
@@ -114,5 +115,76 @@ func TestHostingPreviewRuntimeOptIn(t *testing.T) {
 		if m.Bool("frontend_hosting_previews_enabled", true) {
 			t.Fatal("hot disable ignored")
 		}
+	}
+}
+
+func TestHostingHistoryRuntimeOptIn(t *testing.T) {
+	// adr: 202610170902 — independent capture/provenance/history admission is default off.
+	for _, value := range []string{"", "false", "true", "1"} {
+		m := apidserver.NewRuntimeConfigManager(func(name string) string {
+			if name == "FAAS_FRONTEND_HOSTING_HISTORY_ENABLED" {
+				return value
+			}
+			return ""
+		})
+		if m.Bool("frontend_hosting_history_enabled", false) != (value == "true" || value == "1") {
+			t.Fatal(value)
+		}
+		if err := m.Apply("frontend_hosting_history_enabled", []byte("false")); err != nil {
+			t.Fatal(err)
+		}
+		if m.Bool("frontend_hosting_history_enabled", true) {
+			t.Fatal("hot disable ignored")
+		}
+	}
+}
+
+func TestHostingHistoryDisablePrecedesReleaseReplay(t *testing.T) {
+	// adr: 202610170902 — metadata admission applies before cached response replay.
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "true")
+	env := apidserver.Setup(t, api.PlanHobby)
+	(*env.S()).WithAdminAllowlist(env.Acct().Email)
+	values := map[string]string{
+		"FAAS_FRONTEND_HOSTING_ENABLED": "true", "FAAS_FRONTEND_HOSTING_HISTORY_ENABLED": "true",
+		"FAAS_FRONTEND_HOSTING_DOMAIN": "hosting.example", "FAAS_FRONTEND_HOSTING_R2_ENDPOINT": "https://example.r2.cloudflarestorage.com",
+		"FAAS_FRONTEND_HOSTING_R2_BUCKET": "hosting", "FAAS_FRONTEND_HOSTING_R2_ACCESS_KEY": "test-key", "FAAS_FRONTEND_HOSTING_R2_SECRET_KEY": "test-secret",
+		"FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "FAAS_FRONTEND_HOSTING_KV_NAMESPACE_ID": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "FAAS_FRONTEND_HOSTING_CF_TOKEN": "test-token",
+	}
+	getenv := func(key string) string { return values[key] }
+	if err := (*env.S()).ConfigureHostingForTest(getenv); err != nil {
+		t.Fatal(err)
+	}
+	manager := apidserver.NewRuntimeConfigManager(getenv)
+	(*env.S()).WithRuntimeConfigManager(manager)
+	_, err := (*env.Store()).CreateProject(t.Context(), state.Project{AccountID: env.Acct().ID, Slug: "history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := env.Do(t, "POST", "/v1/internal/hosting/sites", api.CreateHostingSiteRequest{Project: "history", Environment: "production", Name: "history"}, nil)
+	if created.Code != 201 {
+		t.Fatal(created.Code, created.Body)
+	}
+	var site api.HostingSite
+	if err = json.Unmarshal(created.Body.Bytes(), &site); err != nil {
+		t.Fatal(err)
+	}
+	id := site.ID
+	request := api.CreateHostingReleaseRequest{HostingManifest: api.HostingManifest{Files: []api.HostingFile{{Path: "index.html", Size: 1, SHA256: strings.Repeat("a", 64), ContentType: "text/html"}}}, Provenance: &api.HostingReleaseProvenance{Description: "caller provided"}}
+	path := "/v1/internal/hosting/sites/" + id + "/releases"
+	headers := map[string]string{"Idempotency-Key": "history-release-once"}
+	first := env.Do(t, "POST", path, request, headers)
+	if first.Code != 201 {
+		t.Fatal(first.Code, first.Body)
+	}
+	if err = manager.Apply("frontend_hosting_history_enabled", []byte("false")); err != nil {
+		t.Fatal(err)
+	}
+	replay := env.Do(t, "POST", path, request, headers)
+	if replay.Code != 503 || !strings.Contains(replay.Body.String(), "frontend_hosting_history_disabled") {
+		t.Fatal(replay.Code, replay.Body)
+	}
+	legacy := env.Do(t, "POST", path, request.HostingManifest, nil)
+	if legacy.Code != 201 {
+		t.Fatal("off metadata gate blocked content-only release", legacy.Code, legacy.Body)
 	}
 }

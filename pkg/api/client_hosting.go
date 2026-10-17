@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 const hostingAPIPath = "/v1/internal/hosting/sites"
@@ -106,5 +107,20 @@ func (c *Client) CreateHostingPreview(ctx context.Context, site string, req Crea
 func (c *Client) RevokeHostingPreview(ctx context.Context, site, id string, generation int64) (HostingPreview, error) {
 	var out HostingPreview
 	err := c.do(ctx, http.MethodDelete, hostingSitePath(site)+"/previews/"+url.PathEscape(id), RevokeHostingPreviewRequest{ExpectedGeneration: generation}, &out)
+	return out, err
+}
+
+func (c *Client) CreateHostingReleaseWithProvenance(ctx context.Context, site string, manifest HostingManifest, p *HostingReleaseProvenance) (HostingRelease, error) {
+	var out HostingRelease
+	err := c.do(ctx, http.MethodPost, hostingSitePath(site)+"/releases", CreateHostingReleaseRequest{HostingManifest: manifest, Provenance: p}, &out)
+	return out, err
+}
+func (c *Client) ListHostingHistory(ctx context.Context, site string, before int64) (HostingHistoryPage, error) {
+	var out HostingHistoryPage
+	path := hostingSitePath(site) + "/history"
+	if before != 0 {
+		path += "?before_revision=" + strconv.FormatInt(before, 10)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
