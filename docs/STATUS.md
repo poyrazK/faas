@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Guarded, reversible config changes — 2026-10-17
+
+[ADR-1391](adr/1391-guarded-reversible-config-changes.md): every customer env
+or secret write records a revision of the scope's config (`gregale env
+history`), and `gregale env rollback <revision>` restores its variables. A
+change to a scope with a live deployment opens a config guard. The guard judges
+the first traffic served with the new config against the old config and, when
+the new config fails, restores the previous variables and replaced secrets
+(sealed rows, never unsealed) and restarts the app. Deleted or rotated secrets
+are never restored automatically. Stage 2, config canaries through config-only
+deployments, is a follow-up. On the n2 node the safe-release drill's new case
+sets a variable that makes the hello app answer 500. The guard restored the
+previous config 20 s after the change (`fail_first_wake_5xx`, new config 17/17
+5xx), and the app served again at the same mark. All seven drill cases passed,
+leakcheck clean. The Postgres and MemStore conformance case, the clone schema
+registry on a migrated database, the apidserver guard, rollback and history
+tests, the CLI tests, spec compliance and the SDK coverage gate pass.
+
 ## One rollout flag and a live rollout view — 2026-10-16
 
 [ADR-1352](adr/1352-one-rollout-flag-and-live-rollout.md): `gregale deploy
