@@ -58,7 +58,11 @@ def test_tcp_patch_normalization_preserves_authoritative_spec(tmp_path):
                     "additionalProperties": False,
                     "properties": {"enabled": {"type": "boolean"}, "tls": {"type": "object"}},
                     "oneOf": [{"required": ["enabled"]}, {"required": ["tls"]}],
-                }
+                },
+                "ManagedPostgresCutoverPreflight": {
+                    "type": "object",
+                    "properties": {"activation_allowed": {"type": "boolean", "enum": [False]}},
+                },
             }
         }
     }
