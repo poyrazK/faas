@@ -91,8 +91,9 @@ func usageStatementFinalizedWebhookPayload(statement APIConsumerUsageStatement) 
 		Currency: statement.Currency, BillableUnits: statement.BillableUnits,
 		UnpricedUnits: statement.UnpricedUnits, AmountMillicents: statement.AmountMillicents,
 		Priced: statement.Priced, AsOf: statement.AsOf.UTC().Format(time.RFC3339Nano),
-		FinalizedAt: statement.FinalizedAt.UTC(),
-		Buckets:     make([]api.APIConsumerUsageStatementBucketResponse, 0, len(statement.Buckets)),
+		FinalizedAt:             statement.FinalizedAt.UTC(),
+		Buckets:                 make([]api.APIConsumerUsageStatementBucketResponse, 0, len(statement.Buckets)),
+		CreditAppliedMillicents: statement.CreditAppliedMillicents, AmountDueMillicents: statement.AmountDueMillicents(),
 	}
 	for _, bucket := range statement.Buckets {
 		payload.Buckets = append(payload.Buckets, api.APIConsumerUsageStatementBucketResponse{

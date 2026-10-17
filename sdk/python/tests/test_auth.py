@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -124,8 +124,8 @@ def test_verify_accepts_an_auth_app_token():
     assert claims.aal == "aal1"
     assert claims.role == "authenticated"
     assert claims.session_id == "5c1b9d2e-0b5f-4d8f-8a3a-7a512f0e6f70"
-    assert claims.expires_at == datetime.fromtimestamp(NOW + 600, tz=timezone.utc)
-    assert claims.issued_at == datetime.fromtimestamp(NOW, tz=timezone.utc)
+    assert claims.expires_at == datetime.fromtimestamp(NOW + 600, tz=UTC)
+    assert claims.issued_at == datetime.fromtimestamp(NOW, tz=UTC)
     assert claims.app_metadata == {"provider": "email"}
     assert claims.raw["aal"] == "aal1"
     assert claims.is_anonymous is False

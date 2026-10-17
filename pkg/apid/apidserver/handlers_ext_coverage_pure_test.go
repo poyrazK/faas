@@ -43,9 +43,9 @@ func TestNormalizeStripeWebhookRefundUsesIndividualRefund(t *testing.T) {
 	var envelope stripeWebhookEnvelope
 	if err := json.Unmarshal([]byte(`{
 		"id":"evt_refund","type":"charge.refunded","data":{"object":{
-			"id":"ch_123","customer":"cus_123","currency":"eur",
+			"id":"ch_123","customer":"cus_123","currency":"usd",
 			"amount_refunded":9000,"refunds":{"data":[{
-				"id":"re_latest","amount":2500,"status":"pending","currency":"eur"
+				"id":"re_latest","amount":2500,"status":"pending","currency":"usd"
 			}]}
 		}}
 	}`), &envelope); err != nil {
@@ -63,7 +63,7 @@ func TestNormalizeStripeWebhookInvoiceKeepsMinorUnits(t *testing.T) {
 	var envelope stripeWebhookEnvelope
 	if err := json.Unmarshal([]byte(`{
 		"id":"evt_invoice","type":"invoice.payment_succeeded","data":{"object":{
-			"id":"in_123","customer":"cus_123","currency":"eur","status":"paid",
+			"id":"in_123","customer":"cus_123","currency":"usd","status":"paid",
 			"subtotal":1234,"tax":234,"total":1468,"amount_paid":1468
 		}}
 	}`), &envelope); err != nil {

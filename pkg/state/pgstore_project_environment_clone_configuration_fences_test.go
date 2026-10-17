@@ -576,15 +576,13 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(unused) != 2 {
 		t.Fatal("missing unused reservation guard downgrade")
 	}
-	// H10-94 redefines assert_clone_configuration_mutable for account purge
-	// order, so it is the newest link in the chain.
 	accountPurgeRaw, err := migrations.FS.ReadFile("20261016084512417_clone_guard_account_purge_order.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	accountPurge := strings.SplitN(string(accountPurgeRaw), "-- +goose Down", 2)
 	if len(accountPurge) != 2 {
-		t.Fatal("missing account purge order downgrade")
+		t.Fatal("missing account purge ordering downgrade")
 	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)

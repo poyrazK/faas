@@ -40,7 +40,7 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Security-Policy", policy)
 			data.AuthOrigin = origin
 			data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID, app.ID)
-			data.Keys, data.MaxKeys, data.EmailProviders = s.dashboardAuthKeys(ctx, acct, app), api.AuthMaxSigningKeys, authsettings.EmailProviders
+			data.Keys, data.MaxKeys, data.EmailProviders, data.SMSProviders = s.dashboardAuthKeys(ctx, acct, app), api.AuthMaxSigningKeys, authsettings.EmailProviders, authsettings.SMSProviders
 		} else {
 			data.Message = "This app has no HTTPS address the dashboard can reach."
 		}

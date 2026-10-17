@@ -3477,15 +3477,164 @@ status snapshots, service-driven logical-time expiry, generation-fenced cohort
 reclamation and pure application migrations. See
 [the lifecycle guide](../../docs/durable-entity-session-lifecycle.md).
 
+Checked project release graphs use the preparation and activation endpoints.
+Preparation returns a manifest with exact members, expected routing and policy
+revisions; activation independently rechecks binding evidence and service
+readiness. Internal service evidence is selected by `service_targets` together
+with an exact caller deployment. See the [qualification and activation workflow](../../docs/networking.md#qualify-and-activate-a-project-release-graph)
+for the CLI steps, consent requirements and graph limitations.
+
+
+Checked graph recovery uses `ProjectsService.prepareCheckedProjectRollback` and
+`ProjectsService.rollbackCheckedProjectRelease` to select retained history
+and commit the verified manifest. Historical membership and expiry are checked
+atomically under current binding policies. The new release records
+`rollback_source_release_id` and `rollback_previous_release_id`. See the
+[recovery workflow](../../docs/networking.md#recover-a-retained-project-release-graph).
+
+
+Checked graph deactivation uses `ProjectsService.prepareCheckedProjectDeactivation` and `ProjectsService.deactivateCheckedProjectRelease`.
+Preparation freezes one 100% weighted fallback per workload with current policy
+and service targets. Qualify this `deactivate: true`, `ttl_seconds: 0` manifest,
+then deactivate explicitly. Missing fallbacks, splits, stale intent and missing
+readiness block the switch. The retired release's `deactivation` field contains
+the durable receipt and exact fallback members. See the
+[deactivation workflow](../../docs/networking.md#deactivate-a-project-graph-with-checked-fallback-routing).
+
+Candidate service staging uses `POST .../release-sets/staging` with a complete
+prepared forward or rollback manifest and a 1–1800 second `ttl_seconds` lease.
+Read or cancel the stage with `GET` / `DELETE .../release-sets/staging/{stage}`.
+Staging capacity is billable, preserves current routes, uses ordinary admission
+limits, and excludes GitOps-managed workloads. Repeating the same manifest reuses
+its original expiry. `ready` is observed replica readiness, not binding proof;
+run verification and explicit activation/rollback afterwards. Cancellation or
+expiry removes temporary capacity while active graph allocations remain.
+
+
+Push queue canaries require an exact deployment, a declared safe `GREGALE_QUEUE_CANARY_BINDINGS` override and explicit publication consent. Create, get and cancel operations expose bounded publication/dispatch/completion status. The `handler_completion` queue release requirement checks fresh completion on the selected deployment plus normal consumer readiness. See [queue completion canaries](../../docs/networking.md#push-queue-binding-completion-canaries).
+
+Durable single-app binding verification exposes create, status, resume, atomic
+step admission, complete and cancel operations. Supply a stable run UUID and
+review digest; original consent and deadlines are immutable, and observing an
+existing task/message does not acquire ownership. See
+[durable verification runs](../../docs/networking.md#durable-single-app-binding-verification).
+
+Durable graph qualification preserves the reviewed manifest, member receipts and exact service targets. See [durable project graph verification](../../docs/networking.md#durable-project-graph-verification) for status, resume and cancel.
+
+Binding verification review endpoints return an executable plan and opaque digests without admitting work. Call `ReviewBindingVerification` / `reviewBindingVerification` / `review_binding_verification`, or the corresponding project review method. Check `ready`, show blockers and required consent, then forward the returned selection and digest to receipt creation. Graph creation also forwards the aggregate `review_digest`, member `review_digests` and unchanged consent. No client-side digest calculation is required. A ready review is not a passing verification result.
+
+### Run a durable binding verification receipt
+
+After reviewing and creating a consented receipt, save its UUID and resume it directly:
+
+```ts
+import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node';
+const run = await runBindingVerification('api', savedRunId, {
+  concurrency: 2,
+  signal: controller.signal,
+  onProgress: progress => console.log(progress),
+});
+const graph = await runProjectBindingVerification('project', 'production', savedGraphRunId, {
+  concurrency: 2,
+});
+```
+
+Configure `OpenAPI.BASE` and `OpenAPI.TOKEN` as for the generated services. One graph budget covers all unfinished task and queue resources. Callbacks run serially and expose sanitized IDs/status; a persisted passed receipt reports `qualifying` until final completion is reconfirmed. A callback exception, abort or transport error throws `BindingVerificationRecoveryError` with `runId`, `cause` and the latest observation. These failures leave server work intact: resume the same UUID. Use the generated cancel API for explicit cancellation. Neither expiry nor consent changes on resume; no route activation occurs. Callbacks should finish promptly.
+
+### Diagnose a stopped verification run
+
+```ts
+const diag = await AppsService.getBindingVerificationRunDiagnostics({slug: 'api', run: savedRunId});
+const graphDiag = await ProjectsService.getProjectBindingVerificationRunDiagnostics({slug: 'project', environment: 'production', run: savedGraphRunId});
+```
+
+Inspect `blockers`, whitelisted public `changes` and suggested `recovery` actions after a runner error. `complete` describes diagnostic read completeness; optional `check_passed` describes public evidence and conveys no admission or completion authority. Diagnostics preserve the original deadline and perform no execution, cancellation or receipt mutation. Missing domain permission fails the read. Continue with the same run ID only when current server checks allow it, or explicitly cancel and obtain a new reviewed receipt as directed.
+
+Verification receipt creation accepts `max_concurrency` (`MaxConcurrency` in Go), default two with a range of one through eight. This budget is frozen and enforced by the server across all drivers and graph members. Local runner concurrency can be lower; resume never changes the server budget. Runners wait and reread on `binding_verification_budget_full`, preserving the original receipt and deadline. Other capacity errors retain their recovery behavior. Diagnostics expose `budget` with the shared run ID, limit, unfinished resource count, waiting steps and fullness.
+
+Runner recovery errors now attach typed optional `diagnostics` containing server blockers, public changes and recovery suggestions. The read-only lookup has a two-second cap and respects the original receipt/caller deadlines. Unavailable, forbidden or mismatched diagnostics preserve the original cause and run ID. Cancellation and callback failures skip enrichment; no recovery action is executed automatically. Use `skipDiagnostics: true` to disable it.
+
+### Create from a reviewed binding selection
+
+Persist a canonical nonzero run UUID before creation. Pass a ready server review, lifetime and explicit effect consent; digests and selections are forwarded unchanged. Typed creation errors retain the UUID, original cause and whether creation was invoked. This flag does not prove acceptance. Reconcile uncertain creation by reading the same ID with the same review/options. Reconciliation never writes, resumes or replaces work; a failed read does not establish noncreation. Run a confirmed receipt explicitly using the existing runner.
+
+```ts
+const options = { runId: savedId, ttlSeconds: 60, maxConcurrency: 2, queuePublish: true, signal: controller.signal };
+const run = await createBindingVerificationFromReview('api', review, options);
+// After an uncertain creation error, inspect the same identity:
+const recovered = await reconcileBindingVerificationCreation('api', review, options);
+```
+
+Graph helpers are `createProjectBindingVerificationFromReview` and `reconcileProjectBindingVerificationCreation`. `BindingVerificationCreationError` exposes `runId`, `attempted` and `cause`.
+
+Durable runner status GETs now retry temporary connection failures and HTTP 502/503/504 with bounded exponential jitter. Configure `statusReadRetries` (default three; zero disables), maximum eight retries per read. Retry waits obey the original expiry and caller stop controls. Progress exposes `retrying`, `retry_attempt` and `retry_delay_ms`; callback failures stop observation. Lifecycle writes and invalid responses retain explicit recovery behavior.
+
+### Discover retained verification receipts
+
+Use `AppsService.listBindingVerificationRuns({slug, limit: 20})` and `ProjectsService.listProjectBindingVerificationRuns({slug, environment, limit: 20})`. Both accept `cursor`, `deploymentId` and `status`; app calls additionally support `scope` and `includeMembers`. Follow `next_cursor` with the same filters. `BindingVerificationRunList` contains compact `BindingVerificationRunSummary` entries and `observed_at`. Lists describe retained stored/expired states, never current qualification; app members are opt-in and identify `graph_run_id`, while project lists contain roots only. Retention is unchanged.
+
+Durable runners wait for recognized final `qualification` conditions after successful probes. Progress reports `waiting_for_qualification` with typed public conditions; polling stays within the original receipt expiry and caller deadline/stop controls. Unknown conditions or review drift stop observation. Waiting does not admit new work or renew receipts. See [ADR-1365](../../docs/adr/1365-verification-qualification-waiting.md).
+
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1366](../../docs/adr/1366-verification-write-reconciliation.md).
+
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `statusReadRetries`, `onProgress` and the existing `signal`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1368](../../docs/adr/1368-verification-creation-reconciliation.md).
+
+### PostgreSQL pool runtime
+
+Use `PostgresPoolBinding` to validate a fresh pool before atomic secret adoption and
+retire old pools after their transaction leases release. Validation and retirement
+callbacks are required; the application supplies its driver. Register the secret
+consumer with the reload coordinator, hold each lease through driver connection
+release, and invalidate before waiting for retirement at shutdown. See the
+[pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
+[runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Deadline count alerts
+
+`watchEventSubscriptionDeadlines(target, options)` provides sustained upcoming,
+expired and waiting-reason count alerts, separate recovery boundaries, fresh-evidence
+confirmation progress, cancellation and a bounded checkpoint outbox. Load checkpoints
+with `validateEventDeadlineCheckpoint`; acknowledge exact incident/sequence pairs
+with `acknowledgeEventDeadlineAlerts` or the watch's acknowledgment callback.
+
+The Node deadline-only checkpoint format is distinct from Go/CLI delivery-health
+checkpoints. Applications own persistence and notifications: persist before sending,
+replay unacknowledged alerts after a crash, and deduplicate downstream. See
+[configuration, callbacks and recovery semantics](../../docs/event-deadline-node-watch.md).
+
+`expiredRatio: { warningBasisPoints: 1000, recoveryBasisPoints: 500,
+minimumRecipients: 100 }` enables >=10% expired backlog warnings and <=5% recovery
+with a qualifying cohort. Decisions use exact BigInt arithmetic; display values
+are approximate and alerts retain the source count sample. Ratio selections use
+version 2 Node checkpoints; existing count-only selections stay at version 1. See
+[ratio validation and compatibility](../../docs/event-deadline-node-watch.md#expired-backlog-ratios).
+
+`investigateEventDeadlineAlert(checkpoint, { incidentId, sequence }, { limit: 25 })`
+maps an exact retained Node alert to one current read-only triage page. It validates
+the checkpoint and returned scope/cohort, preserves opaque cursor continuation and
+keeps the saved notification time separate from current observation clocks. Ratio
+alerts list the expired numerator only. See
+[investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).
+
 ## Issue source maps
 
-Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept
 `sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
 bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
 Ship matching maps with the deployment and load them before creating the reporter.
 Original frames determine grouping, and raw bundle stacks remain available.
 Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
 [registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+To discover maps automatically after a build, run
+`gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace` and ship
+the manifest with the bundles. Set
+`sourceMapManifest: { file: '/app/dist/.gregale-issue-maps.json', directory: '/app/dist' }`
+instead of `sourceMaps`. Initialization checks bundle hashes and resolves paths
+against the running deployment; capture never reads files. Build-time discovery
+removes embedded source content, supports local annotations and adjacent hidden
+maps, and rejects remote/inline references and mismatched artifacts. See
+[automatic discovery](../../docs/issues.md#discover-source-maps-during-node-builds).
 
 ## Reversible issue grouping
 
@@ -3497,3 +3646,14 @@ Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reporte
 cause. The dashboard preserves the outer exception and cause chain. See
 [Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
 language semantics, incomplete chains, and compatibility.
+
+Issue reporters accept explicitly reported operational context. Create a separate collector for each request or job:
+
+```ts
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.

@@ -47,9 +47,17 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		e.log.Warn("service recovery: read desired generations", "app", appID, "err", err)
 		return
 	}
+	readiness := map[string]int{}
+	if store, ok := e.store.(state.ProjectReleaseStagingStore); ok {
+		readiness, err = store.ServiceReleaseReadinessTargets(readCtx, appID)
+		if err != nil {
+			e.log.Warn("service recovery: read graph readiness", "app", appID, "err", err)
+			return
+		}
+	}
 	now := e.now().UTC()
 	token := uuid.NewString()
-	lease, claimed, err := e.store.ClaimServiceRecovery(readCtx, appID, serviceRecoveryRevision(app, deps), token,
+	lease, claimed, err := e.store.ClaimServiceRecovery(readCtx, appID, serviceRecoveryReadinessRevision(app, deps, readiness), token,
 		now, now.Add(time.Duration(api.ServiceRecoveryAttemptTimeoutSeconds)*time.Second))
 	if err != nil {
 		e.log.Warn("service recovery: claim", "app", appID, "err", err)
@@ -210,4 +218,13 @@ func (l *Loop) runServiceRecovery(ctx context.Context) {
 
 func (l *Loop) submitServiceRecovery(ctx context.Context, appID string) {
 	l.submitWork(workServiceRecovery, appID, func() { l.engine.ReconcileServiceApp(ctx, appID) })
+}
+
+func serviceRecoveryReadinessRevision(app state.App, deps []state.Deployment, targets map[string]int) string {
+	data, _ := json.Marshal(struct {
+		Revision string
+		Targets  map[string]int
+	}{serviceRecoveryRevision(app, deps), targets})
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
 }

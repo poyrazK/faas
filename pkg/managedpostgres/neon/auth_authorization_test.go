@@ -22,7 +22,10 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false);
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false);
+CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, provider text NOT NULL, provider_id text NOT NULL);
+CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
+CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
 CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text);
 CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
 
@@ -335,7 +338,7 @@ func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
 	}
 	want := []string{
 		`auth.user.created {"provider": "google", "anonymous": false}`,
-		`auth.user.confirmed {}`,
+		`auth.user.confirmed {"channel": "email"}`,
 		`auth.user.signed_in {"aal": "aal1", "session_id": "` + session.String() + `"}`,
 		`auth.user.banned`,
 		`auth.user.unbanned {}`,
@@ -349,11 +352,93 @@ func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
 			t.Fatalf("event %d = %q, want %q", i, got[i], want[i])
 		}
 	}
+	// A phone sign-up is confirmed by its code; the number is never recorded.
+	executeSQL(t, owner, `DELETE FROM gregale_auth.event_outbox`)
+	phone := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.users (id, phone, raw_app_meta_data) VALUES ($1, '447700900123', '{"provider":"phone"}')`, phone)
+	executeSQL(t, owner, `UPDATE auth.users SET phone_confirmed_at = now() WHERE id = $1`, phone)
+	executeSQL(t, owner, `UPDATE auth.users SET phone_confirmed_at = now() WHERE id = $1`, phone)
+	var phoneEvents string
+	if err := owner.QueryRow(ctx, `SELECT string_agg(type || ' ' || data::text, '; ' ORDER BY occurred_at, ctid) FROM gregale_auth.event_outbox WHERE user_id = $1`, phone).Scan(&phoneEvents); err != nil {
+		t.Fatal(err)
+	}
+	if phoneEvents != `auth.user.created {"provider": "phone", "anonymous": false}; auth.user.confirmed {"channel": "phone"}` {
+		t.Fatalf("phone events = %s", phoneEvents)
+	}
 	// Only the auth credential reaches the outbox.
 	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
 		t.Fatal(err)
 	}
 	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT count(*) FROM gregale_auth.event_outbox`); code != "42501" {
 		t.Fatalf("runtime credential read the outbox: %s", code)
+	}
+}
+
+func TestSQLOrganizationSSOJoinsLinkedProvidersAndBoundsInvitations(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice := newAuthUser(t, owner, "alice@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	provider := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sso_providers (id) VALUES ($1)`, provider)
+	executeSQL(t, owner, `INSERT INTO auth.sso_domains (sso_provider_id, domain) VALUES ($1, 'Acme.com')`, provider)
+	ssoUser := func(email string) authUser {
+		u := newAuthUser(t, owner, email)
+		executeSQL(t, owner, `UPDATE auth.users SET is_sso_user = true WHERE id = $1`, u.id)
+		executeSQL(t, owner, `INSERT INTO auth.identities (user_id, provider, provider_id) VALUES ($1, $2, $3)`, u.id, "sso:"+provider.String(), email)
+		return u
+	}
+	member := func(u authUser) string {
+		var role string
+		if err := owner.QueryRow(ctx, `SELECT coalesce((SELECT role FROM gregale_auth.memberships WHERE org_id = $1 AND user_id = $2), '')`, org, u.id).Scan(&role); err != nil {
+			t.Fatal(err)
+		}
+		return role
+	}
+	// A user who signed in before the link joins when it is made.
+	early := ssoUser("early@acme.com")
+	var joined int
+	if err := owner.QueryRow(ctx, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, org).Scan(&joined); err != nil || joined != 1 || member(early) != "member" {
+		t.Fatalf("link joined %d (%v), early member %q", joined, err, member(early))
+	}
+	// Later users join on their first SSO sign-in; other providers do not.
+	later := ssoUser("later@acme.com")
+	other := newAuthUser(t, owner, "oauth@acme.com")
+	executeSQL(t, owner, `INSERT INTO auth.identities (user_id, provider, provider_id) VALUES ($1, 'google', 'g1')`, other.id)
+	if member(later) != "member" || member(other) != "" {
+		t.Fatalf("later %q, google user %q", member(later), member(other))
+	}
+	if code, _ := sqlCode(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'owner')`, provider, org); code != "23514" {
+		t.Fatalf("linking with the owner role: %s", code)
+	}
+	// An SSO user accepts invitations only for its provider's domains.
+	actAs(ctx, t, owner, alice)
+	inside, outside := tokenHash(t), tokenHash(t)
+	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'eve@acme.com', 'member', $2, 3600)`, org, inside)
+	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'eve@globex.com', 'member', $2, 3600)`, org, outside)
+	executeSQL(t, owner, `DELETE FROM gregale_auth.sso_organizations`)
+	claimed := ssoUser("eve@globex.com")
+	actAs(ctx, t, owner, claimed)
+	wantSQLError(t, owner, "42501", "invitation_email_mismatch", `SELECT gregale_auth.accept_invitation($1)`, outside)
+	eve := ssoUser("eve@acme.com")
+	actAs(ctx, t, owner, eve)
+	executeSQL(t, owner, `SELECT gregale_auth.accept_invitation($1)`, inside)
+	// Deleting the provider removes its link; members stay.
+	executeSQL(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, org)
+	executeSQL(t, owner, `DELETE FROM auth.sso_providers WHERE id = $1`, provider)
+	var links int
+	if err := owner.QueryRow(ctx, `SELECT count(*) FROM gregale_auth.sso_organizations`).Scan(&links); err != nil || links != 0 || member(later) != "member" {
+		t.Fatalf("links %d (%v), later %q", links, err, member(later))
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT gregale_auth.link_sso_organization(gen_random_uuid(), gen_random_uuid(), 'member')`); code != "42501" {
+		t.Fatalf("runtime credential linked a provider: %s", code)
 	}
 }

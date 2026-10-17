@@ -132,6 +132,7 @@ type Metrics struct {
 	usageOutboxPending          prometheus.Gauge
 	usageOutboxBytes            prometheus.Gauge
 	usageOutboxFailures         prometheus.Counter
+	usageCommitAborts           prometheus.Counter
 	usageDelivered              prometheus.Counter
 	usageDeliveryFailures       prometheus.Counter
 	wakeLatency                 prometheus.Histogram
@@ -1007,6 +1008,7 @@ func NewMetrics() *Metrics {
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
 		usageOutboxBytes:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_bytes", Help: "Unacknowledged financial usage bytes on local disk."}),
 		usageOutboxFailures:   prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_outbox_failures_total", Help: "Financial usage events that could not be appended to the durable outbox."}),
+		usageCommitAborts:     prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_usage_commit_aborts_total", Help: "Billable responses withheld because their usage could not be made durable (ADR-1505)."}),
 		usageDelivered:        prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivered_total", Help: "Financial usage events acknowledged by apid."}),
 		usageDeliveryFailures: prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivery_failures_total", Help: "Failed financial usage delivery attempts retained for replay."}),
 		// ADR-089 PR 3 — kind=route substitution outcomes.
@@ -2046,7 +2048,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
-	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
+	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3964,6 +3966,14 @@ func (m *Metrics) IncRequestIDJournalDropped() {
 func (m *Metrics) IncUsageOutboxFailure() {
 	if m != nil {
 		m.usageOutboxFailures.Inc()
+	}
+}
+
+// IncUsageCommitAbort counts a billable response withheld because its usage
+// could not be made durable (ADR-1505).
+func (m *Metrics) IncUsageCommitAbort() {
+	if m != nil {
+		m.usageCommitAborts.Inc()
 	}
 }
 

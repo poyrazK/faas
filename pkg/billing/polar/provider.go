@@ -428,8 +428,8 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 			switch price.AmountType {
 			case "fixed":
 				fixed++
-				if price.PriceCurrency != "eur" || price.PriceAmount != expectedFixedCents {
-					return fmt.Errorf("polar: validate %s product %q fixed price must be EUR %d cents", plan, productID, expectedFixedCents)
+				if price.PriceCurrency != api.BillingCurrencyLower || price.PriceAmount != expectedFixedCents {
+					return fmt.Errorf("polar: validate %s product %q fixed price must be %s %d cents", plan, productID, api.BillingCurrency, expectedFixedCents)
 				}
 			case "metered_unit":
 				if price.CapAmount != nil {
@@ -438,8 +438,8 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 				switch price.MeterID {
 				case p.meterID:
 					computeMetered++
-					if price.PriceCurrency != "eur" || !decimalEquals(price.UnitAmount, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent) {
-						return fmt.Errorf("polar: validate %s product %q compute price must be EUR 1 cent per unit on meter %q", plan, productID, p.meterID)
+					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEquals(price.UnitAmount, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent) {
+						return fmt.Errorf("polar: validate %s product %q compute price must be %s 1 cent per unit on meter %q", plan, productID, api.BillingCurrency, p.meterID)
 					}
 				case p.egressMeterID:
 					egressMetered++
@@ -448,14 +448,14 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 						return fmt.Errorf("polar: validate %s product %q egress price is attached without a valid configured price", plan, productID)
 					}
 					wantCents := p.egressPrice / api.MillicentsPerCent
-					if price.PriceCurrency != "eur" || !decimalEquals(price.UnitAmount, wantCents) {
-						return fmt.Errorf("polar: validate %s product %q egress price must be EUR %d cents per GiB on meter %q", plan, productID, wantCents, p.egressMeterID)
+					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEquals(price.UnitAmount, wantCents) {
+						return fmt.Errorf("polar: validate %s product %q egress price must be %s %d cents per GiB on meter %q", plan, productID, api.BillingCurrency, wantCents, p.egressMeterID)
 					}
 				case p.objectStorageMeterID:
 					objectStorageMetered++
 					validateObjectStorageMeter = true
-					if price.PriceCurrency != "eur" || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
-						return fmt.Errorf("polar: validate %s product %q object storage price must be EUR 0.001 cents per charge millicent on meter %q", plan, productID, p.objectStorageMeterID)
+					if price.PriceCurrency != api.BillingCurrencyLower || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
+						return fmt.Errorf("polar: validate %s product %q object storage price must be %s 0.001 cents per charge millicent on meter %q", plan, productID, api.BillingCurrency, p.objectStorageMeterID)
 					}
 				default:
 					return fmt.Errorf("polar: validate %s product %q has an unexpected metered price on meter %q", plan, productID, price.MeterID)
@@ -710,7 +710,7 @@ func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record stat
 	if p == nil || p.objectStorageMode != ObjectStorageBillingLive || !p.Capabilities().Has(billing.CapObjectStorageUsage) {
 		return errors.New("polar: object storage usage delivery is not live")
 	}
-	if record.ID == "" || record.Currency != "EUR" || !state.ValidObjectStorageBillingRecord(record) ||
+	if record.ID == "" || record.Currency != api.BillingCurrency || !state.ValidObjectStorageBillingRecord(record) ||
 		chargeMillicents < 0 || chargeMillicents > record.TotalMillicents {
 		return errors.New("polar: invalid object storage billing record")
 	}

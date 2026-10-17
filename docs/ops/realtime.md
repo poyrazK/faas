@@ -2886,6 +2886,44 @@ per principal. Session cutoffs and principal records remain until endpoint
 deletion; they are not expired automatically. Static bearer and unauthenticated
 endpoints do not support per-user revocation.
 
+### Retained WebSocket channel authorization refresh
+
+Retained v2 WebSocket subscriptions reuse SSE's 30-second application channel
+grant lifetime ([ADR-1385](../adr/1385-retained-channel-authorization-refresh.md)).
+The history pump checks idle subscriptions, and the writer rechecks expired
+grants before sending queued channel messages, presence, signals, read receipts
+or checkpoints. Channel commands also refresh an expired grant before executing.
+Concurrent checks of one subscription share a callback. Changes
+to endpoint policy invalidate its cached grant and use the current callback
+address and token. No positive grant is extended while a refresh is unavailable.
+
+HTTP 401/403 from the authorization callback remove that subscription and emit
+`access_revoked`, including its presence and route cleanup. Other non-2xx statuses,
+transport errors and timeouts close the connection with WebSocket code 1013 so
+clients may reconnect; they do not assert permanent revocation. Idle cleanup
+includes the configured history poll interval and callback deadline. Already
+written frames cannot be recalled. These callbacks may wake the application and
+keep it billable while subscriptions remain active.
+
+Retained JWT connections also cache verification of their pinned subject and
+session for up to 30 seconds ([ADR-1332](../adr/1332-session-bound-retained-realtime.md)). An
+expiry timer closes idle sockets, and all output checks token validity. Expired
+or changed identities close with code 1008; verification outages use 1013.
+Custom principal projections must still match. Tokens require `exp` in the
+production retained transports; clients reconnect with a refreshed token.
+Signing-key removal follows the existing JWKS cache freshness/grace contract.
+
+The Auth template now requires a verified `session_id` in channel callbacks and
+uses `gregale_auth.authorize` in a transaction scoped to that session. Upgrade
+the daemon, redeploy Auth apps from the new template and reconnect clients. An
+older Auth app still uses subject-wide checks; an updated app fails closed on
+callbacks from daemons that omit the session ID. Legacy management and
+inbox/direct-message session authorization retain their existing contracts.
+Ticket subscriptions continue using their existing one-second durable checks.
+Before deployment qualification, exercise membership removal, bans/global
+sign-out, callback outages, policy rotation and slow consumers across nodes.
+Existing preview gates and production qualification requirements still apply.
+
 ### PostgreSQL table-change feeds (operator preview)
 
 A table-change feed queues selected row changes automatically into the transactional

@@ -41,7 +41,7 @@ func (p *Provider) checkpointConnectionClosure(ctx context.Context, d managedpos
 	}
 	out := managedpostgres.CheckpointConnectionClosure{CheckpointConnectionIdentity: managedpostgres.CheckpointConnectionIdentity{
 		OwnerToken: actual.OwnerToken, SourceResourceID: actual.SourceResourceID}, State: actual.State, ClosedAt: actual.ClosedAt,
-		Drained: actual.Drained, UnselectedDatabases: actual.UnselectedDatabases}
+		Drained: actual.Drained, UnselectedDatabases: actual.UnselectedDatabases, WriterInventory: actual.WriterInventory}
 	for _, db := range actual.Databases {
 		out.Databases = append(out.Databases, managedpostgres.CheckpointConnectionDatabase{OID: db.OID, OwnerOID: db.OwnerOID, Name: db.Name,
 			OriginalAllowConnections: db.OriginalAllowConnections, Sessions: db.Sessions, PreparedTransactions: db.PreparedTransactions})

@@ -4,7 +4,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-COPY handler.js secret-reload.js ./
+COPY handler.js database.js ./
+COPY runtime ./runtime
 ENV PORT=8080
 EXPOSE 8080
 LABEL com.gregale.secret-reload-signal="SIGHUP" \

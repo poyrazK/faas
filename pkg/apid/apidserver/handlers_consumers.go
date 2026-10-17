@@ -3,11 +3,13 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -83,6 +85,11 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
 		return
 	}
+	if req.TrialDays != 0 && !consumercontrols.ValidTrialDays(req.TrialDays) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d", state.MaxAPIConsumerTrialDays)))
+		return
+	}
 	c, err := s.store.CreateAPIConsumer(r.Context(), acct.ID, app.ID, req.ExternalRef, req.Name)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
@@ -96,6 +103,12 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 	s.audit.Emit(r.Context(), "api_consumer.created", &acct.ID, map[string]any{
 		"app_id": app.ID, "consumer_id": c.ID, "external_ref": c.ExternalRef,
 	})
+	if req.TrialDays != 0 {
+		if _, err := s.consumerControls.StartTrial(r.Context(), acct, c, req.TrialDays); err != nil {
+			api.WriteProblem(w, api.ErrInternal("the consumer was created but its trial was not; set it with PUT .../trial"))
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, consumerResponse(c))
 }
 
@@ -231,9 +244,9 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 	seen := make(map[string]struct{}, len(req.Scopes))
 	for i, scope := range req.Scopes {
 		req.Scopes[i] = strings.TrimSpace(scope)
-		if req.Scopes[i] != "read" && req.Scopes[i] != "write" && req.Scopes[i] != "admin" {
+		if req.Scopes[i] != "read" && req.Scopes[i] != "write" && req.Scopes[i] != "admin" && req.Scopes[i] != api.ConsumerScopeBilling {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid consumer key scope", "scopes must contain only read, write, or admin"))
+				"Invalid consumer key scope", "scopes must contain only read, write, admin, or billing"))
 			return
 		}
 		if _, ok := seen[req.Scopes[i]]; ok {

@@ -6,6 +6,9 @@ import (
 )
 
 func deliveryHealthValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	if strings.HasPrefix(metric, "processing_") {
+		return deliveryHealthProcessingValue(h, metric)
+	}
 	if metric == "capacity_command_receipt_budget_used_slots" {
 		_, valid, observed := deliveryHealthReceiptBudgetValue(h)
 		if !valid {
@@ -161,4 +164,30 @@ func deliveryHealthReceiptBudgetValue(h EventConsumerDeliveryHealth) (float64, b
 		return 1, valid, b.ObservedAt
 	}
 	return 0, valid, b.ObservedAt
+}
+
+func deliveryHealthProcessingValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	p := h.Processing
+	if p == nil {
+		return 0, false, time.Time{}
+	}
+	valid := p.Complete && p.Coverage == "retained_deferred_invocations" && p.AppID == h.Routing.AppID && p.SubscriptionID == h.Routing.SubscriptionID && p.Processing >= 0 && p.Expired >= 0 && p.NearExpiry >= 0 && p.NearExpiry <= p.Processing && p.NearExpirySeconds == int(EventProcessingNearExpiry/time.Second)
+	if !valid {
+		return 0, false, p.ObservedAt
+	}
+	switch metric {
+	case "processing_lease_risk_seconds":
+		return float64(p.NearExpiry), true, p.ObservedAt
+	case "processing_expired_seconds":
+		return float64(p.Expired), true, p.ObservedAt
+	case "processing_oldest_seconds":
+		if p.Processing == 0 {
+			return 0, p.OldestProcessingOfferedAt == nil, p.ObservedAt
+		}
+		if p.OldestProcessingOfferedAt == nil || p.OldestProcessingOfferedAt.IsZero() || p.OldestProcessingOfferedAt.After(p.ObservedAt) {
+			return 0, false, p.ObservedAt
+		}
+		return p.ObservedAt.Sub(*p.OldestProcessingOfferedAt).Seconds(), true, p.ObservedAt
+	}
+	return 0, false, p.ObservedAt
 }

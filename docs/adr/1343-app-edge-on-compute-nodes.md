@@ -83,13 +83,22 @@ On every compute node with the edge enabled:
   send `*.<apps domain>` to `http://127.0.0.1:8090` and return 404 for
   anything else. It runs in `faas-cp.slice`.
 - **gatewayd-public** listens on `127.0.0.1:8090` (8080 is gatewayd-internal's
-  TCP listener on compute nodes). Its control listener binds the node's
-  private address on port 9092, which nftables already limits to the control
-  plane. Its compute unit drops `Requires=postgresql.service` and
-  `Wants=faas-apid.service`, and uses `/etc/faas/compute-db.env`.
-- The daemon registry gives gatewayd-public `AdditionalRoles` compute, and
-  `role_convergence` leaves it unmasked on compute nodes when the edge is
-  enabled. The binary accepts the compute role only in edge mode.
+  TCP listener on compute nodes). Its control listener binds port 9092,
+  which nftables already limits to the control plane. Its compute unit drops
+  `Requires=postgresql.service` and `Wants=faas-apid.service`, and uses
+  `/etc/faas/compute-db.env`.
+- The compute unit is a separate optional unit, `faas-gatewayd-public-edge`
+  (`OptionalRegistry`, compute-only), derived from the control-plane unit so
+  the two cannot drift. A separate unit leaves the core registry,
+  `role_convergence` and release activation untouched; the
+  `gatewayd_public_edge_service` role installs it, or removes it when the
+  edge is off. `PartOf=` and `Wants=` tie it to gatewayd-internal, so every
+  compute release and node join restarts it on the active binary. The binary
+  accepts the compute role only in edge mode.
+- The control plane's gatewayd-public gains a second listener on its private
+  address, port 8090, for the routes an edge forwards (§2). nftables admits
+  the compute nodes there, and on each compute node admits its peers on 8080
+  for the compute-pool fallback. Both rules exist only while the edge is on.
 
 The control plane keeps Caddy and gatewayd-public for the platform hosts and
 custom domains. Its gatewayd-public keeps the compute pool, because `api.`
@@ -187,8 +196,10 @@ Every step is dark until the manifest turns it on:
 1. gatewayd-public edge mode with tests (routing, host check, forwarding,
    client IP).
 2. The compute role (`cloudflared`, the gatewayd-public compute unit),
-   registry and convergence changes, nftables, sealed tunnel credentials,
-   behind manifest `edge.on_compute_nodes: false`.
+   registry changes, nftables, the tunnel credential, behind manifest
+   `public_edge.compute_nodes` (default off). The operator stages the cell's
+   tunnel token as a root-only file; the connector reads it through
+   `LoadCredential=` and stays stopped until it exists.
 3. The CPU and RAM hold-back, applied only where the edge is enabled.
 4. Per-node discovery, alerts and `check_public_endpoint`.
 5. Connector withdrawal in the drain path (with ADR-1344 P4).

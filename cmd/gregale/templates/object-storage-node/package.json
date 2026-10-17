@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-timeout=15000 test/*.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1149.0"

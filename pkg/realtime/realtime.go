@@ -87,11 +87,12 @@ type pendingSignalKey struct{ channel, member, name string }
 type pendingSignal struct{ message Message }
 
 type Message struct {
-	accessChannel string
-	signalKey     pendingSignalKey
-	signalToken   *pendingSignal
-	signalUpdated time.Time
-	signalExpires *time.Time
+	accessChannel        string
+	channelAuthorization bool
+	signalKey            pendingSignalKey
+	signalToken          *pendingSignal
+	signalUpdated        time.Time
+	signalExpires        *time.Time
 
 	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
 	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
@@ -135,6 +136,7 @@ type Event struct {
 	AccountID             string    `json:"account_id"`
 	ConnectionID          string    `json:"connection_id"`
 	Principal             string    `json:"principal,omitempty"`
+	SessionID             string    `json:"session_id,omitempty"`
 	Channel               string    `json:"channel,omitempty"`
 	Permission            string    `json:"permission,omitempty"`
 	Sequence              uint64    `json:"sequence"`
@@ -450,6 +452,7 @@ type Stats struct {
 }
 
 type connection struct {
+	identity      *connectionIdentity
 	issuedAt      time.Time
 	ticketToken   string
 	ticketClaims  state.RealtimeSubscriptionTicket
@@ -835,7 +838,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := value.(*endpointState)
-	endpoint := *state.config.Load()
+	endpointSnapshot := state.config.Load()
+	endpoint := *endpointSnapshot
 	protocols := websocket.Subprotocols(r)
 	wantsResume := false
 	for _, protocol := range protocols {
@@ -894,6 +898,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
 	var issuedAt time.Time
+	var identity JWTIdentity
+	var identityToken string
+	identityAt := time.Now()
 	if usesTicket {
 		claims, err := m.readTicket(r.Context(), endpoint.ID, ticketToken)
 		if err != nil {
@@ -929,7 +936,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			var err error
-			principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+			if wantsResume {
+				identity, err = m.authorizeIdentity(r.Context(), token, endpoint.ClientAuth)
+				principal, identityToken = identity.Principal, token
+			} else {
+				principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+			}
 			if err != nil || strings.TrimSpace(principal) == "" {
 				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 				m.rejectedConnections.Add(1)
@@ -1013,12 +1025,17 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close()
 		return
 	}
+	var verifiedConnection *connectionIdentity
+	if identityToken != "" {
+		verifiedConnection = &connectionIdentity{token: identityToken, identity: identity, request: r,
+			endpoint: endpointSnapshot, checkedAt: identityAt}
+	}
 	conn := m.addAuthenticatedConnection(state, endpoint, principal, ws, wantsResume, issuedAt, func() string {
 		if usesTicket {
 			return ticketToken
 		}
 		return ""
-	}())
+	}(), verifiedConnection)
 	state.gate.Unlock()
 	m.runConnection(r.Context(), conn)
 }
@@ -1129,13 +1146,14 @@ func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpo
 	if len(issuedAts) > 0 {
 		issuedAt = issuedAts[0]
 	}
-	return m.addAuthenticatedConnection(state, endpoint, principal, ws, v2, issuedAt, "")
+	return m.addAuthenticatedConnection(state, endpoint, principal, ws, v2, issuedAt, "", nil)
 }
 
-func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool, issuedAt time.Time, ticket string) *connection {
+func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool, issuedAt time.Time, ticket string, identity *connectionIdentity) *connection {
 	now := time.Now().UTC()
 	id := "rt_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := &connection{
+		identity:    identity,
 		issuedAt:    issuedAt,
 		ticketToken: ticket,
 		info: ConnectionInfo{
@@ -1174,6 +1192,12 @@ func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endp
 func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	defer m.removeConnection(ctx, c)
 
+	if c.identity != nil {
+		if !c.identityAllows(ctx) {
+			return
+		}
+		go c.monitorIdentity()
+	}
 	if c.accessEnabled() {
 		if !c.accessAllows(ctx, "") {
 			return
@@ -1316,7 +1340,15 @@ func (c *connection) writePump() {
 				c.releaseOutboundBytes(int64(len(msg.Data)))
 				continue
 			}
+			if !c.identityAllows(c.m.ctx) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				return
+			}
 			if !c.accessAllows(c.m.ctx, msg.accessChannel) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
+			if msg.channelAuthorization && !c.m.admitOutboundResumeChannel(c.m.ctx, c, msg.accessChannel) {
 				c.releaseOutboundBytes(int64(len(msg.Data)))
 				continue
 			}

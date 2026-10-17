@@ -78,7 +78,7 @@ func NewPoolCollector(prefix string, pool *pgxpool.Pool) *PoolCollector {
 		),
 		canceled: prometheus.NewDesc(
 			prefix+"_db_pool_canceled_acquires_total",
-			"Cumulative acquisitions abandoned because the caller's context ended while waiting for a connection. This is the unambiguous saturation signal — it cannot fire during warm-up, only when a caller gave up waiting — and any non-zero rate is pool starvation already surfacing as customer-visible timeouts. It must be zero before any entry in DaemonMaxConnections is lowered.",
+			"Cumulative acquisitions abandoned because the caller's context ended while waiting for a connection. This is the unambiguous saturation signal — it cannot fire during warm-up, only when a caller gave up waiting — and any non-zero rate is pool starvation already surfacing as customer-visible timeouts. An acquisition whose context had already ended before it started is not counted: it never waited. It must be zero before any entry in DaemonMaxConnections is lowered.",
 			nil, nil,
 		),
 		acquireWait: prometheus.NewDesc(
@@ -142,7 +142,11 @@ func (c *PoolCollector) Collect(ch chan<- prometheus.Metric) {
 
 	counter(c.acquires, float64(stat.AcquireCount()))
 	counter(c.emptyAcquires, float64(stat.EmptyAcquireCount()))
-	counter(c.canceled, float64(stat.CanceledAcquireCount()))
+	canceled := stat.CanceledAcquireCount()
+	if abandoned, ok := abandonedAcquires(c.pool); ok {
+		canceled = abandoned
+	}
+	counter(c.canceled, float64(canceled))
 	counter(c.acquireWait, stat.AcquireDuration().Seconds())
 
 	hub := NotifyHubStatsFor(c.pool)

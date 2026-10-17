@@ -46,3 +46,11 @@ jobs:
           node scripts/sync-storage-starter.mjs --check
       - name: materialized app tests and actual gateway journey
         run: bash scripts/test-storage-node-starter.sh
+      - name: native Node and Python storage fixture and evidence contracts (no KVM)
+        run: |
+          python3 scripts/ci/object-storage-native-verdict_test.py
+          python3 scripts/ci/object-storage-native-runner_test.py
+          sh -n scripts/test-object-storage-native.sh
+          go test -race -p 1 -count=1 ./pkg/e2etest/storagestarter ./pkg/e2etest/storagefixture
+          go test -race -p 1 -count=1 ./pkg/e2etest -run '^TestStorageGuest(Manifest|App)'
+          go test -race -p 1 -count=1 -run '^TestStorageNativeIndependentObserver$' ./pkg/s3gateway

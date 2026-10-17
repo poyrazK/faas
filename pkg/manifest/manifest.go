@@ -590,6 +590,36 @@ type DNS struct {
 // PublicEdge is the public HTTPS edge contract beyond the platform zone.
 type PublicEdge struct {
 	CustomDomains CustomDomainsEdge `yaml:"custom_domains,omitempty"`
+	// ComputeNodes runs the app edge on every compute node behind a
+	// Cloudflare Tunnel connector (ADR-1343): *.<apps domain> is served
+	// there, while the platform hosts and custom domains stay on the control
+	// plane. Off by default.
+	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+}
+
+// validate checks the compute-node edge against the fleet: it needs a control
+// plane to forward credential-bound routes to and compute nodes to run on.
+func (e PublicEdge) validate(hosts []Host) Errors {
+	if !e.ComputeNodes {
+		return nil
+	}
+	var controlPlanes, computeNodes int
+	for _, h := range hosts {
+		switch h.Role {
+		case "control-plane":
+			controlPlanes++
+		case "compute-only":
+			computeNodes++
+		}
+	}
+	var errs Errors
+	if controlPlanes == 0 {
+		errs = append(errs, Error{"public_edge.compute_nodes", "needs a control-plane host to forward public object reads, uploads and OTLP to"})
+	}
+	if computeNodes == 0 {
+		errs = append(errs, Error{"public_edge.compute_nodes", "needs at least one compute-only host to run the edge"})
+	}
+	return errs
 }
 
 // CustomDomainsEdgeModeOnDemand selects ADR-520's self-hosted customer
@@ -904,6 +934,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.DNS.validate()...)
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
+	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
 	errs = append(errs, m.Release.validate()...)

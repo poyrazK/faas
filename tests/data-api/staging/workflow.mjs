@@ -31,6 +31,21 @@ export function matchingRuntimeLog(output, info, deployment, method, route) {
     try { envelope = JSON.parse(line); record = JSON.parse(envelope.line) } catch { continue }
     if (!record || typeof record !== 'object' || record.request_id !== info.requestId) continue
     const fields = ['code', 'duration_ms', 'event', 'level', 'method', 'outcome', 'request_id', 'route', 'status', 'time']
+    if (record.admission !== undefined) {
+      fields.unshift('admission')
+      const admission = record.admission
+      requireValue(admission && Object.keys(admission).sort().join(',') === 'active,outcome,queued,wait_ms' &&
+        admission.outcome === 'admitted' && Number.isFinite(admission.wait_ms) && admission.wait_ms >= 0 &&
+        Number.isInteger(admission.active) && admission.active >= 1 && admission.active <= 2 &&
+        Number.isInteger(admission.queued) && admission.queued >= 0 && admission.queued <= 8, 'runtime_log_admission_invalid')
+    }
+    if (record.timings !== undefined) {
+      fields.push('timings')
+      const timings = record.timings
+      requireValue(timings && typeof timings === 'object' && !Array.isArray(timings) && Object.keys(timings).length > 0 &&
+        Object.entries(timings).every(([phase, timing]) => ['verification','refresh','readiness','signing','upstream','streaming'].includes(phase) &&
+          timing && Object.keys(timing).sort().join(',') === 'complete,duration_ms' && timing.complete === true && Number.isFinite(timing.duration_ms) && timing.duration_ms >= 0), 'runtime_log_timings_invalid')
+    }
     requireValue(Object.keys(record).sort().join(',') === fields.join(',') && record.event === 'data_api_request' &&
       record.method === method && record.route === route && record.status === info.status && record.outcome === 'completed' && record.code === null && record.level === 'info' &&
       Number.isFinite(record.duration_ms) && record.duration_ms >= 0 && Number.isFinite(Date.parse(record.time)) && envelope.deployment_id === deployment &&

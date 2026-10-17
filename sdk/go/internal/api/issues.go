@@ -5,26 +5,31 @@ import "time"
 // IssueEvent is the instrumentation envelope. Identity and deployment fields
 // are resolved from the ingest credential, never accepted from this body.
 type IssueEvent struct {
-	Causes              []IssueCause `json:"causes,omitempty"`
-	CausesIncomplete    bool         `json:"causes_incomplete,omitempty"`
-	EventID             string       `json:"event_id"`
-	OccurredAt          time.Time    `json:"occurred_at"`
-	ExceptionType       string       `json:"exception_type"`
-	Message             string       `json:"message"`
-	StackTrace          string       `json:"stack_trace,omitempty"`
-	Frames              []IssueFrame `json:"frames,omitempty"`
-	FingerprintOverride string       `json:"fingerprint_override,omitempty"`
-	GroupingStrategy    string       `json:"grouping_strategy,omitempty"`
-	FrameOrder          string       `json:"frame_order,omitempty"`
-	ErrorCode           string       `json:"error_code,omitempty"`
-	TraceID             string       `json:"trace_id,omitempty"`
-	SpanID              string       `json:"span_id,omitempty"`
-	RequestID           string       `json:"request_id,omitempty"`
-	InvocationID        string       `json:"invocation_id,omitempty"`
-	Route               string       `json:"route,omitempty"`
-	HTTPStatus          int          `json:"http_status,omitempty"`
-	SourceKind          string       `json:"source_kind,omitempty"`
-	Redactions          []string     `json:"redactions,omitempty"`
+	Breadcrumbs           []IssueBreadcrumb         `json:"breadcrumbs,omitempty"`
+	BreadcrumbsDropped    int                       `json:"breadcrumbs_dropped,omitempty"`
+	Tags                  map[string]string         `json:"tags,omitempty"`
+	SymbolicationStrategy string                    `json:"symbolication_strategy,omitempty"`
+	Symbolication         *IssueSymbolicationResult `json:"symbolication,omitempty"`
+	Causes                []IssueCause              `json:"causes,omitempty"`
+	CausesIncomplete      bool                      `json:"causes_incomplete,omitempty"`
+	EventID               string                    `json:"event_id"`
+	OccurredAt            time.Time                 `json:"occurred_at"`
+	ExceptionType         string                    `json:"exception_type"`
+	Message               string                    `json:"message"`
+	StackTrace            string                    `json:"stack_trace,omitempty"`
+	Frames                []IssueFrame              `json:"frames,omitempty"`
+	FingerprintOverride   string                    `json:"fingerprint_override,omitempty"`
+	GroupingStrategy      string                    `json:"grouping_strategy,omitempty"`
+	FrameOrder            string                    `json:"frame_order,omitempty"`
+	ErrorCode             string                    `json:"error_code,omitempty"`
+	TraceID               string                    `json:"trace_id,omitempty"`
+	SpanID                string                    `json:"span_id,omitempty"`
+	RequestID             string                    `json:"request_id,omitempty"`
+	InvocationID          string                    `json:"invocation_id,omitempty"`
+	Route                 string                    `json:"route,omitempty"`
+	HTTPStatus            int                       `json:"http_status,omitempty"`
+	SourceKind            string                    `json:"source_kind,omitempty"`
+	Redactions            []string                  `json:"redactions,omitempty"`
 }
 
 // IssueCause describes one linear cause, ordered from immediate to deepest.
@@ -37,6 +42,7 @@ type IssueCause struct {
 }
 
 type IssueFrame struct {
+	Column   int    `json:"column,omitempty"`
 	File     string `json:"file"`
 	Function string `json:"function"`
 	Line     int    `json:"line,omitempty"`
@@ -52,6 +58,7 @@ type Issue struct {
 	GroupingVersion          int        `json:"grouping_version"`
 	Title                    string     `json:"title"`
 	State                    string     `json:"state"`
+	AssigneeTeamID           string     `json:"assignee_team_id,omitempty"`
 	AssigneeAccountID        string     `json:"assignee_account_id,omitempty"`
 	FirstSeenAt              time.Time  `json:"first_seen_at"`
 	LastSeenAt               time.Time  `json:"last_seen_at"`
@@ -138,10 +145,13 @@ type UpdateIssueImpactAlertPolicyRequest struct {
 }
 
 type IssueOwnershipRule struct {
+	SourcePathPrefix  string `json:"source_path_prefix,omitempty"`
+	Tag               string `json:"tag,omitempty"`
 	ExceptionType     string `json:"exception_type,omitempty"`
 	SourceKind        string `json:"source_kind,omitempty"`
 	RoutePrefix       string `json:"route_prefix,omitempty"`
-	AssigneeAccountID string `json:"assignee_account_id"`
+	AssigneeAccountID string `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string `json:"assignee_team_id,omitempty"`
 }
 
 type IssueOwnershipRules struct {
@@ -178,6 +188,7 @@ type IssueActionRequest struct {
 	MemberIssueID     string     `json:"member_issue_id,omitempty"`
 	Action            string     `json:"action"`
 	AssigneeAccountID string     `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string     `json:"assignee_team_id,omitempty"`
 	FixedDeploymentID string     `json:"fixed_deployment_id,omitempty"`
 	IgnoredUntil      *time.Time `json:"ignored_until,omitempty"`
 }

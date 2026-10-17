@@ -3,6 +3,7 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,33 @@ func TestCharacterizationStartupExitIsAnAppStartupCrash(t *testing.T) {
 	p := api.AsProblem(err)
 	if !terminal || p == nil || p.Code != api.CodeAppStartupCrash || !strings.Contains(p.Detail, "code 17") || !strings.Contains(p.Detail, "boom") {
 		t.Fatalf("startup exit = (%v, %#v), want terminal %s with exit code and tail", terminal, err, api.CodeAppStartupCrash)
+	}
+}
+
+// spec: §6.1, §12
+// A workload that contradicts its declared mode is the customer's to fix, so it
+// carries a stable customer-caused code instead of "internal" (H10-135).
+func TestExecutionModeConflictIsCustomerCaused(t *testing.T) {
+	tests := []struct {
+		name   string
+		mode   string
+		report api.CharacterizationReport
+	}{
+		{"worker bound a port", api.ExecutionModeWorker, api.CharacterizationReport{ObservedClass: "http", ObservedPort: 8080, ExitCode: -1}},
+		{"worker exited cleanly", api.ExecutionModeWorker, api.CharacterizationReport{ObservedClass: "job", ExitCode: 0}},
+		{"job served", api.ExecutionModeJob, api.CharacterizationReport{ObservedClass: "grpc", ObservedPort: 50051, ExitCode: -1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			terminal, err := characterizationBootOutcome(tt.report, tt.mode)
+			p := api.AsProblem(err)
+			if !terminal || p == nil || p.Code != api.CodeExecutionModeConflict || p.Status != 422 || !strings.Contains(p.Detail, tt.report.ObservedClass) {
+				t.Fatalf("conflict = (%v, %#v), want terminal 422 %s naming %q", terminal, err, api.CodeExecutionModeConflict, tt.report.ObservedClass)
+			}
+		})
+	}
+	if !slices.Contains(api.CustomerCausedDeploymentFailureCodes(), api.CodeExecutionModeConflict) {
+		t.Fatalf("%s is not customer-caused; the status page would count it as a platform failure", api.CodeExecutionModeConflict)
 	}
 }
 

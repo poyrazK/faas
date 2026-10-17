@@ -256,8 +256,8 @@ reports declared service bindings as `enforced`.
 the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
 object storage, queues, and outbound integrations. Omit `scope` to inspect all
 resource scopes, or use `?scope=staging` / `gregale bindings public-api --scope
-staging` to filter database and bucket bindings. App-wide service, queue, and
-outbound bindings remain included; the filter does not create or isolate
+staging` to filter database, bucket, and environment queue bindings. Shared
+legacy queues and app-wide service and outbound bindings remain included; the filter does not create or isolate
 resources for that environment.
 
 The binding inventory separates configuration from queue consumer state and
@@ -268,10 +268,14 @@ their configuration or provisioning state, not verified application
 connectivity. JSON `runtime_status` is `unknown` unless a queue consumer has a
 scheduler observation; `observed_at` identifies that observation, while
 `generated_at` is the inventory collection time. `verification_status` is
-`passed`, `failed`, `unknown`, or `stale` for service and PostgreSQL entries.
+`passed`, `failed`, `unknown`, or `stale` for service, runtime PostgreSQL,
+object-storage, and configured outbound entries.
 The optional `verification` contains sanitized stage statuses, the actual task
 scope and deployment, completion time, and PostgreSQL credential generation.
-Other binding families remain `unknown`. Outbound entries show integration enablement, credential
+Queues and release-only migration bindings remain `unknown`. Queue entries
+publish `queue_environment`: an empty string means shared legacy configuration;
+otherwise it names the binding's environment. This also distinguishes a project
+environment named `app` from the app-wide inventory label. Outbound entries show integration enablement, credential
 configuration, and the app binding's allowed methods and path prefixes. They
 do not expose provider credentials, resource IDs, or sealed secret names.
 
@@ -335,8 +339,14 @@ current manual-task deployment. Use `--deployment ID|vN` to select an exact live
 materialized deployment, including a candidate receiving zero traffic. Revision
 handles resolve within the named app. An explicit `--scope` asserts that the
 selected deployment uses that scope; omit it to use the deployment's scope.
-App-wide service, queue and outbound bindings remain included. PostgreSQL and
-object-storage bindings in other scopes are explicitly skipped.
+App-wide service and outbound bindings and shared legacy queues remain included.
+PostgreSQL, object-storage and environment queue bindings in other scopes are
+explicitly skipped. PostgreSQL bindings with `access: migration` are reported as
+`skipped` with reason `release_only`: their credentials are confined to the
+deployment's release task. The existing release-command gate must succeed before
+activation; runtime probes, application ACKs and refresh requirements do not
+validate migration credentials. `bindings verify --all` skips these bindings and
+creates no migration probes.
 
 Use `--wait --timeout 5m --poll-interval 1s` to observe already pending probes,
 credential refreshes, runtime replacement or application acknowledgements. Waiting
@@ -414,6 +424,82 @@ consumers retain partial coverage because their liveness is not observed by the
 scheduler. Polling health establishes control-plane readiness; it does not
 prove guest queue access or message delivery. See
 [ADR-523](adr/523-queue-binding-readiness.md).
+
+A stored release policy can explicitly require scheduler readiness for individual
+push queue bindings while retaining strict verification for other dependencies:
+
+```sh
+gregale bindings release-policy set public-api --scope production --mode enforce --expected-revision 0 --queue-require orders=consumer_readiness
+gregale bindings check public-api --deployment v12 --release-policy --json
+```
+
+`orders` is the binding name. The requirement needs exactly one shared or
+selected-environment binding, enabled push delivery, and a healthy consumer poll
+no older than thirty seconds. Missing, ambiguous, disabled, pull, unobserved,
+stale and unhealthy consumers block. The queue environment must be confirmed by
+the server; older inventories cannot satisfy this requirement. JSON exposes
+`queue_requirements` and `required_queue_evidence`. A satisfied readiness policy
+returns `passed` with `coverage: partial` and a `queue_connectivity_unverified`
+warning. It establishes scheduler readiness only; it sends no messages and does
+not establish guest connectivity or end-to-end delivery. Unlisted queues and
+unsupported outbound bindings still block stored enforcement. Probe age never
+extends the separate queue-poll deadline, which promotion checks under its
+transaction locks.
+
+Use `--wait` to observe the next scheduler poll for an active consumer whose
+required readiness is stale or unobserved. Waiting sends no messages and does
+not resume paused consumers or repair missing bindings.
+
+Use `--queue-require NAME=consumer_readiness` repeatedly (up to 32 bindings) to replace the complete
+queue requirement map. Updates require the observed policy revision; use
+`--clear-queue-requirements` to explicitly remove all queue requirements.
+Existing storage requirements must be retained with `--object-storage-require`
+or explicitly cleared. CLI and SDK writes use the dedicated
+`PUT .../bindings/release-policy-with-queues` route, so older servers return 404
+before mutation. Older write routes reject implicit removal of these
+requirements. A local `bindings check --queue-require ...` reads the same
+readiness evidence without changing the stored policy. See
+[ADR-1346](adr/1346-binding-runtime-audiences-and-queue-release-requirements.md).
+
+To prepare all dependencies for an enforced release policy with one command,
+preview the plan and then run it for the same candidate:
+
+```sh
+gregale bindings verify public-api --deployment v12 --release-policy --dry-run --json
+gregale bindings verify public-api --deployment v12 --release-policy --wait-timeout 5m --json
+```
+
+The policy need not contain storage requirements. The plan covers services,
+runtime PostgreSQL, object storage, configured outbound integrations and required
+queue readiness. Each entry exposes an `action`: `probe` for missing, failed,
+stale or insufficient evidence; `reuse` for current evidence; `wait` for an
+already-pending compatible probe; `observe` for queue readiness; `skip` for disabled,
+release-only or other-scope bindings; and `blocked` for unsupported or invalid
+configuration. `observed_check` contains initial findings, while `plan_blockers`
+explain conditions that stop the whole batch before tasks. A dry run reports
+`status: planned` and `passed: false`; it performs no probes or provider calls.
+
+If any scheduled storage operation writes, add `--object-storage-write` after
+reviewing the plan. Without that consent, no part of the batch runs. Current
+write evidence can be reused without writing again. The storage requirement and
+binding permission select listing or upload/cleanup, with download for a
+read/write canary. Unlisted write-only storage bindings also need an explicit
+write canary because their credentials cannot perform a listing.
+
+The command pins the deployment, scope and original policy; reconfirms selected
+binding configuration before each task and after each successful probe; and
+stops on failures or observed configuration changes. It finishes with fresh
+policy-aware preflight, observing pending probes, required queue polls and
+supported runtime/ACK progress under one overall `--wait-timeout`. Paused or
+missing consumers and other terminal failures stop immediately. Reused evidence
+that expires before the final check cannot pass. Queue coverage remains partial,
+and canaries do not establish resident application adoption. JSON retains the
+plan and completed results alongside `preflight` when later work fails. Deadline
+errors use `error_code: verification_timeout` and retain any admitted task ID.
+
+The final result is an observation; traffic promotion rechecks policy and
+evidence under its transaction locks. See
+[ADR-1347](adr/1347-unified-binding-policy-verification.md).
 
 Human output identifies blockers and remediation. JSON includes `passed`, the
 applied policy, scope and deployment, per-binding coverage, runtime counts,
@@ -516,7 +602,9 @@ map, `null` clears it, and `{}` denies every caller. Project-managed apps must
 set `x-gregale-allow-call-scopes` in source; they reject this PATCH just like
 the existing caller allowlist.
 
-For an app created outside a project, use the app API instead: include
+For an app created outside a project, use the
+[service binding CLI](service-binding-configuration.md) to preview and apply
+these fields from a JSON policy file. The app API is also available: include
 `"allowed_service_callers": ["frontend"]` in `POST /v1/apps`, or PATCH
 `/v1/apps/customer-billing` with that field to replace the list. PATCH with `[]` denies
 all internal callers; PATCH with `null` restores same-account access. Omission
@@ -1380,3 +1468,445 @@ caller.
 Private TCP addresses are a node-level rollout. Until your node has it
 enabled, `*.svc.gregale` keeps answering with the HTTP-only address, and HTTP
 service calls work as before.
+
+### Qualify and activate a project release graph
+
+For projects using enforced binding release policies, prepare a fixed graph,
+verify its dependencies, then activate it with an atomic check. Every project
+workload must appear in the selection, with a materialized live deployment in
+the selected environment and enough revision retention for the release TTL.
+Every member scope needs an enforced policy. Preparation and verification keep
+the current routes.
+
+Save a selection such as this as `release-selection.json`, using real deployment
+UUIDs for each workload:
+
+```json
+{
+  "ttl_seconds": 1800,
+  "deployments": {
+    "shop-api": "11111111-1111-4111-8111-111111111111",
+    "shop-billing": "22222222-2222-4222-8222-222222222222"
+  }
+}
+```
+
+```bash
+gregale projects environments release-sets prepare shop production \
+  --file release-selection.json > release-manifest.json
+gregale projects environments release-sets verify shop production \
+  --file release-manifest.json --dry-run --json
+gregale projects environments release-sets verify shop production \
+  --file release-manifest.json --json
+gregale projects environments release-sets activate shop production \
+  --file release-manifest.json --json
+```
+
+If the preview plans storage uploads and cleanup, add
+`--object-storage-write` to the verification command after reviewing the plan.
+The verifier reuses fresh compatible evidence and waits for compatible pending
+probes and required queue readiness. It previews every member before any task.
+Internal service edges use HTTPS HEAD probes pinned to the graph's exact target
+deployments. These probes require a healthy registered endpoint and never wake
+the target or call its handler. External services retain ordinary probe coverage.
+
+The manifest fixes the candidate deployments, current routing, service targets
+and policy revisions. Activation rechecks the complete graph, evidence age,
+policy, artifacts and service replica readiness in one transaction. A concurrent
+release, policy/config change, missing member, stale proof or loss of readiness
+blocks the switch. Prepare and qualify again when the intent changes. The first
+release also compares the existing weighted routing and requires it to be
+unambiguous. Qualification alone does not reserve capacity or guarantee future
+readiness.
+
+The API routes are `POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare`
+and `POST /v1/projects/{slug}/environments/{environment}/release-sets/activate`.
+Exact service evidence can be inspected through the binding inventory's
+`service_targets` JSON query parameter together with `deployment_id`.
+Ordinary inventory remains separate from evidence for proposed targets.
+Generic graph publication and deactivation stay blocked under enforcement;
+Checked fallback deactivation is described below; GitOps candidate staging remains a follow-up.
+
+
+### Recover a retained project release graph
+
+Select an inactive, unexpired release from the release-set inventory. Save its
+UUID and the desired release retention as `rollback-selection.json`:
+
+```json
+{"release_id":"33333333-3333-4333-8333-333333333333","ttl_seconds":1800}
+```
+
+```bash
+gregale projects environments release-sets prepare-rollback shop production \
+  --file rollback-selection.json > rollback-manifest.json
+gregale projects environments release-sets verify shop production \
+  --file rollback-manifest.json --dry-run --json
+gregale projects environments release-sets verify shop production \
+  --file rollback-manifest.json --json
+gregale projects environments release-sets rollback shop production \
+  --file rollback-manifest.json --json
+```
+
+Add `--object-storage-write` when the reviewed verification plan requires it.
+The graph must match current project membership and every member must satisfy
+current enforced policy, artifact eligibility and service readiness. Verification
+uses exact historical service targets. Preparation and verification do not switch
+routes or wake targets. Expired graph history cannot be recovered even when its
+deployments remain live or pinned independently. The historical source and the
+expected current release are rechecked atomically, with expiry rechecked at
+PostgreSQL commit. A failure leaves the current graph intact.
+
+Recovery creates a new release. Release inventory exposes
+`rollback_source_release_id` and `rollback_previous_release_id` as its durable
+recovery record. The API uses `POST .../release-sets/prepare-rollback` and
+`POST .../release-sets/rollback`; use an `Idempotency-Key` for API mutation retries.
+A stale unkeyed retry fails rather than publishing a second recovery. This does
+not undo application data migrations or lift GitOps ownership restrictions.
+
+### Deactivate a project graph with checked fallback routing
+
+Observe the active graph and its weighted fallbacks, qualify them, then explicitly
+deactivate. Every current workload must have exactly one eligible materialized
+live 100% fallback in the environment and an enforced binding policy. Missing
+fallbacks and traffic splits block preparation.
+
+```bash
+gregale projects environments release-sets prepare-deactivation shop production \
+  --json > deactivation-manifest.json
+gregale projects environments release-sets verify shop production \
+  --file deactivation-manifest.json --dry-run --json
+gregale projects environments release-sets verify shop production \
+  --file deactivation-manifest.json --json
+gregale projects environments release-sets deactivate shop production \
+  --file deactivation-manifest.json --json
+```
+
+Supply `--object-storage-write` when the reviewed verification plan needs a
+storage canary. Preparation and verification keep current routing. Internal
+service probes qualify the exact fallback deployments; they do not wake targets.
+Deactivation rechecks the current graph, complete fallback routing, current
+policies, fresh evidence, artifacts and service readiness atomically. Changed
+routing, stale proof or missing readiness keeps the active graph intact.
+
+The manifest has `deactivate: true` and `ttl_seconds: 0`. No new deployment
+retention setting is required for already-serving fallbacks. Retirement preserves
+the graph's existing TTL and retained member access for requests carrying its ID.
+New requests use the qualified weighted routes. The retired release's
+`deactivation` field records the receipt ID, release ID, completion time and every
+fallback app/deployment pair. The API routes are `POST .../release-sets/prepare-deactivation`
+and `POST .../release-sets/deactivate`; use an `Idempotency-Key` for mutation retries.
+The same key replays the completed receipt; stale unkeyed requests fail. Existing
+unchecked deactivation and GitOps-managed workloads remain blocked under enforcement.
+
+### Stage candidate services before graph qualification
+
+A prepared forward or rollback graph may select a dark service deployment with
+no ready replicas. Service probes do not wake targets. Use a temporary staging
+lease to bring those exact service deployments up through schedd's normal
+admission and readiness gates, while keeping current weighted and graph routes.
+Selected deployments must already be live and materialized; use the existing
+dark-deployment preparation workflow first. GitOps-managed workloads, active
+service rollouts, mirror recipients and deactivation manifests are excluded.
+
+```bash
+gregale projects environments release-sets stage shop production \
+  --file manifest.json --ttl-seconds 600 --json > stage.json
+stage_id=$(jq -r .id stage.json)
+gregale projects environments release-sets stage-status shop production \
+  --stage "$stage_id" --json
+# Once status is ready, qualify exact targets and explicitly publish the graph.
+gregale projects environments release-sets verify shop production --file manifest.json
+gregale projects environments release-sets activate shop production --file manifest.json
+# Use rollback instead of activate for a prepared rollback manifest.
+```
+
+`stage-status` reports `waiting`, `ready`, `blocked`, `expired` or `cancelled`,
+with per-service ready/desired counts and a reason for blockers. Capacity, startup
+or dependency failures and changed manifests are observable. Readiness is an
+observation, not binding evidence: activation still independently checks current
+policies, exact service evidence, membership, artifacts and replica readiness.
+Staging gives function and worker members no residency lease.
+
+The capacity is billable and uses normal concurrency and residency limits.
+Staging preserves serving allocations and provides no rollout overlap allowance.
+A full plan can block the candidate until spare capacity is available. The lease
+lasts 1–1800 seconds; repeating the same manifest reuses the original stage ID
+and expiry. Another manifest conflicts while that scope has an unexpired,
+uncancelled stage. Cancel before staging a different selection:
+
+```bash
+gregale projects environments release-sets cancel-stage shop production \
+  --stage "$stage_id" --json
+```
+
+Cancellation and expiry remove only the temporary allocation. An in-progress
+boot may complete and is cleaned up by normal reconciliation. Current traffic
+and active graph allocations remain authoritative, so cancellation does not tear
+down a service serving the active graph. Active graph members retain their desired
+service allocation after activation invalidates the staging manifest.
+
+The API routes are `POST .../release-sets/staging` with
+`{ "manifest": <prepared manifest>, "ttl_seconds": 600 }`, and
+`GET` / `DELETE .../release-sets/staging/{stage}`. They enforce existing account,
+project and environment scope, MFA and deploy/read permissions. Mutation retries
+support `Idempotency-Key`. This scheduler lifecycle change requires dedicated
+native KVM `test-metal` and `leakcheck` acceptance before deployment; see
+[ADR-1351](adr/1351-checked-project-service-staging.md).
+
+### Push queue binding completion canaries
+
+A healthy poll proves consumer readiness. Select `handler_completion` when a release must also prove that a safe message reached the selected deployment and its handler completed successfully.
+
+The deployment declares supported logical binding names in its `override_env`:
+
+```json
+{"GREGALE_QUEUE_CANARY_BINDINGS":"[\"orders\"]"}
+```
+
+The consumer must recognize `{"gregale_queue_canary":"v1","canary_id":"<unique UUID>","binding":"orders"}` and handle it safely. Return success only after the safe test handler finishes. Successful HTTP handling does not certify application-specific business effects. Pull consumers are unsupported. Shared legacy bindings support canaries in production/default only; other environments require an explicitly scoped queue binding.
+
+```sh
+gregale bindings release-policy set my-api --scope production --require-verification --queue-require orders=handler_completion --expected-revision 0
+gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
+gregale bindings verify my-api --deployment v12 --release-policy --queue-publish --json
+gregale bindings verify my-api --deployment v12 --queue orders --queue-publish --json
+```
+
+Checked graph verification also accepts `--queue-publish`. It reviews every member and publication consent requirement before admitting messages. Dry runs never publish; compatible pending canaries are observed and fresh successful evidence is reused.
+
+The API exposes `POST /v1/apps/{slug}/bindings/queue-canaries` with `deployment_id`, `binding`, `ttl_seconds` (1–600) and `publish_consent: true`; `GET` and `DELETE /v1/apps/{slug}/bindings/queue-canaries/{canary}` observe and cancel. `published` and `dispatching` are not passes. Confirmed success reports delivery and completion timestamps. Raw handler output and credentials are not returned. Cancellation revokes evidence even when an in-flight handler is finishing; CLI interruption or timeout requests cancellation.
+
+Canaries use normal queue/runtime limits, retained revision pins and one execution attempt. They do not change release routing. Evidence expires at the original deadline or sooner under the policy's maximum age. Consumer or deployment changes invalidate it. Replay and stale acknowledgements cannot qualify a release.
+
+The shipped `queue-worker` starter handles the reserved canary before business
+jobs and rejects malformed or undeclared probes. Opt-in remains an exact
+deployment override plus explicit publication consent; its README includes the
+API setup and durable verification commands. The
+[native queue acceptance journey](ops/queue-bindings-native-acceptance.md)
+exercises this starter, real delivery/restore, scheduler recovery and release
+fences. Supported native execution remains required for qualification.
+
+Ordinary durable dispatch does not perform a separate canary lookup. The existing
+ledger ownership read also identifies registered canaries, and only those
+invocations undergo full completion-canary validation. Caller-controlled source,
+payload and headers cannot skip these checks; cancelled and expired canaries
+remain registered until ordinary retention removes them. See
+[ADR-1354](adr/1354-ledger-backed-canary-dispatch-authority.md).
+
+### Parallel binding qualification
+
+`gregale bindings verify APP --deployment ID --release-policy --concurrency 2`
+runs independent required probes concurrently. The default is 2; `--concurrency`
+accepts 1–8 and applies only to release-policy verification. Use 1 for serial
+execution when provider or application capacity requires it. Server admission
+limits still apply.
+
+`gregale projects environments release-sets verify PROJECT ENV --file release.json
+--concurrency 2` shares the same limit across all graph members. Review with
+`--dry-run`; planned object writes still require `--object-storage-write`, and
+planned queue publication still requires `--queue-publish`. No probe starts until
+every member has passed the plan and consent review.
+
+The CLI preserves reviewed deployment, configuration, policy and service target
+snapshots. Results stay in plan order. Failed or interrupted runs stop new
+admissions and wait for cleanup of work they created; preexisting queue canaries
+remain available to their original owners. After all members finish, graph
+verification rechecks current evidence against the original snapshots. Evidence
+expiry and the atomic checks at activation remain unchanged. See
+[ADR-1353](adr/1353-bounded-parallel-binding-verification.md).
+
+### Durable single-app binding verification
+
+Use a durable receipt when a CI job or CLI session may disconnect:
+
+```sh
+gregale bindings verify my-api --deployment v12 --release-policy --durable \
+  --object-storage-write --queue-publish --concurrency 2 --json
+```
+
+Only include `--object-storage-write` or `--queue-publish` when you consent to
+those planned effects. Review with `--dry-run` first; a dry run creates neither
+a receipt nor a resource. `--durable` requires `--release-policy` and a wait
+budget of at least one second. The lifetime is capped at ten minutes. To make
+creation recovery deterministic in CI, supply your own UUID with `--run-id`.
+The CLI prints the run ID before requesting creation and includes `run_id` in
+its verification report.
+
+```sh
+gregale bindings verification-runs status my-api RUN_ID --json
+gregale bindings verification-runs resume my-api RUN_ID --concurrency 2 --json
+gregale bindings verification-runs cancel my-api RUN_ID --json
+```
+
+Status shows the original plan, resource IDs, ownership and current progress.
+Receipt details require the same domain catalog access as their binding inventory.
+Resume keeps the original deployment, policy, configuration, binding metadata,
+consent and deadlines. It observes compatible pending work and fresh results;
+failed, missing, cancelled, changed or expired work requires a newly reviewed run.
+It does not silently publish another message or replace a task. A shorter resume
+wait budget is allowed and never renews the server deadline.
+
+Each new task/message and its receipt entry commit together. If the client crashes
+or loses that HTTP response, the next admission request returns the existing
+resource. Transient transport errors preserve owned work for resume. An explicit
+cancel, interrupt or exhausted CLI wait budget blocks new admissions and requests
+cleanup of unfinished owned work. Preexisting work remains owned by its original
+creator. In-flight handling may still finish; cancellation is cooperative.
+
+Admission and publication remain insufficient for qualification. The server only
+completes a run after successful owned work and fresh policy preflight. Current
+proof can subsequently expire or change; activation still performs its atomic
+policy and freshness checks. Runs are limited to 128 steps and eight unfinished
+unexpired receipts per app, use normal queue/runtime capacity, and are pruned after
+one day of expiry on the next creation for that app. This workflow currently covers
+one app; graph verification retains its existing prepared-manifest workflow. See
+[ADR-1355](adr/1355-durable-single-app-binding-verification-runs.md).
+
+### Durable project graph verification
+
+Persist the prepared graph and every member's review before admitting probes:
+
+```sh
+gregale projects environments release-sets verify my-project production \
+  --file prepared.json --durable --run-id RUN_UUID \
+  --queue-publish --object-storage-write --concurrency 2 --json
+```
+
+Only include effect consent flags for effects you reviewed. `--dry-run` previews
+all members without creating receipts, tasks or messages. Durable verification
+also accepts prepared rollback and deactivation manifests. It requires a wait
+budget of at least one second, capped at ten minutes. The parent and every member
+receipt commit together and share that fixed deadline. The CLI prints the parent
+ID before creation, so a lost creation response is recoverable with the same UUID.
+
+```sh
+gregale projects environments release-sets verification-runs status my-project production RUN_UUID --json
+gregale projects environments release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
+gregale projects environments release-sets verification-runs cancel my-project production RUN_UUID --json
+```
+
+Resume retains membership, routing expectations, policy revisions, exact service
+recipients, effect consent and resource ownership. Changed membership, private
+configuration, failed work or expired evidence requires a new review. Retries use
+the recorded member and resource IDs. Explicit cancel, interrupt or exhaustion of
+the root CLI wait budget fences the graph before cooperative cleanup of unfinished
+owned work. Transient transport errors preserve work for recovery.
+
+Completion freshly checks all members after their probes finish. Graph passed
+status does not authorize activation: activation still performs its atomic graph
+and binding checks. Graph receipts use the existing 100-member and per-member
+admission bounds, at most eight active graph runs per project/environment, and
+normal runtime/queue capacity. Receipt requests are limited to 1 MiB. Receipts
+older than one day after expiry are pruned on the next creation for the project.
+GitOps candidate holds retain their existing checked workflow. See
+[ADR-1356](adr/1356-durable-project-binding-verification-runs.md).
+
+### Review a binding verification plan
+
+App and project graph verification reviews are side-effect-free reads:
+
+- `POST /v1/apps/{slug}/bindings/verification-runs/review` accepts an optional deployment ID and exact service targets. An omitted deployment selects the current live deployment and returns its exact ID.
+- `POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review` accepts a prepared release, rollback or deactivation manifest and the intended effect consent flags.
+
+Responses contain public inventory, policy, the plan, blockers, required consent and opaque review digests. `ready` means the plan is available; it does not mean probes or release checks passed. Reviews never run probes, publish messages or create receipts. Blocked reviews have no usable digest.
+
+Forward the returned deployment, targets and digest into app receipt creation. For graph creation, forward the manifest, member `review_digests`, aggregate `review_digest` and the same consent flags. Creation rechecks current state and rejects a stale or altered review. CLI `--dry-run` uses these endpoints; durable verification reviews on the server before creating its receipt.
+
+### Run an existing verification receipt from an SDK
+
+Go provides `Client.RunBindingVerification` and `Client.RunProjectBindingVerification`. Node provides `runBindingVerification` and `runProjectBindingVerification`. Python provides `run_binding_verification` and `run_project_binding_verification`, plus async `arun_` variants.
+
+Save the caller-selected receipt UUID before creation. After forwarding the server review and explicit consent to creation, pass that UUID to the runner. It resumes frozen steps, observes task/canary status and asks the server for final qualification. Success requires a confirmed passed completion; graph completion also requires every member to pass. Verification never activates routes.
+
+The default concurrency is two unfinished resources, configurable from one to eight across the entire graph. Existing work counts toward that budget. A runner never replaces reused work or renews expiry. Multiple runner invocations do not share a distributed client lease; server admission and capacity limits still apply.
+
+SDK transport failures, caller stops and progress callback failures preserve server work and identify the same run for resumption. Use the existing cancel API when cancellation is intended. Go context cancellation, Node abort signals and Python stop events stop observation; asyncio task cancellation carries `run_id`. Synchronous Python stops are checked between requests, whose configured HTTP timeouts are bounded by the remaining receipt lifetime. The CLI retains its interrupt/deadline cleanup policy. Durable CLI JSON reports include sanitized `resource_id`, `resource_kind` and status without reconstructing guest stage reports.
+
+### Explain blocked verification receipts
+
+Use `gregale bindings verification-runs diagnostics APP RUN_ID --json` or `gregale projects environments release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
+
+Responses preserve the original run ID and expiry and include `complete`, optional `check_passed`, `blockers`, `changes` and `recovery`. `complete` means applicable diagnostic reads succeeded; `check_passed` describes current public policy/evidence. Neither grants admission, confirms receipt completion or authorizes traffic changes. A previously passed or expired receipt can have current blockers.
+
+Differences contain only whitelisted public values such as policy revisions, configuration timestamps, credential generations and selected service target IDs. Credentials, provider origins, private commands/pins, raw errors and guest stdout are excluded. Incomplete reads produce retry guidance rather than false binding-removal differences. Access to every reviewed binding domain is required, including when the original deployment is unavailable.
+
+Recovery actions distinguish continuing the original run, waiting for application acknowledgment/readiness, retrying diagnostics, explicitly cancelling unfinished owned work, and reviewing a new receipt. Changed original authority suppresses resume guidance. Diagnostics perform no execution or cleanup and never renew expiry. Get fresh diagnostics or invoke the existing resume/cancel APIs deliberately; those operations independently enforce permissions and current authority.
+
+### Shared verification admission budgets
+
+Receipt creation accepts `max_concurrency` (one through eight, default two). The CLI freezes `--concurrency` into a newly created durable receipt. Every driver of that receipt shares the server budget, and project graph members share one root budget. Resuming a receipt cannot change it; the runner's local concurrency may further restrict admission attempts. Independent receipts retain separate budgets, and normal scheduler, queue and account capacity still apply.
+
+At capacity, step admission returns HTTP 429 with code `binding_verification_budget_full`, `limit` and `observed`. Current SDK runners wait, reread the same receipt, and retry within its original deadline. Other capacity errors still stop observation with the original receipt ID. An admission replay returns its original resource even when the budget is full.
+
+Diagnostics include `budget.run_id`, `max_concurrency`, `active_resources`, `waiting_steps` and `full`. Counts deduplicate resource identities and include borrowed unfinished work. Cancellation requests or expired canary evidence do not free a slot while the underlying task/invocation remains unfinished. Terminal or missing resources free capacity; they do not count as successful verification.
+
+### Automatic recovery explanations
+
+Durable verification failures now include best-effort diagnostics in CLI JSON output under `diagnostics`. Project failures include root diagnostics and available member diagnostics in `reports`. Terminal output shows a short blocker/recovery summary. The original failure, exit code and receipt ID remain authoritative for the client outcome; successful diagnostic reads never make verification pass.
+
+Go recovery errors expose `Diagnostics` or `ProjectDiagnostics`. Node and Python recovery errors expose a typed `diagnostics` value. Lookups are read-only and bounded to two seconds, the caller deadline and a confirmed original receipt expiry. Cancelled calls and local callback failures skip enrichment; unavailable, forbidden or mismatched responses leave the original error intact. `SkipDiagnostics`, `skipDiagnostics` or `skip_diagnostics` disables enrichment in the corresponding SDK. Manual `verification-runs diagnostics` remains available. Suggested recovery is never executed automatically.
+
+### Create and reconcile reviewed verification receipts
+
+SDK create-from-review helpers accept an explicit ready review, caller-supplied canonical UUID, lifetime, concurrency and effect consent. Persist the UUID before calling creation. Helpers validate the review and returned selection without computing digests. Server freshness, authorization and idempotency checks remain authoritative.
+
+A creation error preserves the original cause and UUID plus whether creation was invoked; this does not prove acceptance. Use the separate reconciliation helper to GET that same ID once and validate the receipt against the same review/options. A failed or missing read does not prove noncreation. Reconciliation permits terminal or expired matching receipts and performs no resume, admission, renewal or cancellation. Run a confirmed resumable receipt explicitly with the existing runner.
+
+CLI creation failures with `--json` include `run_id`, app or project/environment, `passed=false`, `status=creation_failed`, `create_attempted`, `error` and recovery guidance. Inspect the same ID with `verification-runs status` after uncertainty. See [ADR-1362](adr/1362-reviewed-verification-creation-helpers.md).
+
+### Retry transient verification status reads
+
+Durable runners retry temporary polling GET failures and HTTP 502/503/504 up to three additional times per read. Backoff uses equal jitter with exponential delay from 250 ms, capped at two seconds, and obeys the original receipt expiry and caller cancellation/deadline. Lifecycle writes, diagnostics, permanent HTTP failures and malformed or mismatched successful responses retain their existing recovery behavior. Exhaustion returns the existing recovery error and diagnostic enrichment.
+
+Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable; values through eight are supported. Go options use `StatusReadRetries` (nil defaults to three, pointer to zero disables), Node uses `statusReadRetries`, and Python uses `status_read_retries`. Progress callbacks receive root `retrying` events with `retry_attempt` and `retry_delay_ms`. No new receipt, renewed expiry or duplicate admission is introduced. See [ADR-1363](adr/1363-bounded-verification-status-read-retries.md).
+
+### Discover retained verification receipts
+
+Use `gregale bindings verification-runs list APP --json` or `gregale projects environments release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
+
+Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
+
+Reuse filters with `next_cursor`; `observed_at` freezes expiry evaluation across pages. Newer creations do not shift existing page boundaries. Concurrent state changes and retention pruning can remove matches, so pages are not a historical snapshot or permanent audit log. Existing receipt cleanup is unchanged. Inspect the selected UUID with status/diagnostics before choosing a recovery action. See [ADR-1364](adr/1364-verification-run-discovery.md).
+
+### Waiting for final binding qualification
+
+Durable app and graph runners now keep observing the original receipt when completion returns HTTP 202 with recognized `qualification` conditions. Progress callbacks receive `waiting_for_qualification` and public condition codes/selectors. This covers runtime refresh, consumer readiness and valid application acknowledgment observations that are still settling. Failed or malformed evidence, unknown conditions and review drift still stop the run.
+
+Waiting uses the existing polling interval, caller stop controls and original expiry. It admits no replacement tasks or queue messages and never renews a receipt. CLI verify/resume inherits the shared runner behavior and existing timeout cleanup policy. HTTP 200 with passed status still requires the authoritative final preflight. See [ADR-1365](adr/1365-verification-qualification-waiting.md).
+
+### Recovering lost admission and completion responses
+
+Durable runners reconcile eligible transport failures and HTTP 502/503/504 by reading the original receipt. Admission proceeds only when that read proves the exact reviewed step owns a valid resource. Completion succeeds only when fresh status confirms the root and all graph members passed with finished resources. Pending completion, missing ownership, failed resources or review drift stop with the original receipt ID and error cause retained.
+
+Progress reports `reconciling` with `operation: admission` or `operation: completion`; admission events identify the selected member and step. Reads use `--status-read-retries` and share the original deadline and caller stop controls. The uncertain write is never automatically replayed. Create, initial resume and cancellation keep their existing explicit recovery behavior. See [ADR-1366](adr/1366-verification-write-reconciliation.md).
+
+### Binding CLI progress and stopped-run recovery
+
+Durable app/graph verify and receipt resume accept `--progress auto|plain|ndjson|off`. Auto prints compact stderr updates for human output and disables live updates under `--json`. Explicit progress flags require durable execution and cannot be used with dry-run, status, diagnostics or cancellation. Planned steps without resources are omitted from plain updates; repeated conditions with only a newer observation time are suppressed.
+
+For CI, keep stdout as one final JSON report and stream typed events on stderr:
+
+```sh
+gregale bindings verify api --release-policy --durable --json --progress ndjson
+gregale projects environments release-sets verification-runs resume project production RUN_ID --json --progress ndjson
+```
+
+`binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.
+
+Stopped app reports and graph result envelopes include `recovery` with the original root ID, last status/operation, `last_qualification` and exact status/diagnostics commands. These conditions are the last observed wait, with its original check time; they do not assert current qualification. Human summaries show the same recovery context. Turning progress off does not discard it. Creation still announces its recovery ID before the request, using a structured `creating` event in NDJSON mode. Progress output is best effort and never changes execution or timeout cleanup. See [ADR-1367](adr/1367-binding-cli-progress.md).
+
+### Recovering an uncertain verification creation
+
+Durable app/graph CLI verification now reconciles eligible creation transport failures and HTTP 502/503/504 by reading the original caller-selected UUID. It continues only when the receipt matches the reviewed selection, manifest, member identities, consent, concurrency, plans and lifetime and remains usable. A missing receipt, expired/cancelled state, failed resource or changed selection stops with the original creation error and recovery ID. Creation is never automatically posted twice, and no replacement UUID or review is generated.
+
+Recovery is capped at five seconds, the original caller deadline/stop controls and the requested TTL measured from the attempt. `--status-read-retries` bounds extra transient GET attempts; zero allows the initial reconciliation GET without retries. Existing progress modes emit `reconciling` with `operation: creation` and `retrying` when needed. `--json --progress ndjson` keeps the final report on stdout and events on stderr. The normal runner then resumes the same confirmed receipt under its original expiry. See [ADR-1368](adr/1368-verification-creation-reconciliation.md).
+
+### Adopt rotated PostgreSQL pools in application code
+
+The Go, Node and synchronous Python SDKs provide driver-independent PostgreSQL
+pool bindings with required readiness validation and transaction leases. Applied
+secret ACKs follow validation; old pools drain after leased transactions release
+their driver connections. These application checks do not replace platform binding
+verification or release qualification. See the [runtime guide](postgres-pool-runtime.md)
+and [pg.Pool example](../examples/postgres-pool-rotation/README.md).

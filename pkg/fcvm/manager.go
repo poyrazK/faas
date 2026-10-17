@@ -5437,8 +5437,32 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
 	}
-	scan, err := m.readBaseScan(ctx, scanKey)
-	if err != nil {
+	scan, readErr := m.readBaseScan(ctx, scanKey)
+	gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	// The sidecar is read through this node's cache. Another node may since
+	// have published a complete scan for the same base (H10-103 left a
+	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
+	// re-checked once against the canonical copy before the boot fails.
+	if gateErr != nil && m.refreshCachedScan(ctx, scanKey) {
+		scan, readErr = m.readBaseScan(ctx, scanKey)
+		gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	}
+	if gateErr != nil {
+		return gateErr
+	}
+	// Forward per-severity finding counts to the vmmd Prometheus
+	// counter. The image label is the OCI ref imaged wrote into
+	// the sidecar (defensive empty-string fallback if absent —
+	// imaged always populates it in production).
+	for sev, n := range scan.Findings {
+		m.metricsImageScan(scan.Image, sev, n)
+	}
+	return nil
+}
+
+// baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
+func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) error {
+	if readErr != nil {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
@@ -5471,14 +5495,22 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 			"Fixable CRITICAL vulnerability in base ext4",
 			fmt.Sprintf("base %q has %d fix-available CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
 	}
-	// Forward per-severity finding counts to the vmmd Prometheus
-	// counter. The image label is the OCI ref imaged wrote into
-	// the sidecar (defensive empty-string fallback if absent —
-	// imaged always populates it in production).
-	for sev, n := range scan.Findings {
-		m.metricsImageScan(scan.Image, sev, n)
-	}
 	return nil
+}
+
+// refreshCachedScan replaces this node's cached copy of scanKey with the
+// canonical object. It reports false when the key is not cache-backed or the
+// refresh fails, leaving the cached verdict in force.
+func (m *Manager) refreshCachedScan(ctx context.Context, scanKey string) bool {
+	cache, rel, err := storage.CacheBackendForKey(m.storage, scanKey)
+	if err != nil || cache == nil {
+		return false
+	}
+	rc, err := cache.Refresh(ctx, rel)
+	if err != nil {
+		return false
+	}
+	return rc.Close() == nil
 }
 
 // Park snapshots a running instance then destroys it, freeing all resident RAM

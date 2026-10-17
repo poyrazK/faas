@@ -24,9 +24,9 @@ func TestFinancialCLI(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/billing/costs":
-			_ = json.NewEncoder(w).Encode(api.FinancialCostsResponse{Currency: "EUR", KnownUsageMillicents: 12345, InvoiceReconciliation: "not_reconciled", MissingBillComponents: []string{"tax"}})
+			_ = json.NewEncoder(w).Encode(api.FinancialCostsResponse{Currency: "USD", KnownUsageMillicents: 12345, InvoiceReconciliation: "not_reconciled", MissingBillComponents: []string{"tax"}})
 		case "/v1/billing/forecast":
-			_ = json.NewEncoder(w).Encode(api.FinancialForecastResponse{Currency: "EUR", MissingBillComponents: []string{"tax"}})
+			_ = json.NewEncoder(w).Encode(api.FinancialForecastResponse{Currency: "USD", MissingBillComponents: []string{"tax"}})
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -44,7 +44,7 @@ func TestFinancialCLI(t *testing.T) {
 			t.Fatalf("%s exit=%d stderr=%s", command, code, stderr)
 		}
 		var response map[string]json.RawMessage
-		if err := json.Unmarshal(stdout.Bytes()[before:], &response); err != nil || string(response["currency"]) != `"EUR"` {
+		if err := json.Unmarshal(stdout.Bytes()[before:], &response); err != nil || string(response["currency"]) != `"USD"` {
 			t.Fatalf("JSON response: %s, %v", stdout, err)
 		}
 	}
@@ -61,7 +61,7 @@ func TestFinancialCLI(t *testing.T) {
 	if code := cmdBillingFinancial("costs", []string{"--month", "2026-09", "--json"}); code == 0 || stdout.String() != before {
 		t.Fatal("failed API emitted successful output")
 	}
-	if got := financialMoney(12345); got != "EUR 0.12345" {
+	if got := financialMoney(12345); got != "USD 0.12345" {
 		t.Fatalf("money rendering lost precision: %s", got)
 	}
 }

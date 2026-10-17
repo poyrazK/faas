@@ -195,8 +195,8 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	}
 	var out api.AppResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if out.RAMMB != 512 {
-		t.Errorf("RAM default = %d, want 512 (pro)", out.RAMMB)
+	if want := api.MustLimitsFor(api.PlanPro).RAMMB; out.RAMMB != want {
+		t.Errorf("RAM default = %d, want %d (pro)", out.RAMMB, want)
 	}
 	if out.VCPU != api.VCPUPerPlan[api.PlanPro] {
 		t.Errorf("guest vCPU default = %d, want %d (pro)", out.VCPU, api.VCPUPerPlan[api.PlanPro])
@@ -229,7 +229,7 @@ func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
 func TestCreateApp_ExplicitCPURAMPair(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanScale)
 	good := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{
-		Slug: "cpu-ram-shape", RAMMB: 1024, VCPU: 4,
+		Slug: "cpu-ram-shape", RAMMB: api.MustLimitsFor(api.PlanScale).RAMMB, VCPU: 4,
 	}, nil)
 	if good.Code != http.StatusCreated {
 		t.Fatalf("canonical pair: %d %s", good.Code, good.Body)
