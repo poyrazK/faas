@@ -393,6 +393,54 @@ and fresh environment-specific qualification remain required; production
 enforcement and dedicated native acceptance retain their existing gates. See
 [ADR-1345](adr/1345-gitops-promotion-proposals.md).
 
+### Open a promotion pull or merge request
+
+After reviewing a `promotion-plan`, use its hash and the current target branch
+commit to preview a draft proposal:
+
+```sh
+gregale projects environments gitops promotion-pr shop production \
+  --from staging --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH"
+```
+
+Add `--yes` to create the draft PR/MR and `--json` for its portable receipt:
+
+```sh
+gregale projects environments gitops promotion-pr shop production \
+  --from staging --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH" --yes --json
+```
+
+Authenticate `gh` for GitHub.com or `glab` for GitLab.com first, using an account
+allowed to create repository branches and pull/merge requests. Gregale's platform
+credential needs only the existing GitOps read scope. The repository, manifest
+path and base branch come from the verified target binding. Tag bindings are
+unsupported; the target commit must still be that branch's exact head.
+
+The command checks a fresh plan and target binding before writing. It commits
+only the reviewed workload source replacements, preserves target configuration,
+and includes origin release, selected artifact provenance and qualification
+requirements in the draft description. YAML comments outside replaced source
+nodes are retained; YAML formatting can normalize. JSON output remains canonical
+JSON. Neither the local working tree nor its Git index is used.
+
+Retries use a branch derived from the complete plan hash. A matching open draft
+returns its existing URL; a valid branch left by an interrupted attempt can
+finish opening the draft. Closed, merged, edited, ambiguous or foreign requests,
+unexpected files/ancestry and changed proposal branches are rejected. The command
+never overwrites a branch or automatically retries an uncertain write. If a
+request times out, retry the exact command. If the target base or reviewed plan
+changed, request and review a new plan. A proposal branch or draft can remain
+after a race; it is not deleted automatically.
+
+Creating the draft does not merge, approve or deploy it, pin artifacts, or extend
+retention. Normal Git review/approval, current artifact trust and fresh target
+qualification, activation and serving evidence remain required. This command
+currently supports promotion; rollback continues to use reviewed plan exports.
+Native acceptance and production execution gates remain unchanged. See
+[ADR-1352](adr/1352-gitops-promotion-review-requests.md).
+
 ## Prepare a reviewed code rollback
 
 Optionally protect recovery artifacts through reviewed Git intent:

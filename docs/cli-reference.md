@@ -14378,7 +14378,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|releases|rollback-plan|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|releases|rollback-plan|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -14490,6 +14490,26 @@ Examples:
 
 ```sh
 gregale projects environments gitops promotion-plan shop production --from staging --target-commit COMMIT_SHA
+```
+
+##### projects environments gitops promotion-pr
+
+Open a draft promotion PR or MR from a freshly checked reviewed plan
+
+`gregale projects environments gitops promotion-pr --from <ENV> --target-commit <SHA> --expected-plan-hash <HASH> [--yes] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | Source environment with a proven serving release | required |
+| `--target-commit <SHA>` | Reviewed current target branch commit | required |
+| `--expected-plan-hash <HASH>` | Reviewed promotion observation hash | required |
+| `--yes` | Create the draft proposal; default is a read-only preview |  |
+| `--json` | Emit the proposal receipt as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops promotion-pr shop production --from staging --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes
 ```
 
 ##### projects environments gitops releases
