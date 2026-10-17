@@ -77,6 +77,17 @@ func TestImagePreparationPhaseTimingMigration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT phase_started_at FROM deployment_image_preparations WHERE deployment_id=$1", deps[1].ID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	// Replaying expanded DDL must retain both known progress and unknown
+	// legacy timing, including when the function and trigger already exist.
+	for range 2 {
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("replay existing phase timing schema: %v", err)
+		}
+	}
+	s, err = store.ImagePreparationProgressSnapshot(ctx, "node-a")
+	if err != nil || s.Preparing.Pending != 2 || s.Preparing.UnknownAge != 1 || !s.Preparing.OldestPhaseStartedAt.Equal(before) {
+		t.Fatalf("replay changed phase timing: %+v %v", s, err)
+	}
 	if _, err := pool.Exec(ctx, "UPDATE deployment_image_preparations SET updated_at=now(),claim_token=$2,phase_started_at='infinity' WHERE deployment_id=$1", deps[1].ID, uuid.NewString()); err != nil {
 		t.Fatal(err)
 	}

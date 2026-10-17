@@ -3,13 +3,13 @@
 -- +goose Up
 -- Do not backfill: updated_at includes claims that made no phase progress.
 ALTER TABLE deployment_image_preparations
-    ADD COLUMN phase_started_at timestamptz
+    ADD COLUMN IF NOT EXISTS phase_started_at timestamptz
     CHECK (phase_started_at IS NULL OR (isfinite(phase_started_at) AND phase_started_at > 'epoch'::timestamptz));
 
 -- Maintain timing for both current and older writers during rolling upgrades.
 -- Same-phase claims cannot renew a known age or invent legacy history.
 -- +goose StatementBegin
-CREATE FUNCTION image_preparation_phase_timing() RETURNS trigger
+CREATE OR REPLACE FUNCTION image_preparation_phase_timing() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
@@ -23,7 +23,7 @@ BEGIN
 END;
 $$;
 -- +goose StatementEnd
-CREATE TRIGGER image_preparation_phase_timing
+CREATE OR REPLACE TRIGGER image_preparation_phase_timing
     BEFORE INSERT OR UPDATE ON deployment_image_preparations
     FOR EACH ROW EXECUTE FUNCTION image_preparation_phase_timing();
 
