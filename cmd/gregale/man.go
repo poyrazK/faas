@@ -81,7 +81,7 @@ func cmdMan(args []string) int {
 // lookupCliCommand returns the cliCommand for name. Linear scan
 // is fine — the manifest has ~50 entries.
 func lookupCliCommand(name string) (cliCommand, bool) {
-	for _, c := range cliCommands {
+	for _, c := range visibleCliCommands() {
 		if c.Name == name {
 			return c, true
 		}
@@ -415,7 +415,7 @@ func suggestCommand(query string) (string, bool) {
 	bestName := ""
 	bestDist := maxDist + 1
 	tied := false
-	for _, c := range cliCommands {
+	for _, c := range visibleCliCommands() {
 		d := levenshtein(query, c.Name)
 		switch {
 		case d < bestDist:

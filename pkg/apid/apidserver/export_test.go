@@ -1204,6 +1204,9 @@ func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManif
 func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rotateManagedPostgresBinding(p0, p1, p2)
 }
+func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.createManagedPostgresBinding(p0, p1, p2)
+}
 func (r *server) SaveOwnedProfileInvestigation(p0 context.Context, p1 state.Account, p2 state.App, p3 state.ProfileInvestigationStore, p4 string, p5 api.SaveProfileInvestigationRequest) (api.ProfileInvestigation, *api.Problem) {
 	return r.saveOwnedProfileInvestigation(p0, p1, p2, p3, p4, p5)
 }

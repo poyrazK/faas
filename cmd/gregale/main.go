@@ -356,6 +356,9 @@ func run(args []string) (status int) {
 	case "data-api":
 		return cmdDataAPI(args[1:])
 	case "auth":
+		if !applicationAuthCLI() {
+			return unknownCommand(args[0])
+		}
 		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
@@ -677,11 +680,15 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
-		if suggestion, ok := suggestCommand(args[0]); ok {
-			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", args[0], suggestion))
-		}
-		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
+		return unknownCommand(args[0])
 	}
+}
+
+func unknownCommand(name string) int {
+	if suggestion, ok := suggestCommand(name); ok {
+		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion))
+	}
+	return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", name))
 }
 
 // printManifestHelp resolves verb paths without invoking a command parser or

@@ -157,7 +157,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// We use Exists (which wraps NameIsValid + Names membership) so a
 	// bad flag like "--template ../../etc/passwd" is rejected before we
 	// touch the embed FS.
-	if !templates.Exists(tpl) {
+	if !templateAvailable(tpl) {
 		PrintFail(stderr, "unknown --template %q (known: %s)",
 			tpl, strings.Join(templates.ListedNames(), ", "))
 		return 1

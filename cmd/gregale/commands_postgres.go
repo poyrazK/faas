@@ -607,19 +607,28 @@ func normalizePostgresArgs(args []string) []string {
 var postgresFlagVocab = map[string][]string{
 	"class":        {"development", "burstable", "production"},
 	"availability": {"single_zone", "high_availability"},
-	"access":       {"read_write", "read_only", "migration", "data_api", "auth"},
+	"access":       {"read_write", "read_only", "migration", "data_api"},
+}
+
+// postgresVocab is a flag's vocabulary. The access mode of application Auth,
+// a dark launch (unreleased.go), joins it only while Auth is turned on.
+func postgresVocab(name string) []string {
+	if name == "access" && applicationAuthCLI() {
+		return append(slices.Clone(postgresFlagVocab[name]), "auth")
+	}
+	return postgresFlagVocab[name]
 }
 
 func postgresServiceClassOK(value string) bool {
-	return slices.Contains(postgresFlagVocab["class"], value)
+	return slices.Contains(postgresVocab("class"), value)
 }
 
 func postgresAvailabilityOK(value string) bool {
-	return slices.Contains(postgresFlagVocab["availability"], value)
+	return slices.Contains(postgresVocab("availability"), value)
 }
 
 func postgresAccessOK(value string) bool {
-	return slices.Contains(postgresFlagVocab["access"], value)
+	return slices.Contains(postgresVocab("access"), value)
 }
 
 // invalidPostgresChoice names the first enumerated flag whose value is outside
@@ -628,7 +637,7 @@ func postgresAccessOK(value string) bool {
 func invalidPostgresChoice(command string, flagValues ...string) bool {
 	for i := 0; i+1 < len(flagValues); i += 2 {
 		name, value := flagValues[i], flagValues[i+1]
-		if vocab := postgresFlagVocab[name]; !slices.Contains(vocab, value) {
+		if vocab := postgresVocab(name); !slices.Contains(vocab, value) {
 			printCommandValidation(os.Stderr, "gregale %s: invalid --%s %q (want %s)\n", command, name, value, strings.Join(vocab, "|"))
 			return true
 		}

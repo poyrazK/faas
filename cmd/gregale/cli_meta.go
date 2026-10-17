@@ -94,6 +94,9 @@ type cliCommand struct {
 	// scripts do not break, and remain in the manifest for man pages and drift
 	// tests.
 	Audience cliAudience
+	// Unreleased keeps a dark-launched command out of every customer
+	// surface, and out of dispatch, unless it is turned on (unreleased.go).
+	Unreleased bool
 }
 
 // customerCliCommands returns the commands intended for normal application
@@ -101,7 +104,7 @@ type cliCommand struct {
 // legacy entries still need completion/man/dispatch coverage.
 func customerCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
-	for _, command := range cliCommands {
+	for _, command := range visibleCliCommands() {
 		if command.Audience == cliAudienceCustomer {
 			commands = append(commands, command)
 		}
@@ -111,7 +114,7 @@ func customerCliCommands() []cliCommand {
 
 func advancedCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
-	for _, command := range cliCommands {
+	for _, command := range visibleCliCommands() {
 		if command.Audience != cliAudienceCustomer {
 			commands = append(commands, command)
 		}
@@ -308,6 +311,9 @@ type cliFlag struct {
 	// Short is the human description (mirrors flag.NewFlagSet's
 	// third arg in each leaf).
 	Short string
+	// Unreleased keeps a dark-launched flag out of every customer surface
+	// unless it is turned on (unreleased.go).
+	Unreleased bool
 	// Req marks required flags. Completion backends do NOT offer
 	// required flags as a TAB choice (the user is forced to provide
 	// them); the marker exists for the man-page SYNOPSIS section
@@ -492,7 +498,6 @@ var templateNames13 = []string{
 	"data-api-starter",
 	"data-api-teams",
 	"data-api-support-console",
-	"auth",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -583,7 +588,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Positionals: []string{"<name>"}, Flags: []cliFlag{
@@ -3094,7 +3099,7 @@ var cliCommands = []cliCommand{
 				{Name: "geo-deny", Short: "kind=geo: deny ISO country code (repeat)", Value: "CC"},
 				{Name: "jwt-issuer", Short: "kind=jwt: token issuer", Value: "ISSUER"},
 				{Name: "jwt-jwks-url", Short: "kind=jwt: JWKS URL (https)", Value: "URL"},
-				{Name: "jwt-auth", Short: "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)", Value: "AUTH_APP"},
+				{Name: "jwt-auth", Short: "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)", Value: "AUTH_APP", Unreleased: true},
 				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -4272,7 +4277,7 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
-		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)",
+		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)", Unreleased: true,
 		Subcommands: []cliSub{
 			{Name: "create", Short: "Deploy a managed GoTrue Auth server bound to your database", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
@@ -4471,7 +4476,7 @@ var cliCommands = []cliCommand{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
 				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
-				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)"},
+				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)", Unreleased: true},
 				{Name: "issuer", Value: "HTTPS_URL", Short: "application JWT issuer"},
 				{Name: "jwks-url", Value: "HTTPS_URL", Short: "application JWKS URL"},
 				{Name: "audience", Value: "AUDIENCE", Short: "application JWT audience"},
@@ -4600,7 +4605,7 @@ var cliCommands = []cliCommand{
 					{Name: "app", Short: "app ID", Req: true, Value: "APP_ID"},
 					{Name: "scope", Short: "environment scope", Req: true, Value: "SCOPE"},
 					{Name: "environment-key", Short: "environment variable name", Req: true, Value: "KEY"},
-					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
+					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 				}},
 				{Name: "get", Short: "Show one binding", Positionals: []string{"<id>"}},
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
@@ -4613,7 +4618,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Positionals: []string{"<database>", "<app>"}, Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise default)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 			}, Examples: []string{"gregale postgres attach orders my-api --env DATABASE_URL --access read_write"}},
 		},
 	},
@@ -4754,7 +4759,7 @@ var cliCommands = []cliCommand{
 				{Name: "auth-token", Short: "client static bearer token (prefer --auth-token-stdin)", Value: "TOKEN"},
 				{Name: "auth-issuer", Short: "OIDC issuer URL", Value: "URL"},
 				{Name: "auth-jwks-url", Short: "OIDC JWKS URL", Value: "URL"},
-				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP"},
+				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP", Unreleased: true},
 				{Name: "auth-audience", Short: "OIDC audience (repeatable)", Value: "AUDIENCE", Repeatable: true},
 				{Name: "auth-algorithm", Short: "OIDC signing algorithm (repeatable)", Value: "ALG", Repeatable: true},
 				{Name: "auth-claim", Short: "required OIDC claim as KEY=VALUE (repeatable)", Value: "KEY=VALUE", Repeatable: true},

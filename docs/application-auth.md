@@ -586,3 +586,15 @@ reported as `email_exists`.
 - The dashboard page reaches the Auth app at its canonical address. If you
   serve the dashboard from another origin than the Gregale API URL that
   `gregale auth create` used, the Auth app refuses the page's requests.
+
+## The `auth` credential mode
+
+Application Auth uses the separately qualified `auth` managed Postgres
+credential mode: direct connections, for serving and release tasks. GoTrue
+enables row-level security on every table it creates, so the auth login acts as
+a dedicated non-login owner of only the `auth` and `gregale_auth` schemas. That
+owner never joins the customer schema owner and has no database `CREATE`,
+temporary-object or customer-schema access. Issuance fails closed when an
+`auth` schema already belongs to another role. Neon advertises the mode only
+when the backend sets `auth_enabled: true` and passes fresh qualification
+including the `auth_credentials_probe`.

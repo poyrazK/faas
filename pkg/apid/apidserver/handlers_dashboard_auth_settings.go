@@ -29,7 +29,14 @@ const (
 // `auth` binding, a valid CSRF token and a parsed form.
 func (s *server) dashboardAuthSettingsApp(w http.ResponseWriter, r *http.Request) (state.Account, state.App, bool) {
 	acct, app, ok := s.dashboardDataAPIApp(w, r)
-	if !ok || !s.verifyDashboardConfigCSRF(w, r, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID) {
+	if !ok {
+		return acct, app, false
+	}
+	if !api.ApplicationAuthEnabled(acct.ID) {
+		http.NotFound(w, r)
+		return acct, app, false
+	}
+	if !s.verifyDashboardConfigCSRF(w, r, dashboardAuthSettingsAction, dashboardAuthSettingsCookie, acct.ID) {
 		return acct, app, false
 	}
 	if isAuth, err := s.appHasAuthBinding(r.Context(), acct, app); err != nil || !isAuth {

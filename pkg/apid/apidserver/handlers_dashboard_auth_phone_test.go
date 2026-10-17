@@ -13,6 +13,7 @@ import (
 )
 
 func TestDashboardAuthPhoneSignIn(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	_, restore := apidserver.WithTestIdentities(t)
 	t.Cleanup(restore)
 	e := apidserver.Setup(t, api.PlanPro)

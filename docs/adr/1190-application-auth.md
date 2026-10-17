@@ -409,6 +409,26 @@ provider's domains. Self-service SSO for an organization's own admins is
 rejected for now: it needs domain ownership proof, without which one
 organization could claim another's domain.
 
+### Dark launch
+
+Application Auth reaches no customer until it launches. apid reads
+`FAAS_APPLICATION_AUTH_ENABLED` (every account) and
+`FAAS_APPLICATION_AUTH_ACCOUNTS` (a comma-separated allowlist for internal
+accounts) on every request (`api.ApplicationAuthEnabled`). Where it is off,
+the `auth` credential mode is indistinguishable from an unknown one in the
+binding API, the deploy manifest and capability discovery; the dashboard's
+Auth link and screens do not exist; and the template catalog omits `auth`.
+Existing Auth apps keep running. The CLI shows the `auth` command, the
+`--auth`/`--jwt-auth` flags of other commands, the `auth` access mode and
+template only with `FAAS_APPLICATION_AUTH_ENABLED` set in the shell; without it
+they are absent from help, completions, man pages, the generated reference
+and suggestions, and dispatch treats them as unknown. The customer docs omit
+the Auth page (`docs/application-auth.md`, unlisted) and the public OpenAPI
+omits the mode. Launch reverses these: add the page to
+`docs/customer-pages.json`, the mode to the OpenAPI enums and the managed
+Postgres page, drop the `Unreleased` markers and the `unlisted` entry, and set
+the apid flag.
+
 ### Scale to zero
 
 The gateway, Data API and realtime service verify tokens against cached JWKS,

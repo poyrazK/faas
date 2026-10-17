@@ -18,6 +18,7 @@ import (
 )
 
 func TestAuthCreateDeploysRuntimeAfterConfiguration(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	for _, tc := range []struct {
 		name              string
 		resume, workflows bool
@@ -294,6 +295,7 @@ func authIssuerServer(t *testing.T, handle func(w http.ResponseWriter, r *http.R
 }
 
 func TestEdgeRuleJWTAuthUsesTheAuthAppIssuer(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	resetJSONEnv(t)
 	var action map[string]any
 	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
@@ -327,6 +329,7 @@ func TestEdgeRuleJWTAuthUsesTheAuthAppIssuer(t *testing.T) {
 }
 
 func TestDataAPIAuthFlagReplacesManualIssuer(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	resetJSONOut(t)
 	if code := cmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth", "--issuer", "https://other.example"}); code == 0 {
 		t.Fatal("--auth combined with an explicit issuer")
@@ -458,6 +461,7 @@ func TestAuthTemplateImageCopiesEveryRuntimeFile(t *testing.T) {
 }
 
 func TestRealtimeCreateWithAuthWiresCallbackAndOIDC(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	resetJSONEnv(t)
 	sealed := map[string]string{}
 	var endpoint api.CreateManagedRealtimeEndpointRequest
