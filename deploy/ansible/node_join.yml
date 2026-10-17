@@ -783,14 +783,14 @@
       # fence of 8,192 MB, and the gap surfaced as CONSTRAINT_MEMCG OOM
       # kills of tenant firecracker processes. Both numbers now come from
       # this one call.
+      # ADR-1343 §4: a node that runs the app edge also holds back the edge
+      # daemons' CPU and RAM. --edge is passed only then, so a fleet without
+      # the edge keeps working with an operator binary that predates it.
       ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - compute-nodes
-          - sizing
-          - --role
-          - "{{ faas_box_role | default('compute-only', true) }}"
-          - --json
+        argv: >-
+          {{ ['/usr/local/bin/gregalectl', 'compute-nodes', 'sizing',
+              '--role', faas_box_role | default('compute-only', true), '--json']
+             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else []) }}
       changed_when: false
       register: faas_node_sizing_raw
 
@@ -825,6 +825,17 @@
           gregalectl compute-nodes sizing could not measure this host
           (detected={{ faas_node_sizing.detected }}); refusing to register
           single-box capacity constants on it.
+
+    # compute_nodes.vpcpus counts the CPUs tenants may use: the probed
+    # count, less the app edge's hold-back on an edge node. Without the edge
+    # (or with a report that predates tenant_cpus) the hold-back is zero and
+    # this is exactly ansible_processor_vcpus.
+    - name: Derive the CPUs this node registers for tenants
+      ansible.builtin.set_fact:
+        faas_join_tenant_vcpus: >-
+          {{ [1, (ansible_processor_vcpus | int)
+                 - ((faas_node_sizing.host_cpus | int)
+                    - (faas_node_sizing.tenant_cpus | default(faas_node_sizing.host_cpus) | int))] | max }}
 
     - name: Ensure the tenant slice drop-in directory exists
       ansible.builtin.file:
@@ -863,11 +874,11 @@
         mode: "0644"
         content: |
           [Service]
-          Environment=FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}
+          Environment=FAAS_COMPUTE_VCPUS={{ faas_join_tenant_vcpus }}
           Environment=FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}
-          Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}
+          Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((faas_join_tenant_vcpus | int) * 5, true) }}
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}
-          Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
+          Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((faas_join_tenant_vcpus | int) * 8, true) }}
 
     # A fresh host has no /opt/faas/current yet, but release-bound base
     # preparation needs vmmd. Register the row as unavailable before the
@@ -889,11 +900,11 @@
           - --gateway-target-url
           - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
           - --vpcpus
-          - "{{ ansible_processor_vcpus }}"
+          - "{{ faas_join_tenant_vcpus }}"
           - --mem-mb
           - "{{ ansible_memtotal_mb }}"
           - --max-concurrency
-          - "{{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}"
+          - "{{ faas_join_max_concurrency | default((faas_join_tenant_vcpus | int) * 5, true) }}"
           - --admission-ceiling-mb
           - "{{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}"
           - --defer-activation

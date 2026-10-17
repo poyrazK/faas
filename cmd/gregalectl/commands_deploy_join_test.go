@@ -267,7 +267,8 @@ func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
 	}
 	block := playbook[capacity:restart]
 	for _, token := range []string{
-		"FAAS_COMPUTE_VCPUS={{ ansible_processor_vcpus }}",
+		// The probed CPUs less the app edge's hold-back (ADR-1343 §4).
+		"FAAS_COMPUTE_VCPUS={{ faas_join_tenant_vcpus }}",
 		"FAAS_COMPUTE_MEM_MB={{ ansible_memtotal_mb }}",
 		"FAAS_COMPUTE_MAX_CONCURRENCY=",
 		"FAAS_COMPUTE_ADMISSION_CEILING_MB=",

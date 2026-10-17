@@ -1929,6 +1929,8 @@ request therefore does not create an instance transition or resident usage.
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
 
+A multi-box compute host derives its own slice from the same arithmetic with a smaller reserve (`ComputeNodeDaemonReserveMB` + `BuilderSlotReserveMB`, `pkg/api/limits.go`). A compute host that runs the app edge (ADR-1343) reserves `ComputeEdgeDaemonReserveMB` (256 MB) more, and registers its CPUs less `ComputeEdgeCPUHoldbackMillicores` (1,000, rounded up to whole CPUs) for tenant admission.
+
 The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is independent of the RAM ledger — a customer's `concurrency_per_vm` ceiling is the platform-advertised listener-level bound (Free 4 / Hobby 5 / Pro 25 / Scale 80), set by plan tier rather than by VM RAM. See §4.9.1 for the runner-level concurrency model.
 
 ---

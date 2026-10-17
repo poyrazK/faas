@@ -87,7 +87,7 @@ func TestDeriveNodeSizingForRole_ReferenceBoxIsUnchanged(t *testing.T) {
 			MemMB: 65_536, TenantSliceMaxMB: 57_344, TenantBudgetMB: 56_000,
 			AdmissionCeilingMB: 47_600, VCPUSlots: 160, NonTenantReserveMB: 8_192,
 			// vpcpus is physical (ADR-204); 20 cores * CPUOvercommit = 160 slots.
-			HostCPUs: 20,
+			HostCPUs: 20, TenantCPUs: 20,
 		}},
 	} {
 		got := DeriveNodeSizingForRole(65_536, 20, shape.shape)
@@ -153,5 +153,40 @@ func TestDeriveNodeSizingForRole_UndetectedHostKeepsSafeConstants(t *testing.T) 
 	got := DeriveNodeSizingForRole(0, 0, NodeShapeComputeOnly)
 	if got.AdmissionCeilingMB != RAMAdmissionCeilingMB || got.TenantSliceMaxMB != TenantSliceMaxMB {
 		t.Fatalf("undetected host must keep the legacy constants, got %+v", got)
+	}
+}
+
+// ADR-1343 §4: a compute node that runs the app edge holds back the edge
+// daemons' RAM and CPU from tenants; everything else matches compute-only.
+//
+// adr: 1343
+func TestDeriveNodeSizingForRole_ComputeEdgeHoldsBackTheEdge(t *testing.T) {
+	const prodMemMB = 15_985
+	compute := DeriveNodeSizingForRole(prodMemMB, 4, NodeShapeComputeOnly)
+	edge := DeriveNodeSizingForRole(prodMemMB, 4, NodeShapeComputeEdge)
+
+	if got := edge.NonTenantReserveMB - compute.NonTenantReserveMB; got != ComputeEdgeDaemonReserveMB {
+		t.Fatalf("edge reserve exceeds compute-only by %d MB, want %d", got, ComputeEdgeDaemonReserveMB)
+	}
+	if got := compute.TenantSliceMaxMB - edge.TenantSliceMaxMB; got != ComputeEdgeDaemonReserveMB {
+		t.Fatalf("edge tenant slice is %d MB smaller, want %d", got, ComputeEdgeDaemonReserveMB)
+	}
+	if edge.AdmissionCeilingMB >= compute.AdmissionCeilingMB || edge.AdmissionCeilingMB >= edge.TenantSliceMaxMB {
+		t.Fatalf("edge ceiling %d must be below compute-only %d and its own slice %d",
+			edge.AdmissionCeilingMB, compute.AdmissionCeilingMB, edge.TenantSliceMaxMB)
+	}
+
+	holdback := (ComputeEdgeCPUHoldbackMillicores + 999) / 1000
+	if compute.TenantCPUs != 4 || edge.HostCPUs != 4 || edge.TenantCPUs != 4-holdback {
+		t.Fatalf("CPUs: compute tenant %d, edge host %d tenant %d; want 4, 4, %d",
+			compute.TenantCPUs, edge.HostCPUs, edge.TenantCPUs, 4-holdback)
+	}
+	if edge.VCPUSlots != edge.TenantCPUs*CPUOvercommit {
+		t.Fatalf("edge vCPU slots %d, want tenant CPUs x overcommit %d", edge.VCPUSlots, edge.TenantCPUs*CPUOvercommit)
+	}
+	// A single-CPU edge node still registers one CPU rather than zero, which
+	// the compute_nodes CHECK would reject.
+	if tiny := DeriveNodeSizingForRole(prodMemMB, 1, NodeShapeComputeEdge); tiny.TenantCPUs != 1 {
+		t.Fatalf("1-CPU edge node registers %d CPUs, want 1", tiny.TenantCPUs)
 	}
 }
