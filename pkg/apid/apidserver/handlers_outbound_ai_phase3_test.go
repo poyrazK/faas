@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -188,7 +189,7 @@ func TestAIGatewayReleaseGateIsClosedByDefault(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if *(*e.S()).AiGatewayEnabled() {
+	if (*e.S()).PlatformFlagOn(platformflags.AIGateway) {
 		t.Fatal("FAAS_AI_GATEWAY_ENABLED=0 did not override the TOML setting")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -122,8 +123,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := ValidateAIGateway(configured, cfg.AIGateway(os.Getenv)); err != nil {
+	aiGatewayFlags, err := startPlatformFlags(ctx, cfg, pool, log)
+	if err != nil {
 		return err
+	}
+	if ids := AIIntegrationsWhileGatewayOff(configured, aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway)); len(ids) > 0 {
+		log.Warn("outbound AI gateway is off; these operator AI integrations return 503 until the ai_gateway platform flag is on", "integrations", ids)
 	}
 	identityVerifier, err := cfg.IdentityVerifier(configured)
 	if err != nil {
@@ -201,12 +206,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
-	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
-	if handler.AIGatewayRollout, err = cfg.AIGatewayRollout(os.Getenv); err != nil {
-		return fmt.Errorf("outboundd: %w", err)
-	}
-	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled,
-		"rollout_accounts", len(handler.AIGatewayRollout), "rollout_limited", handler.AIGatewayRollout != nil)
+	// ADR-1700: the gate and rollout are the live ai_gateway platform flag.
+	handler.AIGatewayFlags = aiGatewayFlags
+	_, flagVersion, _ := aiGatewayFlags.Snapshot().Definition(platformflags.AIGateway)
+	log.Info("outbound AI gateway release gate", "enabled", aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway),
+		"platform_flag_version", flagVersion)
 	// ADR-990: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err

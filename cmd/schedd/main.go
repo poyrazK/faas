@@ -693,6 +693,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return nil
 		}, log)
+	watcher.Daemon = "schedd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
 	}

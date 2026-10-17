@@ -7902,6 +7902,102 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/admin/flags:
+    get:
+      tags: [operator]
+      operationId: listOperatorPlatformFlags
+      summary: List platform flags
+      description: |
+        Returns every catalogued platform flag (ADR-1700) with apid's live
+        definition, the per-daemon apply receipts and convergence, and the
+        shared account groups. Change a flag with
+        PATCH /v1/admin/config/{config_key}. Operator-only.
+      responses:
+        '200':
+          description: Platform flags and groups
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlagList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/admin/flags/{key}:
+    get:
+      tags: [operator]
+      operationId: getOperatorPlatformFlag
+      summary: Get a platform flag
+      description: One platform flag with its live definition, apply receipts and convergence. Operator-only.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: Platform flag key, for example ai_gateway.
+      responses:
+        '200':
+          description: Platform flag
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlag' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/flags/{key}/decision:
+    get:
+      tags: [operator]
+      operationId: inspectOperatorPlatformFlag
+      summary: Explain a platform flag for an account
+      description: |
+        Evaluates the flag for one account against apid's live definition
+        and reports the matching rule, the reason, and whether the account's
+        plan is entitled to the capability the flag releases. Records
+        nothing. Operator-only.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          description: Platform flag key.
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+          description: Account to evaluate.
+      responses:
+        '200':
+          description: Decision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorPlatformFlagDecision' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/accounts/{id}/flags:
+    get:
+      tags: [operator]
+      operationId: listOperatorAccountPlatformFlags
+      summary: List platform flags for an account
+      description: Every platform flag decided for one account, with plan entitlement. Operator-only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Account ID.
+      responses:
+        '200':
+          description: Decisions for the account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperatorAccountPlatformFlags' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 
   # ─── Account ──────────────────────────────────────────────────────────────
 
@@ -69134,7 +69230,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -69199,6 +69295,137 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 3, maxLength: 500 }
         expected_version: { type: integer, format: int64, minimum: 0 }
+
+    # ─── Platform flags (ADR-1700) ───────────────────────────────────────
+
+    PlatformFlagRule:
+      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      type: object
+      required: [id, value]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        accounts:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
+        group: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        plans:
+          type: array
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        value: { type: boolean }
+
+    PlatformFlagDefinition:
+      description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."
+      type: object
+      required: [enabled, default]
+      properties:
+        enabled: { type: boolean }
+        default: { type: boolean }
+        rules:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/PlatformFlagRule' }
+
+    OperatorRuntimeConfigApplyReceipt:
+      description: "What one daemon instance reported applying for a runtime-configuration key."
+      type: object
+      required: [config_key, daemon, instance, version, status, reported_at]
+      properties:
+        config_key: { type: string }
+        daemon: { type: string }
+        instance: { type: string }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [applied, failed] }
+        error: { type: string }
+        reported_at: { type: string, format: date-time }
+
+    OperatorPlatformFlagConvergence:
+      description: "Consumers of a platform flag grouped by whether every instance applied its current version."
+      type: object
+      required: [converged, pending, failed]
+      properties:
+        converged: { type: array, items: { type: string } }
+        pending: { type: array, items: { type: string } }
+        failed: { type: array, items: { type: string } }
+
+    OperatorPlatformFlag:
+      description: "One catalogued platform flag with its live definition, apply receipts and convergence."
+      type: object
+      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
+                 source, version, status, receipts, convergence]
+      properties:
+        key: { type: string }
+        config_key: { type: string, description: "Runtime-configuration key that stores the flag; write it with PATCH /v1/admin/config/{key}." }
+        label: { type: string }
+        description: { type: string }
+        capability: { type: string }
+        adr: { type: string }
+        consumers: { type: array, items: { type: string } }
+        legacy_env: { type: array, items: { type: string } }
+        retire_by: { type: string, format: date }
+        definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
+        source: { type: string, enum: [default_or_environment, operator] }
+        version: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, applied, failed, blocked] }
+        last_error: { type: string }
+        updated_at: { type: string, format: date-time }
+        receipts:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
+        convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
+
+    OperatorPlatformFlagGroups:
+      description: "Shared named account sets referenced by platform-flag rules."
+      type: object
+      required: [config_key, groups, references, version]
+      properties:
+        config_key: { type: string }
+        groups:
+          type: object
+          additionalProperties: { type: array, items: { type: string, format: uuid } }
+        references:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+        version: { type: integer, format: int64 }
+
+    OperatorPlatformFlagList:
+      description: "Every platform flag and the shared account groups."
+      type: object
+      required: [items, groups, generated_at]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorPlatformFlag' }
+        groups: { $ref: '#/components/schemas/OperatorPlatformFlagGroups' }
+        generated_at: { type: string, format: date-time }
+
+    OperatorPlatformFlagDecision:
+      description: "One platform flag decided for one account. Available is the decision and the plan entitlement of the released capability."
+      type: object
+      required: [flag, account_id, plan, enabled, reason, version, available]
+      properties:
+        flag: { type: string }
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        enabled: { type: boolean }
+        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }
+        rule_id: { type: string }
+        bucket: { type: integer, minimum: 0, maximum: 9999 }
+        version: { type: integer, format: int64 }
+        entitled: { type: boolean }
+        available: { type: boolean }
+
+    OperatorAccountPlatformFlags:
+      description: "Every platform flag decided for one account."
+      type: object
+      required: [account_id, plan, items]
+      properties:
+        account_id: { type: string, format: uuid }
+        plan: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OperatorPlatformFlagDecision' }
 
     # ─── Dashboard auth (issue #165 PR #2, ADR-032) ──────────────────────
 

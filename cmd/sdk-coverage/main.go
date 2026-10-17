@@ -195,6 +195,10 @@ var routeExclude = map[string]bool{
 	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
 	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
 	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
 	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the

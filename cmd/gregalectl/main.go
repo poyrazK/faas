@@ -216,6 +216,10 @@ func run(args []string) int {
 		// Runtime configuration reads and hot-only mutations through
 		// apid. The CLI refuses apply modes that require a rollout.
 		return cmdConfigDispatch(args[1:])
+	case dispatchFlags:
+		// ADR-1700 platform flags: per-account release gates, written
+		// through the hot runtime-configuration path with a version check.
+		return cmdFlagsDispatch(args[1:])
 	case dispatchAudit:
 		// Exact, indexed trace correlation through the read-only operator API.
 		return cmdAuditDispatch(args[1:])

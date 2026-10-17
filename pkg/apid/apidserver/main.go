@@ -1540,6 +1540,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// before any listener is exposed. Database state wins over the
 	// bootstrap fallback for catalogued runtime settings.
 	srv.WithRuntimeConfigManager(newRuntimeConfigManager(deps.getenv))
+	// ADR-1700: report what this apid applies so the console shows
+	// convergence per consumer, not only the database acknowledgement.
+	srv.runtimeConfig.enableReceipts("apid")
 	// Seed legacy consumers from the same bootstrap snapshot before the
 	// durable reconciliation. The durable operator value must win after a
 	// restart; calling WithDataPlacement after reconcile would overwrite it
