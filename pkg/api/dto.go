@@ -8340,11 +8340,11 @@ type EdgeRuleRewriteAction struct {
 	To   string `json:"to"`
 }
 
-// ApplyEdgeRuleRewritePath applies the edge-rule prefix rewrite semantics used
+// ApplyEdgeRuleRewritePathRenamed applies the edge-rule prefix rewrite semantics used
 // by both the gateway and the read-only trace preview. It returns applied=false
 // when From is not a prefix of requestPath (the selector may still have
 // matched, but the gateway treats this inconsistent action as a miss).
-func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath string, applied bool) {
+func ApplyEdgeRuleRewritePathRenamed(requestPath, from, to string) (rewrittenPath string, applied bool) {
 	if from == "*" {
 		from = ""
 	}

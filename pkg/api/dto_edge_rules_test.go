@@ -57,9 +57,9 @@ func TestApplyEdgeRuleRewritePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotPath, gotApplied := ApplyEdgeRuleRewritePath(tc.requestPath, tc.from, tc.to)
+			gotPath, gotApplied := ApplyEdgeRuleRewritePathRenamed(tc.requestPath, tc.from, tc.to)
 			if gotPath != tc.wantPath || gotApplied != tc.wantApplied {
-				t.Fatalf("ApplyEdgeRuleRewritePath(%q, %q, %q) = (%q, %v), want (%q, %v)", tc.requestPath, tc.from, tc.to, gotPath, gotApplied, tc.wantPath, tc.wantApplied)
+				t.Fatalf("ApplyEdgeRuleRewritePathRenamed(%q, %q, %q) = (%q, %v), want (%q, %v)", tc.requestPath, tc.from, tc.to, gotPath, gotApplied, tc.wantPath, tc.wantApplied)
 			}
 		})
 	}
