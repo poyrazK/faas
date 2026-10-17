@@ -80,10 +80,10 @@ func cmdIssueTrackerLinks(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		for _, item := range out.Items {
-			fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", item.ID, item.Provider, item.ExternalKey, item.URL)
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", item.ID, item.Provider, item.ExternalKey, item.URL)
 		}
 		if out.NextCursor != "" {
-			fmt.Fprintf(osStdout, "Next cursor: %s\n", out.NextCursor)
+			_, _ = fmt.Fprintf(osStdout, "Next cursor: %s\n", out.NextCursor)
 		}
 	case "save":
 		out, err := c.PutIssueTrackerLink(ctx, *app, id.String(), in)
@@ -93,7 +93,7 @@ func cmdIssueTrackerLinks(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
 		}
-		fmt.Fprintf(osStdout, "%s\t%s\n", out.ID, out.URL)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\n", out.ID, out.URL)
 	case "delete":
 		if err := c.DeleteIssueTrackerLink(ctx, *app, id.String(), *link); err != nil {
 			return printErr("Could not unlink tracker issue", err)
@@ -101,7 +101,7 @@ func cmdIssueTrackerLinks(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"deleted": true, "id": *link}))
 		}
-		fmt.Fprintf(osStdout, "Unlinked %s.\n", *link)
+		_, _ = fmt.Fprintf(osStdout, "Unlinked %s.\n", *link)
 	}
 	return 0
 }

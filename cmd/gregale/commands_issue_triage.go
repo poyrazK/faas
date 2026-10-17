@@ -83,7 +83,7 @@ func cmdIssueTriage(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
 		}
-		fmt.Fprintf(osStdout, "Updated %d canonical issue groups.\n", len(out.Items))
+		_, _ = fmt.Fprintf(osStdout, "Updated %d canonical issue groups.\n", len(out.Items))
 		return 0
 	}
 	out, err := c.CompareIssueReleases(context.Background(), *app, *baseline, *candidate, *environment)
@@ -95,8 +95,8 @@ func cmdIssueTriage(args []string) int {
 	}
 	view := dashboard.IssueReleaseComparisonPresentation(out)
 	for _, row := range view.Rows {
-		fmt.Fprintf(osStdout, "%s %s: %d observed requests, %d HTTP 5xx (%s); %d issue events, %d groups, %d new, %d regressed.\n", row.Label, row.Health.DeploymentID, row.Health.ObservedRequests, row.Health.HTTP5xxRequests, row.Rate, row.Health.ObservedIssueEvents, row.Health.ObservedIssueGroups, row.Health.NewIssueGroups, row.Health.RegressedIssueGroups)
+		_, _ = fmt.Fprintf(osStdout, "%s %s: %d observed requests, %d HTTP 5xx (%s); %d issue events, %d groups, %d new, %d regressed.\n", row.Label, row.Health.DeploymentID, row.Health.ObservedRequests, row.Health.HTTP5xxRequests, row.Rate, row.Health.ObservedIssueEvents, row.Health.ObservedIssueGroups, row.Health.NewIssueGroups, row.Health.RegressedIssueGroups)
 	}
-	fmt.Fprintf(osStdout, "Observed HTTP 5xx rate delta: %s. Retained observations; traffic exposure and coverage may differ.\n", view.Delta)
+	_, _ = fmt.Fprintf(osStdout, "Observed HTTP 5xx rate delta: %s. Retained observations; traffic exposure and coverage may differ.\n", view.Delta)
 	return 0
 }

@@ -76,7 +76,7 @@ func cmdIssueTeams(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		for _, team := range out.Items {
-			fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d members\n", team.Key, team.ID, team.Name, len(team.MemberAccountIDs))
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%d members\n", team.Key, team.ID, team.Name, len(team.MemberAccountIDs))
 		}
 	case "get", "save":
 		var out api.IssueTeam
@@ -91,7 +91,7 @@ func cmdIssueTeams(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
 		}
-		fmt.Fprintf(osStdout, "%s: %s (%s)\nMembers: %s\n", out.Key, out.Name, out.ID, strings.Join(out.MemberAccountIDs, ","))
+		_, _ = fmt.Fprintf(osStdout, "%s: %s (%s)\nMembers: %s\n", out.Key, out.Name, out.ID, strings.Join(out.MemberAccountIDs, ","))
 	case "delete":
 		if err := c.DeleteIssueTeam(ctx, *app, *key); err != nil {
 			return printErr("Could not delete team", err)
@@ -99,7 +99,7 @@ func cmdIssueTeams(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"deleted": true, "key": *key}))
 		}
-		fmt.Fprintf(osStdout, "Deleted team %s.\n", *key)
+		_, _ = fmt.Fprintf(osStdout, "Deleted team %s.\n", *key)
 	case "inbox":
 		out, err := c.ListIssuesForTeam(ctx, *app, *key, *cursor)
 		if err != nil {
@@ -109,10 +109,10 @@ func cmdIssueTeams(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		for _, issue := range out.Items {
-			fmt.Fprintf(osStdout, "%s\t%s\t%s\n", issue.ID, issue.State, issue.Title)
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\n", issue.ID, issue.State, issue.Title)
 		}
 		if out.NextCursor != "" {
-			fmt.Fprintf(osStdout, "Next cursor: %s\n", out.NextCursor)
+			_, _ = fmt.Fprintf(osStdout, "Next cursor: %s\n", out.NextCursor)
 		}
 	}
 	return 0

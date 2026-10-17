@@ -132,7 +132,7 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 			return jsonOut(e)
 		}
 	} else if result.Ticket.URL != "" {
-		fmt.Fprintf(osStdout, "%s\t%s\t%s\n", result.State, result.RequestID, result.Ticket.URL)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\n", result.State, result.RequestID, result.Ticket.URL)
 	}
 	if err != nil {
 		return printErr("Ticket request incomplete", err)
@@ -161,7 +161,7 @@ func runNativeIssueTicketCreate(ctx context.Context, client *api.Client, slug st
 			return jsonOut(err)
 		}
 	} else {
-		fmt.Fprintf(osStdout, "%s\t%s\t%s\n", out.State, out.RequestID, out.TicketURL)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\n", out.State, out.RequestID, out.TicketURL)
 	}
 	if out.State != "linked" {
 		return printErr("Ticket exists but attachment is incomplete", fmt.Errorf("retry the same request ID and inputs"))
