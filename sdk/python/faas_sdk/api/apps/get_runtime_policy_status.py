@@ -115,6 +115,11 @@ def sync_detailed(
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):
@@ -168,6 +173,11 @@ def sync(
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):
@@ -216,6 +226,11 @@ async def asyncio_detailed(
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):
@@ -267,6 +282,11 @@ async def asyncio(
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):

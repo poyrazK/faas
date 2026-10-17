@@ -191,6 +191,26 @@ func TestEnvironmentQualificationServiceDenialsNeverWakeOrFallBack(t *testing.T)
 	}
 }
 
+func TestEnvironmentQualificationServiceAmbiguousCallerIsDenied(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{{state.ErrConflict, http.StatusForbidden}, {state.ErrInvalidArgument, http.StatusForbidden}, {errors.New("database offline"), http.StatusServiceUnavailable}} {
+		s, graph := privateServiceFixture()
+		h := NewEnvironmentQualificationServiceProxy(EnvironmentQualificationServiceProxyConfig{Store: s, ResolveNode: func(context.Context, string) (string, error) { return "", tc.err },
+			Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("unidentified caller fell back") }), Forward: func(Target) http.Handler { t.Fatal("unidentified caller was forwarded"); return nil }})
+		for _, path := range []string{EnvironmentQualificationServicePrefix + graph + "/backend/health", "/v1/internal/services/production/health"} {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.RemoteAddr = "10.100.0.3:45000"
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("%v %s: status=%d want=%d", tc.err, path, w.Code, tc.want)
+			}
+		}
+	}
+}
+
 func TestEnvironmentQualificationServiceAllowsHTTPSAndCancelsRevokedStream(t *testing.T) {
 	s, graph := privateServiceFixture()
 	s.route.RequireHTTPS = true

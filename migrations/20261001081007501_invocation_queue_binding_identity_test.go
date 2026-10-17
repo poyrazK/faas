@@ -1,5 +1,6 @@
 //go:build !no_pg
 
+// adr: 570
 package migrations_test
 
 import (
@@ -24,10 +25,7 @@ func TestMigrationInvocationQueueBindingIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "invocation-binding-migration", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
+	app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, Slug: "invocation-binding-migration", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
 	binding := func(name string) state.QueueBindingConsumerResult {
 		t.Helper()
 		b := seedLegacyQueueBindingConsumer(t, pool, account.ID, app.ID, name, false)

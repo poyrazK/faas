@@ -1,3 +1,4 @@
+// adr: 091 — maintenance transitions must reach their named response gate.
 // apps_maintenance_mode_e2e_test.go — D18 per-kind e2e for
 // `apps.maintenance_mode` (ADR-091 amendment, PR-C rollout-closer).
 // Bitmask: APID | Gatewayd.
@@ -84,7 +85,7 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 		t.Fatalf("after PATCH MaintenanceMode=false; want true. body=%s", patchRec)
 	}
 
-	// Loop until 503 — the pg_notify listener has ~10-50ms latency
+	// Loop until the maintenance response — the pg_notify listener has ~10-50ms latency
 	// before the cache is dropped, so a single request may race.
 	var (
 		headers http.Header
@@ -93,7 +94,7 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 	)
 	for i := 0; i < 20; i++ {
 		headers, body, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
-		if status == http.StatusServiceUnavailable {
+		if status == http.StatusServiceUnavailable && problemCode(body) == api.CodeAppMaintenance {
 			break
 		}
 	}
@@ -118,8 +119,9 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 		t.Errorf("detail = %q; want it to mention slug %q", problem.Detail, slug)
 	}
 
-	// PATCH maintenance_mode=false → cache flush → 200 path (Backend.Pick
-	// miss since no real impl; status NOT 503).
+	// PATCH maintenance_mode=false → cache flush → the verified backend
+	// fallthrough. A transient rate-admission refusal is fail-closed, but
+	// does not prove this transition reached the backend.
 	patchRec = doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
 		api.UpdateAppRequest{MaintenanceMode: boolPtr(false)})
 	if err := json.Unmarshal(patchRec, &patched); err != nil {
@@ -131,7 +133,7 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 		_, body, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
-		if problemCode(body) != api.CodeAppMaintenance {
+		if status == http.StatusNotFound || (status == http.StatusServiceUnavailable && problemCode(body) == api.CodeCapacity) {
 			break
 		}
 	}

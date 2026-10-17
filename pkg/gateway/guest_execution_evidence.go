@@ -219,7 +219,7 @@ func forwardedResponseHeader(ctx context.Context, dst http.Header, name, value s
 }
 
 func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, name, value string, preserveUpgrade bool) {
-	if platformOwnsLifecycleHeader(ctx, name) {
+	if isTrafficResponseControlHeader(name) || platformOwnsLifecycleHeader(ctx, name) {
 		return
 	}
 	// Response headers cross the internal bridge before they reach the
@@ -298,6 +298,16 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	resp.Header.Del(api.ReleaseHeader)
 	resp.Header.Del(api.DeploymentIDHeader)
 	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
+	for name := range resp.Header {
+		if isTrafficResponseControlHeader(name) {
+			resp.Header.Del(name)
+		}
+	}
+	stripTrafficControlTrailerDeclarations(resp.Header)
+	stripTrafficControlTrailers(resp.Trailer)
+	if resp.Body != nil {
+		resp.Body = &contextResponseBody{Reader: resp.Body, Closer: resp.Body, response: resp}
+	}
 	ctx := context.Background()
 	if resp.Request != nil {
 		ctx = resp.Request.Context()

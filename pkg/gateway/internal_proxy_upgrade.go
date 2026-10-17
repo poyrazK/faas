@@ -15,14 +15,13 @@ import (
 )
 
 // serveUpgrade uses the standard library's HTTP/1.1 reverse proxy for the
-// public-to-compute hop. Its 101 path hijacks both sides and copies bytes in
-// both directions; the ordinary InternalReverseProxy body copier cannot do
-// that. It also forwards a backend's non-101 rejection as ordinary HTTP.
+// public-to-compute handshake and non-101 rejections. The successful tunnel
+// owns both sockets and joins its copiers before releasing security ownership.
 func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Request) {
 	// The compute gateway's raw bridge or realtimed owns the upgraded session's
 	// idle and maximum-age bounds. Detach only the ordinary request budget once
-	// a valid 101 arrives; client cancellation still tears down the tunnel.
-	streamCtx, detachBudget, _, cancelStream := newStreamSession(r.Context(), 0, 0)
+	// a valid 101 arrives; client and security cancellation tear down the tunnel.
+	streamCtx, detachBudget, _, cancelStream := newStreamSession(r.Context(), rawStreamSessionDeadline, 0)
 	defer cancelStream()
 
 	// Never pool a rejected upgrade under the logical gatewayd-internal host:
@@ -30,6 +29,12 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 	transport := newInternalProxyTransport(p.Dialer, p.DialTimeout)
 	transport.DisableKeepAlives = true
 	defer transport.CloseIdleConnections()
+	stopResponse := func() {}
+	defer func() {
+		if stopResponse != nil {
+			stopResponse()
+		}
+	}()
 
 	// Read once here so ModifyResponse does not reach back into the
 	// request context (ADR-830: app-set headers win on customer hosts).
@@ -40,6 +45,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			pr.Out.URL.Scheme = p.Target.Scheme
 			pr.Out.URL.Host = p.Target.Host
 			pr.Out.Host = pr.In.Host // app lookup uses the customer hostname
+			stampTrafficStart(pr.Out)
 			clientIP, proto := p.forwardingContext(pr.In)
 			if clientIP != "" {
 				pr.Out.Header.Set("X-Forwarded-For", clientIP)
@@ -48,8 +54,16 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			propagation.TraceContext{}.Inject(pr.In.Context(), propagation.HeaderCarrier(pr.Out.Header))
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			if err := bindPublicTrafficSecurity(r, resp); err != nil {
+				return err
+			}
+			var err error
+			stopResponse, err = protectUpgradeResponse(w, streamCtx, r.Context(), resp)
+			if err != nil {
+				return err
+			}
 			// The outer public-edge middleware owns static policy and trace
-			// headers, including for 101 (which httputil writes by hijacking).
+			// headers, including for the hijacked 101 response.
 			for name := range resp.Header {
 				// On customer hosts the app's copy replaces the platform
 				// default; httputil appends resp.Header after this hook,
@@ -71,6 +85,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			}
 			if resp.StatusCode == http.StatusSwitchingProtocols {
 				detachBudget()
+				return copyPublicUpgrade(streamCtx, w, r, resp)
 			} else if edgeTransportStatus(r, resp.StatusCode) {
 				w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 				resp.StatusCode = edgeOrigin504TransportStatus
@@ -78,6 +93,12 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			return nil
 		},
 		ErrorHandler: func(dst http.ResponseWriter, _ *http.Request, err error) {
+			if errors.Is(err, errPublicUpgradeHandled) {
+				return
+			}
+			if refusePublicTrafficSecurity(dst, r, err) {
+				return
+			}
 			if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
 				return
 			}

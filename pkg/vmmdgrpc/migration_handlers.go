@@ -544,6 +544,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		return out, err
 	}
 	const op = "AdoptMigratedInstance"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	if req.GetWakeId() != "" {
 		if _, err := uuid.Parse(req.GetWakeId()); err != nil {
@@ -579,6 +580,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wakeReq.NodeID = s.nodeID
 	inst, err := s.vmm.Wake(ctx, wakeReq)
 	if err != nil {
 		// Manager.Wake normally cleans its own partial allocation. The

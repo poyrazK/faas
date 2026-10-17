@@ -622,6 +622,16 @@
     "kind": "configuration"
   },
   {
+    "table": "app_egress_circuits",
+    "columns": [
+      "app_id",
+      "revision",
+      "targets",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_egress_policy_node_status",
     "columns": [
       "app_id",
@@ -2098,6 +2108,14 @@
       "token_hash"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "clone_checkpoint_admission_guard",
+    "columns": [
+      "generation",
+      "id"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "cluster_signing_keys",
@@ -5035,6 +5053,37 @@
       "last_change_id",
       "node_name",
       "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "gateway_traffic_policy_observations",
+    "columns": [
+      "boot_id",
+      "generation",
+      "last_change_id",
+      "node_name",
+      "observed_at",
+      "policy_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "gateway_traffic_runtime_observations",
+    "columns": [
+      "boot_id",
+      "deadline_signing",
+      "generation",
+      "managed_circuit",
+      "managed_http",
+      "node_name",
+      "policy_snapshot",
+      "rate_counter_mode",
+      "reported_at",
+      "retry_backend_id",
+      "retry_counter_mode",
+      "retry_enabled",
+      "security_revocation"
     ],
     "kind": "operational"
   },
@@ -11714,6 +11763,28 @@
     "kind": "configuration"
   },
   {
+    "table": "traffic_retry_counters",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "originals",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "traffic_security_epochs",
+    "columns": [
+      "reason",
+      "revision",
+      "revoked",
+      "scope_id",
+      "scope_kind",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "trigger_consumer_health",
     "columns": [
       "lag_age_seconds",
@@ -12101,6 +12172,14 @@
       "step_name"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "workflow_code_admission_guard",
+    "columns": [
+      "app_id",
+      "generation"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_code_pins",

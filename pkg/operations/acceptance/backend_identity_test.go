@@ -173,7 +173,14 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp})
+	// Seed the original pre-traffic-policy app shape too. This is historical
+	// fixture data, not permission to relax today's production writer.
+	app := state.App{ID: uuid.NewString(), AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1}
+	// The app belongs to the account's personal org, as CreateApp assigns:
+	// ADR-595's enrollment trigger in this baseline requires an org.
+	_, err = pool.Exec(ctx, `INSERT INTO apps(id,account_id,org_id,slug,type,ram_mb,max_concurrency)
+		VALUES($1,$2,(SELECT id FROM orgs WHERE personal_org AND personal_owner_account_id=$2),$3,$4,$5,$6)`,
+		app.ID, app.AccountID, app.Slug, string(app.Type), app.RAMMB, app.MaxConcurrency)
 	if err != nil {
 		t.Fatal(err)
 	}

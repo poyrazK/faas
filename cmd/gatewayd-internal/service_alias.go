@@ -13,7 +13,7 @@ import (
 // newServiceAliasAllowed is shared by the guest DNS and HTTP proxy paths.
 // DNS controls discoverability; this HTTP check remains authoritative when a
 // guest bypasses DNS and sends a .internal Host header to the bridge directly.
-func newServiceAliasAllowed(store state.Store) gateway.ServiceAliasAllowed {
+func newServiceAliasAllowed(store servicePolicyApps) gateway.ServiceAliasAllowed {
 	return func(ctx context.Context, callerAppID, service string) (bool, error) {
 		if !isAppID(callerAppID) || store == nil {
 			return false, nil

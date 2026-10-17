@@ -27,7 +27,7 @@ import (
 // platform fault — as the only path that still returns 503.
 //
 // Extracted from run() so the boundary is unit-testable without the daemon.
-func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer {
+func newServiceProxyAuthorizer(store servicePolicyApps) gateway.ServiceProxyAuthorizer {
 	return func(ctx context.Context, callerAppID, targetAppID string) (gateway.ServiceCaller, error) {
 		if !isAppID(callerAppID) || !isAppID(targetAppID) {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
@@ -99,7 +99,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				return gateway.ServiceCaller{}, err
 			}
 			if projectID != "" {
-				policyStore, ok := store.(state.GitHubDeployPolicyStore)
+				policyStore, ok := store.(serviceProjectPolicyReader)
 				if !ok {
 					return gateway.ServiceCaller{}, errors.New("preview service policy storage is unavailable")
 				}
@@ -199,7 +199,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 // fast path; legacy rows pay one parent lookup only while they remain alive.
 // Standalone app previews have no project policy and retain the documented
 // allow-and-mark behaviour.
-func previewCallerProjectID(ctx context.Context, store state.Store, caller state.App) (string, error) {
+func previewCallerProjectID(ctx context.Context, store servicePolicyApps, caller state.App) (string, error) {
 	if caller.ProjectID != "" || caller.PreviewOfSlug == "" {
 		return caller.ProjectID, nil
 	}

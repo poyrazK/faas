@@ -46,6 +46,7 @@ var memDispatched = map[string]bool{
 	"AppBySlug":                                               true,
 	"AppRuntimeConfigChangedAt":                               true,
 	"AppRuntimeConfigChangedAtInScope":                        true,
+	"ClaimDuePublishedEventRecipient":                         true,
 	"ClaimPreviewTeardown":                                    true,
 	"CloneProjectEnvironment":                                 true,
 	"ComputeNodeUsedMB":                                       true,
@@ -64,6 +65,7 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
+	"FinishPublishedEventRecipient":                           true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
 	"GetObjectBucketObjectLock":                               true,
@@ -195,6 +197,24 @@ func (s *Mem) AdmitPublishedEventRecipient(p0 context.Context, p1 state.Publishe
 		return o.AdmitPublishedEventRecipient(p0, p1)
 	}
 	return s.MemStore.AdmitPublishedEventRecipient(p0, p1)
+}
+
+func (s *Mem) ClaimDuePublishedEventRecipient(p0 context.Context, p1 time.Time, p2 ...bool) (*state.PublishedEventRecipientWork, error) {
+	if o, ok := s.over.(interface {
+		ClaimDuePublishedEventRecipient(context.Context, time.Time, ...bool) (*state.PublishedEventRecipientWork, error)
+	}); ok {
+		return o.ClaimDuePublishedEventRecipient(p0, p1, p2...)
+	}
+	return s.MemStore.ClaimDuePublishedEventRecipient(p0, p1, p2...)
+}
+
+func (s *Mem) FinishPublishedEventRecipient(p0 context.Context, p1 *state.PublishedEventRecipientWork, p2 state.PublishedEventRecipientProgress, p3 time.Time) error {
+	if o, ok := s.over.(interface {
+		FinishPublishedEventRecipient(context.Context, *state.PublishedEventRecipientWork, state.PublishedEventRecipientProgress, time.Time) error
+	}); ok {
+		return o.FinishPublishedEventRecipient(p0, p1, p2, p3)
+	}
+	return s.MemStore.FinishPublishedEventRecipient(p0, p1, p2, p3)
 }
 
 func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p3 string, p4 time.Time) (state.WorkflowScheduleCursor, bool, error) {
@@ -2370,6 +2390,7 @@ var storeDispatched = map[string]bool{
 	"ListServingAppCPUPolicyNodeStates":             true,
 	"ListServingAppEgressPolicyNodeStates":          true,
 	"ListServingGatewayControlPlaneStates":          true,
+	"ListServingGatewayTrafficRuntime":              true,
 	"LatestAppCPUPolicyRevision":                    true,
 	"LatestAppEgressPolicyRevision":                 true,
 	"LatestAppResponseCachePurgeID":                 true,
@@ -2839,6 +2860,19 @@ func (s *Store) ListServingGatewayControlPlaneStates(ctx context.Context) ([]sta
 		ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error)
 	}); ok {
 		return source.ListServingGatewayControlPlaneStates(ctx)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error) {
+	if override, ok := s.over.(interface {
+		ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error)
+	}); ok {
+		return override.ListServingGatewayTrafficRuntime(ctx)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error)
+	}); ok {
+		return source.ListServingGatewayTrafficRuntime(ctx)
 	}
 	return nil, state.ErrNotFound
 }

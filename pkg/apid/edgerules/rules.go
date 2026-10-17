@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -505,7 +506,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.ErrEdgeRuleConflict(err.Error()))
 		default:
-			api.WriteProblem(w, api.ErrCapacity("could not create edge rule"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule")))
 		}
 		return
 	}
@@ -763,6 +764,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// apid-Validate.
 			out.Budget = &state.EdgeRuleBudgetAction{
 				BudgetMs:            a.BudgetMs,
+				TotalDeadlineMs:     a.TotalDeadlineMs,
 				AllowOverrideHeader: a.AllowOverrideHeader,
 			}
 		}
@@ -1074,7 +1076,7 @@ func (s *Service) UpdateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 			httpkit.NotFound(w, "no such edge rule")
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not update edge rule"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule")))
 		return
 	}
 	s.Host.Logger().Info("edge rule updated",

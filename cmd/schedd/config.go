@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -20,6 +21,8 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// AppsDomain matches public routing for deployment alias activation checks.
+	AppsDomain                      string `toml:"apps_domain"`
 	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
 	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
@@ -337,6 +340,13 @@ func (c *Config) ResolveVMMTarget() string {
 	return "unix://" + c.VMMDSocket
 }
 
+func (c *Config) GetAppsDomain(env func(string) string) string {
+	if value := env("FAAS_APPS_DOMAIN"); value != "" {
+		return value
+	}
+	return c.AppsDomain
+}
+
 // LoadServerTLS returns the server's mTLS config when all three TLS
 // paths are set, or (nil, nil) when none are set. Partial cluster is
 // rejected — wire.LoadServerTLSConfig names the missing fields.
@@ -420,6 +430,7 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		AppsDomain:         hostidentity.DefaultAppsDomain,
 		SocketPath:         "/run/faas/schedd.sock",
 		VMMDSocket:         "/run/faas/vmmd.sock",
 		GatewaySynthSocket: "/run/faas/gatewayd-internal.sock",

@@ -11,9 +11,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+type environmentHostCloneStore interface {
+	state.Store
+	state.ProjectEnvironmentCloneOperationStore
+	state.ProjectEnvironmentCloneWorkloadStore
+	state.ProjectEnvironmentClonePublicationStore
+	state.ProjectEnvironmentWorkloadSpecReader
+	state.ProjectReleaseSetStore
+	state.ProjectPromotionDeploymentStore
+	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
+}
+
 func TestEnvironmentHostWaitsForAtomicCloneGraphPublication(t *testing.T) {
-	ctx := context.Background()
-	store := state.NewMemStore()
+	testEnvironmentHostClonePublication(t, state.NewMemStore())
+}
+func TestEnvironmentHostPostgresSnapshotWaitsForAtomicClonePublication(t *testing.T) {
+	fixture := newPublicRoutingPGFixture(t)
+	testEnvironmentHostClonePublication(t, fixture.store)
+}
+func testEnvironmentHostClonePublication(t *testing.T, store environmentHostCloneStore) {
+	t.Helper()
+	ctx := t.Context()
 	acct, err := store.CreateAccount(ctx, "clone-host@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
