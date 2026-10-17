@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { command } from './staging/canary.mjs'
+import { verifyTeamOrderSummary } from './team-order-summary.mjs'
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_RUNTIME_DIR)
 
 async function port() {
@@ -56,6 +57,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0009_webhook_diagnostics.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0010_saved_views_bulk_fulfilment.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0011_shared_team_views.sql', import.meta.url), 'utf8'))
+  await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0012_team_order_summary.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/seed.sql', import.meta.url), 'utf8'))
   await owner.query(`GRANT USAGE ON SCHEMA api TO "${role}";
     GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA api TO "${role}";
@@ -64,6 +66,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
     GRANT EXECUTE ON FUNCTION api.list_team_members(text,text,integer), api.get_team_change_receipt(text,uuid), api.change_team_member_once(uuid,text,text,uuid,api.team_role), api.transfer_team_ownership_once(uuid,text,text,uuid) TO "${role}";
     GRANT EXECUTE ON FUNCTION api.create_team_invitation_once(uuid,text,text,api.team_role,timestamptz), api.revoke_team_invitation_once(uuid,text), api.accept_team_invitation_once(uuid,text,text), api.team_invitation_identity(), api.start_team_order_import_once(uuid,text,text,jsonb), api.advance_team_order_import_once(uuid,text,integer), api.transition_team_order_once(uuid,text,uuid,integer,api.order_status), api.claim_team_order_webhook(text,uuid), api.finish_team_order_webhook(text,uuid,uuid,boolean,integer), api.replay_team_order_webhook(text,uuid,integer), api.get_team_delivery_health(text), api.get_team_delivery_operation(text,uuid), api.preview_team_delivery_replay(text,integer), api.set_team_delivery_pause_once(text,uuid,uuid,boolean), api.batch_replay_team_deliveries_once(text,uuid,jsonb), api.save_webhook_subscription_once(text,uuid,uuid,uuid,text,text[],text,boolean,boolean), api.get_webhook_subscription_receipt(text,uuid), api.claim_subscription_webhook(text,uuid,uuid), api.finish_subscription_webhook(text,uuid,uuid,uuid,boolean,integer,text), api.replay_subscription_webhook(text,uuid,uuid,integer), api.get_subscription_health(text,uuid), api.queue_webhook_test_once(text,uuid,uuid,uuid), api.get_webhook_test_receipt(text,uuid), api.save_order_view_once(text,uuid,uuid,uuid,text,api.order_status,integer,integer,text), api.get_order_view_receipt(text,uuid), api.list_view_orders(text,api.order_status,integer,integer,text,uuid,integer,integer), api.preview_team_order_fulfilment(text,jsonb), api.fulfil_team_orders_once(text,uuid,jsonb), api.get_team_bulk_order_receipt(text,uuid), api.save_shared_order_view_once(text,uuid,uuid,uuid,text,api.order_status,integer,integer,text), api.copy_shared_order_view_once(text,uuid,uuid,uuid,uuid,text), api.get_shared_order_view_receipt(text,uuid) TO "${role}"`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
+  await owner.query(`GRANT EXECUTE ON FUNCTION api.summarize_team_orders(text,api.order_status,integer,integer) TO "${role}"`)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   const typed = await mkdtemp(join(tmpdir(), 'team-orders-client-'))
   t.after(() => rm(typed, { recursive: true, force: true }))
@@ -72,6 +75,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   await writeFile(join(typed, 'package.json'), '{"type":"module"}')
   await writeFile(join(typed, 'database.types.ts'), generate(snapshot))
   await writeFile(join(typed, 'orders.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/orders.ts', import.meta.url), 'utf8'))
+  await writeFile(join(typed, 'order-summary.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/order-summary.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'administration.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/administration.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'invitations.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/invitations.ts', import.meta.url), 'utf8'))
   await writeFile(join(typed, 'imports.ts'), await readFile(new URL('../../cmd/gregale/templates/data-api-teams/client/src/imports.ts', import.meta.url), 'utf8'))
@@ -105,6 +109,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   const amy=createDataClient({url,accessToken:adminToken}).schema('api')
   const member=createDataClient({url,accessToken:memberToken}).schema('api')
   const other=createDataClient({url,accessToken:otherToken}).schema('api')
+  await verifyTeamOrderSummary({ owner, pg, loginURL: loginURL.toString(), url, typed, teamsClient, token, adminToken, memberToken, otherToken })
   const save=(db,args)=>dataRequest(db.rpc('save_team_order_once',args),{timeoutMs:5000})
   const args={request_key:randomUUID(),team_id:'shop-a',order_id:randomUUID(),expected_version:0,order_total:42,order_state:'draft'}
   const concurrent=await Promise.all(Array.from({length:6},()=>save(alice,args)))

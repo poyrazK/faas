@@ -18,10 +18,12 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|check|refresh|sync|status|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
+	case "rotation":
+		return cmdDataAPIRotation(args[1:])
 	case "health":
 		return cmdDataAPIHealth(args[1:])
 	case "transaction":
@@ -59,7 +61,7 @@ func cmdDataAPI(args []string) int {
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync, status, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 

@@ -2423,6 +2423,27 @@ type CustomerWorkflowReadinessSubscription struct {
 	LeaseUntil       pgtype.Timestamptz
 }
 
+type DataApiRuntimeConnectionObservation struct {
+	BindingID            pgtype.UUID
+	InstanceID           pgtype.UUID
+	AccountID            pgtype.UUID
+	DatabaseID           pgtype.UUID
+	DeploymentID         pgtype.UUID
+	NodeID               pgtype.UUID
+	WakeID               pgtype.UUID
+	BackendFingerprint   string
+	DataResourceID       string
+	DatabaseGeneration   int64
+	CredentialGeneration int64
+	ProviderIdentityID   string
+	State                string
+	RuntimeModel         string
+	EngineConnections    int32
+	RefreshConnections   int32
+	ObservedAt           pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
@@ -5784,6 +5805,22 @@ type ManagedPostgresCheckpointMaintenance struct {
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
 	ReservedByCutoverID      pgtype.UUID
+}
+
+type ManagedPostgresConnectionCapacity struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DataResourceID     string
+	Generation         int64
+	State              string
+	Evidence           []byte
+	CheckedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	LeaseToken         pgtype.Text
+	LeaseUntil         pgtype.Timestamptz
 }
 
 type ManagedPostgresCreationReceipt struct {
