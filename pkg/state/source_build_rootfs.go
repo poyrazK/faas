@@ -180,5 +180,16 @@ func checkSourceBuildRootfsBase(in SourceBuildRootfsInput, base BaseImageProduce
 
 func sourceBuildRootfsMetadataMatches(value SourceBuildRootfs, dep Deployment) bool {
 	in := value.Input
-	return in.Scope == dep.Scope && in.RootfsPath == dep.RootfsPath && in.StorageKey == dep.RootfsKey && in.ContentBytes == dep.RootfsBytes
+	return in.Scope == dep.Scope && in.RootfsPath == dep.RootfsPath && in.StorageKey == dep.RootfsKey && in.ContentBytes == dep.RootfsBytes &&
+		dep.RuntimeBase == sourceBuildRootfsRuntimeBase(in)
+}
+
+// sourceBuildRootfsRuntimeBase is the deployment runtime_base a source rootfs
+// stamps: its shared runner base, or "" for function layers and app layers on
+// the app's own base.
+func sourceBuildRootfsRuntimeBase(in SourceBuildRootfsInput) string {
+	if in.Kind == "source-app-layer" {
+		return in.Runtime
+	}
+	return ""
 }

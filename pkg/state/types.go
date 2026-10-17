@@ -2646,6 +2646,11 @@ type Deployment struct {
 	// legacy deployment whose support has not been recorded yet.
 	SecretReloadSignal      string `json:"-"`
 	SecretReloadSignalKnown bool   `json:"-"`
+	// RuntimeBase is the shared runner base a source-built container app's
+	// layer was built for ("" for the app's own base). imaged stamps it with
+	// the deployment's source rootfs; schedd boots that base
+	// (docs/adr/20261017-shared-runtime-source-apps.md, H10-140).
+	RuntimeBase string `json:"-"`
 	// Revision (ADR-198) is the per-AppID monotonic counter that makes
 	// an immutable deployment row addressable as `v42` instead of a
 	// uuid. Assigned inside CreateDeployment's existing `FOR UPDATE`

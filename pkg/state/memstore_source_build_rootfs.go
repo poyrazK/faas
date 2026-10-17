@@ -48,6 +48,7 @@ func (m *MemStore) publishSourceBuildRootfsLocked(in SourceBuildRootfsInput, has
 		m.sourceBuildRootfsCurrent = map[string]string{}
 	}
 	dep.RootfsPath, dep.RootfsKey, dep.RootfsBytes = in.RootfsPath, in.StorageKey, in.ContentBytes
+	dep.RuntimeBase = sourceBuildRootfsRuntimeBase(in)
 	m.deployments[dep.ID] = dep
 	m.sourceBuildRootfs[in.ID] = value
 	m.sourceBuildRootfsCurrent[in.DeploymentID] = in.ID

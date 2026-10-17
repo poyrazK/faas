@@ -105,8 +105,8 @@ func sourceBuildRootfsLifecycle(t *testing.T, s sourceRootfsTestStore) {
 		t.Fatal("selected producer missing", err)
 	}
 	dep, err := s.DeploymentByID(t.Context(), f.Dep.ID)
-	if err != nil || !sourceBuildRootfsMetadataMatches(value, dep) {
-		t.Fatal("metadata stamp not atomic", err)
+	if err != nil || !sourceBuildRootfsMetadataMatches(value, dep) || dep.RuntimeBase != "" {
+		t.Fatal("metadata stamp not atomic", err, dep.RuntimeBase)
 	}
 	if _, err := s.GetCurrentSourceBuildRootfs(t.Context(), uuid.NewString(), f.App.ID, f.Dep.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("cross-owner producer exposed", err)
@@ -375,6 +375,9 @@ func sourceBuildRootfsSharedRuntime(t *testing.T, s sourceRootfsTestStore) {
 	}
 	if current, err := s.GetCurrentSourceBuildRootfs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || current.ID != value.ID {
 		t.Fatal("shared-runtime producer not selected", err)
+	}
+	if dep, err := s.DeploymentByID(t.Context(), f.Dep.ID); err != nil || dep.RuntimeBase != "node24" {
+		t.Fatalf("deployment runtime base = %q (%v), want node24 stamped with the layer", dep.RuntimeBase, err)
 	}
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID)
 	if err != nil || len(inputs.Artifacts) != 2 || inputs.Artifacts[1].Kind != "source-app-layer" {
