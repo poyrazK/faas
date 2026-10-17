@@ -10,7 +10,19 @@ One signed tag (release.yml) ships every daemon, CLI, runner and the kernel
 (ADR-113). Building and signing takes 4-5 minutes, but a rollout takes 55-75
 minutes: the mega-tier gate, base prestage, compute drains and acceptance all
 run for every release, whatever it changed. A merge that touches one
-control-plane daemon waits for all of it. The owner's target is a merged change
+control-plane daemon waits for all of it.
+
+cd-platform run 38985388820 shows where the time goes:
+
+- In the control-plane stage, 30.7 of 43.3 min was the full Ansible
+  convergence of the control-plane roles, which runs whenever their inputs
+  changed since the last release, and nearly every release changes some.
+- Each compute node took 22-28 min, serially. About 720 of its 752 Ansible
+  tasks were small convergence tasks (about 12 min), and the runtime-base
+  pre-stage took 5.0 min.
+- The fleet convergence report took 16-20 min.
+
+Activating new binaries is entangled with configuring the host. The owner's target is a merged change
 in production within 30 minutes, deploying only what it touches, with zero
 downtime.
 
@@ -80,7 +92,9 @@ one.
 
 The unit lane never runs migrations, role convergence, KGV rotation or
 fleet-seal steps. Those inputs are blocking, so they are unchanged since the
-base, which already ran them.
+base, which already ran them. This is the split between release activation
+and host configuration, for the control plane: no Ansible runs on the unit
+lane's critical path.
 
 ## Consequences
 
@@ -115,6 +129,16 @@ base, which already ran them.
 - **Compute lane.** schedd, gatewayd-public(-edge) and realtimed restart
   without touching VMs, but they run on compute hosts and need a per-unit mode
   in cd-compute.
+- **Build runner.** release-units.yml builds on a GitHub-hosted runner, so on
+  a busy CI day its job can queue 8-14 min before it starts. Building on the
+  dedicated fleet runner (warm Go cache, no queue) keeps merge-to-prod near 10
+  min, but puts builds of main on the host that holds deploy keys. That is the
+  owner's decision.
+- **Full lane, outside this ADR.** Run host configuration in its own lane,
+  keyed by a per-role content hash, instead of inside every activation.
+  Content-address runtime bases and pre-stage them off the critical path.
+  Roll compute as a canary node, then parallel waves, once activation is
+  per-unit without a drain.
 - **Base discovery.** The base defaults to the newest tag. When production
   trails it, dispatch with `base`. Recording the deployed release (for example
   in a GitHub deployment) would remove that step.
