@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Restart-safe Node recovery alert checkpoints](20261017112428-node-recovery-alert-checkpoints.md)
+
 - [Node sustained acknowledgment recovery alerts](20261017111119-node-acknowledgment-recovery-watch.md)
 
 - [Node acknowledgment intent recovery health](20261017110351-node-acknowledgment-intent-health.md)

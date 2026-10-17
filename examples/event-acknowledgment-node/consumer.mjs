@@ -1,7 +1,7 @@
 // Integration functions for an application-owned durable queue. See README for
 // the adapter's persistence and exclusive-ownership requirements.
 import { randomUUID } from 'node:crypto';
-import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, getEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
+import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, getEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealthWithCheckpoint, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
 
 const names = new Set([
   'x-gregale-event-source', 'x-gregale-event-id', 'x-gregale-event-subscription-id',
@@ -84,4 +84,28 @@ export async function watchAcknowledgmentRecovery(scope, pool, signal, notify) {
     signal, health: { scanLimit: 1000, stallAfterMs: 300000 },
     dueThreshold: 100, stalledThreshold: 1, sustainMs: 30000,
   }, notify);
+}
+
+/** store and notify must provide the fenced persistence/idempotency contract in README. */
+export async function watchAcknowledgmentRecoveryWithCheckpoint(scope, pool, signal, store, notify) {
+  const target = owner(scope);
+  const saved = await store.loadOwned(signal);
+  const result = await watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, target.accountId, target.appId, {
+    signal, health: { scanLimit: 1000, stallAfterMs: 300000 },
+    dueThreshold: 100, stalledThreshold: 1, sustainMs: 30000, resume: saved ?? undefined,
+    pollAcknowledgments: (checkpoint, callbackSignal) => store.listAcknowledgments(checkpoint, callbackSignal),
+    onProgress: async (progress, callbackSignal) => {
+      // Commit the checkpoint BEFORE any external notification attempt.
+      await store.saveOwned(progress.checkpoint, callbackSignal);
+      for (const notification of progress.checkpoint.pending) {
+        callbackSignal.throwIfAborted();
+        await notify(notification, callbackSignal); // Owner deduplicates by incidentId + sequence.
+        await store.recordAcknowledgment({ incidentId: notification.incidentId, sequence: notification.sequence }, callbackSignal);
+      }
+    },
+  });
+  // Cancellation returns a final detached checkpoint. Use an independently
+  // bounded shutdown context because the watch signal is already aborted.
+  await store.saveOwnedOnShutdown(result.checkpoint);
+  return result;
 }

@@ -160,3 +160,45 @@ the signal reason, without resolving an alert. Configure actual acquisition/quer
 and statement timeouts: SDK cancellation is cooperative and waits for active
 operations rather than overlapping polls or releasing a busy connection. Watch
 state is in memory and resets on restart. See [Node watch configuration and recovery](../../docs/event-acknowledgment-intent-health.md#node-watch).
+
+## Persist recovery alert checkpoints
+
+Use `watchAcknowledgmentRecoveryWithCheckpoint` as an explicit alternative to the
+ordinary in-memory watch:
+
+```js
+import { watchAcknowledgmentRecoveryWithCheckpoint } from './consumer.mjs';
+
+await watchAcknowledgmentRecoveryWithCheckpoint(
+  { app: appSlug, accountId, appId }, pool, signal, monitorStore,
+  deliverRecoveryNotificationIdempotently,
+);
+```
+
+The application-owned `monitorStore` must provide:
+
+- `loadOwned(signal)`: load the saved checkpoint under exclusive writer ownership.
+- `saveOwned(checkpoint, signal)`: atomically commit the whole checkpoint and reject stale writers.
+- `listAcknowledgments(checkpoint, signal)`: return at most 1024 unique exact pairs still present in that checkpoint's pending/retained acknowledgment lists; keep the ledger durable until checkpoint persistence records them.
+- `recordAcknowledgment(pair, signal)`: durably record destination confirmation, idempotently.
+- `saveOwnedOnShutdown(checkpoint)`: use an independent bounded shutdown context and the same ownership fence; an aborted or stale writer must not overwrite a successor.
+
+The wrapper saves each snapshot before attempting notification, including initial
+replay before the first health query. It delivers `checkpoint.pending` in sequence
+order. The destination must deduplicate by incident ID plus sequence. A crash after
+confirmed delivery but before acknowledgment can repeat that same notification.
+No queue, store, file or notification service is installed by the SDK.
+
+Retain unresolved identity across evidence loss and restart, then collect fresh,
+complete observations before reconfirming or resolving. The outbox contains only
+opening/resolution lifecycle notifications; unknown evidence remains visible in
+progress. A full outbox blocks new openings and reserves capacity for existing
+resolutions. The ordinary watch's state is not a checkpoint and cannot be resumed
+as one. Do not run two writers for the same checkpoint or apply offline
+acknowledgments concurrently with a live writer.
+
+A callback failure throws `EventAcknowledgmentIntentCheckpointWatchCallbackError`
+with a detached result. The wrapper does not overwrite storage in that case:
+compare/reconcile current storage and `error.result.checkpoint` under the ownership
+fence before notification retry. Cancellation returns a final snapshot which the
+wrapper saves with its bounded shutdown hook. See [checkpoint, acknowledgment and replay rules](../../docs/event-acknowledgment-node-checkpoints.md).

@@ -620,3 +620,12 @@ export { watchEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentWatchCal
   type EventAcknowledgmentIntentWatchOptions, type EventAcknowledgmentIntentWatchMetric,
   type EventAcknowledgmentIntentAlert, type EventAcknowledgmentIntentAlertChange,
   type EventAcknowledgmentIntentAlertReason } from './event-acknowledgment-intent-watch.js';
+
+export { EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX, validateEventAcknowledgmentIntentCheckpoint,
+  acknowledgeEventAcknowledgmentIntentAlerts, type EventAcknowledgmentIntentCheckpoint,
+  type EventAcknowledgmentIntentCheckpointCondition, type EventAcknowledgmentIntentNotification,
+  type EventAcknowledgmentIntentAcknowledgment } from './event-acknowledgment-intent-checkpoint.js';
+export { watchEventAcknowledgmentIntentHealthWithCheckpoint, EventAcknowledgmentIntentCheckpointWatchCallbackError,
+  type EventAcknowledgmentIntentCheckpointWatchOptions,
+  type EventAcknowledgmentIntentCheckpointWatchResult } from './event-acknowledgment-intent-checkpoint-watch.js';
+export type { EventAcknowledgmentIntentConfirmation } from './event-acknowledgment-intent-checkpoint-state.js';

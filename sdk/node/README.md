@@ -3621,3 +3621,11 @@ incomplete or stale evidence becomes `unknown` / `confirmation_lost`. Polls and
 local callbacks run sequentially, and cancellation never resolves an incident.
 State is in memory; notification transport and durable identity stay application-owned.
 See [watch options, callback errors and cooperative deadlines](../../docs/event-acknowledgment-intent-health.md#node-watch).
+
+`watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, accountId, appId, options)`
+adds opt-in restart recovery with stable incident IDs and a bounded notification
+outbox. Persist `progress.checkpoint` in `onProgress` before delivering
+`checkpoint.pending`; acknowledge exact incident/sequence pairs with
+`acknowledgeEventAcknowledgmentIntentAlerts`. Resume validates owner/policy and
+requires fresh confirmation while retaining unresolved incident identity.
+See [checkpoint validation, replay and shutdown](../../docs/event-acknowledgment-node-checkpoints.md).

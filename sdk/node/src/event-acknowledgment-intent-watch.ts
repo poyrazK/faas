@@ -10,7 +10,7 @@ export { EventAcknowledgmentIntentWatchCallbackError, type EventAcknowledgmentIn
   type EventAcknowledgmentIntentWatchMetric, type EventAcknowledgmentIntentAlert,
   type EventAcknowledgmentIntentAlertChange, type EventAcknowledgmentIntentAlertReason } from './event-acknowledgment-intent-watch-policy.js';
 
-async function read(pool: EventConsumerPool, account: string, app: string, policy: IntentWatchPolicy,
+export async function readIntentWatchHealth(pool: EventConsumerPool, account: string, app: string, policy: IntentWatchPolicy,
   signal: AbortSignal): Promise<EventAcknowledgmentIntentHealth | undefined> {
   const controller = new AbortController(), abort = () => controller.abort();
   const started = performance.now();
@@ -47,7 +47,7 @@ export async function watchEventAcknowledgmentIntentHealth(pool: EventConsumerPo
   try {
     for (;;) {
       signal.throwIfAborted();
-      const health = await read(pool, account, app, policy, signal);
+      const health = await readIntentWatchHealth(pool, account, app, policy, signal);
       signal.throwIfAborted();
       const wall = Date.now(), local = performance.now();
       const reason = intentWatchEvidence(health, previousObserved, previousPoll, wall, local, policy.maxAgeMs);

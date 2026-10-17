@@ -243,3 +243,7 @@ and downstream deduplication when needed. See the
 [monitoring integration example](../examples/event-acknowledgment-node/README.md#watch-sustained-recovery-conditions).
 Local validation is build, generation and static checks; database timing,
 cancellation and notification behavior require hosted acceptance before release.
+
+For stable incident identity and replayable pending notifications across restarts,
+use the separate opt-in [checkpointed Node watch](event-acknowledgment-node-checkpoints.md).
+The ordinary watch above retains its in-memory behavior.
