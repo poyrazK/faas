@@ -561,6 +561,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-basebackup-push_test.sh
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
+	bash deploy/scripts/faas-check-compute-edges_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -799,6 +800,11 @@ scan-images: ## Scan concrete locally-loaded OCI refs (IMAGE_REFS="ref1 ref2 ...
 public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPOINT_URL required)
 	@test -n "$(PUBLIC_ENDPOINT_URL)" || { echo "PUBLIC_ENDPOINT_URL is required (example: https://my-api.gregale.dev)" >&2; exit 2; }
 	@PUBLIC_ENDPOINT_URL="$(PUBLIC_ENDPOINT_URL)" PUBLIC_PLATFORM_API_URL="$(PUBLIC_PLATFORM_API_URL)" PUBLIC_HTTP_URL="$(PUBLIC_HTTP_URL)" PUBLIC_ENDPOINT_PATH="$(PUBLIC_ENDPOINT_PATH)" bash scripts/ci/check_public_endpoint.sh
+
+.PHONY: check-compute-edges
+check-compute-edges: ## ADR-1343 §5: probe every compute node's app edge and tunnel connector from the control plane (CP_SSH=user@host)
+	@test -n "$(CP_SSH)" || { echo "CP_SSH is required (the control plane's SSH destination)" >&2; exit 2; }
+	ssh "$(CP_SSH)" 'bash -s' < deploy/scripts/faas-check-compute-edges.sh
 
 .PHONY: systemd-hardening-check
 systemd-hardening-check: ## Static release gate for production systemd isolation directives

@@ -159,8 +159,12 @@ domains still enter there.
   gatewayd-public control target and `cloudflared` metrics endpoint.
 - Alerts become per instance: daemon down or not ready, connector
   disconnected, local-gateway fallback rate, `421` rate.
-- `check_public_endpoint` gains a per-node mode that probes each edge through
-  its local listener from the control plane.
+- A per-node check (`make check-compute-edges`,
+  `deploy/scripts/faas-check-compute-edges.sh`) probes each edge from the
+  control plane: gatewayd-public's `/readyz` on its control port and the
+  connector's `/ready` on its metrics port. The edge's own listener is
+  loopback-only, and a public request cannot pick its connector, so
+  `check_public_endpoint` alone cannot see one bad node.
 - `/v1/traces` lookups are per edge process: a lookup sees only spans from
   the edge that served the request. This is accepted; the spans pipeline is
   the durable record.

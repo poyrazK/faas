@@ -22,5 +22,6 @@ faas_cloudflared_install_dir: "/opt/faas/cloudflared/{{ faas_cloudflared_version
 # systemd LoadCredential, so it never appears in the unit or the process list.
 faas_cloudflared_token_path: /etc/faas/secrets/cloudflared/tunnel-token
 
-# Prometheus endpoint of the connector, loopback until per-node scraping lands.
-faas_cloudflared_metrics_addr: 127.0.0.1:20241
+# Prometheus endpoint of the connector. The control plane scrapes it per node
+# (ADR-1343 §5); nftables admits only the control plane on this port.
+faas_cloudflared_metrics_addr: 0.0.0.0:20241

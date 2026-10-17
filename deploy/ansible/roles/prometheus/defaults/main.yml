@@ -39,6 +39,10 @@ prom_compute_builderd_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/
 prom_compute_node_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/node-targets"
 prom_compute_realtimed_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/realtimed-targets"
 prom_compute_schedd_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/schedd-targets"
+# ADR-1343 §5: scraped only while the cell runs the app edge on its compute
+# nodes (faas_edge_on_compute_nodes).
+prom_compute_edge_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/gatewayd-public-edge-targets"
+prom_compute_cloudflared_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/cloudflared-targets"
 prom_compute_metrics_discovery_refresh_interval: "15s"
 # The supported fleet shape is one control plane with up to 1,000 compute
 # nodes. Keep the bound in the rendered scrape job as a second line of
