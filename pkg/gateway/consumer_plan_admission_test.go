@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -87,4 +88,20 @@ func TestEnforceConsumerPlan(t *testing.T) {
 			t.Fatal("anonymous or smoke traffic was plan-limited")
 		}
 	})
+}
+
+// adr: 1306 — a spend-capped consumer gets a 402 on any plan, before any
+// counter is written, and the request is not billed.
+func TestEnforceConsumerSpendCap(t *testing.T) {
+	store := &fakeConsumerPlanStore{policy: ConsumerPlanPolicy{SpendCapped: true, SpendCapMillicents: 0, SpendDueMillicents: 125000, SpendCurrency: "EUR"}}
+	h := (&Handler{}).WithConsumerPlanStore(store)
+	w, r := httptest.NewRecorder(), planRequest("GET /items")
+	if h.enforceConsumerPlan(w, r, &statusRecorder{}, App{ID: "app-1", AccountID: "acct-1"}, false) {
+		t.Fatal("spend-capped consumer admitted")
+	}
+	if w.Code != http.StatusPaymentRequired || !strings.Contains(w.Body.String(), "consumer_spend_cap_reached") ||
+		!strings.Contains(w.Body.String(), `"observed":125000`) || len(store.admitUnits) != 0 ||
+		w.Header().Get("x-faas-rate-limit-scope") != "consumer-spend-cap" || r.Context().Value(suppressFinancialUsageKey{}) != true {
+		t.Fatalf("code=%d body=%s admissions=%d", w.Code, w.Body, len(store.admitUnits))
+	}
 }

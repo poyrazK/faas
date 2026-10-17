@@ -10,6 +10,23 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_billing_connections",
+    "columns": [
+      "account_id",
+      "api_url",
+      "automatic_tax",
+      "collection",
+      "created_at",
+      "days_until_due",
+      "key_last4",
+      "livemode",
+      "provider",
+      "sealed_secret",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_credits",
     "columns": [
       "account_id",
@@ -197,6 +214,70 @@
     "kind": "configuration"
   },
   {
+    "table": "api_consumer_billing_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "block_overdue_after_days",
+      "created_at",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "api_consumer_credit_applications",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "created_at",
+      "grant_id",
+      "statement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_credit_grants",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "expires_at",
+      "id",
+      "note",
+      "remaining_millicents",
+      "voided_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_meter_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_key",
+      "meter",
+      "units",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_overdue_holds",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "due_at",
+      "export_id",
+      "since"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_plan_admissions",
     "columns": [
       "account_id",
@@ -241,14 +322,17 @@
     "columns": [
       "account_id",
       "app_id",
+      "base_fee_millicents_per_month",
       "created_at",
       "currency",
       "effective_from",
       "id",
       "included_units_per_month",
+      "minimum_millicents_per_month",
       "plan_id",
       "price_millicents_per_unit",
       "route_weights",
+      "tier_mode",
       "tiers",
       "unit"
     ],
@@ -264,6 +348,37 @@
       "route",
       "updated_at",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_spend_caps",
+    "columns": [
+      "account_id",
+      "amount_due_millicents",
+      "app_id",
+      "capped",
+      "checked_at",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "month_start",
+      "monthly_cap_millicents",
+      "next_check_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_trials",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "ends_at",
+      "starts_at",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -308,9 +423,11 @@
       "account_id",
       "app_id",
       "billable_units",
+      "compute_ms",
       "consumer_key",
       "error_count",
       "request_count",
+      "response_bytes",
       "updated_at",
       "window_start"
     ],
@@ -342,7 +459,9 @@
       "buckets",
       "consumer_id",
       "created_at",
+      "credit_applied_millicents",
       "currency",
+      "fees",
       "finalized_at",
       "id",
       "period_end",
@@ -1767,6 +1886,69 @@
       "provider",
       "quantity",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_run_items",
+    "columns": [
+      "amount_millicents",
+      "app_id",
+      "attempts",
+      "completeness",
+      "currency",
+      "exported_count",
+      "external_ref",
+      "invoice_id",
+      "next_attempt_at",
+      "outcome",
+      "reason",
+      "revision",
+      "run_id",
+      "source_id",
+      "source_kind",
+      "statement_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_run_schedules",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delay_hours",
+      "export_provider",
+      "finalize",
+      "hold_on_gaps",
+      "last_period_start",
+      "next_period_start",
+      "next_run_at",
+      "sources",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "billing_runs",
+    "columns": [
+      "account_id",
+      "completed_at",
+      "created_at",
+      "discovered_at",
+      "export_provider",
+      "finalize",
+      "hold_on_gaps",
+      "id",
+      "lease_owner",
+      "lease_until",
+      "notified_at",
+      "period_end",
+      "period_start",
+      "sources",
+      "started_at",
+      "status",
+      "trigger"
     ],
     "kind": "operational"
   },
@@ -8429,6 +8611,39 @@
     "kind": "operational"
   },
   {
+    "table": "platform_tenant_plan_assignments",
+    "columns": [
+      "account_id",
+      "created_at",
+      "effective_from",
+      "id",
+      "plan_id",
+      "rate_card_id",
+      "tenant_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "platform_tenant_plans",
+    "columns": [
+      "account_id",
+      "created_at",
+      "currency",
+      "id",
+      "included_units_per_month",
+      "max_requests_per_day",
+      "max_requests_per_minute",
+      "name",
+      "price_millicents_per_unit",
+      "route_weights",
+      "tier_mode",
+      "tiers",
+      "unit",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "platform_tenant_rate_cards",
     "columns": [
       "account_id",
@@ -8439,6 +8654,8 @@
       "included_units_per_month",
       "platform_tenant_id",
       "price_millicents_per_unit",
+      "route_weights",
+      "tier_mode",
       "tiers",
       "unit"
     ],
@@ -8470,6 +8687,21 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "platform_tenant_source_route_usage_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "billable_units",
+      "platform_tenant_id",
+      "route",
+      "source_id",
+      "source_kind",
+      "updated_at",
+      "window_start"
+    ],
+    "kind": "operational"
   },
   {
     "table": "platform_tenant_statement_consumers",
@@ -8540,10 +8772,12 @@
       "account_id",
       "app_id",
       "billable_units",
+      "compute_ms",
       "consumer_key",
       "error_count",
       "platform_tenant_id",
       "request_count",
+      "response_bytes",
       "source_kind",
       "updated_at",
       "window_start"
@@ -11466,6 +11700,37 @@
       "requests",
       "tail_seconds",
       "tx_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "usage_statement_invoice_exports",
+    "columns": [
+      "account_id",
+      "amount_minor",
+      "amount_paid_minor",
+      "amount_remaining_minor",
+      "automatic_tax",
+      "collection",
+      "completed_at",
+      "created_at",
+      "currency",
+      "customer",
+      "days_until_due",
+      "due_at",
+      "hosted_invoice_url",
+      "id",
+      "livemode",
+      "next_status_sync_at",
+      "overdue_notified_at",
+      "paid_at",
+      "payment_status",
+      "provider",
+      "provider_invoice_id",
+      "source_kind",
+      "statement_id",
+      "status",
+      "status_synced_at"
     ],
     "kind": "operational"
   },

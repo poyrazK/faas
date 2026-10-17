@@ -516,7 +516,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "account",
 		DocSlug: "account",
-		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo)",
+		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run|invoices)",
 		Subcommands: []cliSub{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
@@ -533,6 +533,38 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write DPA metadata to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
+			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
+				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
+				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
+				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
+				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
+			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
+				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
+					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
+					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants (default: both)", Value: "LIST"},
+					{Name: "no-finalize", Short: "only draft statements", Bool: true},
+					{Name: "export", Short: "none, stripe, paddle or lago (default none)", Value: "TARGET"},
+					{Name: "no-hold-on-gaps", Short: "finalize consumers even when request telemetry shows unbilled requests", Bool: true},
+					{Name: "wait", Short: "wait until the run completes and list its customers", Bool: true},
+				}, Examples: []string{"gregale account billing-run start --month 2026-09 --export stripe --wait"}},
+				{Name: "list", Short: "List billing runs, newest first", Flags: []cliFlag{{Name: "limit", Short: "runs to list (1-100)", Value: "N"}}},
+				{Name: "show", Short: "Show a run and what it did for each customer", Positionals: []string{"RUN_ID"}, Flags: []cliFlag{
+					{Name: "outcome", Short: "only customers with this outcome, e.g. held or failed", Value: "OUTCOME"},
+				}},
+				{Name: "schedule", Short: "Show the monthly billing run schedule"},
+				{Name: "schedule-set", Short: "Start a run automatically after each month ends", Flags: []cliFlag{
+					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants for scheduled runs (default: both)", Value: "LIST"},
+					{Name: "no-finalize", Short: "scheduled runs only draft statements", Bool: true},
+					{Name: "export", Short: "none, stripe, paddle or lago for scheduled runs (default none)", Value: "TARGET"},
+					{Name: "no-hold-on-gaps", Short: "scheduled runs finalize consumers with completeness gaps", Bool: true},
+					{Name: "delay-hours", Short: "hours after month end before the run starts (1-240, default 24)", Value: "N"},
+				}, Examples: []string{"gregale account billing-run schedule-set --export stripe --delay-hours 6"}},
+				{Name: "schedule-delete", Short: "Stop scheduled runs; a started run continues"},
+			}},
+			{Name: "invoices", Short: "List invoices exported from usage statements and whether they were paid", Flags: []cliFlag{
+				{Name: "status", Short: "unpaid, overdue, or one payment status: draft, open, paid, void, uncollectible, deleted", Value: "STATUS"},
+			}, Examples: []string{"gregale account invoices --status overdue"}},
 		},
 	},
 	{
@@ -2741,13 +2773,14 @@ var cliCommands = []cliCommand{
 			{Name: "create", Short: "Register an API consumer", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "external-ref", Short: "stable consumer reference", Value: "REF", Req: true},
 				{Name: "name", Short: "consumer display name", Value: "TEXT", Req: true},
+				{Name: "trial-days", Short: "free trial from the next minute: usage is priced at zero for this many days", Value: "N"},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "keys", Short: "List a consumer's API keys", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "key-create", Short: "Issue a consumer API key (secret shown once)", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "name", Short: "key display name", Value: "TEXT", Req: true},
-				{Name: "scopes", Short: "comma-separated scopes: read, write, admin (default write)", Value: "LIST"},
+				{Name: "scopes", Short: "comma-separated scopes: read, write, admin, billing (default write); billing lets the customer read its own usage and invoices", Value: "LIST"},
 				{Name: "expires", Short: "key expiry", Value: "RFC3339"},
 			}},
 			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}},
@@ -2773,7 +2806,11 @@ var cliCommands = []cliCommand{
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
 				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
-			}},
+				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per consumer minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
+				{Name: "base-fee-millicents", Short: "fixed charge per consumer per UTC month, billed by the month's statement", Value: "N"},
+				{Name: "minimum-millicents", Short: "minimum usage charge per consumer per UTC month; the statement tops up the difference", Value: "N"},
+			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 0 --tier 1000:100 --tier inf:60 --tier-mode volume", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --included-units 100000 --base-fee-millicents 4900000", "gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --unit app:output_tokens"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -2784,6 +2821,10 @@ var cliCommands = []cliCommand{
 			{Name: "statement-finalize", Short: "Freeze a fully priced draft revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},
 			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
+			}},
+			{Name: "statement-export", Short: "Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
+				{Name: "customer", Short: "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the consumer's external_ref when it is one)", Value: "ID"},
+				{Name: "provider", Short: "billing provider (default stripe)", Value: "PROVIDER", ClosedSet: []string{"stripe", "paddle", "lago"}},
 			}},
 			{Name: "plans", Short: "List an app's consumer plans", Positionals: []string{"<slug>"}},
 			{Name: "plan-create", Short: "Create a consumer plan with request limits", Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -2804,6 +2845,32 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "plan-history", Short: "List a consumer's plan assignments", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "usage-alerts", Short: "List the plan usage alerts a consumer crossed", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "credits", Short: "List a consumer's prepaid credit grants and usable balance", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "credit-grant", Short: "Grant prepaid credit that finalized statements draw down", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "currency", Short: "ISO-4217 currency of the credit, e.g. EUR", Value: "CODE", Req: true},
+				{Name: "amount-millicents", Short: "credit in millicents; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "expires", Short: "when unused credit expires, RFC3339", Value: "TIME"},
+				{Name: "note", Short: "note shown with the credit", Value: "TEXT"},
+			}, Examples: []string{"gregale consumers credit-grant my-api CONSUMER_ID --currency EUR --amount-millicents 5000000 --note \"Starter pack\""}},
+			{Name: "credit-void", Short: "Void what is left of a credit grant", Positionals: []string{"<slug>", "<consumer-id>", "<credit-id>"}},
+			{Name: "spend-cap", Short: "Show a consumer's monthly spend cap and whether it is reached", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "spend-cap-set", Short: "Refuse a consumer's requests once the month's amount due after credit passes a cap", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "currency", Short: "ISO-4217 currency of the cap, e.g. EUR", Value: "CODE", Req: true},
+				{Name: "monthly-cap-millicents", Short: "cap in millicents; 0 allows prepaid usage only", Value: "N", Req: true},
+			}, Examples: []string{"gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-millicents 0"}},
+			{Name: "spend-cap-delete", Short: "Remove a consumer's spend cap", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "trial", Short: "Show a consumer's free trial", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "trial-set", Short: "Start a consumer's one free trial at the next minute, or move the end of a running one", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
+				{Name: "days", Short: "trial length from its start", Value: "N"},
+				{Name: "ends-at", Short: "trial end (UTC minute, not in the past)", Value: "RFC3339"},
+			}, Examples: []string{"gregale consumers trial-set my-api CONSUMER_ID --days 14"}},
+			{Name: "trial-end", Short: "End a consumer's running trial at the next minute", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "billing-policy", Short: "Show the app's overdue-invoice rule", Positionals: []string{"<slug>"}},
+			{Name: "billing-policy-set", Short: "Refuse consumers whose exported invoice is unpaid some days after its due date", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "block-overdue-after-days", Short: "days past the due date before the gateway answers 402 (0 blocks at once)", Value: "N", Req: true},
+			}, Examples: []string{"gregale consumers billing-policy-set my-api --block-overdue-after-days 14"}},
+			{Name: "billing-policy-delete", Short: "Stop blocking consumers for overdue invoices; holds lift within minutes", Positionals: []string{"<slug>"}},
+			{Name: "overdue-holds", Short: "List consumers the gateway refuses because of an overdue invoice", Positionals: []string{"<slug>"}},
 		},
 	},
 	{
@@ -2869,7 +2936,10 @@ var cliCommands = []cliCommand{
 				{Name: "price-millicents", Short: "price per request; 100000 = 1.00", Value: "N", Req: true},
 				{Name: "included-units", Short: "free requests per tenant per UTC calendar month across all apps", Value: "N"},
 				{Name: "tier", Short: "graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
+				{Name: "weight", Short: "units per request on a route, including surface and JWT-rule requests; repeat per route, unlisted routes count 1 (statements then cover calendar months)", Value: "\"METHOD /template=N\"", Repeatable: true},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
 			}},
 			{Name: "statements", Short: "List a period's cross-app statement revisions", Flags: []cliFlag{
 				platformTenantIDFlag,
@@ -2889,6 +2959,42 @@ var cliCommands = []cliCommand{
 				platformTenantIDFlag, platformTenantStatementIDFlag,
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
+			{Name: "statement-export", Short: "Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff", Flags: []cliFlag{
+				platformTenantIDFlag, platformTenantStatementIDFlag,
+				{Name: "customer", Short: "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the tenant's external_ref when it is one)", Value: "ID"},
+				{Name: "provider", Short: "billing provider (default stripe)", Value: "PROVIDER", ClosedSet: []string{"stripe", "paddle", "lago"}},
+			}},
+			{Name: "plans", Short: "List tenant plans: reusable price and request-budget bundles"},
+			{Name: "plan-create", Short: "Create a tenant plan", Flags: []cliFlag{
+				{Name: "name", Short: "plan name (lowercase letters, digits, hyphens)", Value: "NAME", Req: true},
+				{Name: "currency", Short: "ISO-4217 currency (default EUR)", Value: "CODE"},
+				{Name: "price-millicents", Short: "price per request unit; 100000 = 1.00", Value: "N"},
+				{Name: "included-units", Short: "free units per tenant per UTC calendar month", Value: "N"},
+				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf", Value: "UP_TO:PRICE", Repeatable: true},
+				{Name: "weight", Short: "units per request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
+				{Name: "max-requests-per-minute", Short: "request budget per minute the plan sets (with --max-requests-per-day)", Value: "N"},
+				{Name: "max-requests-per-day", Short: "request budget per day the plan sets (with --max-requests-per-minute)", Value: "N"},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
+			}, Examples: []string{"gregale platform-tenants plan-create --name growth --currency EUR --price-millicents 20 --weight \"POST /generate=5\" --max-requests-per-minute 600 --max-requests-per-day 100000"}},
+			{Name: "plan-update", Short: "Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again", Flags: []cliFlag{
+				{Name: "plan", Short: "plan to change", Value: "NAME", Req: true},
+				{Name: "name", Short: "new plan name", Value: "NAME"},
+				{Name: "currency", Short: "ISO-4217 currency", Value: "CODE"},
+				{Name: "price-millicents", Short: "price per request unit; 100000 = 1.00", Value: "N"},
+				{Name: "included-units", Short: "free units per tenant per UTC calendar month", Value: "N"},
+				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf", Value: "UP_TO:PRICE", Repeatable: true},
+				{Name: "weight", Short: "units per request on a route; repeat per route", Value: "\"METHOD /template=N\"", Repeatable: true},
+				{Name: "max-requests-per-minute", Short: "request budget per minute (with --max-requests-per-day)", Value: "N"},
+				{Name: "max-requests-per-day", Short: "request budget per day (with --max-requests-per-minute)", Value: "N"},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, rounded per subject minute", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+				{Name: "tier-mode", Short: "how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches)", Value: "MODE", ClosedSet: []string{"graduated", "volume"}},
+			}},
+			{Name: "set-plan", Short: "Move a tenant onto a plan: its rate card from the next minute (the next month when the unit changes) and its request budget at once", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "plan", Short: "tenant plan name", Value: "NAME", Req: true},
+			}},
+			{Name: "plan-history", Short: "List a tenant's plan assignments, newest first", Flags: []cliFlag{platformTenantIDFlag}},
 		},
 	},
 	{

@@ -19,6 +19,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
+	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
+	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
+	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -31,6 +35,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
+	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
+	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -96,6 +102,12 @@ type server struct {
 	aiGatewayRollout                       outbound.AIGatewayRollout // ADR-998
 	outboundAI                             outboundai.Service        // ADR-977; Host wired in newServer
 	flagsWorkloadVerifier                  *workloadidentity.Verifier
+	statementInvoices                      statementinvoices.Service // ADR-1300; Host wired in newServer
+	billingRuns                            billingruns.Service       // ADR-1301; Host wired in newServer
+	consumerBilling                        consumerbilling.Service   // ADR-1304; Host wired in newServer
+	consumerCredits                        consumercredits.Service   // ADR-1306; Host wired in newServer
+	consumerControls                       consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
+	tenantPlans                            tenantplans.Service       // ADR-1307; Host wired in newServer
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
@@ -1262,6 +1274,12 @@ func newServerWithDeps(
 	s.realtime.DrainWake = make(chan struct{}, 1)
 	s.appEvents.Host = appEventsHost{s}
 	s.outboundAI.Host = outboundAIHost{s}
+	s.statementInvoices.Host = statementInvoicesHost{s}
+	s.billingRuns.Host = billingRunsHost{s}
+	s.consumerBilling.Host = consumerBillingHost{s}
+	s.consumerCredits.Host = consumerCreditsHost{s}
+	s.consumerControls.Host = consumerControlsHost{s}
+	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
@@ -1712,6 +1730,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/request-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantRequestBudget))))
 	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/request-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setPlatformTenantRequestBudget))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantRateCards))))
+	// ADR-1307: tenant plans bundle card terms and a request budget.
+	mux.HandleFunc("GET /v1/account/platform-tenant-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListPlans))))
+	mux.HandleFunc("POST /v1/account/platform-tenant-plans", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.CreatePlan)))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.GetPlan))))
+	mux.HandleFunc("PUT /v1/account/platform-tenant-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.tenantPlans.UpdatePlan))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListAssignments))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.AssignPlan)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantRateCard)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
@@ -1719,6 +1744,21 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizePlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatementHandoff))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimPlatformTenantStatement)))))
+	// ADR-1300: export finalized statements to the account's own Stripe as draft invoices.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.GetPlatformTenantStatementExport))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.statementInvoices.ExportPlatformTenantStatement)))))
+	mux.HandleFunc("GET /v1/account/billing-connections/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.GetBillingConnection))))
+	mux.HandleFunc("PUT /v1/account/billing-connections/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.statementInvoices.PutBillingConnection))))
+	mux.HandleFunc("DELETE /v1/account/billing-connections/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.statementInvoices.DeleteBillingConnection))))
+	mux.HandleFunc("GET /v1/account/statement-invoices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.ListInvoices)))) // ADR-1302
+	// Month-end billing runs (ADR-1301).
+	mux.HandleFunc("POST /v1/account/billing-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.billingRuns.CreateRun)))))
+	mux.HandleFunc("GET /v1/account/billing-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.ListRuns))))
+	mux.HandleFunc("GET /v1/account/billing-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.GetRun))))
+	mux.HandleFunc("GET /v1/account/billing-runs/{id}/items", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.ListRunItems))))
+	mux.HandleFunc("GET /v1/account/billing-run-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.GetSchedule))))
+	mux.HandleFunc("PUT /v1/account/billing-run-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.billingRuns.PutSchedule))))
+	mux.HandleFunc("DELETE /v1/account/billing-run-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.billingRuns.DeleteSchedule))))
 	// Downstream tenants get a separate route namespace and an explicit
 	// special-scope gate; account keys cannot use these routes.
 	// ADR-521: customer Operations uses a distinct tenant-owned namespace.
@@ -1862,6 +1902,20 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-plans/{plan_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAPIConsumerPlanLimits))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerPlanAssignments))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.assignAPIConsumerPlan)))))
+	// ADR-1306: prepaid credit and monthly spend caps per consumer.
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/credits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.ListCredits))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/credits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.consumerCredits.CreateCredit)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/credits/{credit_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.VoidCredit))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.GetSpendCap))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.PutSpendCap))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.DeleteSpendCap))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTrial)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTrial))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTrial))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetBillingPolicy)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutBillingPolicy))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteBillingPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageAlerts))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageCompleteness))))
@@ -1877,6 +1931,8 @@ func (s *server) handler() http.Handler {
 	// never charges through Gregale.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageStatementHandoff))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimAPIConsumerUsageStatement)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.GetAppConsumerStatementExport))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.statementInvoices.ExportAppConsumerStatement)))))
 	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a
@@ -4432,6 +4488,11 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	// ADR-1304: an app's customer reads its own billing with its consumer
+	// key; no account credential is involved.
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}", s.consumerBilling.Summary)
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}/usage", s.consumerBilling.Usage)
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}/statements", s.consumerBilling.Statements)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))
