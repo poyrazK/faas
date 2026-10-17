@@ -17628,6 +17628,26 @@ CREATE TABLE public.database_role_verifiers (
 
 
 --
+-- Name: database_restore_drills; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.database_restore_drills (
+    drill_id uuid NOT NULL PRIMARY KEY,
+    node_id text NOT NULL,
+    source_id uuid NOT NULL,
+    target_at timestamp with time zone NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    result text DEFAULT 'running'::text NOT NULL,
+    recovered_to timestamp with time zone,
+    error_code text,
+    CONSTRAINT database_restore_drills_error_code CHECK (((error_code IS NULL) OR (error_code ~ '^[a-z0-9_]{1,64}$'::text))),
+    CONSTRAINT database_restore_drills_finished CHECK (((result = 'running'::text) = (finished_at IS NULL))),
+    CONSTRAINT database_restore_drills_result_check CHECK ((result = ANY (ARRAY['running'::text, 'ok'::text, 'failed'::text, 'skipped'::text])))
+);
+
+
+--
 -- Name: database_usage; Type: TABLE; Schema: public; Owner: -
 --
 

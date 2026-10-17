@@ -375,3 +375,48 @@ tests:
               summary: 3 native database(s) still on an outdated base after a day
               description: "Database VMs survive vmmd restarts, so a release's PostgreSQL minor, guest-init or launch changes reach a running database only when it restarts. schedd restarts idle always-on databases on its own; these stayed busy, or are scale-to-zero databases that never went idle. Restart them in place: gregalectl database-nodes restart (runbook)."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: a node without a passing restore drill for two days warns
+    interval: 1m
+    input_series:
+      # db-1 last passed at t=0 and never again; db-2 keeps passing.
+      - series: schedd_database_restore_drill_last_ok_timestamp_seconds{node="db-1",instance="10.42.0.2:9102"}
+        values: 0+0x3200
+      - series: schedd_database_restore_drill_last_ok_timestamp_seconds{node="db-2",instance="10.42.0.2:9102"}
+        values: 0+60x3200
+    alert_rule_test:
+      - eval_time: 1d
+        alertname: FaasDatabaseRestoreDrillStale
+        exp_alerts: []
+      - eval_time: 2d3h
+        alertname: FaasDatabaseRestoreDrillStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+              node: db-1
+            exp_annotations:
+              summary: No restore drill has passed on database node db-1 for two days
+              description: "schedd restores one of each node's databases from its backups every day into a throwaway database. None has passed on db-1 for two days, so nothing proves its databases restore. Look for failed or skipped drills in schedd's log."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+
+  - name: a failed restore drill warns for a day
+    interval: 1m
+    input_series:
+      - series: schedd_database_restore_drills_total{result="failed",instance="10.42.0.2:9102"}
+        values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1+0x200
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasDatabaseRestoreDrillFailed
+        exp_alerts: []
+      - eval_time: 1h
+        alertname: FaasDatabaseRestoreDrillFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: A database restore drill failed
+              description: "A daily restore drill could not restore a database from its node's backups in the last day. The same restore serves customers' point-in-time restores and node-loss recovery."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md

@@ -9482,6 +9482,40 @@ func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNod
 	return items, nil
 }
 
+const databaseRestoreDrillsByNode = `-- name: DatabaseRestoreDrillsByNode :many
+SELECT node_id,
+       max(started_at)::timestamptz AS last_started,
+       coalesce(max(finished_at) FILTER (WHERE result = 'ok'), 'epoch'::timestamptz)::timestamptz AS last_ok
+  FROM database_restore_drills
+ GROUP BY node_id
+`
+
+type DatabaseRestoreDrillsByNodeRow struct {
+	NodeID      string
+	LastStarted pgtype.Timestamptz
+	LastOk      pgtype.Timestamptz
+}
+
+func (q *Queries) DatabaseRestoreDrillsByNode(ctx context.Context, db DBTX) ([]DatabaseRestoreDrillsByNodeRow, error) {
+	rows, err := db.Query(ctx, databaseRestoreDrillsByNode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseRestoreDrillsByNodeRow{}
+	for rows.Next() {
+		var i DatabaseRestoreDrillsByNodeRow
+		if err := rows.Scan(&i.NodeID, &i.LastStarted, &i.LastOk); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const databaseUsageRows = `-- name: DatabaseUsageRows :many
 SELECT meter, started_at, ended_at, rate FROM database_usage
 WHERE database_id = $1 AND started_at < $2
@@ -15031,6 +15065,32 @@ UPDATE database_vms SET promote_pending = false WHERE database_id = $1
 
 func (q *Queries) FinishDatabasePromotion(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
 	result, err := db.Exec(ctx, finishDatabasePromotion, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishDatabaseRestoreDrill = `-- name: FinishDatabaseRestoreDrill :execrows
+UPDATE database_restore_drills
+   SET result = $1, finished_at = now(), recovered_to = $2, error_code = $3
+ WHERE drill_id = $4 AND result = 'running'
+`
+
+type FinishDatabaseRestoreDrillParams struct {
+	Result      string
+	RecoveredTo pgtype.Timestamptz
+	ErrorCode   pgtype.Text
+	DrillID     pgtype.UUID
+}
+
+func (q *Queries) FinishDatabaseRestoreDrill(ctx context.Context, db DBTX, arg FinishDatabaseRestoreDrillParams) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseRestoreDrill,
+		arg.Result,
+		arg.RecoveredTo,
+		arg.ErrorCode,
+		arg.DrillID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -52502,6 +52562,18 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 	return err
 }
 
+const pruneDatabaseRestoreDrills = `-- name: PruneDatabaseRestoreDrills :execrows
+DELETE FROM database_restore_drills WHERE result <> 'running' AND started_at < $1
+`
+
+func (q *Queries) PruneDatabaseRestoreDrills(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, pruneDatabaseRestoreDrills, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneDatabaseUsage = `-- name: PruneDatabaseUsage :execrows
 DELETE FROM database_usage
 WHERE ended_at < $1 OR (meter = 'egress' AND started_at < $1)
@@ -68181,6 +68253,40 @@ func (q *Queries) RouteProbeObservations(ctx context.Context, db DBTX, arg Route
 	return items, nil
 }
 
+const runningDatabaseRestoreDrills = `-- name: RunningDatabaseRestoreDrills :many
+SELECT drill_id, node_id, source_id, target_at, started_at, finished_at, result, recovered_to, error_code FROM database_restore_drills WHERE result = 'running' ORDER BY started_at
+`
+
+func (q *Queries) RunningDatabaseRestoreDrills(ctx context.Context, db DBTX) ([]DatabaseRestoreDrill, error) {
+	rows, err := db.Query(ctx, runningDatabaseRestoreDrills)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseRestoreDrill{}
+	for rows.Next() {
+		var i DatabaseRestoreDrill
+		if err := rows.Scan(
+			&i.DrillID,
+			&i.NodeID,
+			&i.SourceID,
+			&i.TargetAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Result,
+			&i.RecoveredTo,
+			&i.ErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runtimeConfigInputsFresh = `-- name: RuntimeConfigInputsFresh :one
 SELECT environment_runtime_inputs_fresh($1::uuid, $2::text, $3::timestamptz,
     $4::jsonb, $5::jsonb, $6::boolean,$7::jsonb,$8::jsonb)::boolean AS fresh
@@ -69923,6 +70029,34 @@ func (q *Queries) StartCustomerOperationWorkflowStep(ctx context.Context, db DBT
 	var input []byte
 	err := row.Scan(&input)
 	return input, err
+}
+
+const startDatabaseRestoreDrill = `-- name: StartDatabaseRestoreDrill :execrows
+
+INSERT INTO database_restore_drills (drill_id, node_id, source_id, target_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (drill_id) DO NOTHING
+`
+
+type StartDatabaseRestoreDrillParams struct {
+	DrillID  pgtype.UUID
+	NodeID   string
+	SourceID pgtype.UUID
+	TargetAt pgtype.Timestamptz
+}
+
+// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
+func (q *Queries) StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg StartDatabaseRestoreDrillParams) (int64, error) {
+	result, err := db.Exec(ctx, startDatabaseRestoreDrill,
+		arg.DrillID,
+		arg.NodeID,
+		arg.SourceID,
+		arg.TargetAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one

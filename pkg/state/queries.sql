@@ -18665,3 +18665,28 @@ WHERE database_id = sqlc.arg(database_id) AND role_name = sqlc.arg(role_name);
 
 -- name: DeleteDatabaseRoleVerifiers :execrows
 DELETE FROM database_role_verifiers WHERE database_id = sqlc.arg(database_id);
+
+-- ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
+
+-- name: StartDatabaseRestoreDrill :execrows
+INSERT INTO database_restore_drills (drill_id, node_id, source_id, target_at)
+VALUES (@drill_id, @node_id, @source_id, @target_at)
+ON CONFLICT (drill_id) DO NOTHING;
+
+-- name: RunningDatabaseRestoreDrills :many
+SELECT * FROM database_restore_drills WHERE result = 'running' ORDER BY started_at;
+
+-- name: FinishDatabaseRestoreDrill :execrows
+UPDATE database_restore_drills
+   SET result = @result, finished_at = now(), recovered_to = sqlc.narg(recovered_to), error_code = sqlc.narg(error_code)
+ WHERE drill_id = @drill_id AND result = 'running';
+
+-- name: DatabaseRestoreDrillsByNode :many
+SELECT node_id,
+       max(started_at)::timestamptz AS last_started,
+       coalesce(max(finished_at) FILTER (WHERE result = 'ok'), 'epoch'::timestamptz)::timestamptz AS last_ok
+  FROM database_restore_drills
+ GROUP BY node_id;
+
+-- name: PruneDatabaseRestoreDrills :execrows
+DELETE FROM database_restore_drills WHERE result <> 'running' AND started_at < @before;

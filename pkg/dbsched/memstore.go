@@ -17,12 +17,14 @@ type MemStore struct {
 	leases map[string]time.Time
 	// ledger is the usage ledger by database id.
 	ledger map[string][]UsageRow
+	// drills are the restore drills by id.
+	drills map[string]Drill
 	now    func() time.Time
 }
 
 // NewMemStore returns an empty MemStore.
 func NewMemStore() *MemStore {
-	return &MemStore{nodes: map[string]Node{}, vms: map[string]VM{}, leases: map[string]time.Time{}, ledger: map[string][]UsageRow{}, now: time.Now}
+	return &MemStore{nodes: map[string]Node{}, vms: map[string]VM{}, leases: map[string]time.Time{}, ledger: map[string][]UsageRow{}, drills: map[string]Drill{}, now: time.Now}
 }
 
 var _ Store = (*MemStore)(nil)
@@ -628,4 +630,70 @@ func (m *MemStore) FinishPromotion(_ context.Context, id string) error {
 	vm.PromotePending = false
 	m.vms[id] = vm
 	return nil
+}
+
+func (m *MemStore) StartDrill(_ context.Context, d Drill) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.drills[d.ID]; ok {
+		return false, nil
+	}
+	d.StartedAt, d.Result = m.now(), DrillRunning
+	m.drills[d.ID] = d
+	return true, nil
+}
+
+func (m *MemStore) RunningDrills(context.Context) ([]Drill, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Drill
+	for _, d := range m.drills {
+		if d.Result == DrillRunning {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
+	return out, nil
+}
+
+func (m *MemStore) FinishDrill(_ context.Context, id string, result DrillResult, recoveredTo time.Time, errorCode string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.drills[id]
+	if !ok || d.Result != DrillRunning {
+		return nil
+	}
+	d.Result, d.FinishedAt, d.RecoveredTo, d.ErrorCode = result, m.now(), recoveredTo, errorCode
+	m.drills[id] = d
+	return nil
+}
+
+func (m *MemStore) DrillsByNode(context.Context) (map[string]DrillSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]DrillSummary{}
+	for _, d := range m.drills {
+		sum := out[d.NodeID]
+		if d.StartedAt.After(sum.LastStarted) {
+			sum.LastStarted = d.StartedAt
+		}
+		if d.Result == DrillOK && d.FinishedAt.After(sum.LastOK) {
+			sum.LastOK = d.FinishedAt
+		}
+		out[d.NodeID] = sum
+	}
+	return out, nil
+}
+
+func (m *MemStore) PruneDrills(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for id, d := range m.drills {
+		if d.Result != DrillRunning && d.StartedAt.Before(before) {
+			delete(m.drills, id)
+			n++
+		}
+	}
+	return n, nil
 }

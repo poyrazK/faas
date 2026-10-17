@@ -1702,6 +1702,41 @@ databases (copy readers and targets over the restored database, and
 checkpoint connections and maintenance on the source). Until they exist,
 a clone of a native database stops after the fork.
 
+### Restore drills
+
+Backups nobody restores prove nothing, and this ADR makes restore drills
+ship-blocking. schedd's idle sweep runs them (`dbsched.RunDrills`, every
+sample, at most one per node per `DrillEvery`, 24 h):
+
+- **Pick.** On each active node with no drill running, one database that
+  was created and base-backed up before the drill's target. It is chosen
+  by a hash of the day, so replicas agree and every database takes its
+  turn. A drill's id derives from the source and the day, and a
+  `database_restore_drills` row starts it once.
+- **Restore.** `Restore` to a minute ago, into a throwaway database on the
+  source's node: 1 vCPU, at most 384 MiB, a one-hour restore window.
+  This is the restore customers' point-in-time restores and node-loss
+  recovery use, so the drill covers archive flush, base backup, WAL
+  replay, promotion and the copy's own first backup.
+- **Settle.** Once the copy parks, the drill is `ok` with its
+  `recovered_to`. A failed restore fails the drill with its code, and so
+  does a drill still running after `DrillTimeout` (3 h). Then the copy is
+  deleted and its archive dropped. `drill_no_capacity` is `skipped`, not
+  a failure.
+- **Watch.** `schedd_database_restore_drills_total{result}` and
+  `schedd_database_restore_drill_last_ok_timestamp_seconds{node}`.
+  `FaasDatabaseRestoreDrillFailed` warns on a failed drill, and
+  `FaasDatabaseRestoreDrillStale` when a node has had no pass for two
+  days. Finished drills are kept 90 days.
+
+On metal, a drill restored a database with 5,000 rows to a minute before
+the drill in 10.8 s, recovering to its last commit 5.1 s before the
+target. The copy and its archive were gone afterwards, and the source was
+untouched.
+
+Not yet done: drills prove the restore runs and reaches a commit near
+the target; they do not compare the copy's contents with the source.
+
 ### Storage guard
 
 A database's volume is its storage limit. When it fills, PostgreSQL

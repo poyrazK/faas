@@ -188,6 +188,16 @@ type Store interface {
 	Usage(ctx context.Context, id string, from, to time.Time) (Usage, error)
 	// PruneUsage drops ledger rows that ended before before.
 	PruneUsage(ctx context.Context, before time.Time) (int64, error)
+
+	// Restore drills (drill.go). StartDrill records a running drill and
+	// reports false when one with its id exists; FinishDrill ends a
+	// running one; DrillsByNode summarizes each node's drills;
+	// PruneDrills drops finished drills started before before.
+	StartDrill(ctx context.Context, d Drill) (bool, error)
+	RunningDrills(ctx context.Context) ([]Drill, error)
+	FinishDrill(ctx context.Context, id string, result DrillResult, recoveredTo time.Time, errorCode string) error
+	DrillsByNode(ctx context.Context) (map[string]DrillSummary, error)
+	PruneDrills(ctx context.Context, before time.Time) (int64, error)
 	// Resize records a parked or running database's new shape and marks
 	// it pending, if the node fits it (volume capacity, and RAM while the
 	// VM is active). The same shape again is a no-op; a smaller volume is

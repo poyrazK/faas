@@ -1896,6 +1896,18 @@ type DatabaseNode struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type DatabaseRestoreDrill struct {
+	DrillID     pgtype.UUID
+	NodeID      string
+	SourceID    pgtype.UUID
+	TargetAt    pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	Result      string
+	RecoveredTo pgtype.Timestamptz
+	ErrorCode   pgtype.Text
+}
+
 type DatabaseRoleVerifier struct {
 	DatabaseID pgtype.UUID
 	RoleName   string

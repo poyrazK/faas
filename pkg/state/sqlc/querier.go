@@ -447,6 +447,7 @@ type Querier interface {
 	// standby volume counts on its standby node, and its memory there while
 	// the standby runs.
 	DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error)
+	DatabaseRestoreDrillsByNode(ctx context.Context, db DBTX) ([]DatabaseRestoreDrillsByNodeRow, error)
 	// Rows that can overlap [from, to): intervals crossing it and egress hours
 	// starting before its end (the caller drops earlier hours).
 	DatabaseUsageRows(ctx context.Context, db DBTX, arg DatabaseUsageRowsParams) ([]DatabaseUsageRowsRow, error)
@@ -957,6 +958,7 @@ type Querier interface {
 	FinishAppHealthCollection(ctx context.Context, db DBTX, arg FinishAppHealthCollectionParams) error
 	FinishClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg FinishClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
 	FinishDatabasePromotion(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
+	FinishDatabaseRestoreDrill(ctx context.Context, db DBTX, arg FinishDatabaseRestoreDrillParams) (int64, error)
 	FinishDatabaseVMMove(ctx context.Context, db DBTX, arg FinishDatabaseVMMoveParams) (int64, error)
 	FinishDatabaseVMResize(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
@@ -2628,6 +2630,7 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	PruneDatabaseRestoreDrills(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PruneDatabaseUsage(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
 	// Keeps the newest keep_count manifests of the app plus the live
@@ -3304,6 +3307,7 @@ type Querier interface {
 	RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error)
 	RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
+	RunningDatabaseRestoreDrills(ctx context.Context, db DBTX) ([]DatabaseRestoreDrill, error)
 	RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg RuntimeConfigInputsFreshParams) (bool, error)
 	RuntimeConfigReceiptRequired(ctx context.Context, db DBTX, arg RuntimeConfigReceiptRequiredParams) (bool, error)
 	RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, catalogKey string) (RuntimeSnapshot, error)
@@ -3406,6 +3410,8 @@ type Querier interface {
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowRunParams) error
 	StartCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowStepParams) ([]byte, error)
+	// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
+	StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg StartDatabaseRestoreDrillParams) (int64, error)
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
 	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)

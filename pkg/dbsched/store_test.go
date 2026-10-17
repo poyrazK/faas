@@ -472,3 +472,51 @@ func TestStoreResize(t *testing.T) {
 		})
 	}
 }
+
+// Drills start once per id, finish once, summarize per node and prune.
+func TestStoreRestoreDrills(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			d := Drill{ID: uuid.NewString(), NodeID: "db-a", SourceID: uuid.NewString(), TargetAt: time.Now().UTC().Truncate(time.Microsecond)}
+			if ok, err := s.StartDrill(ctx, d); err != nil || !ok {
+				t.Fatalf("start = %v, %v", ok, err)
+			}
+			if ok, err := s.StartDrill(ctx, d); err != nil || ok {
+				t.Fatalf("second start of the same drill = %v, %v; want false", ok, err)
+			}
+			other := Drill{ID: uuid.NewString(), NodeID: "db-b", SourceID: uuid.NewString(), TargetAt: d.TargetAt}
+			if _, err := s.StartDrill(ctx, other); err != nil {
+				t.Fatal(err)
+			}
+			running, err := s.RunningDrills(ctx)
+			if err != nil || len(running) != 2 || running[0].Result != DrillRunning || !running[0].TargetAt.Equal(d.TargetAt) {
+				t.Fatalf("running = %+v, %v", running, err)
+			}
+			recovered := d.TargetAt.Add(-time.Second)
+			if err := s.FinishDrill(ctx, d.ID, DrillOK, recovered, ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.FinishDrill(ctx, other.ID, DrillFailed, time.Time{}, "restore_failed"); err != nil {
+				t.Fatal(err)
+			}
+			// A finished drill stays finished.
+			if err := s.FinishDrill(ctx, d.ID, DrillFailed, time.Time{}, "late"); err != nil {
+				t.Fatal(err)
+			}
+			if running, _ := s.RunningDrills(ctx); len(running) != 0 {
+				t.Fatalf("running after finishing = %+v", running)
+			}
+			sums, err := s.DrillsByNode(ctx)
+			if err != nil || sums["db-a"].LastOK.IsZero() || sums["db-a"].LastStarted.IsZero() || !sums["db-b"].LastOK.IsZero() {
+				t.Fatalf("summaries = %+v, %v", sums, err)
+			}
+			if n, err := s.PruneDrills(ctx, time.Now().Add(time.Hour)); err != nil || n != 2 {
+				t.Fatalf("prune = %d, %v", n, err)
+			}
+			if sums, _ := s.DrillsByNode(ctx); len(sums) != 0 {
+				t.Fatalf("summaries after pruning = %+v", sums)
+			}
+		})
+	}
+}

@@ -206,6 +206,11 @@ type Config struct {
 	// negative restarts none).
 	StaleIdle     time.Duration
 	StaleRestarts int
+	// DrillEvery spaces each node's restore drills (default 24 h; negative
+	// turns drills off); DrillTimeout fails a drill still restoring after
+	// it (default 3 h, beyond RestoreTimeout).
+	DrillEvery   time.Duration
+	DrillTimeout time.Duration
 	// AutoFailoverAfter fails a running replicated database over to its
 	// synchronized standby once its primary's node has not answered for
 	// this long (default 30 s; negative leaves failover to the operator's
@@ -338,6 +343,12 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.StaleRestarts == 0 {
 		cfg.StaleRestarts = 2
+	}
+	if cfg.DrillEvery == 0 {
+		cfg.DrillEvery = 24 * time.Hour
+	}
+	if cfg.DrillTimeout <= 0 {
+		cfg.DrillTimeout = cfg.RestoreTimeout + time.Hour
 	}
 	if cfg.AutoFailoverAfter == 0 {
 		cfg.AutoFailoverAfter = 30 * time.Second
@@ -1082,6 +1093,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 				sampled = now
 				if _, err := s.SampleStorage(ctx); err != nil {
 					s.log.Warn("dbsched: storage sample failed", "err", err)
+				}
+				if _, err := s.RunDrills(ctx); err != nil {
+					s.log.Warn("dbsched: restore drills failed", "err", err)
 				}
 			}
 			if _, err := s.SettleLostNodes(ctx); err != nil {

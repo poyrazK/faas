@@ -202,6 +202,29 @@ groups:
           description: "Database VMs survive vmmd restarts, so a release's PostgreSQL minor, guest-init or launch changes reach a running database only when it restarts. schedd restarts idle always-on databases on its own; these stayed busy, or are scale-to-zero databases that never went idle. Restart them in place: gregalectl database-nodes restart (runbook)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      - alert: FaasDatabaseRestoreDrillStale
+        expr: time() - max by (node) (schedd_database_restore_drill_last_ok_timestamp_seconds) > 2 * 86400
+        for: 2h
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "No restore drill has passed on database node {{ $labels.node }} for two days"
+          description: "schedd restores one of each node's databases from its backups every day into a throwaway database. None has passed on {{ $labels.node }} for two days, so nothing proves its databases restore. Look for failed or skipped drills in schedd's log."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
+      - alert: FaasDatabaseRestoreDrillFailed
+        expr: sum(increase(schedd_database_restore_drills_total{result="failed"}[1d])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "A database restore drill failed"
+          description: "A daily restore drill could not restore a database from its node's backups in the last day. The same restore serves customers' point-in-time restores and node-loss recovery."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
       - alert: FaasDatabaseMoveFailed
         expr: sum(increase(schedd_database_moves_total{result="failed"}[1h])) > 0
         labels:

@@ -925,3 +925,63 @@ func (s *PgStore) FinishPromotion(ctx context.Context, id string) error {
 	n, err := s.q.FinishDatabasePromotion(ctx, s.pool, key)
 	return s.changed(ctx, s.pool, id, n, err)
 }
+
+func (s *PgStore) StartDrill(ctx context.Context, d Drill) (bool, error) {
+	id, err := pgUUID(d.ID)
+	if err != nil {
+		return false, fmt.Errorf("%w: drill id", ErrInvalid)
+	}
+	source, err := pgUUID(d.SourceID)
+	if err != nil {
+		return false, fmt.Errorf("%w: drill source", ErrInvalid)
+	}
+	n, err := s.q.StartDatabaseRestoreDrill(ctx, s.pool, sqlc.StartDatabaseRestoreDrillParams{
+		DrillID: id, NodeID: d.NodeID, SourceID: source, TargetAt: pgtype.Timestamptz{Time: d.TargetAt, Valid: true},
+	})
+	return n == 1, err
+}
+
+func (s *PgStore) RunningDrills(ctx context.Context) ([]Drill, error) {
+	rows, err := s.q.RunningDatabaseRestoreDrills(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Drill, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Drill{ID: uuid.UUID(r.DrillID.Bytes).String(), NodeID: r.NodeID, SourceID: uuid.UUID(r.SourceID.Bytes).String(),
+			TargetAt: r.TargetAt.Time, StartedAt: r.StartedAt.Time, Result: DrillResult(r.Result)})
+	}
+	return out, nil
+}
+
+func (s *PgStore) FinishDrill(ctx context.Context, id string, result DrillResult, recoveredTo time.Time, errorCode string) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	_, err = s.q.FinishDatabaseRestoreDrill(ctx, s.pool, sqlc.FinishDatabaseRestoreDrillParams{
+		Result: string(result), RecoveredTo: pgtype.Timestamptz{Time: recoveredTo, Valid: !recoveredTo.IsZero()},
+		ErrorCode: pgtype.Text{String: errorCode, Valid: errorCode != ""}, DrillID: key,
+	})
+	return err
+}
+
+func (s *PgStore) DrillsByNode(ctx context.Context) (map[string]DrillSummary, error) {
+	rows, err := s.q.DatabaseRestoreDrillsByNode(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]DrillSummary, len(rows))
+	for _, r := range rows {
+		sum := DrillSummary{LastStarted: r.LastStarted.Time}
+		if r.LastOk.Time.After(time.Unix(0, 0)) {
+			sum.LastOK = r.LastOk.Time
+		}
+		out[r.NodeID] = sum
+	}
+	return out, nil
+}
+
+func (s *PgStore) PruneDrills(ctx context.Context, before time.Time) (int64, error) {
+	return s.q.PruneDatabaseRestoreDrills(ctx, s.pool, pgtype.Timestamptz{Time: before, Valid: true})
+}

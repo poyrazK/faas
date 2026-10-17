@@ -158,7 +158,32 @@ take `sum`.
 | `schedd_database_moves_total{result}` | Moves between nodes. |
 | `schedd_database_stale_vms` | Running databases (or their standbys) on an outdated base or launch at the last sample. |
 | `schedd_database_stale_restarts_total{result}` | Idle always-on databases schedd restarted onto the current base. |
+| `schedd_database_restore_drills_total{result}` | Daily restore drills: `ok`, `failed`, `skipped` (no capacity to start one). |
+| `schedd_database_restore_drill_last_ok_timestamp_seconds{node}` | When the node's last drill passed (0: none yet). |
 | `schedd_database_storage{level}` | Running databases at the last storage sample (every 2 min): `sampled`, `low` (short of the space that ends read-only), `read_only`. |
+
+### FaasDatabaseRestoreDrillFailed and FaasDatabaseRestoreDrillStale (warn)
+
+Every day, schedd restores one database per active node to a minute ago
+from that node's backups. It uses the same restore as a customer's
+point-in-time restore and node-loss recovery: the archive is flushed, the
+base backup extracted, WAL replayed, and the copy promoted and backed up.
+The copy is a throwaway database. Once the drill is recorded in
+`database_restore_drills`, the copy and its archive are deleted.
+Customers never see it.
+
+1. `journalctl -u faas-schedd | grep 'restore drill'` shows each drill's
+   node, source, target and outcome (`recovered_to`, or an `error_code`).
+2. A `failed` drill means a restore from that node's backups does not
+   work right now. Treat it as you would a failed customer restore: check
+   `FaasDatabaseArchiveKeeperDown`, dbbackupd's log on the node, and the
+   source's `last_backup_at`. The next day's drill picks another database.
+3. `drill_no_capacity` (`skipped`) means the node had no room for the
+   throwaway database; that is not a backup failure, but it leaves the
+   node unproven, and `FaasDatabaseRestoreDrillStale` fires after two
+   days without a pass.
+4. `SELECT * FROM database_restore_drills ORDER BY started_at DESC` keeps
+   90 days of drills.
 
 ### FaasDatabaseStaleVMs (warn)
 

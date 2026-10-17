@@ -19,6 +19,8 @@ type Metrics struct {
 	storage      *prometheus.GaugeVec
 	stale        prometheus.Gauge
 	staleRestart *prometheus.CounterVec
+	drills       *prometheus.CounterVec
+	drillLastOK  *prometheus.GaugeVec
 	catalog      *catalogCollector
 }
 
@@ -66,9 +68,17 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_database_stale_restarts_total",
 			Help: "Idle always-on databases restarted onto the current base, by result (ok, failed).",
 		}, []string{"result"}),
+		drills: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_restore_drills_total",
+			Help: "Restore drills by result: ok (a database restored to a minute before the drill from its node's backups), failed, or skipped (no capacity to start one).",
+		}, []string{"result"}),
+		drillLastOK: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: prefix + "_database_restore_drill_last_ok_timestamp_seconds",
+			Help: "When a database node's last restore drill passed (0: none since its drills began). Only nodes with drills report.",
+		}, []string{"node"}),
 		catalog: newCatalogCollector(prefix),
 	}
-	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.stale, m.staleRestart, m.catalog)
+	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.stale, m.staleRestart, m.drills, m.drillLastOK, m.catalog)
 	return m
 }
 
@@ -97,6 +107,25 @@ func (m *Metrics) sampledStorage(s StorageSample) {
 	m.storage.WithLabelValues("low").Set(float64(s.Low))
 	m.storage.WithLabelValues("read_only").Set(float64(s.ReadOnly))
 	m.stale.Set(float64(s.Stale))
+}
+
+func (m *Metrics) drilled(result DrillResult) {
+	if m != nil {
+		m.drills.WithLabelValues(string(result)).Inc()
+	}
+}
+
+func (m *Metrics) observedDrills(summaries map[string]DrillSummary) {
+	if m == nil {
+		return
+	}
+	for node, sum := range summaries {
+		at := 0.0
+		if !sum.LastOK.IsZero() {
+			at = float64(sum.LastOK.Unix())
+		}
+		m.drillLastOK.WithLabelValues(node).Set(at)
+	}
 }
 
 func (m *Metrics) restartedStale(err error) {
