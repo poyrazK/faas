@@ -114,6 +114,25 @@ Node 22 and Node 24. Each run executed fourteen SQL scenarios plus the parent
 test: fifteen passes, zero skips and zero failures. These are portable SQL
 lifecycle results; no native VM capture or restore is qualified by them.
 
+## Integration with the Auth and rehearsal releases
+
+The branch also integrates main through
+`49ecac58dad13a8d0ee27f0e8af5206d4d7408dc`. The function destination replay
+fence stays ahead of rehearsal network setup. Activity retains both managed
+dispatch identity and independent execution ownership; a single held dispatch
+cannot authorize suspension while separate function execution remains. Focused
+regressions cover both interactions.
+
+The three unmerged function migrations now follow the published rehearsal
+migrations at versions `20261018003150915`, `20261018003150916` and
+`20261018003150917`. Published main migrations retain their bytes and identities.
+Fresh combined schema generation produced 78,875 lines, and replay/down-up
+preserved that schema. SQLC and protobuf drift, SDK build, ADR uniqueness,
+documentation/live fixtures and the full activity race suite passed. The larger
+qualification-tagged simulated-host race run and native-binary compilation were
+still pending when this increment was recorded; the PR tracks completion before
+merge. Function native activation remains disabled.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

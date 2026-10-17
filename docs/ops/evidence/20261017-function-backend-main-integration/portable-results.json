@@ -398,5 +398,49 @@
         "log_sha256": "35cca5e67feccbb0f432d845f2a458ea0cc4b1c5808cab02466fc7d1ad8558ea"
       }
     }
+  },
+  "rehearsal_main_integration": {
+    "main_base": "49ecac58dad13a8d0ee27f0e8af5206d4d7408dc",
+    "code_commit": "f4ee8ef514b7396475cb5e7760271c011c92279e",
+    "schema_lines": 78875,
+    "function_migration_versions": [
+      20261018003150915,
+      20261018003150916,
+      20261018003150917
+    ],
+    "checks": {
+      "fresh_schema": {
+        "passed": true,
+        "log_sha256": "27ca32b940d6f6ec238d214dd84a30c507ca996ac98c12b31105eadc32484c9d"
+      },
+      "sqlc": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "protobuf": {
+        "passed": true,
+        "log_sha256": "3527862273bad2495db3831df4453a6765075b8aba5be0fc445bcd8d271df2c1"
+      },
+      "documentation_and_adr": {
+        "passed": true,
+        "log_sha256": "53fe1472e2416bcfb1a397095c3a3471e8eccd7af14323c78b8526f562756210"
+      },
+      "node_sdk_build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      },
+      "activity_race": {
+        "passed": true,
+        "log_sha256": "cd4f93a531a009e5ba0b39afc55bbdb0d8a20eb562ff4be8b106bf93fb774281"
+      },
+      "function_migration_roundtrip": {
+        "passed": true,
+        "log_sha256": "12498623c474698e1aa23528a8ecbb339082b2e59b461d7830585b4c8b9a6b7c"
+      }
+    },
+    "qualified_core_local_pending_at_record_creation": true,
+    "native_compile_pending_at_record_creation": true,
+    "native_execution_qualified": false,
+    "production_ready": false
   }
 }
