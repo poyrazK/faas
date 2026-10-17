@@ -103,21 +103,22 @@ def sync_detailed(
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
-    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
-    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
-    complete accounting and native owners; unavailable authority returns 422
-    financial_compute_not_ready.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute suspend_workloads with zero drain and no alert thresholds. Other
+    enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires
+    quiet covered workloads, complete accounting and capable native owners; unavailable authority
+    returns 422 financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
-            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads
+            (app/job gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
             activation requires quiet covered workloads, complete accounting, and native owners.
-            Account strict activation also requires recorded allowance and no independent jobs.
+            Account strict activation also requires recorded allowance and native owners capable of
+            funded jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,21 +151,22 @@ def sync(
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
-    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
-    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
-    complete accounting and native owners; unavailable authority returns 422
-    financial_compute_not_ready.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute suspend_workloads with zero drain and no alert thresholds. Other
+    enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires
+    quiet covered workloads, complete accounting and capable native owners; unavailable authority
+    returns 422 financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
-            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads
+            (app/job gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
             activation requires quiet covered workloads, complete accounting, and native owners.
-            Account strict activation also requires recorded allowance and no independent jobs.
+            Account strict activation also requires recorded allowance and native owners capable of
+            funded jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,21 +194,22 @@ async def asyncio_detailed(
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
-    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
-    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
-    complete accounting and native owners; unavailable authority returns 422
-    financial_compute_not_ready.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute suspend_workloads with zero drain and no alert thresholds. Other
+    enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires
+    quiet covered workloads, complete accounting and capable native owners; unavailable authority
+    returns 422 financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
-            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads
+            (app/job gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
             activation requires quiet covered workloads, complete accounting, and native owners.
-            Account strict activation also requires recorded allowance and no independent jobs.
+            Account strict activation also requires recorded allowance and native owners capable of
+            funded jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -237,21 +240,22 @@ async def asyncio(
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
-    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
-    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
-    complete accounting and native owners; unavailable authority returns 422
-    financial_compute_not_ready.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute suspend_workloads with zero drain and no alert thresholds. Other
+    enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires
+    quiet covered workloads, complete accounting and capable native owners; unavailable authority
+    returns 422 financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
-            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads
+            (app/job gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
             activation requires quiet covered workloads, complete accounting, and native owners.
-            Account strict activation also requires recorded allowance and no independent jobs.
+            Account strict activation also requires recorded allowance and native owners capable of
+            funded jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -43962,7 +43962,7 @@ paths:
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
         identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-        Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app, complete accounting and native owners; unavailable authority returns 422 financial_compute_not_ready.
+        Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross compute or account net compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires quiet covered workloads, complete accounting and capable native owners; unavailable authority returns 422 financial_compute_not_ready.
         Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
       parameters:
         - name: Idempotency-Key
@@ -44022,7 +44022,7 @@ paths:
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
         must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
-        policies can activate, along with strict app gross compute suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+        policies can activate, along with strict app/job gross compute or account net compute suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
         Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
@@ -61450,13 +61450,14 @@ components:
         targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
     FinancialComputeBalance:
       type: object
-      description: Conservative compute admission ledger. App scopes use gross compute; account scopes share included MB-seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Account strict activation requires no independent jobs.
+      description: Conservative compute admission ledger. App and job scopes use gross compute; account scopes share included MB-seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Independent job task attempts share account funding with apps.
       required: [initialized, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
       properties:
         initialized: { type: boolean }
         app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
-        scope_kind: { type: string, enum: [account, app] }
+        scope_kind: { type: string, enum: [account, app, job] }
         basis: { type: string, enum: [net_usage, gross_usage] }
         allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
@@ -61487,7 +61488,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app gross_usage or account net_usage) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowance and no independent jobs.
+      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app/job gross_usage or account net_usage) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowance and native owners capable of funded jobs.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
@@ -61540,7 +61541,7 @@ components:
         meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict mode covers compute only., items: { type: string, enum: [compute, egress] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
-        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict app compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
+        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
         mode: { type: string, enum: [monitored, strict] }
         action: { type: string, enum: [notify, reject_traffic, suspend_background, stop_previews, suspend_workloads] }
         drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify and strict app compute use zero; monitored stopping targets drain before the deadline. }

@@ -23,7 +23,7 @@ export type FinancialBudgetSpec = {
   basis: 'net_usage' | 'gross_usage';
   limit_millicents: number;
   /**
-   * Increasing nonnegative thresholds at or below the limit. Strict app compute requires an empty array; configure a separate monitored policy for alerts.
+   * Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts.
    */
   notify_millicents: Array<number>;
   mode: 'monitored' | 'strict';

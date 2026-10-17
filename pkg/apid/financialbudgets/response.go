@@ -37,7 +37,10 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		out.Reasons = []string{"strict_app_gross_compute", "conservative_compute_commitments", "funded_execution_window_only", "subscription_storage_egress_tax_excluded"}
 		if financial.StrictAccountCompute(p.Spec) {
 			out.Reasons[0] = "strict_account_net_compute"
-			out.Reasons = append(out.Reasons, "shared_quantity_allowance", "independent_jobs_unavailable")
+			out.Reasons = append(out.Reasons, "shared_quantity_allowance", "funded_job_attempts")
+		}
+		if financial.StrictJobCompute(p.Spec) {
+			out.Reasons[0] = "strict_job_gross_compute"
 		}
 		if !balance.Initialized {
 			out.Reasons = append(out.Reasons, "awaiting_period_initialization")

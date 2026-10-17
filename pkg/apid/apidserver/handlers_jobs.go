@@ -887,7 +887,7 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if err != nil {
 		switch {
 		case errors.Is(err, financial.ErrComputeUnavailable):
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_compute_job_unsupported", "Job unavailable under account compute budget", "Independent jobs require funded compute support. Disable the account strict compute policy before creating a job."))
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_compute_not_ready", "Job compute authority unavailable", "The compute authority could not be verified. Retry after native compute owners are ready."))
 		case errors.Is(err, state.ErrJobQuotaExceeded):
 			var qe *state.JobQuotaError
 			if errors.As(err, &qe) {

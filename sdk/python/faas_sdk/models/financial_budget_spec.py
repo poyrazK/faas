@@ -42,8 +42,8 @@ class FinancialBudgetSpec:
     usage."""
     limit_millicents: int
     notify_millicents: list[int]
-    """Increasing nonnegative thresholds at or below the limit. Strict app compute requires an empty array;
-    configure a separate monitored policy for alerts."""
+    """Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a
+    separate monitored policy for alerts."""
     mode: FinancialBudgetSpecMode
     action: FinancialBudgetSpecAction
     drain_seconds: int

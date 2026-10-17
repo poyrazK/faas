@@ -1,6 +1,7 @@
 package apidserver_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -61,11 +62,23 @@ func TestFinancialBudgetAccountStrictCompute(t *testing.T) {
 	if read.Runtime.Compute.AllowanceRemaining != 153600 {
 		t.Fatal("read lost allowance")
 	}
-	// The API reports the unsupported producer constraint as an actionable
-	// validation problem, rather than a generic capacity failure.
-	job := api.CreateJobRequest{Name: "blocked-job", Kind: "batch", ImageRef: "alpine:latest", RAMMB: 128, TaskTimeoutSec: 30, MaxParallelism: 1}
-	blocked := e.Do(t, "POST", "/v1/jobs", job, map[string]string{"Idempotency-Key": "unsupported-account-job"})
-	if blocked.Code != http.StatusUnprocessableEntity || !strings.Contains(blocked.Body.String(), "financial_compute_job_unsupported") {
-		t.Fatalf("job escaped account guard: %d %s", blocked.Code, blocked.Body)
+	job := api.CreateJobRequest{Name: "funded-job", Kind: "batch", ImageRef: "alpine:latest", RAMMB: 128, TaskTimeoutSec: 30, MaxParallelism: 1}
+	created := e.Do(t, "POST", "/v1/jobs", job, map[string]string{"Idempotency-Key": "funded-account-job"})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("job definition under account cap: %d %s", created.Code, created.Body)
+	}
+	var j api.JobResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &j); err != nil {
+		t.Fatal(err)
+	}
+	spec.Scope = financial.BudgetScope{Kind: "job", ID: j.ID}
+	spec.Basis = "gross_usage"
+	jobPolicy := decodeFinancialBudget(t, e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "job-strict"}), http.StatusCreated)
+	if jobPolicy.Runtime.Compute.JobID != j.ID || jobPolicy.Runtime.Compute.AppID != "" || jobPolicy.Runtime.Compute.ScopeKind != "job" {
+		t.Fatalf("job budget identity: %+v", jobPolicy)
+	}
+	read = decodeFinancialBudget(t, e.Do(t, "GET", "/v1/billing/budgets/"+jobPolicy.ID, nil, nil), http.StatusOK)
+	if read.Runtime.Compute.JobID != j.ID || !read.EnforcementReady {
+		t.Fatalf("job budget read: %+v", read)
 	}
 }

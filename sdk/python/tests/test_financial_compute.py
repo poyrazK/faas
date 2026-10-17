@@ -48,3 +48,28 @@ def test_account_compute_quantity_allowance_has_no_fake_app_identity():
     assert "app_id" not in serialized
     assert serialized["basis"] == "net_usage"
     assert serialized["allowance_remaining_mb_seconds"] == 0
+
+
+def test_job_compute_preserves_scope_gross_spending_and_hold():
+    compute = {
+        "initialized": True,
+        "job_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+        "scope_kind": "job",
+        "basis": "gross_usage",
+        "period_start": "2026-10-01T00:00:00Z",
+        "period_end": "2026-11-01T00:00:00Z",
+        "committed_millicents": 9007199254740000,
+        "reserved_millicents": 991,
+        "remaining_millicents": 0,
+        "unconfirmed_leases": 1,
+        "held": True,
+        "observed_at": "2026-10-17T10:00:00Z",
+    }
+    runtime = FinancialBudgetRuntime.from_dict({"alerts": [], "compute": compute})
+    serialized = runtime.to_dict()["compute"]
+    assert serialized["job_id"] == compute["job_id"]
+    assert serialized["scope_kind"] == "job"
+    assert serialized["basis"] == "gross_usage"
+    assert serialized["committed_millicents"] + serialized["reserved_millicents"] == 9007199254740991
+    assert serialized["held"]
+    assert "app_id" not in serialized

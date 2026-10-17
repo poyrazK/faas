@@ -61,13 +61,16 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 		out.Guarantee = "strict_compute_pending_reservations_and_local_deadline_acceptance"
 		if financial.StrictCompute(spec) {
 			if compute, ok := store.(state.FinancialComputeStore); ok {
-				out.EnforcementReady, err = compute.FinancialComputeReady(ctx, account, spec.Scope.ID)
+				out.EnforcementReady, err = compute.FinancialComputeReady(ctx, account, financial.ComputeScopeKey(spec.Scope))
 				if err != nil {
 					return out, err
 				}
 				out.Guarantee = "strict_app_gross_compute_funded_windows;conservative_commitments;other_meters_excluded"
+				if financial.StrictJobCompute(spec) {
+					out.Guarantee = "strict_job_gross_compute_funded_windows;conservative_commitments;other_meters_excluded"
+				}
 				if financial.StrictAccountCompute(spec) {
-					out.Guarantee = "strict_account_net_compute_funded_windows;shared_quantity_allowance;independent_jobs_unavailable;other_meters_excluded"
+					out.Guarantee = "strict_account_net_compute_funded_windows;shared_quantity_allowance;funded_job_attempts;other_meters_excluded"
 				}
 				if !out.EnforcementReady {
 					out.Reasons = append(out.Reasons, "requires_quiet_app_complete_accounting_native_owners")

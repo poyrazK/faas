@@ -20,10 +20,10 @@ T = TypeVar("T", bound="FinancialComputeBalance")
 
 @_attrs_define
 class FinancialComputeBalance:
-    """Conservative compute admission ledger. App scopes use gross compute; account scopes share included MB-seconds and
-    cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical
-    retirement. Subscriptions, storage, egress, builds and taxes are excluded. Account strict activation requires no
-    independent jobs.
+    """Conservative compute admission ledger. App and job scopes use gross compute; account scopes share included MB-
+    seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until
+    physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Independent job task attempts
+    share account funding with apps.
 
     """
 
@@ -37,6 +37,7 @@ class FinancialComputeBalance:
     held: bool
     observed_at: datetime.datetime
     app_id: UUID | Unset = UNSET
+    job_id: UUID | Unset = UNSET
     account_id: UUID | Unset = UNSET
     scope_kind: FinancialComputeBalanceScopeKind | Unset = UNSET
     basis: FinancialComputeBalanceBasis | Unset = UNSET
@@ -68,6 +69,10 @@ class FinancialComputeBalance:
         app_id: str | Unset = UNSET
         if not isinstance(self.app_id, Unset):
             app_id = str(self.app_id)
+
+        job_id: str | Unset = UNSET
+        if not isinstance(self.job_id, Unset):
+            job_id = str(self.job_id)
 
         account_id: str | Unset = UNSET
         if not isinstance(self.account_id, Unset):
@@ -106,6 +111,8 @@ class FinancialComputeBalance:
         )
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
+        if job_id is not UNSET:
+            field_dict["job_id"] = job_id
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
         if scope_kind is not UNSET:
@@ -151,6 +158,13 @@ class FinancialComputeBalance:
         else:
             app_id = UUID(_app_id)
 
+        _job_id = d.pop("job_id", UNSET)
+        job_id: UUID | Unset
+        if isinstance(_job_id, Unset):
+            job_id = UNSET
+        else:
+            job_id = UUID(_job_id)
+
         _account_id = d.pop("account_id", UNSET)
         account_id: UUID | Unset
         if isinstance(_account_id, Unset):
@@ -191,6 +205,7 @@ class FinancialComputeBalance:
             held=held,
             observed_at=observed_at,
             app_id=app_id,
+            job_id=job_id,
             account_id=account_id,
             scope_kind=scope_kind,
             basis=basis,
