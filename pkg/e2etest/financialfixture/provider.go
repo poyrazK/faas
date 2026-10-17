@@ -109,9 +109,9 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id": id, "recurring_interval": "month", "recurring_interval_count": 1, "is_recurring": true,
 			"prices": []map[string]any{
-				{"amount_type": "fixed", "price_currency": "eur", "price_amount": billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent},
-				{"amount_type": "metered_unit", "price_currency": "eur", "unit_amount": "1", "meter_id": "compute"},
-				{"amount_type": "metered_unit", "price_currency": "eur", "unit_amount": fmt.Sprint(p.price / api.MillicentsPerCent), "meter_id": "egress"},
+				{"amount_type": "fixed", "price_currency": api.BillingCurrencyLower, "price_amount": billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent},
+				{"amount_type": "metered_unit", "price_currency": api.BillingCurrencyLower, "unit_amount": "1", "meter_id": "compute"},
+				{"amount_type": "metered_unit", "price_currency": api.BillingCurrencyLower, "unit_amount": fmt.Sprint(p.price / api.MillicentsPerCent), "meter_id": "egress"},
 			}, "benefits": []any{},
 		})
 		return

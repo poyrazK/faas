@@ -24,14 +24,15 @@ import (
 const gib int64 = 1 << 30
 
 type replayFixture struct {
-	pool     *pgxpool.Pool
-	store    *state.PgStore
-	account  state.Account
-	app      state.App
-	instance state.Instance
-	policy   state.FinancialBudget
-	start    time.Time
-	want     map[string]int64
+	pool            *pgxpool.Pool
+	store           *state.PgStore
+	account         state.Account
+	app             state.App
+	instance        state.Instance
+	policy          state.FinancialBudget
+	start           time.Time
+	want            map[string]int64
+	fundedMBSeconds int64
 }
 
 // This fixture restores historical usage and settled funding, without running
@@ -66,8 +67,11 @@ func seedReplay(t *testing.T) replayFixture {
 	}
 	start := time.Now().UTC().Add(-api.MeterUsageFinalAfter - 5*time.Hour).Truncate(24 * time.Hour)
 	month := financial.ComputeMonth(start)
+	// Match meterd's startup snapshot while preserving four then five paid
+	// GB-hours above the plan's included allowance in the replay below.
+	computeAllowance := int64(a.Plan.PlanIncludedGBHours()) * api.SecondsPerGBHour
 	for _, price := range []financial.Price{
-		{Version: "acceptance-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour},
+		{Version: "acceptance-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: computeAllowance},
 		{Version: "acceptance-egress", Meter: "egress", Currency: "USD", Unit: "interface_bytes", UnitQuantity: gib, MillicentsPerUnit: 2000, IncludedQuantity: gib},
 	} {
 		if _, err := s.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: a.Plan, DeliveryMode: "live", Price: price}); err != nil {
@@ -83,7 +87,7 @@ func seedReplay(t *testing.T) replayFixture {
 	for _, i := range []int{2, 0, 1} {
 		mb := api.SecondsPerGBHour
 		if i == 0 {
-			mb = 52 * api.SecondsPerGBHour
+			mb = computeAllowance + 2*api.SecondsPerGBHour
 		}
 		at := start.Add(time.Duration(i) * time.Hour)
 		if err := s.AppendUsage(ctx, a.ID, app.ID, ins.ID, at, mb, 0, 0, 0, 0, 0, 0, 0); err != nil {
@@ -117,7 +121,7 @@ func seedReplay(t *testing.T) replayFixture {
 
 	// A retained settlement can be more conservative than measured usage:
 	// 5 GiB issued, 4 GiB measured, 1 GiB included, 3 GiB actually billed.
-	book := financial.ComputeBook{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Committed: 5000, QuantityCommitted: 55 * api.SecondsPerGBHour, AllowanceGranted: 50 * api.SecondsPerGBHour, Egress: financial.EgressBook{Initialized: true, QuantityCommitted: 5 * gib, AllowanceGranted: gib, Committed: 8000, RateMillicents: 2000, RateQuantity: gib}}
+	book := financial.ComputeBook{AccountID: a.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), Committed: 5000, QuantityCommitted: computeAllowance + 5*api.SecondsPerGBHour, AllowanceGranted: computeAllowance, Egress: financial.EgressBook{Initialized: true, QuantityCommitted: 5 * gib, AllowanceGranted: gib, Committed: 8000, RateMillicents: 2000, RateQuantity: gib}}
 	payload, err := json.Marshal(book)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +143,7 @@ func seedReplay(t *testing.T) replayFixture {
 			t.Fatal(err)
 		}
 	}
-	return replayFixture{pool: pool, store: s, account: a, policy: p, start: start, want: want, app: app, instance: ins}
+	return replayFixture{pool: pool, store: s, account: a, policy: p, start: start, want: want, app: app, instance: ins, fundedMBSeconds: book.QuantityCommitted}
 }
 
 func receipts(t *testing.T, f replayFixture) map[string]int64 {
@@ -280,11 +284,11 @@ func TestFinancialSystemBillingReconciliation(t *testing.T) {
 			if err := f.pool.QueryRow(t.Context(), `SELECT COALESCE(sum(mb_seconds),0),COALESCE(sum(net_tx_bytes),0) FROM usage_minutes WHERE account_id=$1`, f.account.ID).Scan(&measuredMB, &measuredBytes); err != nil {
 				t.Fatal(err)
 			}
-			if measuredMB != 55*api.SecondsPerGBHour || measuredBytes != b.Egress.CommittedBytes {
+			if measuredMB != f.fundedMBSeconds || measuredBytes != b.Egress.CommittedBytes {
 				t.Fatalf("measured quantities exceed or miss restored funding: mb_seconds=%d bytes=%d", measuredMB, measuredBytes)
 			}
 
-			evidence := map[string]any{"scenario": scenario, "account_id": f.account.ID, "measured_mb_seconds": measuredMB, "measured_egress_bytes": measuredBytes, "funded_mb_seconds": 55 * api.SecondsPerGBHour, "funded_egress_bytes": b.Egress.CommittedBytes, "expected": f.want, "receipts": receipts(t, f), "provider": p.Snapshot(), "initial_invoice_millicents": 10000, "invoice_millicents": report.KnownUsageMillicents, "committed_millicents": b.CommittedMillicents, "limit_millicents": f.policy.Spec.LimitMillicents}
+			evidence := map[string]any{"scenario": scenario, "account_id": f.account.ID, "measured_mb_seconds": measuredMB, "measured_egress_bytes": measuredBytes, "funded_mb_seconds": f.fundedMBSeconds, "funded_egress_bytes": b.Egress.CommittedBytes, "expected": f.want, "receipts": receipts(t, f), "provider": p.Snapshot(), "initial_invoice_millicents": 10000, "invoice_millicents": report.KnownUsageMillicents, "committed_millicents": b.CommittedMillicents, "limit_millicents": f.policy.Spec.LimitMillicents}
 			encoded, err := json.MarshalIndent(evidence, "", "  ")
 			if err != nil {
 				t.Fatal(err)
