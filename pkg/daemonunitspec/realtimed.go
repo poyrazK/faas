@@ -20,6 +20,7 @@ func UnitRealtimed() daemonunit.Unit {
 		Type:         "notify",
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
 		User:         "faas",
 		Group:        "faas",
 		ExecStart:    "/opt/faas/current/bin/realtimed",

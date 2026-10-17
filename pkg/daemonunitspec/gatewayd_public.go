@@ -43,6 +43,7 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		// new connections while this one finishes its own (ADR-1580).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
 		User:         "faas",
 		Group:        "faas",
 		ExecStart:    `/opt/faas/current/bin/gatewayd-public`,

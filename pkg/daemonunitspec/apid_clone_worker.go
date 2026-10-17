@@ -47,6 +47,6 @@ func UnitApidCloneWorker() daemonunit.Unit {
 	}
 	u.ReadWritePaths = []string{"/var/spool/faas/apid-clone-worker"}
 	// The clone worker serves no requests and does not hand off (ADR-1580).
-	u.NotifyAccess, u.ExecReload = "", ""
+	u.NotifyAccess, u.ExecReload, u.OOMPolicy = "", "", ""
 	return u
 }

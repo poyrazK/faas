@@ -113,8 +113,13 @@ type Unit struct {
 	// dropping it — vmmd's 2026-09-03 OOM took its whole compute node out
 	// of rotation, and a hard cap alone would not have changed that.
 	// Empty omits the directive.
-	MemoryHigh            string
-	MemoryMax             string
+	MemoryHigh string
+	MemoryMax  string
+	// OOMPolicy decides what an OOM kill of one of the unit's processes
+	// does. "continue" keeps a hand-off's serving generation running when
+	// the kernel kills the draining one (ADR-1580); a killed main process
+	// still restarts under Restart=on-failure.
+	OOMPolicy             string
 	CPUQuota              string // aggregate process and subprocess CPU ceiling
 	TasksMax              string // aggregate process/thread ceiling
 	Delegate              bool
@@ -164,7 +169,7 @@ func BoolPtr(b bool) *bool { return &b }
 // Inside [Service], field ordering is fixed (Type → NotifyAccess → User →
 // Group → ExecStartPre → ExecStart → ExecStartPost → ExecReload → Restart →
 // RestartSec →
-// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → CPUQuota → TasksMax → Delegate →
+// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → OOMPolicy → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -220,6 +225,7 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
+	writeStringKV(&buf, "OOMPolicy", u.OOMPolicy)
 	writeStringKV(&buf, "CPUQuota", u.CPUQuota)
 	writeStringKV(&buf, "TasksMax", u.TasksMax)
 	if u.Delegate {
@@ -530,6 +536,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.WatchdogSec = val
 	case "[Service]/Slice":
 		u.Slice = val
+	case "[Service]/OOMPolicy":
+		u.OOMPolicy = val
 	case "[Service]/MemoryHigh":
 		u.MemoryHigh = val
 	case "[Service]/MemoryMax":
@@ -702,17 +710,20 @@ func Diff(a, b Unit) []string {
 	add("[Unit]", "StartLimitIntervalSec", a.StartLimitIntervalSec, b.StartLimitIntervalSec)
 	add("[Unit]", "StartLimitBurst", a.StartLimitBurst, b.StartLimitBurst)
 	add("[Service]", "Type", a.Type, b.Type)
+	add("[Service]", "NotifyAccess", a.NotifyAccess, b.NotifyAccess)
 	add("[Service]", "User", a.User, b.User)
 	add("[Service]", "Group", a.Group, b.Group)
 	add("[Service]", "ExecStart", a.ExecStart, b.ExecStart)
 	add("[Service]", "ExecStartPre", fmt.Sprintf("%v", a.ExecStartPre), fmt.Sprintf("%v", b.ExecStartPre))
 	add("[Service]", "ExecStartPost", fmt.Sprintf("%v", a.ExecStartPost), fmt.Sprintf("%v", b.ExecStartPost))
+	add("[Service]", "ExecReload", a.ExecReload, b.ExecReload)
 	add("[Service]", "Restart", a.Restart, b.Restart)
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
 	add("[Service]", "TimeoutStartSec", a.TimeoutStartSec, b.TimeoutStartSec)
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
+	add("[Service]", "OOMPolicy", a.OOMPolicy, b.OOMPolicy)
 	add("[Service]", "CPUQuota", a.CPUQuota, b.CPUQuota)
 	add("[Service]", "TasksMax", a.TasksMax, b.TasksMax)
 	add("[Service]", "Delegate", boolStr(a.Delegate), boolStr(b.Delegate))

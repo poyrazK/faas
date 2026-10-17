@@ -19,8 +19,8 @@ func TestHandoffDaemonsReloadByHandoff(t *testing.T) {
 		} else if got != want[e.Name] {
 			t.Errorf("%s hands off on reload = %v, want %v", e.Name, got, want[e.Name])
 		}
-		if got && (u.Type != "notify" || u.NotifyAccess != "main") {
-			t.Errorf("%s: Type=%s NotifyAccess=%s, want notify/main for a hand-off", e.Name, u.Type, u.NotifyAccess)
+		if got && (u.Type != "notify" || u.NotifyAccess != "main" || u.OOMPolicy != "continue") {
+			t.Errorf("%s: Type=%s NotifyAccess=%s OOMPolicy=%s, want notify/main/continue for a hand-off", e.Name, u.Type, u.NotifyAccess, u.OOMPolicy)
 		}
 	}
 }

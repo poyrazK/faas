@@ -13,6 +13,6 @@ func UnitProfiled() daemonunit.Unit {
 	u.ReadWritePaths = []string{"/run/faas"}
 	// profiled does not hand off on reload (ADR-1580); it keeps the plain
 	// service shape realtimed had.
-	u.Type, u.NotifyAccess, u.ExecReload, u.WatchdogSec = "simple", "", "", ""
+	u.Type, u.NotifyAccess, u.ExecReload, u.WatchdogSec, u.OOMPolicy = "simple", "", "", "", ""
 	return u
 }
