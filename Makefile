@@ -1362,6 +1362,13 @@ data-api-check: ## Runtime and typed application client unit checks
 data-api-acceptance: ## Disposable PostgreSQL/PostgREST application API acceptance
 	@bash scripts/test-data-api.sh --integration
 
+.PHONY: data-api-load-check data-api-load-verify
+data-api-load-check: ## Portable Data API load verifier bounds, evidence and failure contracts
+	@node --test tests/data-api/load/*.test.mjs
+
+data-api-load-verify: ## Concurrent REST/RPC and recovery checks on a disposable local PostgreSQL fixture
+	@bash scripts/test-data-api-load.sh
+
 data-api-browser-acceptance: ## Real browser CORS acceptance with disposable PostgreSQL
 	@DATA_API_BROWSER_REQUIRED=1 bash scripts/test-data-api.sh --integration
 

@@ -1,7 +1,7 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
 export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50 })
 
-import { createPrivateKey } from 'node:crypto'
+import { createECDH, createPrivateKey } from 'node:crypto'
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
 
@@ -75,9 +75,17 @@ export function signingKeys(env) {
     if (!id) continue
     let jwk
     try { jwk = JSON.parse(value) } catch { throw new Error(`Invalid ${name}`) }
-    const valid = jwk && typeof jwk === 'object' && jwk.kty === 'EC' && jwk.crv === 'P-256' && jwk.alg === 'ES256' && jwk.kid === signingKeyID(id) && ['x', 'y', 'd'].every(field => typeof jwk[field] === 'string')
+    const valid = jwk && typeof jwk === 'object' && jwk.kty === 'EC' && jwk.crv === 'P-256' && jwk.alg === 'ES256' && jwk.kid === signingKeyID(id) && ['x', 'y', 'd'].every(field => typeof jwk[field] === 'string' && /^[A-Za-z0-9_-]{43}$/.test(jwk[field]))
     if (!valid) throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`)
-    try { createPrivateKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }, format: 'jwk' }) } catch { throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`) }
+    try {
+      createPrivateKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }, format: 'jwk' })
+      // OpenSSL may import a short scalar or inconsistent public coordinates.
+      // Derive the public point to prove this is one usable P-256 key pair.
+      const curve = createECDH('prime256v1')
+      curve.setPrivateKey(Buffer.from(jwk.d, 'base64url'))
+      const expected = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')])
+      if (!curve.getPublicKey().equals(expected)) throw new Error('inconsistent key pair')
+    } catch { throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`) }
     keys.push({ id, jwk })
   }
   if (keys.length < 1 || keys.length > limits.signingKeys) throw new Error(`Configure one to ${limits.signingKeys} AUTH_JWT_KEY_<ID> secrets`)

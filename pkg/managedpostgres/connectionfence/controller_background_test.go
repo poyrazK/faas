@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 func TestConnectionFenceAllowsUnassignedAutovacuumWorker(t *testing.T) {
@@ -107,7 +107,7 @@ func TestConnectionFenceRejectsForeignSessionWithDroppedRole(t *testing.T) {
 	if err := f.maintenance.QueryRow(ctx, "SELECT usesysid IS NOT NULL AND usename IS NULL FROM pg_stat_activity WHERE pid=$1", client.PgConn().PID()).Scan(&namelessClient); err != nil || !namelessClient {
 		t.Fatalf("dropped role session identity: %t %v", namelessClient, err)
 	}
-	if _, err := f.c.Close(ctx, f.request); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	if _, err := f.c.Close(ctx, f.request); !errors.Is(err, pgerrors.ErrUnsupported) {
 		t.Fatalf("foreign session with dropped role was accepted: %v", err)
 	}
 }

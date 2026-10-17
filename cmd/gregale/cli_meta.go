@@ -4400,11 +4400,16 @@ var cliCommands = []cliCommand{
 				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
 				{Name: "timeout", Value: "DURATION", Short: "replay deadline (default 5m, maximum 1h)"},
 			}, Examples: []string{"gregale data-api replay notes-data --collection data-api.requests.json --identities data-api.identities.json --scenario notes-rls"}},
+			{Name: "health", Short: "Check current Data API health and recent request failures", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "since", Value: "DURATION|RFC3339", Short: "retained request log window (default 15m)"},
+				{Name: "timeout", Value: "DURATION", Short: "entire report deadline (default 30s, maximum 1h)"},
+			}, Examples: []string{"gregale data-api health notes-data", "gregale --json data-api health notes-data --since 15m"}},
 			{Name: "diagnostics", Short: "Summarize retained request logs and look up request IDs", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
 				{Name: "file", Value: "FILE", Short: "saved runtime NDJSON or JSON log envelopes; omit the app name"},
 				{Name: "since", Value: "DURATION|RFC3339", Short: "request time lower bound (for example 15m)"},
 				{Name: "deployment", Value: "ID", Short: "restrict hosted logs to a deployment"},
 				{Name: "request-id", Value: "UUID", Short: "look up one gateway-generated request ID"},
+				{Name: "sort", Value: "requests|p95|errors", Short: "query shape ranking (default requests; p95 uses gateway latency)"},
 				{Name: "timeout", Value: "DURATION", Short: "read deadline (default 2m, maximum 1h)"},
 			}, Examples: []string{"gregale --json data-api diagnostics notes-data --since 15m", "gregale data-api diagnostics --file request-logs.ndjson"}},
 			{Name: "status", Short: "Inspect serving contracts and durable refresh state", Positionals: []string{"<name>"}, Flags: []cliFlag{

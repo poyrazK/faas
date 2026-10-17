@@ -5538,6 +5538,56 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/cutovers/{id}/preflight:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresCutoverID'
+    post:
+      operationId: requestManagedPostgresCutoverPreflight
+      summary: Queue a restore activation preflight
+      description: |
+        Requires managed PostgreSQL manage scope and verified email. Durably
+        queues catalog inspection, including while provider provisioning is
+        disabled. Concurrent pending requests keep the revision; requesting a
+        completed check starts a new revision. Does not fence admissions, call
+        a provider, publish bindings or resume workloads. Activation remains
+        disabled. Idempotency replay returns the original response; poll GET
+        for latest progress. Cancelling or cancelled cutovers conflict.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Durable preflight request; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCutoverPreflight' }
+        default:
+          description: Authentication, state conflict or cutover error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    get:
+      operationId: getManagedPostgresCutoverPreflight
+      summary: Read restore activation preflight findings
+      description: |
+        Requires managed PostgreSQL read scope. Findings describe a historical
+        catalog snapshot. Positive fields remain historical when stale is true.
+        Staleness is recomputed for expiry, cutover changes and cancellation.
+        Even fresh findings never authorize activation or prove writer isolation.
+        Returns 404 if no preflight has been requested.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Durable preflight findings; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCutoverPreflight' }
+        default:
+          description: Authentication or preflight status error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/cutovers/{id}/cancel:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresCutoverID'
@@ -5764,6 +5814,54 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
         default:
           description: Invalid point in time, plan limit, or provider error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/connection-budget:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresConnectionBudget
+      summary: Inspect read-only database connection planning
+      description: Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL, reserve connections or change admission. Current adapters have no verified usable-capacity observation and return unknown with canonical pool estimates. Database snapshots are independent.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Bounded credential-free planning and explicit unknown coverage
+          headers:
+            Cache-Control: { schema: { type: string }, description: Always no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresConnectionBudget' }
+        default:
+          description: Authentication, ownership or metadata read error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/data-api/connection-budget:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: App whose managed Data API bindings select the shared database reports.
+        schema: { type: string }
+    get:
+      operationId: getAppDataAPIConnectionBudgets
+      summary: Inspect shared database budgets for Data API bindings
+      description: Lists independently sampled planning reports for the app's shared managed Data API databases, including other bindings in the same account. Requires managed PostgreSQL read permission. Reads metadata without waking SQL or changing admission; current adapters retain unknown capacity.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Per-database estimates and unknown coverage for this app's managed Data API bindings
+          headers:
+            Cache-Control: { schema: { type: string }, description: Prevents caching the app's independently sampled database reports. }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIConnectionBudgets' }
+        default:
+          description: Data API app lookup, permission or budget inventory failure
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -64463,6 +64561,68 @@ components:
         last_error_code: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    DataAPIConnectionBudgets:
+      description: Read-only planning snapshots. Not applicable means the app has no visible Data API binding.
+      type: object
+      required: [version, app, state, truncated, databases]
+      properties:
+        version: { type: integer, enum: [1] }
+        app: { type: string }
+        state: { type: string, enum: [not_applicable, unknown, within_budget, over_budget] }
+        truncated: { type: boolean }
+        databases: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ManagedPostgresConnectionBudget' } }
+    ManagedPostgresConnectionBudget:
+      description: Canonical pool planning, not live SQL usage or reservation. A comparison requires complete verified capacity and consumer evidence; current adapters report unknown.
+      type: object
+      required: [version, database_id, database_name, state, checked_at, expires_at, enforced, model, inventory, demand, capacity, reasons]
+      properties:
+        version: { type: integer, enum: [1] }
+        database_id: { type: string, format: uuid }
+        database_name: { type: string }
+        state: { type: string, enum: [unknown, within_budget, over_budget] }
+        checked_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        enforced: { type: boolean, enum: [false] }
+        model: { type: string, enum: [canonical_runtime_pools] }
+        inventory: { $ref: '#/components/schemas/ConnectionBudgetInventory' }
+        demand: { $ref: '#/components/schemas/ConnectionBudgetDemand' }
+        capacity: { $ref: '#/components/schemas/ConnectionBudgetCapacity' }
+        reasons: { type: array, items: { type: string } }
+    ConnectionBudgetInventory:
+      description: Deduplicated app/scope potential consumers; counts are not live SQL sessions.
+      type: object
+      required: [bindings, data_api_consumers, auth_consumers, migration_bindings, other_bindings, resident_instances, parked_instances, auxiliary_instances, active_tasks, rotation_pending, overlap_consumers, stale_node_instances]
+      properties:
+        bindings: { type: integer, format: int64, minimum: 0 }
+        data_api_consumers: { type: integer, format: int64, minimum: 0 }
+        auth_consumers: { type: integer, format: int64, minimum: 0 }
+        migration_bindings: { type: integer, format: int64, minimum: 0 }
+        other_bindings: { type: integer, format: int64, minimum: 0 }
+        resident_instances: { type: integer, format: int64, minimum: 0 }
+        parked_instances: { type: integer, format: int64, minimum: 0 }
+        auxiliary_instances: { type: integer, format: int64, minimum: 0 }
+        active_tasks: { type: integer, format: int64, minimum: 0 }
+        rotation_pending: { type: integer, format: int64, minimum: 0 }
+        overlap_consumers: { type: integer, format: int64, minimum: 0 }
+        stale_node_instances: { type: integer, format: int64, minimum: 0 }
+    ConnectionBudgetDemand:
+      description: Canonical runtime pools and explicit planning headroom. Unbounded consumers remain unknown.
+      type: object
+      required: [data_api_resident_estimate, data_api_wake_estimate, auth_wake_estimate, control_headroom, migration_headroom, modeled_peak_connections]
+      properties:
+        data_api_resident_estimate: { type: integer, format: int64, minimum: 0 }
+        data_api_wake_estimate: { type: integer, format: int64, minimum: 0 }
+        auth_wake_estimate: { type: integer, format: int64, minimum: 0 }
+        control_headroom: { type: integer, format: int64, minimum: 0 }
+        migration_headroom: { type: integer, format: int64, minimum: 0 }
+        modeled_peak_connections: { type: integer, format: int64, minimum: 0 }
+    ConnectionBudgetCapacity:
+      description: Qualified tenant-usable allocation for the exact database generation and placement. Current adapters leave this unknown.
+      type: object
+      required: [state]
+      properties:
+        state: { type: string, enum: [unknown, verified] }
+        usable_connections: { type: integer, format: int64, minimum: 1 }
     ManagedPostgresBindingList:
       description: Workload bindings attached to one managed PostgreSQL database.
       type: object
@@ -64508,6 +64668,91 @@ components:
         members: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresCutoverMember' } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ManagedPostgresCutoverPreflight:
+      description: Historical catalog checks and remaining activation blockers. Never an activation token; sealed credentials and provider identities are private.
+      type: object
+      required: [cutover_id, state, revision, activation_allowed, stale, binding_ids, blockers, verification_fresh, source_matches, target_matches, bindings_match, created_at, updated_at]
+      properties:
+        cutover_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, blocked] }
+        revision: { type: integer, format: int64, minimum: 1 }
+        activation_allowed: { type: boolean, enum: [false], description: Always false; customer activation remains disabled. }
+        stale: { type: boolean, description: "Recomputed on read for pending checks, expiry, future check time, cutover changes, cancellation or changed runtime authority and receipts. Older reports without runtime observations require a new check." }
+        binding_ids: { type: array, items: { type: string, format: uuid }, description: Affected source binding IDs observed during evaluation. }
+        blockers:
+          type: array
+          items:
+            type: string
+            enum: [activation_disabled, runtime_safety_unproven, source_sessions_unfenced, routes_unconverged, snapshot_invalidation_unproven, resume_plan_missing, cutover_inactive, source_changed, target_changed, verification_required, bindings_changed]
+        verification_fresh: { type: boolean, description: All staged credentials had fresh SQL verification at checked_at. }
+        source_matches: { type: boolean }
+        target_matches: { type: boolean }
+        bindings_match: { type: boolean }
+        runtime_drain: { $ref: '#/components/schemas/ManagedPostgresCutoverRuntimeDrain' }
+        source_sessions: { $ref: '#/components/schemas/ManagedPostgresCutoverSourceSessions' }
+        observed_cutover_updated_at: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ManagedPostgresCutoverSourceSessions:
+      description: Historical source SQL admission and session observations for the frozen selected database set. Never complete writer-isolation proof. Preflight and GET initiate no SQL fences. Absent on pending and older reports. Inspect the parent stale and expires_at fields.
+      type: object
+      required: [state, admission_closed, selected_databases_drained, selected_database_count, sessions, prepared_transactions, unselected_databases, blockers]
+      properties:
+        state: { type: string, enum: [unavailable, not_requested, pending, closing, closed, abandoning, released] }
+        admission_closed: { type: boolean, description: Admission closure was independently confirmed and fresh at checked_at. }
+        selected_databases_drained: { type: boolean, description: Selected databases had no observed sessions or prepared transactions at checked_at. Background writers and future catalog stability remain unproven. }
+        selected_database_count: { type: integer, minimum: 0 }
+        sessions: { type: integer, format: int64, minimum: 0 }
+        prepared_transactions: { type: integer, format: int64, minimum: 0 }
+        unselected_databases: { type: integer, format: int64, minimum: 0 }
+        blockers: { type: array, items: { type: string } }
+        observed_at: { type: string, format: date-time }
+        writer_isolation: { $ref: '#/components/schemas/ManagedPostgresCutoverWriterIsolation' }
+
+    ManagedPostgresCutoverWriterIsolation:
+      description: Historical SQL writer inventory and optional provider guard evidence. Confirmed requires fresh matching evidence and idle complete SQL inventory; it does not qualify a deployed provider or allow activation. Neon currently lacks the stronger provider guarantee. Names, catalog fingerprints and ownership tokens remain private.
+      type: object
+      required: [state, confirmed, inventory_available, catalog_matches, catalog_stable, background_writers_fenced, client_sessions, background_workers, replication_workers, unknown_backends]
+      properties:
+        state: { type: string, enum: [pending, unsupported, unavailable, blocked, confirmed, expired, inactive] }
+        confirmed: { type: boolean }
+        inventory_available: { type: boolean }
+        catalog_matches: { type: boolean, description: The complete observed catalog matches its immutable original fingerprint; this is not a catalog lock. }
+        catalog_stable: { type: boolean, description: Fresh provider evidence attests a durable catalog guard. }
+        background_writers_fenced: { type: boolean, description: Fresh provider evidence covers background and replication write paths across all dataset endpoints. }
+        client_sessions: { type: integer, format: int64, minimum: 0 }
+        background_workers: { type: integer, format: int64, minimum: 0 }
+        replication_workers: { type: integer, format: int64, minimum: 0 }
+        unknown_backends: { type: integer, format: int64, minimum: 0, description: Backends whose type is hidden by privileges or not recognized; these prevent confirmation. }
+        expires_at: { type: string, format: date-time }
+
+    ManagedPostgresCutoverRuntimeDrain:
+      description: Historical scheduler instance catalog evidence at checked_at. Catalog retirement does not prove complete writer isolation. No fence or drain is initiated by preflight. Absent on pending requests and reports created before runtime observations were supported.
+      type: object
+      required: [state, inventory_count, pending, retired, blocked, blockers, members]
+      properties:
+        state: { type: string, enum: [unavailable, not_fenced, missing, draining, blocked, catalog_retired] }
+        inventory_count: { type: integer, minimum: 0, description: Captured catalog count; a lower bound when inventory_limit_exceeded is reported. }
+        pending: { type: integer, minimum: 0 }
+        retired: { type: integer, minimum: 0, description: Members with matching native retirement receipts. }
+        blocked: { type: integer, minimum: 0 }
+        blockers: { type: array, items: { type: string }, description: Plan and authority blocker codes. Member blockers appear on each member. }
+        members: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresCutoverRuntimeDrainMember' } }
+    ManagedPostgresCutoverRuntimeDrainMember:
+      description: Safe captured workload identity and retirement finding. Host identities and native proof details remain private.
+      type: object
+      required: [instance_id, scope, mode, state]
+      properties:
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        scope: { type: string }
+        mode: { type: string }
+        state: { type: string, enum: [pending, retired, blocked] }
+        blocker_code: { type: string }
+
     ManagedPostgresCutoverMember:
       description: Safe staging and SQL verification evidence for a source binding.
       type: object

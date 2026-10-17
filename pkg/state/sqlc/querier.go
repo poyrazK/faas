@@ -68,6 +68,7 @@ type Querier interface {
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
+	AppConnectionBudgetDatabaseIDs(ctx context.Context, db DBTX, arg AppConnectionBudgetDatabaseIDsParams) ([]string, error)
 	AppHealthHistoryTarget(ctx context.Context, db DBTX, arg AppHealthHistoryTargetParams) (string, error)
 	AppHealthNotificationRecipients(ctx context.Context, db DBTX, arg AppHealthNotificationRecipientsParams) (AppHealthNotificationRecipientsRow, error)
 	AppManagedPostgresBindingInventory(ctx context.Context, db DBTX, arg AppManagedPostgresBindingInventoryParams) ([]AppManagedPostgresBindingInventoryRow, error)
@@ -265,6 +266,7 @@ type Querier interface {
 	ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
 	ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error)
 	ClaimManagedPostgresCutover(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	ClaimManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverSourceFenceParams) (int64, error)
 	ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg ClaimManagedPostgresHealthCheckParams) (ClaimManagedPostgresHealthCheckRow, error)
 	ClaimManagedPostgresLifecycleDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresLifecycleDeleteParams) (ManagedPostgresDatabase, error)
 	ClaimManagedPostgresLifecycleProvision(ctx context.Context, db DBTX, arg ClaimManagedPostgresLifecycleProvisionParams) (ManagedPostgresDatabase, error)
@@ -414,6 +416,7 @@ type Querier interface {
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
 	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	CountManagedPostgresCutoverSourceBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -684,6 +687,7 @@ type Querier interface {
 	DiscoverProfilePeriodicCandidates(ctx context.Context, db DBTX, maxRows int32) ([][]byte, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	DrainEnvironmentWorkloadRetirementDeployments(ctx context.Context, db DBTX, arg DrainEnvironmentWorkloadRetirementDeploymentsParams) (int64, error)
+	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
 	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
@@ -1143,6 +1147,7 @@ type Querier interface {
 	FinishEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg FinishEnvironmentQueueDeliveryInvocationParams) (int64, error)
 	FinishManagedPostgresBindingProvision(ctx context.Context, db DBTX, arg FinishManagedPostgresBindingProvisionParams) (FinishManagedPostgresBindingProvisionRow, error)
 	FinishManagedPostgresCloneRestoreWithProof(ctx context.Context, db DBTX, arg FinishManagedPostgresCloneRestoreWithProofParams) (pgtype.UUID, error)
+	FinishManagedPostgresCutoverPreflight(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverPreflightParams) (ManagedPostgresCutoverPreflight, error)
 	FinishManagedPostgresCutoverStep(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverStepParams) error
 	FinishManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg FinishManagedPostgresCutoverVerificationParams) error
 	FinishManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg FinishManagedPostgresHealthCheckParams) (int64, error)
@@ -1301,6 +1306,9 @@ type Querier interface {
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
 	GetManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresCustomerDatabaseParams) (ManagedPostgresDatabase, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	GetManagedPostgresCutoverPreflight(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverPreflightParams) (ManagedPostgresCutoverPreflight, error)
+	GetManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverSourceFenceParams) (GetManagedPostgresCutoverSourceFenceRow, error)
+	GetManagedPostgresCutoverSourceMaintenance(ctx context.Context, db DBTX, id string) (ManagedPostgresCheckpointMaintenance, error)
 	GetManagedPostgresDrain(ctx context.Context, db DBTX, id string) (ManagedPostgresCutoverDrain, error)
 	GetManagedPostgresDrainPlan(ctx context.Context, db DBTX, id string) (ManagedPostgresCutoverDrainPlan, error)
 	GetManagedPostgresDrainPlanForFence(ctx context.Context, db DBTX, arg GetManagedPostgresDrainPlanForFenceParams) (ManagedPostgresCutoverDrainPlan, error)
@@ -1603,6 +1611,8 @@ type Querier interface {
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
+	InsertManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverSourceFenceParams) error
+	InsertManagedPostgresCutoverSourceMaintenance(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverSourceMaintenanceParams) error
 	InsertManagedPostgresDrain(ctx context.Context, db DBTX, arg InsertManagedPostgresDrainParams) (ManagedPostgresCutoverDrain, error)
 	InsertManagedPostgresDrainPlan(ctx context.Context, db DBTX, arg InsertManagedPostgresDrainPlanParams) (ManagedPostgresCutoverDrainPlan, error)
 	InsertManagedPostgresDrainPlanMember(ctx context.Context, db DBTX, arg InsertManagedPostgresDrainPlanMemberParams) error
@@ -2535,6 +2545,7 @@ type Querier interface {
 	LockManagedPostgresCutoverDatabases(ctx context.Context, db DBTX, databaseIds []string) ([]ManagedPostgresDatabase, error)
 	LockManagedPostgresCutoverForVerification(ctx context.Context, db DBTX, arg LockManagedPostgresCutoverForVerificationParams) (ManagedPostgresCutover, error)
 	LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, arg LockManagedPostgresCutoverLeaseParams) (ManagedPostgresCutover, error)
+	LockManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, id string) (pgtype.UUID, error)
 	LockManagedPostgresDrainApp(ctx context.Context, db DBTX, appID string) (LockManagedPostgresDrainAppRow, error)
 	LockManagedPostgresDrainInstance(ctx context.Context, db DBTX, instanceID string) (LockManagedPostgresDrainInstanceRow, error)
 	LockManagedPostgresDrainMember(ctx context.Context, db DBTX, id string) (ManagedPostgresCutoverDrain, error)
@@ -3080,6 +3091,7 @@ type Querier interface {
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
+	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	// ADR-091 §3.5 — operator observability backend (PR #2) durable view.
 	// Aggregates `events` rows of kind='auth.rate_limited' over a rolling
 	// window, grouped by subject (account_id, NULL for anonymous actors).
@@ -3342,6 +3354,7 @@ type Querier interface {
 	ReadCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCompensationReceipt, error)
 	ReadCloneWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneWorkloadCleanup, error)
 	ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneWorkloadConfigurationBorrowersParams) (ReadCloneWorkloadConfigurationBorrowersRow, error)
+	ReadConnectionBudgetSnapshot(ctx context.Context, db DBTX, arg ReadConnectionBudgetSnapshotParams) (ReadConnectionBudgetSnapshotRow, error)
 	ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error)
 	ReadCustomerOperationCodeApp(ctx context.Context, db DBTX, arg ReadCustomerOperationCodeAppParams) (pgtype.UUID, error)
 	ReadCustomerOperationDeployment(ctx context.Context, db DBTX, arg ReadCustomerOperationDeploymentParams) (string, error)
@@ -3405,9 +3418,13 @@ type Querier interface {
 	ReadMCPPolicyConvergenceSnapshot(ctx context.Context, db DBTX, arg ReadMCPPolicyConvergenceSnapshotParams) (ReadMCPPolicyConvergenceSnapshotRow, error)
 	ReadManagedPostgresCloneRestoreProof(ctx context.Context, db DBTX, arg ReadManagedPostgresCloneRestoreProofParams) (ManagedPostgresRestoreProof, error)
 	ReadManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg ReadManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error)
+	ReadManagedPostgresDrainPlanOwner(ctx context.Context, db DBTX, appID string) (ReadManagedPostgresDrainPlanOwnerRow, error)
 	ReadManagedPostgresHealthSnapshots(ctx context.Context, db DBTX, arg ReadManagedPostgresHealthSnapshotsParams) ([]ReadManagedPostgresHealthSnapshotsRow, error)
 	ReadManagedPostgresLifecycleDependants(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresLifecycleDependantsRow, error)
 	ReadManagedPostgresLifecycleRestoreSource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error)
+	ReadManagedPostgresPreflightBindings(ctx context.Context, db DBTX, arg ReadManagedPostgresPreflightBindingsParams) ([]ManagedPostgresBinding, error)
+	ReadManagedPostgresPreflightDatabases(ctx context.Context, db DBTX, ids []string) ([]ManagedPostgresDatabase, error)
+	ReadManagedPostgresPreflightDrainPlan(ctx context.Context, db DBTX, arg ReadManagedPostgresPreflightDrainPlanParams) (string, error)
 	ReadManagedPostgresResizeConflicts(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresResizeConflictsRow, error)
 	ReadManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg ReadManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error)
 	ReadManagedWorkflowRunForUpdate(ctx context.Context, db DBTX, runID string) (ReadManagedWorkflowRunForUpdateRow, error)
@@ -3772,6 +3789,7 @@ type Querier interface {
 	RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error
 	RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error
 	RequestLayerArtifactDeletion(ctx context.Context, db DBTX, storageKey string) error
+	RequestManagedPostgresCutoverPreflight(ctx context.Context, db DBTX, arg RequestManagedPostgresCutoverPreflightParams) error
 	RequestManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg RequestManagedPostgresCutoverVerificationParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
@@ -4017,6 +4035,8 @@ type Querier interface {
 	SaveExclusiveWorkOperation(ctx context.Context, db DBTX, arg SaveExclusiveWorkOperationParams) error
 	SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg SaveExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
 	SaveManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverCredentialParams) (int64, error)
+	SaveManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverSourceFenceParams) (int64, error)
+	SaveManagedPostgresCutoverSourceMaintenance(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverSourceMaintenanceParams) (int64, error)
 	SaveManagedPostgresCutoverVerification(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverVerificationParams) (int64, error)
 	SaveManagedPostgresDrainProof(ctx context.Context, db DBTX, arg SaveManagedPostgresDrainProofParams) (int64, error)
 	SaveOperationWebhookBinding(ctx context.Context, db DBTX, arg SaveOperationWebhookBindingParams) (CustomerOperationWebhookBinding, error)

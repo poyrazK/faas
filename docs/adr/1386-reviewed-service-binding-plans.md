@@ -1,4 +1,4 @@
-# ADR-1385: Reviewed service binding plans
+# ADR-1386: Reviewed service binding plans
 
 - **Date:** 2026-10-16
 - **Status:** accepted

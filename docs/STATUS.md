@@ -72,7 +72,7 @@ snapshots; reviewed plans remain the guarded write path. See
 
 ## Reviewed service binding plans — 2026-10-16
 
-[ADR-1385](adr/1385-reviewed-service-binding-plans.md) adds private saved plans
+[ADR-1386](adr/1386-reviewed-service-binding-plans.md) adds private saved plans
 with app/account/endpoint identity and service-settings fingerprints. Apply
 checks its precondition under the app lock in both ordinary and activity-aware
 store transactions. Stale plans conflict before mutation, and unrelated manifest

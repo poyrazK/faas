@@ -4397,7 +4397,7 @@ WHERE m.source_database_id=$2::uuid AND m.state=$3::text
   WHERE f.operation_id=$4::uuid AND f.source_database_id=m.source_database_id
    AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
    AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp())
-RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at
+RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at, m.reserved_by_cutover_id
 `
 
 type ClaimClonePostgresMaintenanceDispatchParams struct {
@@ -4436,6 +4436,7 @@ func (q *Queries) ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db 
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -25797,7 +25798,7 @@ FROM project_environment_clone_postgres_write_fences f JOIN project_environment_
 WHERE f.operation_id=$1::uuid AND f.source_database_id=$2::uuid
  AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
  AND o.revision=$3::bigint AND o.lease_token::text=$4::text
- AND o.lease_until>clock_timestamp() RETURNING id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at
+ AND o.lease_until>clock_timestamp() RETURNING id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at, reserved_by_cutover_id
 `
 
 type InsertClonePostgresMaintenanceParams struct {
@@ -25832,6 +25833,7 @@ func (q *Queries) InsertClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -65833,7 +65835,7 @@ func (q *Queries) ReadClonePostgresCheckpointSelection(ctx context.Context, db D
 }
 
 const readClonePostgresMaintenance = `-- name: ReadClonePostgresMaintenance :one
-SELECT id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE
+SELECT id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at, reserved_by_cutover_id FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE
 `
 
 // ADR-531: resource ownership is separate from an operation's writer barrier.
@@ -65857,6 +65859,7 @@ func (q *Queries) ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sou
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -72367,7 +72370,7 @@ WHERE m.source_database_id=$4::uuid AND m.state=$5::text
   WHERE f.operation_id=$6::uuid AND f.source_database_id=m.source_database_id
    AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
    AND o.revision=$7::bigint AND o.lease_token::text=$8::text AND o.lease_until>clock_timestamp())
-RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at
+RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at, m.reserved_by_cutover_id
 `
 
 type RecordClonePostgresMaintenanceParams struct {
@@ -72410,6 +72413,7 @@ func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
