@@ -138,6 +138,15 @@ const (
 )
 
 const (
+	InternalMailAccountSuspendedTTL           = 24 * time.Hour
+	InternalMailAccountSuspendedMaxBytes      = 512
+	InternalMailDunningSuspendAfter           = 7 * 24 * time.Hour
+	InternalMailDunningDeleteAfter            = 21 * 24 * time.Hour
+	InternalMailSuspensionFollowupLease       = 5 * time.Minute
+	InternalMailSuspensionCommandTimeout      = 5 * time.Second
+	InternalMailSuspensionCommandMaxBytes     = 4096
+	InternalMailSuspensionTokenMinBytes       = 32
+	InternalMailSuspensionTokenMaxBytes       = 4096
 	InternalMailAccountRestoredTTL            = 24 * time.Hour
 	InternalMailAccountRestoredMaxBytes       = 512
 	InternalMailPaymentFailureEventIDMaxBytes = 256

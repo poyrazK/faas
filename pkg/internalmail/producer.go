@@ -69,6 +69,9 @@ func (s *Service) allowedProducerSenders() []string {
 }
 
 func (s *Service) producerMessagePermitted(m Message) bool {
+	if accountSuspendedMessage(m) && !s.accountSuspendedOutboxEnabled() {
+		return false
+	}
 	if accountRestoredMessage(m) && !s.accountRestoredOutboxEnabled() {
 		return false
 	}

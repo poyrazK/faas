@@ -69,6 +69,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
         OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
+        OR (o.template='account_suspended' AND sqlc.arg(account_suspended_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(account_suspended_keys)::text[]))
         OR (o.template='account_restored' AND sqlc.arg(account_restored_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(account_restored_keys)::text[]))
         OR (o.template='payment_failed' AND sqlc.arg(payment_failed_enabled)::boolean
@@ -150,7 +152,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -372,11 +374,16 @@ WITH expired AS (
 DELETE FROM mfa_disable_tokens t USING expired e WHERE t.token_hash=e.token_hash;
 
 -- name: MFADisabledAlertReady :one
-SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+-- Materialization keeps catalog deparsing behind the exact schema/relation
+-- filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
     JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
       AND c.conname='platform_mail_producer_outbox_security_alert_check'
-      AND position('mfa_disabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('mfa_disabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: MFADisabledAlertKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -405,11 +412,16 @@ UPDATE mfa_disable_requests SET consumed_at=clock_timestamp()
 WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND requested_at+interval '24 hours'<=clock_timestamp();
 
 -- name: PasswordChangedAlertReady :one
-SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+-- Materialization keeps catalog deparsing behind the exact schema/relation
+-- filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
     JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
       AND c.conname='platform_mail_producer_outbox_security_alert_check'
-      AND position('password_changed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('password_changed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: PasswordChangedAlertKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -446,11 +458,16 @@ UPDATE login_tokens SET consumed_at=clock_timestamp()
 WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp();
 
 -- name: MFAEnabledAlertReady :one
-SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+-- Materialization keeps catalog deparsing behind the exact schema/relation
+-- filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
     JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
       AND c.conname='platform_mail_producer_outbox_security_alert_check'
-      AND position('mfa_enabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('mfa_enabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: MFAEnabledAlertKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -480,11 +497,16 @@ WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted IS NOT NULL
 RETURNING mfa_enrolled_at;
 
 -- name: PaymentFailedReady :one
-SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+-- Materialization keeps catalog deparsing behind the exact schema/relation
+-- filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
     JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
       AND c.conname='platform_mail_producer_outbox_security_alert_check'
-      AND position('payment_failed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('payment_failed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: PaymentFailedKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -552,11 +574,16 @@ UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed
 WHERE account_id=$1 AND template='payment_failed' AND state IN ('queued','claimed');
 
 -- name: AccountRestoredReady :one
-SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+-- Materialization keeps catalog deparsing behind the exact schema/relation
+-- filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
     JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
       AND c.conname='platform_mail_producer_outbox_security_alert_check'
-      AND position('account_restored' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('account_restored' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: AccountRestoredKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -610,4 +637,74 @@ WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
 
 -- name: AccountRestoredDeliveryReady :exec
 SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,a.billing_mail_revision,o.account_restored_revision
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0;
+
+-- name: AccountSuspendedReady :one
+-- Materialization keeps catalog deparsing behind the exact schema/relation
+-- filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('account_suspended' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: AccountSuspendedKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='account_suspended' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: AccountSuspendedSchemaReady :exec
+SELECT a.billing_mail_revision,o.account_suspended_revision,o.suspension_past_due_at,p.followup_completed_at,p.lease_id
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_account_suspensions p ON p.intent_id=o.id LIMIT 0;
+
+-- name: LockAccountSuspensionAccount :one
+SELECT id,email,status,past_due_at,deletion_requested_at,billing_mail_revision,clock_timestamp()::timestamptz AS checked_at
+FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: SuspendAccountWithNotice :one
+UPDATE accounts SET status='suspended',suspended_reason=NULL
+WHERE id=$1 AND status='past_due'
+RETURNING billing_mail_revision,clock_timestamp()::timestamptz AS suspended_at;
+
+-- name: CreateAccountSuspendedIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,account_suspended_revision,suspension_past_due_at)
+VALUES($1,$2,$3,$4,$5,$6,'account_suspended',1,$7,$8,$9,$10,$11,$12);
+
+-- name: RecordAccountSuspension :exec
+INSERT INTO billing_account_suspensions(account_id,past_due_at,intent_id,suspended_at,billing_revision)
+VALUES($1,$2,$3,$4,$5);
+
+-- name: AccountSuspensionPeriod :one
+SELECT p.*,o.namespace,o.producer_id,o.from_address,o.recovery_id
+FROM billing_account_suspensions p JOIN platform_mail_producer_outbox o ON o.id=p.intent_id
+WHERE p.account_id=$1 AND p.past_due_at=$2 FOR UPDATE OF p;
+
+-- name: ClaimSuspensionFollowup :one
+UPDATE billing_account_suspensions SET lease_id=sqlc.arg(lease_id),lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::integer)
+WHERE intent_id=sqlc.arg(intent_id) AND followup_completed_at IS NULL
+    AND (lease_id IS NULL OR lease_until<=clock_timestamp() OR lease_id=sqlc.arg(lease_id))
+RETURNING lease_id;
+
+-- name: CompleteSuspensionFollowup :execrows
+UPDATE billing_account_suspensions p SET followup_completed_at=coalesce(p.followup_completed_at,clock_timestamp())
+FROM platform_mail_producer_outbox o
+WHERE o.id=p.intent_id AND o.namespace=$1 AND o.producer_id=$2 AND p.account_id=$3 AND p.intent_id=$4
+    AND p.lease_id=$5;
+
+-- name: ShareAccountSuspendedSubmissionAccount :one
+SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,a.billing_mail_revision,
+    o.account_suspended_revision,o.suspension_past_due_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='account-suspended:'||o.id::text AND o.template='account_suspended'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: AccountSuspendedDeliveryReady :exec
+SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,a.billing_mail_revision,o.account_suspended_revision,o.suspension_past_due_at
 FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0;

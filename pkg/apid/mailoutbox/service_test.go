@@ -54,7 +54,8 @@ func migrationParts(t *testing.T) (string, string) {
 	enabledUp, enabledDown := migrationFileParts(t, "20261017102802761_platform_mail_mfa_enabled_alert_outbox.sql")
 	paymentUp, paymentDown := migrationFileParts(t, "20261017105351033_platform_mail_payment_failed_outbox.sql")
 	restoredUp, restoredDown := migrationFileParts(t, "20261017112923185_platform_mail_account_restored_outbox.sql")
-	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp, restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
+	suspendedUp, suspendedDown := migrationFileParts(t, "20261017115753852_platform_mail_account_suspended_outbox.sql")
+	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp, suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 
 type fixture struct {

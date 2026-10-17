@@ -74,6 +74,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	suspendedGate, suspendedBound := ctx.Value(accountSuspendedSubmissionGateKey{}).(func() bool)
+	if suspendedBound {
+		if suspendedGate == nil || !suspendedGate() {
+			return ErrDisabled
+		}
+		if err := s.shareAccountSuspendedAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	restoredGate, restoredBound := ctx.Value(accountRestoredSubmissionGateKey{}).(func() bool)
 	if restoredBound {
 		if restoredGate == nil || !restoredGate() {
@@ -161,6 +170,9 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			}
 		}
 		return ErrLeaseLost
+	}
+	if suspendedBound && !suspendedGate() {
+		return ErrDisabled
 	}
 	if restoredBound && !restoredGate() {
 		return ErrDisabled

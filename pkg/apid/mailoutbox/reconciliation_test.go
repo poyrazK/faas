@@ -30,6 +30,9 @@ func admitFixture(t *testing.T, f *fixture, intent q.PlatformMailProducerOutbox)
 	if intent.Template == MFADisableTemplate {
 		keyPrefix = "mfa-disable:"
 	}
+	if intent.Template == AccountSuspendedTemplate {
+		keyPrefix = "account-suspended:"
+	}
 	if intent.Template == AccountRestoredTemplate {
 		keyPrefix = "account-restored:"
 	}

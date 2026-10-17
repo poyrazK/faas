@@ -3104,3 +3104,82 @@ and its replay window. Retain durable receipts and evaluate provider redelivery
 before switching. Admission does not establish SMTP custody or destination
 delivery. No activation, deployment or real email is part of this change; live
 qualification remains separate.
+
+## Durable overdue-account suspension notices
+
+`FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0` independently gates
+suspension notices in apid, maild, meterd and private reconciliation. Units and
+examples keep it off. Apply
+[`20261017115753852_platform_mail_account_suspended_outbox.sql`](../../migrations/20261017115753852_platform_mail_account_suspended_outbox.sql)
+before opting in. See
+[ADR-20261017115753](../adr/20261017115753-mail-account-suspended-notices.md).
+
+Meterd delegates the paired billing/outbox transaction to apid on its existing
+loopback operator listener. This adds no listener or public mail API. Enabled
+meterd requires the master, producer, scheduling and producer-outbox gates,
+`FAAS_APID_INTERNAL_BASE_URL` as a literal loopback HTTP origin with an explicit
+port, and `FAAS_INTERNAL_MAIL_SUSPENSION_TOKEN_PATH`. Apid reads that path from
+its existing private environment; meterd can receive it in
+`/etc/faas/secrets/meterd/billing.env`. The file contains a dedicated service
+token of at least 32 printable bytes. Protect it for the two daemon users; do
+not reuse a producer or Safe Deploy token. Maild does not receive this token.
+The narrow client disables proxies and redirects, bounds bodies and uses a
+five-second timeout. Enabled startup probes the authenticated readiness route.
+Default-off meterd reads only its exact flag and creates no client or network
+request. Late enablement requires configuration and restart; it cannot fall back.
+
+The private routes are readiness, account suspension and exact follow-up
+completion under `/v1/internal/billing/`. They are mounted only on the loopback
+operator mux when enabled and reject non-loopback peers and other credentials.
+Requests carry only account ID, expected overdue timestamp and request UUID.
+They cannot supply a recipient, message body, transition time or deadline.
+
+Apid checks the locked current row and database clock against the seven-day
+overdue threshold. It atomically saves suspended status, the billing lifecycle
+revision, pending failure-warning cancellation, encrypted notice and a permanent
+per-account/per-overdue-period receipt. Paired-write failure, held recovery,
+capacity exhaustion or late flag withdrawal leaves suspension retryable without
+inline-mail fallback. Different ticks cannot create duplicate notices. An old
+period cannot suspend a later one; active accounts, operator suspensions and
+legacy suspensions receive no backfill.
+
+Only apid receives the existing dedicated current/previous readers under their
+historical verification identity names. No origin is needed. Retain every reader
+needed by an enabled family's unexpired pending payloads. The sealed payload
+contains original database suspension time and original overdue time. The frozen
+V1 body preserves those times and the original 21-day deletion deadline. Expiry
+is the earlier of suspension plus 24 hours or that deletion deadline. A late
+sweep can enforce suspension while its already-expired notice is erased without
+sending. Retry/restart preserves `account-suspended:<intent UUID>` and cannot
+extend the delivery window.
+
+Apid validates current status, address, overdue anchor, deletion stamp and exact
+billing revision before handoff. Maild repeats that check under the account lock
+before durable SMTP submission start. Payment recovery, deletion or a status or
+address cycle cancels stale notices, including messages already admitted to
+maild. The revision fence remains active with issuance off. Maild records
+`cancelled` / `account_changed` without an SMTP call. The own gate is rechecked
+after lock waits. Later changes cannot recall custody after submission start;
+submitted/uncertain mail is never automatically resent.
+
+A five-minute persisted lease protects meterd's existing parking/notification
+follow-up. Lost replies and restarts resume only the same current dunning
+suspension after lease expiry. Completion requires the exact intent and lease;
+exact completion replay is idempotent. Follow-up is at least once across crashes
+and keeps the existing idempotent scheduler call, parking reason and best-effort
+handling of individual failures. It does not send email inline. The existing
+21-day deletion transition and deletion email remain separate.
+
+Shared suppression, budgets, retry leases and recovery quarantine apply. Private
+receipt review, acknowledgement and audit replay require the own flag and the
+existing operator gates. Account erasure cascades intent and follow-up receipt;
+terminal outbox settlement erases address/ciphertext while opaque audit survives.
+Down refuses any used suspension intent, command receipt or reconciliation audit.
+
+Flag rollback pauses pending notices and private follow-up access; maintenance
+can still expire/erase mail payloads. Future timer work uses its legacy path.
+Review pending follow-up that committed before rollback, since already-suspended
+accounts do not re-enter the legacy suspension step. Retain receipts; changed
+recovery generations require operator review. No activation, deployment,
+credential enrollment or real email is part of this change. Live qualification
+remains separate.

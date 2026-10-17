@@ -1344,3 +1344,7 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
 }
+
+func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, getenv func(string) string) error {
+	return r.mountInternalMailSuspension(mux, addr, getenv)
+}

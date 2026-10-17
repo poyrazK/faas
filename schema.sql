@@ -22944,6 +22944,30 @@ CREATE TABLE public.base_image_scans (
 
 
 --
+-- Name: billing_account_suspensions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_account_suspensions (
+    account_id uuid NOT NULL,
+    past_due_at timestamp with time zone NOT NULL,
+    intent_id uuid NOT NULL,
+    suspended_at timestamp with time zone NOT NULL,
+    billing_revision bigint NOT NULL,
+    followup_completed_at timestamp with time zone,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT billing_account_suspensions_billing_revision_check CHECK ((billing_revision > 0)),
+    CONSTRAINT billing_account_suspensions_check CHECK (((lease_id IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT billing_account_suspensions_check1 CHECK (((followup_completed_at IS NULL) OR (lease_id IS NOT NULL))),
+    CONSTRAINT billing_account_suspensions_followup_completed_at_check CHECK (((followup_completed_at IS NULL) OR isfinite(followup_completed_at))),
+    CONSTRAINT billing_account_suspensions_lease_id_check CHECK (((lease_id IS NULL) OR (lease_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT billing_account_suspensions_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT billing_account_suspensions_past_due_at_check CHECK (isfinite(past_due_at)),
+    CONSTRAINT billing_account_suspensions_suspended_at_check CHECK (isfinite(suspended_at))
+);
+
+
+--
 -- Name: billing_identities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33521,7 +33545,7 @@ CREATE TABLE public.platform_mail_outbox_reconciliations (
     CONSTRAINT platform_mail_outbox_reconciliations_reason_check CHECK ((reason ~ '^[a-z][a-z0-9_]{0,63}$'::text)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_hash_check CHECK ((octet_length(request_hash) = 32)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text])))
+    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text])))
 );
 
 
@@ -33559,6 +33583,8 @@ CREATE TABLE public.platform_mail_producer_outbox (
     security_alert_key_id text DEFAULT ''::text NOT NULL,
     payment_past_due_at timestamp with time zone,
     account_restored_revision bigint,
+    suspension_past_due_at timestamp with time zone,
+    account_suspended_revision bigint,
     CONSTRAINT platform_mail_producer_outbox_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT platform_mail_producer_outbox_check CHECK ((isfinite(restore_until) AND (restore_until > deletion_requested_at))),
     CONSTRAINT platform_mail_producer_outbox_check1 CHECK ((isfinite(expires_at) AND (expires_at > deletion_requested_at))),
@@ -33577,12 +33603,13 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_recipient_address_check CHECK (((length(recipient_address) <= 254) AND (POSITION((chr(10)) IN (recipient_address)) = 0) AND (POSITION((chr(13)) IN (recipient_address)) = 0))),
     CONSTRAINT platform_mail_producer_outbox_restored_check CHECK ((((template = 'account_restored'::text) AND (account_restored_revision IS NOT NULL) AND (account_restored_revision > 0)) OR ((template <> 'account_restored'::text) AND (account_restored_revision IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_revision_check CHECK ((revision > 0)),
-    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
+    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
     CONSTRAINT platform_mail_producer_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'claimed'::text, 'admitted'::text, 'failed'::text, 'expired'::text, 'cancelled'::text, 'suppressed'::text]))),
-    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_suspended_check CHECK ((((template = 'account_suspended'::text) AND (suspension_past_due_at IS NOT NULL) AND isfinite(suspension_past_due_at) AND (account_suspended_revision IS NOT NULL) AND (account_suspended_revision > 0)) OR ((template <> 'account_suspended'::text) AND (suspension_past_due_at IS NULL) AND (account_suspended_revision IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text]))),
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
-    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -40465,6 +40492,22 @@ ALTER TABLE ONLY public.base_image_scans
 
 ALTER TABLE ONLY public.base_image_scans
     ADD CONSTRAINT base_image_scans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_pkey PRIMARY KEY (account_id, past_due_at);
 
 
 --
@@ -53121,6 +53164,13 @@ CREATE INDEX platform_mail_producer_outbox_account_restored_keys_idx ON public.p
 
 
 --
+-- Name: platform_mail_producer_outbox_account_suspended_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_account_suspended_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'account_suspended'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
 -- Name: platform_mail_producer_outbox_magic_keys_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -53195,6 +53245,13 @@ CREATE INDEX platform_mail_producer_outbox_reset_keys_idx ON public.platform_mai
 --
 
 CREATE UNIQUE INDEX platform_mail_producer_outbox_restored_revision_idx ON public.platform_mail_producer_outbox USING btree (account_id, account_restored_revision) WHERE (template = 'account_restored'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_suspended_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_suspended_period_idx ON public.platform_mail_producer_outbox USING btree (account_id, suspension_past_due_at) WHERE (template = 'account_suspended'::text);
 
 
 --
@@ -61741,6 +61798,22 @@ ALTER TABLE ONLY public.base_image_scan_current
 
 ALTER TABLE ONLY public.base_image_scans
     ADD CONSTRAINT base_image_scans_base_producer_id_storage_key_fkey FOREIGN KEY (base_producer_id, storage_key) REFERENCES public.base_image_producers(id, storage_key);
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE CASCADE;
 
 
 --

@@ -31,6 +31,7 @@ type Service struct {
 	mfaDisable                *credentialConfig
 	mfaRecoveryAlert          *credentialConfig
 	mfaDisabledAlert          *credentialConfig
+	accountSuspended          *credentialConfig
 	accountRestored           *credentialConfig
 	paymentFailed             *credentialConfig
 	mfaEnabledAlert           *credentialConfig

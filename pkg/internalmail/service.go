@@ -59,6 +59,7 @@ type Service struct {
 	MagicLinkOutboxEnabled            func() bool
 	MFARecoveryAlertOutboxEnabled     func() bool
 	MFADisabledAlertOutboxEnabled     func() bool
+	AccountSuspendedOutboxEnabled     func() bool
 	AccountRestoredOutboxEnabled      func() bool
 	PaymentFailedOutboxEnabled        func() bool
 	MFAEnabledAlertOutboxEnabled      func() bool
@@ -549,6 +550,13 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 		}
 		return "deferred", "submission_not_started"
 	}
+	submissionCtx, err = s.accountSuspendedSubmissionContext(submissionCtx, m.Message)
+	if err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return "queued", "producer_unavailable"
+		}
+		return "deferred", "submission_not_started"
+	}
 	submissionCtx, err = s.accountRestoredSubmissionContext(submissionCtx, m.Message)
 	if err != nil {
 		if errors.Is(err, ErrDisabled) {
@@ -557,6 +565,9 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 		return "deferred", "submission_not_started"
 	}
 	if err := s.beginMailSubmission(submissionCtx, r, d.Selector); err != nil {
+		if errors.Is(err, errAccountSuspensionObsolete) {
+			return "cancelled", "account_changed"
+		}
 		if errors.Is(err, errAccountRestorationObsolete) {
 			return "cancelled", "account_changed"
 		}
