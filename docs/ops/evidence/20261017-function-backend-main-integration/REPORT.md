@@ -51,8 +51,12 @@ The existing cancellation decision remains ADR-1540.
   error; the corrected RPC suite passed for both protocols. These tests use
   simulated host boundaries and supply no native execution evidence.
 
-The full runner/TLS PostgreSQL race suite and hosted PR checks were still running
-when this record was prepared. Final hosted results belong to
+The complete runner/TLS PostgreSQL race rerun passed without skips, including
+both real-SQL lifecycle cases. Its fixtures now copy the complete shipped SDK
+runtime import closure. The broader runner profiles, worker-pool, rootfs,
+guest-init, template and witness suites also passed their executed cases; existing
+environment-prerequisite skips are recorded in the portable result summary.
+Hosted PR checks were pending when this record was prepared. Final hosted results belong to
 [PR #4883](https://github.com/poyrazK/faas/pull/4883). Earlier increment reports
 retain their validation-time source names and repository state; their ADR links
 now resolve to the reconciled decisions.

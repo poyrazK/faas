@@ -21,14 +21,25 @@ import (
 func resourceFixtureEnv(t *testing.T, witness, gate string) func(*ServeConfig) {
 	t.Helper()
 	return func(cfg *ServeConfig) {
-		data, err := templates.FS.ReadFile("rest-api-postgres/runtime/postgres-pool-runtime.js")
+		writeFunctionResourceRuntime(t, filepath.Dir(cfg.Spec.Args[0]))
+		cfg.Spec.Env = append(cfg.Spec.Env, "POOL_FIXTURE_WITNESS="+witness, "POOL_FIXTURE_DRAIN="+gate)
+	}
+}
+
+func writeFunctionResourceRuntime(t *testing.T, directory string) {
+	t.Helper()
+	for source, target := range map[string]string{
+		"postgres-pool-runtime.js":  "database-runtime.js",
+		"binding-client-runtime.js": "binding-client-runtime.js",
+		"secret-reload-runtime.js":  "secret-reload-runtime.js",
+	} {
+		data, err := templates.FS.ReadFile("rest-api-postgres/runtime/" + source)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(filepath.Dir(cfg.Spec.Args[0]), "database-runtime.js"), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(directory, target), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		cfg.Spec.Env = append(cfg.Spec.Env, "POOL_FIXTURE_WITNESS="+witness, "POOL_FIXTURE_DRAIN="+gate)
 	}
 }
 
@@ -174,13 +185,7 @@ func TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement(t *testing.
 			gate := filepath.Join(t.TempDir(), "drain")
 			source := functionResourceFixture + backgroundFunctionSource
 			f := startBackgroundFunction(t, api.PlanFree, 1, false, source, 0, executionWiring(host), func(cfg *ServeConfig) {
-				data, err := templates.FS.ReadFile("rest-api-postgres/runtime/postgres-pool-runtime.js")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(filepath.Dir(cfg.Spec.Args[0]), "database-runtime.js"), data, 0o600); err != nil {
-					t.Fatal(err)
-				}
+				writeFunctionResourceRuntime(t, filepath.Dir(cfg.Spec.Args[0]))
 				cfg.Spec.Env = append(cfg.Spec.Env, "POOL_FIXTURE_WITNESS="+witness, "POOL_FIXTURE_DRAIN="+gate, "POOL_FIXTURE_FAIL="+strconv.FormatBool(fail))
 				if _, err := workerpool.PrewarmIfSupported(t.Context(), cfg.Execution.WorkerSpec(cfg.Spec)); err != nil {
 					t.Fatal(err)

@@ -1,0 +1,287 @@
+{
+  "main_base": "5f10b1f27616c7543680df4c31b79018312911e1",
+  "production_ready": false,
+  "native_acceptance": false,
+  "runs": {
+    "ordinary_core_initial": {
+      "sha256": "a3d10424b434bc0e09ad238395b161ae4349657478a259242770358c7a01eeca",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 144,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 49,
+          "skipped_tests": [
+            "TestFunctionExecutionWarmRecoveryResealsParkAdmission"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/vmmdgrpc": {
+          "passed_tests": 20,
+          "skipped_tests": [
+            "TestFunctionMigrationRefusedRecoveryRetirement"
+          ],
+          "failed_tests": [
+            "TestMigrationSourcePreparePersistsAuthorityAndKeysBeforeCapture",
+            "package"
+          ]
+        },
+        "github.com/onebox-faas/faas/pkg/fcvm": {
+          "passed_tests": 36,
+          "skipped_tests": [
+            "TestFunctionMigrationAdmittedRecoveryACKAndCanceledRPC/node22",
+            "TestFunctionMigrationAdmittedRecoveryACKAndCanceledRPC/node24",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/wake",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/lease",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/parent",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/incarnation",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/FC_version",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/different_capture",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/expiry",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/purpose",
+            "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/probe",
+            "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/permission_expiry",
+            "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/post-ACK_drift",
+            "TestFunctionMigrationAdmittedLostRegistrationACKHasNoEffects",
+            "TestFunctionMigrationAdmittedRejectedCaptureRetiresWithoutRecovery",
+            "TestFunctionDestinationHostReadyCommitAndDuplicate",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/load",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/probe-or-ACK",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/post-restore-policy",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/cleanup",
+            "TestFunctionDestinationHostCancellationJoinsRestore",
+            "TestFunctionDestinationHostCancelBeforeAdoptionFencesLateRPC",
+            "TestFunctionMigrationSourceRecoveryAdmission/node22",
+            "TestFunctionMigrationSourceRecoveryAdmission/node24",
+            "TestFunctionMigrationSourceUncertainRecovery/lost-ack",
+            "TestFunctionMigrationSourceUncertainRecovery/probe",
+            "TestFunctionMigrationSourceUncertainRecovery/deadline",
+            "TestFunctionMigrationSourceUncertainRecovery/resume",
+            "TestFunctionMigrationSourceUncertainRecovery/checkpoint",
+            "TestFunctionMigrationSourceUncertainRecovery/cleanup",
+            "TestFunctionMigrationSourceDestroyAndStaleBinding",
+            "TestFunctionMigrationSourceCancelledCheckpointRetires",
+            "TestFunctionMigrationSourceRegistrationLostAckDoesNotReplay",
+            "TestFunctionResourceWarmRecoveryAdmission",
+            "TestFunctionResourceWarmUncertainRecoveryRetires",
+            "TestFunctionResourceWarmMeasuredAuthority",
+            "TestFunctionResourceWarmRecoveryJoinedByDestroy"
+          ],
+          "failed_tests": []
+        }
+      }
+    },
+    "qualified_core_initial": {
+      "sha256": "5ec8b9b912f33e424e78b93ca42f7748c371376b57c92f31bddf5aa44d8ff4a9",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/fcvm": {
+          "passed_tests": 85,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 29,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/vmmdgrpc": {
+          "passed_tests": 26,
+          "skipped_tests": [],
+          "failed_tests": [
+            "TestFunctionMigrationHandlersPreparationAndDestinationGate",
+            "package"
+          ]
+        },
+        "github.com/onebox-faas/faas/pkg/runtimeadmission": {
+          "passed_tests": 46,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    },
+    "runner_profiles_initial": {
+      "sha256": "c3c84d1b8ff4f270b3d3ff750d332938ba134897b958fd13142d94d2884d5e19",
+      "packages": {
+        "github.com/onebox-faas/faas/guest/runners/go124": {
+          "passed_tests": 8,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/internal": {
+          "passed_tests": 102,
+          "skipped_tests": [],
+          "failed_tests": [
+            "TestFunctionResourcesRegistrationGateAndCapacity/qualified=false",
+            "TestFunctionResourcesRegistrationGateAndCapacity/qualified=true",
+            "TestFunctionResourcesRegistrationGateAndCapacity",
+            "TestFunctionResourcesCustomHookOrdering/readable=false",
+            "TestFunctionResourcesCustomHookOrdering/readable=true",
+            "TestFunctionResourcesCustomHookOrdering",
+            "TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement/close-fails=false",
+            "TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement/close-fails=true",
+            "TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement",
+            "TestFunctionResourcesRecoveryWaitsForEveryProbe/probe-fails=false",
+            "TestFunctionResourcesRecoveryWaitsForEveryProbe/probe-fails=true",
+            "TestFunctionResourcesRecoveryWaitsForEveryProbe",
+            "package"
+          ]
+        },
+        "github.com/onebox-faas/faas/guest/runners/internal/runnerparity": {
+          "passed_tests": 18,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/internal/workerpool": {
+          "passed_tests": 28,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/node22": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/node24": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/python312": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/python313": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/rootfs": {
+          "passed_tests": 298,
+          "skipped_tests": [
+            "TestAppMkfsRealGoLayer",
+            "TestBuildRealMkfs",
+            "TestPreserveOwnership_IntegerInRange",
+            "TestApplyLayer_OwnershipAppliedEndToEnd",
+            "TestApplyLayer_OutOfRangeClampEndToEnd",
+            "TestApplyEntryPreservesOwnershipOnSymlink",
+            "TestPreserveOwnership_DirIntegerInRange",
+            "TestPatchBaseGuestInitReplacesPID1",
+            "TestPatchBaseGuestInitIsDeterministic",
+            "TestPatchBaseGuestInitRefusesUnexpectedImages"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/e2etest/functionmigration": {
+          "passed_tests": 72,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/e2etest/functionsql": {
+          "passed_tests": 9,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/e2etest/postgresstarter": {
+          "passed_tests": 23,
+          "skipped_tests": [
+            "TestPythonStarterSystemTrust"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/functionlifetime": {
+          "passed_tests": 4,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/init": {
+          "passed_tests": 672,
+          "skipped_tests": [
+            "TestShipReportRetriesBoundedByConstant",
+            "TestWorkloadSecretReloadPublishesAndReportsItsOwnIdentity",
+            "TestMainWorkloadPreparesProjectionBeforeReload",
+            "TestExecHealthcheckUsesDistinctGroup",
+            "TestAppTaskCommandUsesDistinctGroup",
+            "TestRuntimeSecretReloadWorkerRecovery",
+            "TestRuntimeSecretReloadSlowFetchDoesNotShortenBackoff",
+            "TestSidecarRuntimePreservesReloadAcrossProcessRestarts",
+            "TestPreparedSidecarReloaderUsesImageOwner",
+            "TestSidecarRuntimePreparationHonorsOptInAndFailsClosed",
+            "TestEmitWorkloadOOM_SetsSORCVTIMEO"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/cmd/gregale/templates": {
+          "passed_tests": 22,
+          "skipped_tests": [
+            "TestPostgresStarterSQLRecovery",
+            "TestPythonPostgresStarterLifecycle",
+            "TestPythonPostgresStarterSQLRecovery",
+            "TestPythonStorageStarterAcceptance",
+            "TestObjectStorageNodeMaterializeForQualification"
+          ],
+          "failed_tests": []
+        }
+      }
+    },
+    "runner_core_final": {
+      "sha256": "fa531b2b727bfafc164b309450205411fba890bd2e4e9097f01af385418164b8",
+      "packages": {
+        "github.com/onebox-faas/faas/guest/runners/internal": {
+          "passed_tests": 114,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    }
+  },
+  "correction_reruns": {
+    "generic_source_rpc": {
+      "passed": true,
+      "log_sha256": "6d8950053e81ab974cff921984f1d0546b6257cc514efe87ca47dcab27440fcf"
+    },
+    "qualified_function_and_generic_rpc": {
+      "passed": true,
+      "log_sha256": "e222f91e6839f25ca3f4ab27cc5193c7126810dcd5a404d4e2cd0fe7260d1518"
+    },
+    "sdk_package": {
+      "passed": true,
+      "log_sha256": "94a7a6f95f7b743fbbca3dcaa15485e1d5bf4c24343a5704ac666995769dc05f"
+    },
+    "sdk_pool_units": {
+      "passed": true,
+      "log_sha256": "b516e27a93a460bf6e560607b20e10d17786ce1cfaa42ddbdf506894c119a071"
+    },
+    "node_starter": {
+      "passed": true,
+      "log_sha256": "641e743921a0cc92bdfcaa9000ed8b0d5e4e8fb7cd96c64de85153f66339c3d7"
+    },
+    "secret_reload_starter": {
+      "passed": true,
+      "log_sha256": "6f3017a0c95e23ff91056e8631ebf90ec18a1f135f6f00c4272d0adbfd5334fd"
+    },
+    "migration_roundtrip": {
+      "passed": true,
+      "log_sha256": "d868cf3041a4180645c24054c0b9fb14855d7c277143348fac70fb3f81537ef8"
+    },
+    "schema_apply": {
+      "passed": true,
+      "log_sha256": "ebb0d9646c4ed4c70cc6cdd223a3466ca0ae2a0bcee7e44d2e07f425d98a731a"
+    },
+    "sqlc": {
+      "passed": true,
+      "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+    },
+    "migration_expand_contract": {
+      "passed": true,
+      "log_sha256": "8c844d6c4c9ee534449e1c21986b6c0fc41223e15f7f278c7a24ea28a9aaf20a"
+    },
+    "docs_and_source_policy": {
+      "passed": true,
+      "log_sha256": "16175c681a9b3640e614e2338bea2a4f2f6e88bb74bddce982274d0b2e76eece"
+    }
+  },
+  "all_39_normal_qualification_guards_executed_with_tags": true
+}
