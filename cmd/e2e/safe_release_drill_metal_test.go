@@ -297,6 +297,57 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		})
 	})
 
+	// ADR-1391: a variable that makes every new instance answer 500 is
+	// restored by the config guard without a person, and the app serves again.
+	t.Run("config change that breaks the app is restored by the config guard", func(t *testing.T) {
+		d.createApp(t, "sr-config")
+		d.deployLive(t, "sr-config", api.CreateDeploymentRequest{Image: v1})
+		d.waitServing(t, "sr-config", 2*time.Minute)
+		for range 25 { // the old config's sample
+			d.get("sr-config", "/")
+		}
+		raw, status := doReq(t, d.h, d.key, http.MethodPut, "/v1/apps/sr-config/env/FIXTURE_FAIL_REQUESTS", api.PutAppEnvRequest{Value: "1"})
+		var put struct {
+			ConfigChange *api.ConfigChangeReceipt `json:"config_change"`
+		}
+		if status != http.StatusOK || json.Unmarshal(raw, &put) != nil || put.ConfigChange == nil || put.ConfigChange.Guard == nil {
+			t.Fatalf("set breaking variable: status=%d body=%s, want a watching config guard", status, raw)
+		}
+		changed := time.Now()
+		// Parking stops the instance running the old config; the next
+		// request cold-boots with the new one (its snapshots are stale).
+		if raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-config/park", nil); status != http.StatusNoContent {
+			t.Fatalf("park: status=%d body=%s", status, raw)
+		}
+		stop := d.sendTraffic("sr-config", "/", 500*time.Millisecond)
+		var guard api.ConfigGuard
+		deadline := time.Now().Add(4 * time.Minute)
+		for guard.Status == "" || guard.Status == state.ConfigGuardWatching {
+			if time.Now().After(deadline) {
+				stop()
+				t.Fatalf("config guard still %q after 4m: %+v", guard.Status, guard)
+			}
+			time.Sleep(5 * time.Second)
+			raw, status := doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/sr-config/config/guard", nil)
+			if status != http.StatusOK || json.Unmarshal(raw, &guard) != nil {
+				t.Fatalf("read config guard: status=%d body=%s", status, raw)
+			}
+		}
+		stop()
+		if guard.Status != state.ConfigGuardRestored || guard.Decision == nil {
+			t.Fatalf("config guard = %+v, want restored with a decision", guard)
+		}
+		t.Logf("DRILL config_guard seconds=%.0f rule=%s new=%d/%d old=%d/%d summary=%q", time.Since(changed).Seconds(),
+			guard.Decision.Rule, guard.Decision.NewServerErrors, guard.Decision.NewRequests,
+			guard.Decision.OldServerErrors, guard.Decision.OldRequests, guard.Decision.Summary)
+		raw, status = doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/sr-config/env", nil)
+		if status != http.StatusOK || strings.Contains(string(raw), "FIXTURE_FAIL_REQUESTS") {
+			t.Fatalf("env after restore: status=%d body=%s, want the breaking variable gone", status, raw)
+		}
+		d.waitServing(t, "sr-config", 3*time.Minute)
+		t.Logf("DRILL config_guard_recovered seconds=%.0f", time.Since(changed).Seconds())
+	})
+
 	// Last: it stops meterd for the rest of the harness.
 	t.Run("defaulted release falls back to immediate when the canary worker is down", func(t *testing.T) {
 		d.createApp(t, "sr-fallback")

@@ -878,6 +878,11 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeConfigRevisionNotFound means the scope has no such config revision
+	// (ADR-1391), or it was pruned past ConfigRevisionsRetained.
+	CodeConfigRevisionNotFound = "config_revision_not_found"
+	// CodeConfigGuardNotFound means no config change in the scope was guarded.
+	CodeConfigGuardNotFound = "config_guard_not_found"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three

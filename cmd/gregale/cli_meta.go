@@ -3527,9 +3527,21 @@ var cliCommands = []cliCommand{
 				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
 				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
 				{Name: "secret-scan", Short: "scan pairs before pushing", Value: "MODE", ClosedSet: []string{"on", "off", "strict", "source-tree"}},
+				{Name: "no-guard", Short: "do not open a config guard for these changes (ADR-1391)", Bool: true},
 			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)", Examples: []string{"gregale env diff --app my-api", "gregale env diff --app my-api --json"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
+			}},
+			{Name: "history", Short: "List config revisions (each env or secret change) and the config guard's verdicts (ADR-1391)", Examples: []string{"gregale env history --app my-api", "gregale env history --app my-api --scope staging --json"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
+				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "limit", Short: "revisions to show (1-100, default 20)", Value: "N"},
+			}},
+			{Name: "rollback", Short: "Restore a scope's variables to a config revision as one guarded change; secrets that differ are listed, not restored", Positionals: []string{"<revision>"}, Examples: []string{"gregale env rollback 12 --app my-api", "gregale env rollback 12 --app my-api --yes"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked context)", Value: "slug"},
+				{Name: "scope", Short: "env scope (defaults to linked project environment)", Value: "SCOPE"},
+				{Name: "yes", Short: "skip the typed confirmation", Bool: true},
+				{Name: "no-guard", Short: "do not open a config guard for the rollback", Bool: true},
 			}},
 		},
 	},
@@ -4879,6 +4891,7 @@ var cliCommands = []cliCommand{
 				{Name: "scope", Short: "env scope to write (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "class", Short: "retention: persistent by default; ephemeral disables init/warm captures and forces cold boots; omission preserves an existing class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "restart", Short: "restart the app and apply updated secrets now"},
+				{Name: "no-guard", Short: "do not open a config guard for this change (ADR-1391)", Bool: true},
 			}},
 			{Name: "unset", Short: "Remove named sealed secrets (alias: rm)", Examples: []string{"gregale secrets unset OLD_TOKEN UNUSED_KEY --dry-run", "gregale secrets unset --app my-api --interactive", "gregale secrets unset --app my-api OLD_API_KEY", "gregale secrets unset --app my-api OLD_API_KEY --scope staging", "gregale secrets unset --app my-api OLD_API_KEY --wait-for-ack", "gregale secrets unset --app my-api OLD_API_KEY --restart"}, Positionals: []string{"[<KEY>...]"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "validate local input and preview keys and runtime options without API requests or changes", Bool: true},
@@ -4888,6 +4901,7 @@ var cliCommands = []cliCommand{
 				{Name: "restart", Short: "restart the app so running instances drop the removed secret now"},
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"},
 				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
+				{Name: "no-guard", Short: "do not open a config guard for this change (ADR-1391)", Bool: true},
 			}},
 			{Name: "list-all", Short: "List every secret across apps", Examples: []string{"gregale secrets list-all --class ephemeral", "gregale secrets list-all --older-than 90d"}, Flags: []cliFlag{
 				{Name: "before", Short: "pagination cursor from a previous call's next_before", Value: "slug|key"},

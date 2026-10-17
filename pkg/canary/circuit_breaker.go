@@ -285,6 +285,16 @@ func probeBacked5xx(o CircuitBreakerObservation) (CircuitBreakerDecision, bool) 
 	return serverErrorRegression(combined.Candidate, combined.Stable, "; synthetic probes included")
 }
 
+// ServerErrorRegression applies the breaker's 5xx rate comparison to two
+// samples that both meet CircuitBreakerMinRequests. Config guards (ADR-1391)
+// judge a config change against the config before it with the same rule.
+func ServerErrorRegression(candidate, stable HealthWindow) (CircuitBreakerDecision, bool) {
+	if candidate.Requests < CircuitBreakerMinRequests || stable.Requests < CircuitBreakerMinRequests {
+		return CircuitBreakerDecision{}, false
+	}
+	return serverErrorRegression(candidate, stable, "")
+}
+
 // serverErrorRegression is the 5xx rate comparison for two samples that
 // already meet the request floor.
 func serverErrorRegression(c, s HealthWindow, note string) (CircuitBreakerDecision, bool) {

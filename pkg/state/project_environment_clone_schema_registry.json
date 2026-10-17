@@ -471,6 +471,57 @@
     "kind": "configuration"
   },
   {
+    "table": "app_config_guard_secrets",
+    "columns": [
+      "ciphertext",
+      "config_key",
+      "existed",
+      "guard_id",
+      "kid",
+      "secret_class",
+      "value_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_config_guards",
+    "columns": [
+      "account_id",
+      "app_id",
+      "base_revision",
+      "closed_at",
+      "decision",
+      "head_revision",
+      "id",
+      "last_change_at",
+      "opened_at",
+      "restorable",
+      "scope",
+      "status",
+      "window_ends_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_config_revisions",
+    "columns": [
+      "account_id",
+      "actor",
+      "app_id",
+      "config_key",
+      "created_at",
+      "guard_id",
+      "id",
+      "restored_revision",
+      "revision",
+      "scope",
+      "secrets",
+      "source",
+      "variables"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_cpu_policy_node_status",
     "columns": [
       "app_id",

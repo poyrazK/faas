@@ -576,6 +576,48 @@ type AppBindingReleasePolicyHistory struct {
 	ChangedAt pgtype.Timestamptz
 }
 
+type AppConfigGuard struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	BaseRevision int64
+	HeadRevision int64
+	Status       string
+	Restorable   bool
+	OpenedAt     pgtype.Timestamptz
+	LastChangeAt pgtype.Timestamptz
+	WindowEndsAt pgtype.Timestamptz
+	ClosedAt     pgtype.Timestamptz
+	Decision     []byte
+}
+
+type AppConfigGuardSecret struct {
+	GuardID     pgtype.UUID
+	ConfigKey   string
+	Existed     bool
+	Ciphertext  []byte
+	Kid         pgtype.Text
+	ValueHash   pgtype.Text
+	SecretClass pgtype.Text
+}
+
+type AppConfigRevision struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Revision         int64
+	Source           string
+	ConfigKey        string
+	Actor            string
+	Variables        []byte
+	Secrets          []byte
+	GuardID          pgtype.UUID
+	RestoredRevision pgtype.Int8
+	CreatedAt        pgtype.Timestamptz
+}
+
 type AppCpuPolicyNodeStatus struct {
 	AppID             pgtype.UUID
 	NodeID            pgtype.UUID

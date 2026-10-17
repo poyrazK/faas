@@ -284,6 +284,12 @@ type MemStore struct {
 	rollbackPrepared map[string]time.Time
 	// rollbackRecords mirrors deployment_rollbacks (ADR-1353).
 	rollbackRecords map[string]RollbackRecord
+	// configRevisions, configGuards and configGuardSecrets mirror
+	// app_config_revisions, app_config_guards and app_config_guard_secrets
+	// (ADR-1391). Revisions are kept in revision order per scope.
+	configRevisions    map[configScopeKey][]ConfigRevision
+	configGuards       map[string]ConfigGuard
+	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

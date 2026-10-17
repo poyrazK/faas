@@ -21429,6 +21429,85 @@ CREATE TABLE public.app_environment_workload_intents (
 
 
 --
+-- Name: app_config_guard_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_config_guard_secrets (
+    guard_id uuid NOT NULL,
+    config_key text NOT NULL,
+    existed boolean NOT NULL,
+    ciphertext bytea,
+    kid text,
+    value_hash text,
+    secret_class text,
+    CONSTRAINT app_config_guard_secrets_check CHECK ((existed = (ciphertext IS NOT NULL))),
+    CONSTRAINT app_config_guard_secrets_check1 CHECK ((existed = (secret_class IS NOT NULL))),
+    CONSTRAINT app_config_guard_secrets_config_key_check CHECK (((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128))),
+    CONSTRAINT app_config_guard_secrets_secret_class_check CHECK (((secret_class IS NULL) OR (secret_class = ANY (ARRAY['persistent'::text, 'ephemeral'::text]))))
+);
+
+
+--
+-- Name: app_config_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_config_guards (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    base_revision bigint NOT NULL,
+    head_revision bigint NOT NULL,
+    status text NOT NULL,
+    restorable boolean DEFAULT true NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    last_change_at timestamp with time zone NOT NULL,
+    window_ends_at timestamp with time zone,
+    closed_at timestamp with time zone,
+    decision jsonb,
+    CONSTRAINT app_config_guards_base_revision_check CHECK ((base_revision >= 1)),
+    CONSTRAINT app_config_guards_check CHECK ((head_revision >= base_revision)),
+    CONSTRAINT app_config_guards_check1 CHECK ((last_change_at >= opened_at)),
+    CONSTRAINT app_config_guards_check2 CHECK (((status = 'watching'::text) = (closed_at IS NULL))),
+    CONSTRAINT app_config_guards_check3 CHECK (((status = 'watching'::text) OR (decision IS NOT NULL))),
+    CONSTRAINT app_config_guards_decision_check CHECK (((decision IS NULL) OR (jsonb_typeof(decision) = 'object'::text))),
+    CONSTRAINT app_config_guards_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT app_config_guards_status_check CHECK ((status = ANY (ARRAY['watching'::text, 'clean'::text, 'restored'::text, 'regressed'::text, 'no_traffic'::text, 'superseded'::text])))
+);
+
+
+--
+-- Name: app_config_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_config_revisions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    revision bigint NOT NULL,
+    source text NOT NULL,
+    config_key text DEFAULT ''::text NOT NULL,
+    actor text DEFAULT ''::text NOT NULL,
+    variables jsonb NOT NULL,
+    secrets jsonb NOT NULL,
+    guard_id uuid,
+    restored_revision bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_config_revisions_actor_check CHECK ((octet_length(actor) <= 256)),
+    CONSTRAINT app_config_revisions_check CHECK (((source = ANY (ARRAY['baseline'::text, 'config.rollback'::text, 'config.guard_restore'::text])) = (config_key = ''::text))),
+    CONSTRAINT app_config_revisions_check1 CHECK (((source = ANY (ARRAY['config.rollback'::text, 'config.guard_restore'::text])) = (restored_revision IS NOT NULL))),
+    CONSTRAINT app_config_revisions_config_key_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128)))),
+    CONSTRAINT app_config_revisions_restored_revision_check CHECK (((restored_revision IS NULL) OR (restored_revision >= 1))),
+    CONSTRAINT app_config_revisions_revision_check CHECK ((revision >= 1)),
+    CONSTRAINT app_config_revisions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT app_config_revisions_secrets_check CHECK ((jsonb_typeof(secrets) = 'object'::text)),
+    CONSTRAINT app_config_revisions_source_check CHECK ((source = ANY (ARRAY['baseline'::text, 'env.set'::text, 'env.delete'::text, 'secret.set'::text, 'secret.delete'::text, 'secret.rotate'::text, 'config.rollback'::text, 'config.guard_restore'::text]))),
+    CONSTRAINT app_config_revisions_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text))
+);
+
+
+--
 -- Name: app_envs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -38906,6 +38985,38 @@ ALTER TABLE ONLY public.app_environment_workload_intents
 
 
 --
+-- Name: app_config_guard_secrets app_config_guard_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guard_secrets
+    ADD CONSTRAINT app_config_guard_secrets_pkey PRIMARY KEY (guard_id, config_key);
+
+
+--
+-- Name: app_config_guards app_config_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guards
+    ADD CONSTRAINT app_config_guards_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_config_revisions app_config_revisions_app_id_scope_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_app_id_scope_revision_key UNIQUE (app_id, scope, revision);
+
+
+--
+-- Name: app_config_revisions app_config_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_envs app_envs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46756,6 +46867,34 @@ CREATE INDEX app_egress_policy_node_status_observed_idx ON public.app_egress_pol
 --
 
 CREATE UNIQUE INDEX app_environment_workload_intents_job_id_uniq ON public.app_environment_workload_intents USING btree (job_id) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: app_config_guards_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_config_guards_app ON public.app_config_guards USING btree (app_id, scope, opened_at DESC);
+
+
+--
+-- Name: app_config_guards_one_watching; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_config_guards_one_watching ON public.app_config_guards USING btree (app_id, scope) WHERE (status = 'watching'::text);
+
+
+--
+-- Name: app_config_guards_watching; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_config_guards_watching ON public.app_config_guards USING btree (last_change_at, id) WHERE (status = 'watching'::text);
+
+
+--
+-- Name: app_config_revisions_guard; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_config_revisions_guard ON public.app_config_revisions USING btree (guard_id) WHERE (guard_id IS NOT NULL);
 
 
 --
@@ -59295,6 +59434,54 @@ ALTER TABLE ONLY public.app_environment_workload_intents
 
 ALTER TABLE ONLY public.app_environment_workload_intents
     ADD CONSTRAINT app_environment_workload_intents_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_config_guard_secrets app_config_guard_secrets_guard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guard_secrets
+    ADD CONSTRAINT app_config_guard_secrets_guard_id_fkey FOREIGN KEY (guard_id) REFERENCES public.app_config_guards(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_guards app_config_guards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guards
+    ADD CONSTRAINT app_config_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_guards app_config_guards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_guards
+    ADD CONSTRAINT app_config_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_revisions app_config_revisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_revisions app_config_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_config_revisions app_config_revisions_guard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_config_revisions
+    ADD CONSTRAINT app_config_revisions_guard_id_fkey FOREIGN KEY (guard_id) REFERENCES public.app_config_guards(id) ON DELETE SET NULL;
 
 
 --

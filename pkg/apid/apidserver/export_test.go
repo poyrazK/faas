@@ -1183,6 +1183,12 @@ func (r *server) RevokeDevBridgeDashboard(p0 http.ResponseWriter, p1 *http.Reque
 func (r *server) RollbackOn5xxSweep(p0 context.Context, p1 time.Time) error {
 	return r.rollbackOn5xxSweep(p0, p1)
 }
+func (r *server) ConfigGuardSweep(p0 context.Context, p1 time.Time) error {
+	return r.configGuardSweep(p0, p1)
+}
+func (r *server) SetConfigGuardTelemetry(t state.ConfigGuardTelemetryStore) {
+	r.configGuardTelemetry = t
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }

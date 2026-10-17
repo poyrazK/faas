@@ -22481,6 +22481,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/ConfigGuard'
       # ADR-092 PR-B: ?scope= selects which env-scope the row
       # belongs to. PUT/DELETE/POST (single-row writes) reject
       # the reserved sentinel __all__ as 400 EnvScopeReserved.
@@ -22575,6 +22576,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/ConfigGuard'
       # ADR-092 PR-B: ?scope= selects which scope to rotate.
       - $ref: '#/components/parameters/EnvScope'
     post:
@@ -23616,10 +23618,104 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/config/revisions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - name: limit
+        in: query
+        required: false
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    get:
+      tags: [env]
+      operationId: listConfigRevisions
+      summary: List a scope's config revisions (ADR-1391).
+      description: "Newest first. Each customer env or secret write records a revision of the scope's complete config; the newest 100 are kept. Values are not listed; read one revision for its variables."
+      responses:
+        '200':
+          description: Config revisions and the scope's newest config guard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListConfigRevisionsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/config/revisions/{revision}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - name: revision
+        in: path
+        required: true
+        schema: { type: integer, format: int64, minimum: 1 }
+    get:
+      tags: [env]
+      operationId: getConfigRevision
+      summary: Read one config revision (ADR-1391).
+      description: "The scope's variables and secret versions after the change. Secret values and fingerprints are never returned."
+      responses:
+        '200':
+          description: The config revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigRevisionDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/config/guard:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+    get:
+      tags: [env]
+      operationId: getConfigGuard
+      summary: Read a scope's newest config guard (ADR-1391).
+      description: "A guard judges the first traffic served with a changed config against the config before it, and restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in the scope was guarded."
+      responses:
+        '200':
+          description: The config guard and, once closed, its decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigGuard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/config/rollback:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+    post:
+      tags: [env]
+      operationId: rollbackConfig
+      summary: Restore a scope's variables to a config revision (ADR-1391).
+      description: "Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfigRollbackRequest' }
+            example: {"revision": 12}
+      responses:
+        '200':
+          description: What the rollback changed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigRollbackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/env/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/ConfigGuard'
       - $ref: '#/components/parameters/EnvScope'
     put:
       tags: [env]
@@ -51249,6 +51345,16 @@ components:
     # scope=default — the wire shape is byte-identical to
     # pre-PR-B. See EnvScopeInvalid / EnvScopeReserved in
     # responses/ for the 400 codes.
+    ConfigGuard:
+      name: guard
+      in: query
+      required: false
+      schema: { type: boolean }
+      description: |
+        `false` opts this env or secret write out of the config guard
+        (ADR-1391): no guard opens, and a guard already watching the scope
+        closes as superseded. Omitted or `true` guards the change when the
+        scope has a live deployment.
     EnvScope:
       name: scope
       in: query
@@ -84694,6 +84800,9 @@ components:
       type: object
       required: [key, scope, secret_class, created_at, updated_at, delivery_version, delivery_status]
       properties:
+        config_change:
+          $ref: '#/components/schemas/ConfigChangeReceipt'
+          description: "Present on writes: the config revision recorded and the config guard watching it (ADR-1391)."
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
         # written to. Always populated — flat-list reads render
@@ -84939,6 +85048,104 @@ components:
       properties:
         value: { type: string, description: 'Plaintext env-var value. Stored as-is; do NOT use this surface for credentials.', example: "debug" }
 
+    ConfigGuardSummary:
+      description: "The config guard an env or secret write opened or joined (ADR-1391)."
+      type: object
+      required: [id, status, base_revision]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [watching, clean, restored, regressed, no_traffic, superseded] }
+        base_revision: { type: integer, format: int64 }
+        window_minutes: { type: integer }
+    ConfigChangeReceipt:
+      description: "The config revision an env or secret write recorded and the guard watching it (ADR-1391)."
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64 }
+        guard: { $ref: '#/components/schemas/ConfigGuardSummary' }
+    ConfigGuardDecision:
+      description: "Why a config guard closed: the rule, a one-line summary and the new-config and old-config samples."
+      type: object
+      required: [rule, summary, new_requests, new_server_errors, old_requests, old_server_errors]
+      properties:
+        rule: { type: string, example: fail_first_wake_5xx }
+        summary: { type: string }
+        new_requests: { type: integer, format: int64 }
+        new_server_errors: { type: integer, format: int64 }
+        old_requests: { type: integer, format: int64 }
+        old_server_errors: { type: integer, format: int64 }
+        restored_revision: { type: integer, format: int64 }
+        not_restorable: { type: array, items: { type: string } }
+    ConfigGuard:
+      description: "A scope's config guard (ADR-1391)."
+      type: object
+      required: [id, scope, status, base_revision, head_revision, restorable, opened_at, last_change_at]
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string }
+        status: { type: string, enum: [watching, clean, restored, regressed, no_traffic, superseded] }
+        base_revision: { type: integer, format: int64 }
+        head_revision: { type: integer, format: int64 }
+        restorable: { type: boolean }
+        opened_at: { type: string, format: date-time }
+        last_change_at: { type: string, format: date-time }
+        window_ends_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+        decision: { $ref: '#/components/schemas/ConfigGuardDecision' }
+    ConfigRevision:
+      description: "One recorded config change, without values (ADR-1391)."
+      type: object
+      required: [revision, scope, source, actor, created_at, variable_count, secret_count]
+      properties:
+        revision: { type: integer, format: int64 }
+        scope: { type: string }
+        source: { type: string, enum: [baseline, env.set, env.delete, secret.set, secret.delete, secret.rotate, config.rollback, config.guard_restore] }
+        key: { type: string }
+        actor: { type: string }
+        created_at: { type: string, format: date-time }
+        variable_count: { type: integer }
+        secret_count: { type: integer }
+        guard_id: { type: string, format: uuid }
+        guard_status: { type: string }
+        restored_revision: { type: integer, format: int64 }
+    ConfigRevisionDetail:
+      description: "A config revision with its variables and secret versions. Secret values are never returned."
+      allOf:
+        - $ref: '#/components/schemas/ConfigRevision'
+        - type: object
+          required: [variables, secret_versions]
+          properties:
+            variables: { type: object, additionalProperties: { type: string } }
+            secret_versions: { type: object, additionalProperties: { type: integer, format: int64 } }
+    ListConfigRevisionsResponse:
+      type: object
+      required: [revisions]
+      properties:
+        revisions: { type: array, items: { $ref: '#/components/schemas/ConfigRevision' } }
+        guard: { $ref: '#/components/schemas/ConfigGuard' }
+    ConfigRollbackRequest:
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64, minimum: 1 }
+    ConfigSecretDifference:
+      description: "A secret a config rollback could not restore."
+      type: object
+      required: [key]
+      properties:
+        key: { type: string }
+        target_version: { type: integer, format: int64 }
+        current_version: { type: integer, format: int64 }
+    ConfigRollbackResponse:
+      type: object
+      required: [restored_revision, set, deleted, secrets_not_restored]
+      properties:
+        restored_revision: { type: integer, format: int64 }
+        change: { $ref: '#/components/schemas/ConfigChangeReceipt' }
+        set: { type: array, items: { type: string } }
+        deleted: { type: array, items: { type: string } }
+        secrets_not_restored: { type: array, items: { $ref: '#/components/schemas/ConfigSecretDifference' } }
     AppEnvResponse:
       description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
       type: object
@@ -84953,6 +85160,9 @@ components:
           example: "default"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        config_change:
+          $ref: '#/components/schemas/ConfigChangeReceipt'
+          description: "Present on writes: the config revision recorded and the config guard watching it (ADR-1391)."
 
     # ADR-090 PR-B: per-row shape for the nested `env_by_scope`
     # response. Identical to AppEnvResponse except the `scope`

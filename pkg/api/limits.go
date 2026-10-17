@@ -415,6 +415,23 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Guarded, reversible config changes (ADR-1391). Each customer write to an
+// app scope's variables or secrets records a revision; apid keeps the newest
+// ConfigRevisionsRetained per scope (plus any watching guard's base). A write
+// opens or joins the scope's config guard. Its window opens on the first
+// new-config request and lasts ConfigGuardWindowMinutes; a guard that sees no
+// new-config traffic within ConfigGuardMaxWait closes as no_traffic. The
+// old-config sample is the ConfigGuardBaseline before the guard opened. The
+// failure bar reuses RollbackOn5xxMinServerErrors / RollbackOn5xxMinErrorPct.
+// Plan-independent, like the first-wake rollback.
+const ConfigRevisionsRetained = 100
+const ConfigRevisionsListMax = 100
+const ConfigGuardWindowMinutes = 10
+const ConfigGuardMaxWait = 24 * time.Hour
+const ConfigGuardBaseline = time.Hour
+const ConfigGuardCheckIntervalSeconds = 15
+const ConfigGuardBatchSize = 50
+
 // Verified rollback outcomes (ADR-1353). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
