@@ -36,6 +36,7 @@ func (s *PgStore) DeleteFinancialBudget(ctx context.Context, account, id string,
 }
 
 func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string, expected int64, actor, mutation string, spec financial.BudgetSpec) (FinancialBudget, error) {
+	spec = NormalizeFinancialBudgetSpec(spec)
 	if !validFinancialBudgetMutation(account, id, actor, expected) || (mutation != "deleted" && ValidateFinancialBudgetSpec(spec) != nil) {
 		return FinancialBudget{}, ErrInvalidArgument
 	}
@@ -50,6 +51,7 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 	if _, err := q.FinancialBudgetAccountLock(ctx, tx, accountID); err != nil {
 		return FinancialBudget{}, financialBudgetStoreError(err)
 	}
+	continuingStrict := false
 	if mutation != "created" {
 		old, err := q.FinancialBudgetGet(ctx, tx, sqlc.FinancialBudgetGetParams{AccountID: accountID, ID: policyID})
 		if err != nil {
@@ -58,10 +60,37 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 		if old.Revision != expected || old.DeletedAt.Valid {
 			return FinancialBudget{}, ErrConflict
 		}
+		previous, err := financialBudgetFromRow(old)
+		if err != nil {
+			return FinancialBudget{}, err
+		}
+		continuingStrict = previous.Spec.Enabled && financial.StrictAppCompute(previous.Spec) && previous.Spec.Scope == spec.Scope
 	}
 	if mutation != "deleted" {
 		if err := financialBudgetScopeOwned(ctx, tx, q, accountID, spec); err != nil {
 			return FinancialBudget{}, err
+		}
+		if spec.Enabled && spec.Mode == "strict" {
+			if !financial.StrictAppCompute(spec) {
+				return FinancialBudget{}, ErrInvalidArgument
+			}
+			clock, err := q.FinancialComputeClock(ctx, tx)
+			if err != nil {
+				return FinancialBudget{}, err
+			}
+			compute := &pgFinancialComputeTxn{ctx: ctx, db: tx, q: q, account: accountID, now: clock.Time}
+			if !continuingStrict {
+				if err := compute.initialize(spec.Scope.ID, true); err != nil {
+					return FinancialBudget{}, err
+				}
+			}
+			b, err := compute.book(spec.Scope.ID, financial.ComputeMonth(clock.Time))
+			if err != nil {
+				return FinancialBudget{}, err
+			}
+			if b.Committed+b.Reserved > spec.LimitMillicents {
+				return FinancialBudget{}, financial.ErrComputeBudget
+			}
 		}
 	}
 	data, err := json.Marshal(cloneFinancialBudgetSpec(spec))

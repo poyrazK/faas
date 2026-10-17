@@ -3972,6 +3972,43 @@ type FinancialBudgetStopTarget struct {
 	LastError     string
 }
 
+type FinancialComputeBook struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeHold struct {
+	AccountID   pgtype.UUID
+	PolicyID    pgtype.UUID
+	Revision    int64
+	PeriodStart pgtype.Timestamptz
+}
+
+type FinancialComputeLease struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	InstanceID  string
+	NodeID      pgtype.UUID
+	Incarnation pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	Strict      bool
+	StartedAt   pgtype.Timestamptz
+	FundedUntil pgtype.Timestamptz
+	SettledAt   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeOwner struct {
+	NodeID      pgtype.UUID
+	Incarnation pgtype.UUID
+	Protocol    int16
+	ObservedAt  pgtype.Timestamptz
+}
+
 type FinancialEvidenceCoverage struct {
 	Singleton    bool
 	RetainedFrom pgtype.Timestamptz

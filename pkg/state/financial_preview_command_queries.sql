@@ -7,11 +7,11 @@ WHERE t.id=sqlc.arg(task_id)::uuid AND t.account_id=sqlc.arg(account_id)::uuid A
  AND t.deployment_id=sqlc.arg(deployment_id)::uuid AND t.lease_token=sqlc.arg(lease_token)::uuid
  AND t.status='restoring' AND t.lease_expires_at>sqlc.arg(recorded_at)::timestamptz
  AND a.preview_of_slug IS NOT NULL AND a.preview_of_slug!=''
- AND NOT financial_preview_command_held(t.app_id,t.deployment_id,sqlc.arg(recorded_at)::timestamptz)
+ AND NOT financial_app_command_held(t.app_id,t.deployment_id,sqlc.arg(recorded_at)::timestamptz)
 ON CONFLICT (task_id,lease_token) DO NOTHING;
 
 -- name: FinancialPreviewCommandHeld :one
-SELECT financial_preview_command_held(sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(observed_at)::timestamptz)::boolean AS held;
+SELECT financial_app_command_held(sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(observed_at)::timestamptz)::boolean AS held;
 
 -- name: FinancialPreviewCommandActivate :execrows
 UPDATE financial_preview_command_runtimes SET phase='active'

@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-var ErrFinancialBudgetHeld = errors.New("state: preview held by a monitored compute budget")
+var ErrFinancialBudgetHeld = errors.New("state: workload held by a compute budget")
 
 func FinancialBudgetHeldProblem() error {
 	return errors.Join(ErrFinancialBudgetHeld, api.NewProblem(http.StatusPaymentRequired, "financial_budget_held",
@@ -54,6 +55,24 @@ func FinancialBudgetStopsForDeployment(ctx context.Context, store Store, app App
 }
 
 func CheckFinancialBudgetAdmission(ctx context.Context, store Store, app App, deploymentID string, now time.Time) error {
+	if compute, ok := store.(FinancialComputeStore); ok {
+		policies, err := compute.FinancialComputePolicies(ctx, app.AccountID, app.ID)
+		if err != nil {
+			return errors.Join(err, api.ErrCapacity("compute budget admission unavailable"))
+		}
+		for _, p := range policies {
+			if !p.Spec.Enabled || !financial.StrictAppCompute(p.Spec) {
+				continue
+			}
+			balance, err := compute.FinancialComputeBalance(ctx, p, now)
+			if err != nil {
+				return errors.Join(err, api.ErrCapacity("compute budget authority unavailable"))
+			}
+			if balance.Held {
+				return errors.Join(ErrFinancialBudgetHeld, api.NewProblem(402, "financial_budget_held", "Compute budget held", "This app's strict compute budget cannot fund another execution window. Change its policy or wait for its configured UTC reset."))
+			}
+		}
+	}
 	stops, err := FinancialBudgetStopsForDeployment(ctx, store, app, deploymentID, now)
 	if err != nil {
 		return errors.Join(err, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,

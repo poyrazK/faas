@@ -6,12 +6,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/financial"
 )
 
 var _ FinancialPreviewCommandStore = (*MemStore)(nil)
 
 func (m *MemStore) financialPreviewCommandHeldLocked(task AppTask, now time.Time) bool {
 	app := m.apps[task.AppID]
+	for _, h := range m.financialComputeHolds[app.AccountID] {
+		p := m.financialBudgets[h.PolicyID]
+		if p.DeletedAt == nil && p.Revision == h.Revision && p.Spec.Enabled && p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app.ID && (p.Spec.ResumeRule == "manual" || h.PeriodStart.Equal(financial.ComputeMonth(now))) {
+			return true
+		}
+	}
 	if app.PreviewOfSlug == "" {
 		return false
 	}

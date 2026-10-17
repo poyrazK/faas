@@ -37,6 +37,7 @@ type BudgetAlert struct {
 // BudgetRuntime uses the current policy revision. Evaluation and alerts cover
 // the current UTC month; active manual stops may carry over from earlier months.
 type BudgetRuntime struct {
+	Compute    *ComputeBalance   `json:"compute,omitempty"`
 	Evaluation *BudgetEvaluation `json:"evaluation,omitempty"`
 	Alerts     []BudgetAlert     `json:"alerts"`
 	Stops      []BudgetStop      `json:"stops,omitempty"`

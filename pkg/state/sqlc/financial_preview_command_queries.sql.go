@@ -30,7 +30,7 @@ func (q *Queries) FinancialPreviewCommandActivate(ctx context.Context, db DBTX, 
 }
 
 const financialPreviewCommandHeld = `-- name: FinancialPreviewCommandHeld :one
-SELECT financial_preview_command_held($1::uuid,$2::uuid,$3::timestamptz)::boolean AS held
+SELECT financial_app_command_held($1::uuid,$2::uuid,$3::timestamptz)::boolean AS held
 `
 
 type FinancialPreviewCommandHeldParams struct {
@@ -101,7 +101,7 @@ WHERE t.id=$7::uuid AND t.account_id=$8::uuid AND t.app_id=$9::uuid
  AND t.deployment_id=$10::uuid AND t.lease_token=$11::uuid
  AND t.status='restoring' AND t.lease_expires_at>$5::timestamptz
  AND a.preview_of_slug IS NOT NULL AND a.preview_of_slug!=''
- AND NOT financial_preview_command_held(t.app_id,t.deployment_id,$5::timestamptz)
+ AND NOT financial_app_command_held(t.app_id,t.deployment_id,$5::timestamptz)
 ON CONFLICT (task_id,lease_token) DO NOTHING
 `
 
