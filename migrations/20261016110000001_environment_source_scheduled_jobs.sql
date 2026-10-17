@@ -22,6 +22,12 @@ DO $$ BEGIN
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
+DO $preserve_signed_jobs$
+BEGIN
+ -- Migration 20261017115917804 installs signed-artifact Job support atomically;
+ -- its reference helper marks completion. Replaying this older migration
+ -- must preserve the later provenance predicate and Job-link fences.
+ IF to_regprocedure(format('%I.environment_workload_source_job_reference(uuid,uuid,jsonb,text)',current_schema())) IS NOT NULL THEN RETURN; END IF;
 CREATE OR REPLACE FUNCTION environment_workload_source_job_deployment_matches(target_job uuid,target_deployment uuid)
 RETURNS boolean LANGUAGE sql STABLE AS $$
 SELECT EXISTS (
@@ -48,8 +54,16 @@ SELECT EXISTS (
         AND d.environment_workload_runtime->>'workload_class'='job'
 )
 $$;
+END
+$preserve_signed_jobs$;
 -- +goose StatementEnd
 -- +goose StatementBegin
+DO $preserve_signed_jobs$
+BEGIN
+ -- Migration 20261017115917804 installs signed-artifact Job support atomically;
+ -- its reference helper marks completion. Replaying this older migration
+ -- must preserve the later provenance predicate and Job-link fences.
+ IF to_regprocedure(format('%I.environment_workload_source_job_reference(uuid,uuid,jsonb,text)',current_schema())) IS NOT NULL THEN RETURN; END IF;
 CREATE OR REPLACE FUNCTION guard_environment_workload_job_link() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -76,7 +90,8 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-
+END
+$preserve_signed_jobs$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION environment_workload_scheduled_job_acks(target_graph uuid, target_release uuid)

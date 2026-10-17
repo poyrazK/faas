@@ -3,6 +3,12 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
+DO $preserve_signed_jobs$
+BEGIN
+ -- Migration 20261017115917804 installs signed-artifact Job support atomically;
+ -- its reference helper marks completion. Replaying this older migration
+ -- must preserve the later provenance predicate and Job-link fences.
+ IF to_regprocedure(format('%I.environment_workload_source_job_reference(uuid,uuid,jsonb,text)',current_schema())) IS NOT NULL THEN RETURN; END IF;
 CREATE OR REPLACE FUNCTION environment_build_artifact_valid(d deployments, materialized boolean) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE b jsonb:=d.environment_workload_runtime->'built_artifact'; f source_build_rootfs%ROWTYPE; origin deployments%ROWTYPE; a apps%ROWTYPE; src environment_git_sources%ROWTYPE;
 BEGIN
@@ -28,7 +34,8 @@ BEGIN
   AND (NOT materialized OR (d.rootfs_key=b->>'storage_key' AND d.rootfs_path=b->>'rootfs_path' AND d.rootfs_bytes=(b->>'bytes')::bigint
    AND EXISTS(SELECT 1 FROM environment_build_artifact_pins p WHERE p.candidate_id=d.id AND p.artifact_id=f.id)))) IS TRUE;
 END $$;
-
+END
+$preserve_signed_jobs$;
 -- +goose StatementEnd
 -- +goose Down
 -- Retained rollback references must not be invalidated by reverting this adapter.
