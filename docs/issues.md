@@ -343,7 +343,8 @@ server validation and redaction.
 Roll out matching maps and reporting tokens with each deployment. Enabling maps
 can create new issue identities; saved groups and history are not migrated.
 This covers Node reporters. Central artifact publication and server-side OTLP mapping are described below.
-Indexed maps and automatic build-to-server artifact handoff remain future work.
+Automatic publication of prebuilt manifests during CLI deployment is described
+below. Indexed maps and artifacts produced only inside server builds remain future work.
 
 ### Discover source maps during Node builds
 
@@ -451,6 +452,73 @@ can be restored; different mapping metadata cannot replace it. Retained exact ev
 retries keep their original occurrence even after retirement. App or deployment
 deletion cascades artifacts. Existing occurrences retain their mapped evidence;
 source contents and producer extensions are never persisted in artifact storage.
+
+### Publish prebuilt source maps during deployment
+
+For prebuilt JavaScript bundles, `deploy` can publish the manifest to the exact
+deployment it creates. Put the manifest directly in the directory scanned by the
+Node build command, beside the bundle tree its paths describe:
+
+```sh
+npx gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace
+# Include the built bundles and manifest in the source archive.
+tar -czf release.tar.gz package.json dist src
+gregale deploy --name exports --tarball release.tar.gz --no-traffic \
+  --issue-source-maps dist/.gregale-issue-maps.json \
+  --issue-source-map-directory /app/dist
+```
+
+`--issue-source-maps` is relative to the selected source root, not the CLI's
+working directory. `--issue-source-map-directory` is the absolute directory in
+the deployed app corresponding to the manifest's directory. The CLI snapshots
+the final archive, validates and sanitizes the manifest, and verifies every
+referenced bundle's SHA-256 before creating an app or deployment. Bounds match
+Node discovery: 16 MiB per bundle and 64 MiB total. Missing, excluded, changed,
+invalid or empty artifacts stop the command before deployment mutations.
+
+Local source selection (`--path`, HEAD or `--source=worktree`) is also supported
+when the bundles and manifest survive normal packing exclusions. `dist` and
+`.next` are excluded from automatic source packing; use an explicit prebuilt
+archive to include them. Default Git selection uses committed files, so a manifest
+present only in the working tree cannot describe that deployment. Workspace
+deploys resolve the manifest relative to the selected workload's build root.
+
+Publication requires `--no-traffic` or `--traffic-percent=0`. The accepted
+deployment must confirm the same source-archive digest, build root and zero
+production traffic before upload, including when an explicit idempotency key
+replays an earlier submission. A fresh deployment read also verifies that the
+deployment still has those properties, rather than relying on a cached receipt.
+A mismatch produces inspection guidance without
+a publication command. After publication,
+the existing deployment wait continues; `--no-wait` still waits for artifact
+publication and returns before build completion. JSON receipts include
+`issue_source_maps` readiness at publication time, deployment ID, map count and canonical digest.
+A lost PUT response is reconciled only when a fresh read confirms the exact ready
+artifact set. Definite authorization and conflict responses remain errors.
+
+If readiness cannot be confirmed, the command fails with the accepted deployment
+ID, a status command and a publication-only recovery command. Recovery uses a
+private, sanitized manifest snapshot saved locally; delete its file and directory
+after recovery. The command never rolls back or resubmits the deployment to retry
+publication. Recovery only uploads artifacts: it does not resume the deployment
+wait or reapply manifest settings rolled back by the failed deploy. Review those
+settings and confirm publication and deployment readiness before using the normal
+guarded promotion flow. This requires access to inspect the deployment as well as
+publish its artifacts.
+
+This does not enable reporter symbolication or grouping automatically. Startup,
+readiness and preview requests may execute while publication is pending; opted-in
+captures still reject missing artifacts. The hashes verify uploaded bundle bytes,
+not transformations a subsequent build might make: deploy prebuilt bundles without
+rebuilding them, and configure their exact runtime paths. No source code is executed
+locally or source-map URL fetched. Map contents remain private under the existing
+publication API's access checks.
+
+Image, connected-repository, embedded-template, project/function-set, developer-sync,
+preview and create-only paths reject these flags; safe/canary rollouts are also
+excluded because this flow stages zero production traffic. Existing explicit
+publication remains available for those builds. See
+[ADR-1659](adr/1659-deploy-issue-source-map-publication.md).
 
 ### Grouping explanations
 

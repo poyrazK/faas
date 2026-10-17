@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/issues"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 	"github.com/onebox-faas/faas/pkg/whycopy"
@@ -2331,6 +2332,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
+	issueSourceMaps := fs.String("issue-source-maps", "", "portable manifest path inside the selected source root; requires zero production traffic")
+	issueSourceMapDirectory := fs.String("issue-source-map-directory", "", "deployed bundle directory corresponding to the manifest's directory (for example /app/dist)")
 	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313|binary)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
@@ -2587,6 +2590,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
+	if sourceMapErr := validateDeployIssueSourceMaps(explicit, *issueSourceMaps, *issueSourceMapDirectory,
+		*trafficPercent == 0, projectRequested || *image != "" || *repo != "" || *templateName != "" || *githubSnippet ||
+			*simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil ||
+			*safeDeploy || explicit["canary-preset"] || explicit["canary-stages"]); sourceMapErr != nil {
+		return printErr("Invalid source-map publication", sourceMapErr)
+	}
+	if *issueSourceMaps != "" {
+		// Explicit --traffic-percent=0 receives the same dark-deploy output
+		// and promotion guidance as --no-traffic.
+		*noTraffic = true
+	}
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
 	}
@@ -3251,6 +3265,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid deploy manifest", fnErr)
 		}
 		if isFunctionSet {
+			if *issueSourceMaps != "" {
+				return printErr("Invalid source-map publication", errors.New("source-map publication requires a single workload; select its source with --path"))
+			}
 			if len(queueCanaryBindings) > 0 {
 				return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single workload"))
 			}
@@ -3717,6 +3734,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		execution.overrideEnv = overrides
 	}
 
+	var preparedIssueSourceMaps *issues.SourceMapSet
+	if *issueSourceMaps != "" {
+		set, snapshot, cleanup, sourceMapErr := prepareDeployIssueSourceMaps(*tarball, sourceRoot, *issueSourceMaps, *issueSourceMapDirectory)
+		if sourceMapErr != nil {
+			return printErr("Source maps do not match the deployment source", sourceMapErr)
+		}
+		defer cleanup()
+		preparedIssueSourceMaps, *tarball = set, snapshot
+		if !jsonOutput {
+			PrintProgress(osStdout, "Source maps: %d verified bundle(s); publish before promoting production traffic", len(set.Request.Manifest.Artifacts))
+		}
+	}
+
 	// Render one coherent, non-secret summary after the source view and local
 	// inference are authoritative, but before any app creation, binding change,
 	// trigger staging, or source upload. Project deploys and read-only previews
@@ -3768,13 +3798,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	// Fingerprint local source bytes before the first deployment mutation so
 	// the default logical retry key follows the exact archive being shipped.
-	// Normal deploys with an explicit key skip this extra read; previews still
-	// fingerprint the archive so their source identity is meaningful.
+	// Deploys with an explicit key can skip this extra read unless source-map
+	// publication needs to verify the accepted deployment's source identity.
 	sourceSHA256 := ""
-	// Preview requests always need the digest so the diff can identify the
-	// exact source archive, even when the user supplied an explicit
-	// idempotency key. Normal deploys retain the cheaper historical path.
-	if *tarball != "" && (strings.TrimSpace(*idempotencyKey) == "" || *diff) {
+	// Previews also need the digest even with an explicit idempotency key.
+	if *tarball != "" && (strings.TrimSpace(*idempotencyKey) == "" || *diff || preparedIssueSourceMaps != nil) {
 		sourceSHA256, err = tarballSHA256(*tarball)
 		if err != nil {
 			// Keep the established CLI error title for invalid customer
@@ -3799,6 +3827,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
+	}
+	if preparedIssueSourceMaps != nil {
+		deployIntent.IssueSourceMapsSHA256 = preparedIssueSourceMaps.Digest
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
 	if keyErr != nil {
@@ -4236,6 +4267,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		execution.notifyQueued(dep)
+		issueMaps, sourceMapErr := publishDeployIssueSourceMaps(ctx, client, slug, dep, sourceSHA256, sourceRoot, preparedIssueSourceMaps)
+		if sourceMapErr != nil {
+			return printDeployIssueSourceMapsError(sourceMapErr, slug, dep.ID, preparedIssueSourceMaps)
+		}
+		if issueMaps != nil && !jsonOutput {
+			PrintOK(osStdout, "Source maps ready: %d map(s) for deployment %s (%s)", issueMaps.MapCount, issueMaps.DeploymentID, issueMaps.ManifestSHA256)
+		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while
 			// streaming, so preserve the stable receipt field there by
@@ -4251,7 +4289,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if err := applyManifestScaling(); err != nil {
 					return printErr("Manifest scaling policy failed", err)
 				}
-				code := jsonOut(writeJSON(newDeployReceipt(dep, prov, appURL, sourceSHA256, resolvedSimplePlan)))
+				receipt := newDeployReceipt(dep, prov, appURL, sourceSHA256, resolvedSimplePlan)
+				receipt.IssueSourceMaps = issueMaps
+				code := jsonOut(writeJSON(receipt))
 				if code == 0 {
 					commitManifestTriggers()
 				}
@@ -4267,7 +4307,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 0
 		}
 		if jsonWait {
-			code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, resolvedSimplePlan)
+			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, issueMaps, resolvedSimplePlan)
 			if code == 0 {
 				if err := applyManifestScaling(); err != nil {
 					return printErr("Manifest scaling policy failed", err)

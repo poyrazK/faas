@@ -2302,6 +2302,8 @@ var cliCommands = []cliCommand{
 			{Name: "pin-action", Short: "with --github only, resolve the current v0 Action tag to its commit SHA"},
 			{Name: "template", Short: "scaffold from a built-in template", Value: "NAME", ClosedSet: templateNames13},
 			{Name: "dockerfile", Short: "build with the supplied Dockerfile inside --tarball"},
+			{Name: "issue-source-maps", Short: "publish a portable manifest from the selected source; requires zero production traffic", Value: "PATH"},
+			{Name: "issue-source-map-directory", Short: "deployed bundle directory corresponding to the manifest's directory", Value: "PATH"},
 			{Name: "runtime", Short: "function runtime", Value: "RUNTIME", ClosedSet: []string{"node22", "python312", "go124", "go124-alpine", "node24", "python313", "binary"}},
 			{Name: "handler", Short: "function handler", Value: "HANDLER"},
 			{Name: "name", Short: "app name (default: selected source directory, or current directory)", Value: "SLUG"},

@@ -10063,6 +10063,12 @@ const (
 	IssueTagValueMaxBytes          = 128
 )
 
+// Match Node build discovery's bundle hashing bounds (ADR-1659).
+const (
+	IssueSourceMapBundleMaxBytes  = 16 << 20
+	IssueSourceMapBundlesMaxBytes = 64 << 20
+)
+
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
 const IssueGroupMembersMax = 32
 
