@@ -1523,6 +1523,24 @@ func (q *Queries) OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64
 	return column_1, err
 }
 
+const operatorQueuedBuildsSnapshot = `-- name: OperatorQueuedBuildsSnapshot :one
+SELECT count(*)::bigint AS queued,
+       min(enqueued_at)::timestamptz AS oldest_enqueued_at
+FROM builds WHERE status = 'queued'
+`
+
+type OperatorQueuedBuildsSnapshotRow struct {
+	Queued           int64
+	OldestEnqueuedAt pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorQueuedBuildsSnapshot(ctx context.Context, db DBTX) (OperatorQueuedBuildsSnapshotRow, error) {
+	row := db.QueryRow(ctx, operatorQueuedBuildsSnapshot)
+	var i OperatorQueuedBuildsSnapshotRow
+	err := row.Scan(&i.Queued, &i.OldestEnqueuedAt)
+	return i, err
+}
+
 const operatorRecentFailureCounts = `-- name: OperatorRecentFailureCounts :many
 SELECT kind, count(*)::bigint AS hits
 FROM events

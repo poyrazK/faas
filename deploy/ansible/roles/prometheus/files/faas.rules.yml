@@ -3524,6 +3524,39 @@ groups:
           and on (job, instance) (apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} > 0)
           and on (job, instance) (time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} >= 0)
           and on (job, instance) (time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} <= 120)
+          and on (job, instance) (
+            ((faas_build_queue_depth{job="apid"} == 0)
+             and on (job, instance) (faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"} == 0))
+            or
+            ((faas_build_queue_depth{job="apid"} > 0)
+             and on (job, instance) (faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"} > 0)
+             and on (job, instance) (time() - faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"} >= 0))
+          )
+
+      # Keep the original timestamp as input: a waiting build's age must
+      # advance between polls. Healthy empty queues have observed zero wait;
+      # unavailable observations have no wait series.
+      - record: faas_build_queue_oldest_wait_seconds
+        expr: |
+          ((time() - faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"})
+           and on (job, instance) (faas_build_queue_depth{job="apid"} > 0)
+           and on (job, instance) (faas_build_queue_observation_healthy == 1))
+          or
+          ((faas_build_queue_depth{job="apid"} == 0)
+           and on (job, instance) (faas_build_queue_observation_healthy == 1))
+
+      - alert: FaasBuildQueueOldestWaitHigh
+        expr: faas_build_queue_oldest_wait_seconds > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_stuck
+          public_status: internal
+        annotations:
+          summary: "Oldest queued build has waited > 5m"
+          description: "A fresh queue observation has contained a build waiting more than 300 seconds for 10m, even if only one build is queued. The original enqueue time survives requeue. Inspect builder admission, heartbeats, and build state; this observation alone does not prove builder failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuildQueueDepthHigh
         expr: |

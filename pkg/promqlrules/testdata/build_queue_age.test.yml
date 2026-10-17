@@ -1,0 +1,660 @@
+# Oldest currently queued work: low depth, real hold times, and recovery.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: one waiting build warns without any build start histogram events
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: &id001
+        summary: Oldest queued build has waited > 5m
+        description: A fresh queue observation has contained a build waiting more than 300 seconds for 10m, even
+          if only one build is queued. The original enqueue time survives requeue. Inspect builder admission, heartbeats,
+          and build state; this observation alone does not prove builder failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 17m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasBuildQueueBacklog
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_queue_oldest_wait_seconds
+    eval_time: 2m
+    exp_samples:
+    - labels: '{__name__="faas_build_queue_oldest_wait_seconds",job="apid",instance="a"}'
+      value: 60
+  - expr: faas_build_queue_oldest_wait_seconds
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="faas_build_queue_oldest_wait_seconds",job="apid",instance="a"}'
+      value: 300
+  - expr: faas_build_queue_oldest_wait_seconds
+    eval_time: 7m
+    exp_samples:
+    - labels: '{__name__="faas_build_queue_oldest_wait_seconds",job="apid",instance="a"}'
+      value: 360
+  - expr: faas_build_queue_oldest_wait_seconds
+    eval_time: 17m
+    exp_samples:
+    - labels: '{__name__="faas_build_queue_oldest_wait_seconds",job="apid",instance="a"}'
+      value: 960
+- name: successful empty queue is explicitly zero wait
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: '0x45'
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: '0x45'
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildQueueDepthHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_build_queue_oldest_wait_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_build_queue_oldest_wait_seconds",job="apid",instance="a"}'
+      value: 0
+- name: draining clears age alert immediately on a fresh empty observation
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x17 0x25
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x17 0x25
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 18m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 18m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: cancelling oldest leaves younger work with its own age
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 2x17 1x25
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x17 1080x25
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 18m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 33m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 34m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 18m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: failed collection hides cached age and recovery restarts hold
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x17 0x7 1x18
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x17 1020x7 1560+60x18
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 18m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 22m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 23m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: &id002
+        summary: Build queue observation unavailable
+        description: A scraped apid has no successful, complete build queue observation at most 120 seconds old
+          for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's
+          successful fleet snapshot cannot establish this collector's health.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
+  - eval_time: 26m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 36m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+- name: stopped poller expires a cached oldest timestamp
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x17 1020x25
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 20m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 24m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: missing oldest makes age unknown
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: missing at makes age unknown
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: missing success makes age unknown
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: missing count makes age unknown
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: queued with zero oldest
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: '0x45'
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: empty with nonzero oldest
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: '0x45'
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: future enqueue time
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 10000x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: negative enqueue time
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: -1x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: fresh empty sibling cannot hide old queued work
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_depth{job="apid",instance="b"}
+    values: '0x45'
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: '0x45'
+  - series: apid_build_queue_collection_success{job="apid",instance="b"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="b"}
+    values: 0+60x45
+  - series: up{job="apid",instance="b"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 17m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: new sibling work has an independent enqueue time
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_depth{job="apid",instance="b"}
+    values: 0x14 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: 0x14 900x30
+  - series: apid_build_queue_collection_success{job="apid",instance="b"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="b"}
+    values: 0+60x45
+  - series: up{job="apid",instance="b"}
+    values: 1x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id001
+  - eval_time: 17m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: sibling timestamp cannot repair a missing timestamp
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: 60x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002
+- name: failed scrape cannot sustain queue age alert
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 60x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: '0x45'
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: absent apid configuration is not invented
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts: []
+- name: other job cannot provide a missing oldest timestamp
+  interval: 1m
+  input_series:
+  - series: faas_build_queue_depth{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_success{job="apid",instance="a"}
+    values: 1x45
+  - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
+    values: 0+60x45
+  - series: up{job="apid",instance="a"}
+    values: 1x45
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="other",instance="a"}
+    values: 60x45
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasBuildQueueOldestWaitHigh
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: build_queue_stuck
+        public_status: internal
+        job: apid
+        instance: a
+      exp_annotations: *id002

@@ -14,6 +14,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 10m
     alertname: FaasBuildQueueDepthHigh
@@ -49,6 +51,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: '0x30'
   alert_rule_test:
   - eval_time: 15m
     alertname: FaasBuildQueueDepthHigh
@@ -66,6 +70,8 @@ tests:
   - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
     values: 0+60x30
   - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
     values: 1x30
   alert_rule_test:
   - eval_time: 15m
@@ -85,6 +91,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x11 0x19
   alert_rule_test:
   - eval_time: 11m
     alertname: FaasBuildQueueDepthHigh
@@ -150,6 +158,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 4m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -181,6 +191,8 @@ tests:
   - series: apid_build_queue_collection_success{job="apid",instance="a"}
     values: 1x30
   - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
     values: 1x30
   alert_rule_test:
   - eval_time: 4m
@@ -273,6 +285,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -303,6 +317,8 @@ tests:
   - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
     values: 120x30
   - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
     values: 1x30
   alert_rule_test:
   - eval_time: 9m
@@ -338,6 +354,8 @@ tests:
     values: 10000x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -369,6 +387,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -399,6 +419,8 @@ tests:
   - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
     values: 0+60x12 720x6 1200+60x10
   - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
     values: 1x30
   alert_rule_test:
   - eval_time: 12m
@@ -474,6 +496,8 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="a"}
     values: '0x30'
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 15m
     alertname: FaasBuildQueueDepthHigh
@@ -510,6 +534,10 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="b"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 15m
     alertname: FaasBuildQueueDepthHigh
@@ -536,6 +564,10 @@ tests:
     values: 0+60x30
   - series: up{job="apid",instance="b"}
     values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="b"}
+    values: '0x30'
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -567,6 +599,8 @@ tests:
     values: 1x30
   - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="b"}
     values: 0+60x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -598,6 +632,8 @@ tests:
     values: 1x30
   - series: apid_build_queue_collection_last_success_timestamp_seconds{job="other",instance="a"}
     values: 0+60x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="other",instance="a"}
+    values: 1x30
   alert_rule_test:
   - eval_time: 5m
     alertname: FaasBuildQueueTelemetryUnavailable
@@ -628,6 +664,8 @@ tests:
   - series: apid_build_queue_collection_last_success_timestamp_seconds{job="apid",instance="a"}
     values: 120x30
   - series: up{job="apid",instance="a"}
+    values: 1x30
+  - series: faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid",instance="a"}
     values: 1x30
   alert_rule_test:
   - eval_time: 4m

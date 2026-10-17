@@ -492,7 +492,6 @@ RequestTelemetryBaselineP95ByRoute
 RequestTelemetryByDeployment
 RequestTelemetryCoverage
 RequestTelemetryErrorsByRoute
-RequeueBuild
 ResetAppWebhookDeliveryFromDead
 ResolveStaleRegressionObservations
 ResolveStatusIncident

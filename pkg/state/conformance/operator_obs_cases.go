@@ -47,6 +47,56 @@ func testOperatorQueuedBuildsCount(t *testing.T, fx *Fixture) {
 	count(1)
 }
 
+func testOperatorBuildQueueSnapshot(t *testing.T, fx *Fixture) {
+	reader, ok := fx.Store.(state.BuildQueueObservationStore)
+	if !ok {
+		t.Fatal("store lacks coherent queue observation")
+	}
+	check := func(want int64, oldest time.Time) {
+		t.Helper()
+		got, err := reader.QueuedBuildsSnapshot(fx.Ctx)
+		if err != nil || got.Queued != want || !got.OldestEnqueuedAt.Equal(oldest) {
+			t.Fatalf("snapshot = %+v, %v; want %d, %v", got, err, want, oldest)
+		}
+	}
+	check(0, time.Time{})
+	first := seedQueuedBuild(t, fx)
+	second := seedQueuedBuild(t, fx)
+	check(2, first.EnqueuedAt)
+	for range 3 {
+		if _, err := fx.Store.ClaimQueuedBuild(fx.Ctx, first.ID); err != nil {
+			t.Fatal(err)
+		}
+		check(1, second.EnqueuedAt)
+		if err := fx.Store.RequeueBuild(fx.Ctx, first.ID); err != nil {
+			t.Fatal(err)
+		}
+		check(2, first.EnqueuedAt)
+	}
+	if err := fx.Store.UpdateBuildStatus(fx.Ctx, first.ID, state.BuildCancelled, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	check(1, second.EnqueuedAt)
+	if _, err := fx.Store.ClaimQueuedBuild(fx.Ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	check(0, time.Time{})
+	if err := fx.Store.UpdateBuildStatus(fx.Ctx, second.ID, state.BuildSucceeded, "", false, true); err != nil {
+		t.Fatal(err)
+	}
+	check(0, time.Time{})
+	failed := seedQueuedBuild(t, fx)
+	if _, err := fx.Store.ClaimQueuedBuild(fx.Ctx, failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Store.UpdateBuildStatus(fx.Ctx, failed.ID, state.BuildFailed, state.FailureInfra, false, true); err != nil {
+		t.Fatal(err)
+	}
+	check(0, time.Time{})
+	fresh := seedQueuedBuild(t, fx)
+	check(1, fresh.EnqueuedAt)
+}
+
 func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	now := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Second)
 	rule, series := strings.Repeat("a", 64), strings.Repeat("b", 64)

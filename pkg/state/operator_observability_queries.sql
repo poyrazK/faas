@@ -1,6 +1,11 @@
 -- name: OperatorQueuedBuildsCount :one
 SELECT count(*)::bigint FROM builds WHERE status = 'queued';
 
+-- name: OperatorQueuedBuildsSnapshot :one
+SELECT count(*)::bigint AS queued,
+       min(enqueued_at)::timestamptz AS oldest_enqueued_at
+FROM builds WHERE status = 'queued';
+
 -- name: OperatorOverviewTotals :one
 WITH accounts_summary AS (
     SELECT count(*) FILTER (WHERE status = 'active')::bigint AS accounts_active,

@@ -9,12 +9,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-type buildQueueReadFunc func(context.Context) (int, error)
+type buildQueueReadFunc func(context.Context) (state.BuildQueueSnapshot, error)
 
-func (f buildQueueReadFunc) QueuedBuildsCount(ctx context.Context) (int, error) { return f(ctx) }
+func (f buildQueueReadFunc) QueuedBuildsSnapshot(ctx context.Context) (state.BuildQueueSnapshot, error) {
+	return f(ctx)
+}
 
 func queueMetrics(t *testing.T, reg *prometheus.Registry) map[string]float64 {
 	t.Helper()
@@ -37,7 +40,7 @@ func TestBuildQueueMetricsObservationLifecycle(t *testing.T) {
 	m := NewBuildQueueMetrics(reg)
 	now := time.Unix(1_700_000_000, 0)
 	m.now = func() time.Time { return now }
-	lastSuccess := 0.0
+	lastSuccess, oldestSuccess := 0.0, 0.0
 	check := func(t *testing.T, success float64, depth *float64) {
 		t.Helper()
 		want := map[string]float64{
@@ -46,6 +49,7 @@ func TestBuildQueueMetricsObservationLifecycle(t *testing.T) {
 		}
 		if depth != nil {
 			want["faas_build_queue_depth"] = *depth
+			want["faas_build_queue_oldest_enqueued_timestamp_seconds"] = oldestSuccess
 		}
 		if got := queueMetrics(t, reg); !maps.Equal(got, want) {
 			t.Fatalf("metrics = %v, want %v", got, want)
@@ -67,13 +71,17 @@ func TestBuildQueueMetricsObservationLifecycle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			now = now.Add(30 * time.Second)
 			started := now
-			err := m.refresh(t.Context(), buildQueueReadFunc(func(ctx context.Context) (int, error) {
+			err := m.refresh(t.Context(), buildQueueReadFunc(func(ctx context.Context) (state.BuildQueueSnapshot, error) {
 				deadline, ok := ctx.Deadline()
 				if !ok || time.Until(deadline) > api.ObsBuildQueueCollectionBudget {
 					t.Fatal("queue read lacks the collection deadline")
 				}
 				now = now.Add(2 * time.Second)
-				return tc.count, tc.err
+				snapshot := state.BuildQueueSnapshot{Queued: int64(tc.count)}
+				if tc.count > 0 {
+					snapshot.OldestEnqueuedAt = started.Add(-10 * time.Minute)
+				}
+				return snapshot, tc.err
 			}))
 			failed := tc.err != nil || tc.count < 0
 			if (err != nil) != failed {
@@ -83,6 +91,10 @@ func TestBuildQueueMetricsObservationLifecycle(t *testing.T) {
 				check(t, 0, nil)
 			} else {
 				lastSuccess = float64(started.Unix()) // Read start, not completion.
+				oldestSuccess = 0
+				if tc.count > 0 {
+					oldestSuccess = float64(started.Add(-10 * time.Minute).Unix())
+				}
 				depth := float64(tc.count)
 				check(t, 1, &depth)
 			}
@@ -105,12 +117,12 @@ func TestBuildQueueMetricsRunCancellationAndScrapeIsolation(t *testing.T) {
 	defer cancel()
 	entered := make(chan struct{})
 	var calls atomic.Int32
-	store := buildQueueReadFunc(func(ctx context.Context) (int, error) {
+	store := buildQueueReadFunc(func(ctx context.Context) (state.BuildQueueSnapshot, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 		}
 		<-ctx.Done()
-		return 99, nil // Even a misbehaving late success must be rejected.
+		return state.BuildQueueSnapshot{Queued: 99, OldestEnqueuedAt: time.Now().Add(-time.Hour)}, nil // Even a misbehaving late success must be rejected.
 	})
 	done := make(chan struct{}, 2)
 	for range 2 {
@@ -152,18 +164,18 @@ func TestBuildQueueMetricsSequentialTicksAndRecovery(t *testing.T) {
 	entered := make(chan int32, 3)
 	release := make(chan struct{})
 	var calls atomic.Int32
-	store := buildQueueReadFunc(func(ctx context.Context) (int, error) {
+	store := buildQueueReadFunc(func(ctx context.Context) (state.BuildQueueSnapshot, error) {
 		n := calls.Add(1)
 		entered <- n
 		if n == 1 {
 			select {
 			case <-release:
-				return 0, errors.New("unavailable")
+				return state.BuildQueueSnapshot{}, errors.New("unavailable")
 			case <-ctx.Done():
-				return 0, ctx.Err()
+				return state.BuildQueueSnapshot{}, ctx.Err()
 			}
 		}
-		return 42, nil
+		return state.BuildQueueSnapshot{Queued: 42, OldestEnqueuedAt: time.Now().Add(-time.Minute)}, nil
 	})
 	done := make(chan struct{})
 	go func() { defer close(done); m.run(ctx, store, nil, ticks) }()
@@ -204,5 +216,65 @@ func TestBuildQueueMetricsSequentialTicksAndRecovery(t *testing.T) {
 	}
 	if calls.Load() != 3 {
 		t.Fatalf("read count = %d, want immediate + two ticks", calls.Load())
+	}
+}
+
+func TestBuildQueueMetricsSnapshotConsistency(t *testing.T) {
+	at := time.Unix(1_700_000_000, 0).UTC()
+	for _, tc := range []struct {
+		name     string
+		snapshot state.BuildQueueSnapshot
+		advance  time.Duration
+		valid    bool
+	}{
+		{"empty", state.BuildQueueSnapshot{}, 0, true},
+		{"old queued build", state.BuildQueueSnapshot{Queued: 1, OldestEnqueuedAt: at.Add(-time.Hour)}, 0, true},
+		{"enqueue during read", state.BuildQueueSnapshot{Queued: 1, OldestEnqueuedAt: at.Add(time.Second)}, 2 * time.Second, true},
+		{"empty with oldest", state.BuildQueueSnapshot{OldestEnqueuedAt: at}, 0, false},
+		{"queued with no oldest", state.BuildQueueSnapshot{Queued: 1}, 0, false},
+		{"future oldest", state.BuildQueueSnapshot{Queued: 1, OldestEnqueuedAt: at.Add(time.Hour)}, 0, false},
+		{"pre-epoch oldest", state.BuildQueueSnapshot{Queued: 1, OldestEnqueuedAt: time.Unix(-1, 0)}, 0, false},
+		{"negative count", state.BuildQueueSnapshot{Queued: -1}, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := prometheus.NewPedanticRegistry()
+			m := NewBuildQueueMetrics(reg)
+			now := at
+			m.now = func() time.Time { return now }
+			err := m.refresh(t.Context(), buildQueueReadFunc(func(context.Context) (state.BuildQueueSnapshot, error) {
+				now = now.Add(tc.advance)
+				return tc.snapshot, nil
+			}))
+			if (err == nil) != tc.valid {
+				t.Fatalf("refresh = %v, valid = %v", err, tc.valid)
+			}
+			got := queueMetrics(t, reg)
+			depth, hasDepth := got["faas_build_queue_depth"]
+			oldest, hasOldest := got["faas_build_queue_oldest_enqueued_timestamp_seconds"]
+			if hasDepth != tc.valid || hasOldest != tc.valid {
+				t.Fatalf("partial or invalid snapshot: %v", got)
+			}
+			if tc.valid {
+				wantOldest := 0.0
+				if tc.snapshot.Queued > 0 {
+					wantOldest = float64(tc.snapshot.OldestEnqueuedAt.Unix())
+				}
+				if depth != float64(tc.snapshot.Queued) || oldest != wantOldest {
+					t.Fatalf("snapshot: %v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildQueueMetricsMissingSnapshotReader(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewBuildQueueMetrics(reg)
+	if err := m.refresh(t.Context(), nil); err == nil {
+		t.Fatal("missing reader reported success")
+	}
+	got := queueMetrics(t, reg)
+	if len(got) != 2 || got["apid_build_queue_collection_success"] != 0 {
+		t.Fatalf("missing reader: %v", got)
 	}
 }

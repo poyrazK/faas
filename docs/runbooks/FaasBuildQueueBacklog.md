@@ -4,6 +4,9 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metrics: `builderd_build_queue_wait_seconds_bucket` (builderd `/metrics`),
 `faas_build_queue_depth`, `apid_build_queue_collection_success`, and
 `apid_build_queue_collection_last_success_timestamp_seconds` (apid `/metrics`).
+The same apid observation exports
+`faas_build_queue_oldest_enqueued_timestamp_seconds`; Prometheus derives
+`faas_build_queue_oldest_wait_seconds` from that timestamp.
 Spec: §12 (build_queue_wait_p95 < 60 s target, > 300 s warn).
 Severity: warn (no page tier per spec; builds are not customer-blocking).
 
@@ -12,6 +15,10 @@ Severity: warn (no page tier per spec; builds are not customer-blocking).
 `FaasBuildQueueBacklog` reports builds queueing > 300 s at p95 over a
 5-minute window. `FaasBuildQueueDepthHigh` reports more than 50 queued builds
 for ten minutes, using only complete, fresh queue observations.
+`FaasBuildQueueOldestWaitHigh` reports currently queued work whose oldest build
+has waited more than five minutes for ten minutes, even if only one build is
+waiting and no builder starts occur. The p95 histogram only receives samples
+when work starts, so it cannot establish wait for work that remains queued.
 `FaasBuildQueueTelemetryUnavailable` reports an apid that scrapes successfully
 but has no complete fresh queue observation for five minutes.
 
@@ -30,6 +37,8 @@ In Prometheus, inspect each apid independently:
 
 ```promql
 faas_build_queue_depth{job="apid"}
+faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"}
+faas_build_queue_oldest_wait_seconds
 apid_build_queue_collection_success{job="apid"}
 time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"}
 faas_build_queue_observation_healthy
@@ -37,7 +46,8 @@ up{job="apid"}
 ```
 
 The queued count excludes running and terminal builds. Each apid reads the
-same fleet total every thirty seconds with a three-second deadline. Never sum
+same fleet count and oldest enqueue time in one query every thirty seconds
+with a three-second deadline. Never sum
 these counts across apids: two counts of 30 are two observations of the same
 queue, not 60 builds. Compare differing snapshots using their observation times.
 The queued-only `builds_queued_count_idx` index supports this periodic count;
@@ -50,6 +60,19 @@ is older than 120 seconds or in the future. The last-success timestamp freezes
 on failure. A success gauge of one alone is insufficient: a stopped poller can
 leave its last read marked successful. The healthy recording requires the depth,
 success, fresh nonzero timestamp, and successful scrape from the same instance.
+It also requires the oldest enqueue timestamp: zero for an empty queue, or
+positive and nonfuture for queued work. Missing or inconsistent oldest evidence
+makes the whole observation unavailable. Legacy count-only adapters cannot
+establish a complete snapshot.
+
+The derived wait advances from the original enqueue timestamp while observation
+freshness remains valid. Healthy empty queues have zero wait; unknown wait has
+no series. Requeue preserves enqueue time, so repeated retries do not make a
+waiting build younger. Claiming removes a build from the currently queued set;
+cancellation or completion removes it permanently. Removing the oldest build
+reveals the next oldest, which can reset the age warning. An observed empty
+queue during a claim also resets the hold. Investigate running-claim stalls
+separately; queued age alone does not prove builder failure.
 
 Missing depth does not mean the queue drained. The backlog alert resets when
 its evidence becomes unavailable; use the separate telemetry warning to track
@@ -94,3 +117,6 @@ apid. An alert clearing because inputs disappeared is not backlog recovery.
 For backlog, confirm fresh counts decline and queue wait improves. The builder
 execution timeout does not bound how long a queued build waits; queued depth
 alone does not establish slot-admission errors or builder liveness.
+For the oldest-wait warning, confirm the oldest queued build starts or is
+cancelled through normal operator tooling, and inspect the age of remaining
+queued work. A fresh zero wait confirms an empty queue. Missing age does not.

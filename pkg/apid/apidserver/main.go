@@ -1776,7 +1776,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	buildQueueMetrics := operatorobs.NewBuildQueueMetrics(srv.ops.Registry())
 	queueMetricsCtx, stopQueueMetrics := context.WithCancel(ctx)
 	defer stopQueueMetrics()
-	go buildQueueMetrics.Run(queueMetricsCtx, srv.store, log)
+	// Legacy count-only adapters remain observably unavailable; never compose
+	// count and oldest timestamps from separate database snapshots.
+	queueReader, _ := srv.store.(operatorobs.BuildQueueReader)
+	go buildQueueMetrics.Run(queueMetricsCtx, queueReader, log)
 	alertMetrics := operatorobs.NewMaintenanceMetrics(srv.ops.Registry())
 	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log, alertMetrics)
 	go operatorobs.RunAlertRetention(ctx, srv.store, log, alertMetrics)
