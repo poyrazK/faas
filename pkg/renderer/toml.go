@@ -487,6 +487,8 @@ func daemonTableValue(dc *manifest.DaemonConfig, k manifest.TableKey) string {
 			return dc.RateLimitMode
 		}
 		return manifest.DefaultRateLimitMode
+	case "ratelimit.lease":
+		return boolConfigValue(dc.RateLimitLease, false)
 	}
 	return ""
 }
@@ -591,7 +593,7 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 }
 
 func isTOMLBoolKey(key string) bool {
-	return key == "route_metrics_enabled" || key == "streaming_enabled"
+	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "lease"
 }
 
 // tomlQuote serialises a string value as a TOML basic string. The

@@ -209,14 +209,21 @@ func TestRenderTOML_GatewaydInternal(t *testing.T) {
 // kept its own buckets, and on two nodes a 1 rps throttle rule admitted 26
 // of 30 requests sent over 13 s instead of about 15.
 func TestRenderTOML_GatewaydInternalRateLimitTable(t *testing.T) {
-	for _, tc := range []struct{ name, mode, want string }{
-		{"omitted renders central", "", "central"},
-		{"explicit local", "local", "local"},
+	on := true
+	for _, tc := range []struct {
+		name, mode, want string
+		lease            *bool
+		wantLease        bool
+	}{
+		{name: "omitted renders central", want: "central"},
+		{name: "explicit local", mode: "local", want: "local"},
+		{name: "central with leasing", want: "central", lease: &on, wantLease: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dc := fixtureTOML("gatewayd-internal")
 			dc.APIDLoopback = "https://schedd.faas:8081"
 			dc.RateLimitMode = tc.mode
+			dc.RateLimitLease = tc.lease
 			body, _, err := renderTOML(tomlRenderCtx{Daemon: "gatewayd-internal", DC: dc, AppsDomain: "gregale.dev"})
 			if err != nil {
 				t.Fatalf("renderTOML: %v", err)
@@ -226,8 +233,8 @@ func TestRenderTOML_GatewaydInternalRateLimitTable(t *testing.T) {
 				t.Fatalf("decode rendered TOML: %v\n%s", err, body)
 			}
 			table, ok := decoded["ratelimit"].(map[string]any)
-			if !ok || len(table) != 1 || table["mode"] != tc.want {
-				t.Fatalf("[ratelimit] = %#v, want only mode = %q\n%s", decoded["ratelimit"], tc.want, body)
+			if !ok || len(table) != 2 || table["mode"] != tc.want || table["lease"] != tc.wantLease {
+				t.Fatalf("[ratelimit] = %#v, want mode = %q, lease = %v\n%s", decoded["ratelimit"], tc.want, tc.wantLease, body)
 			}
 			for _, key := range []string{"listen_addr", "metrics_addr", "apps_domain", "apid_loopback", "streaming_enabled"} {
 				if _, ok := decoded[key]; !ok {
