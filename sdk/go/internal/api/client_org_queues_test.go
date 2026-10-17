@@ -3,6 +3,7 @@ package api
 // adr: 202610171908
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +21,7 @@ func TestOrgQueueClientOwnershipPaths(t *testing.T) {
 	}))
 	defer server.Close()
 	c := NewClient(server.URL, "company-token")
-	ctx := t.Context()
+	ctx := context.Background()
 	for _, tc := range []struct {
 		want string
 		call func() error

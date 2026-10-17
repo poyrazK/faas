@@ -14470,9 +14470,9 @@ func (q *Queries) EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg En
 const environmentWorkloadIntentContext = `-- name: EnvironmentWorkloadIntentContext :one
 SELECT jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
-JOIN app_resource_accounts c ON c.app_id = a.id
+JOIN LATERAL lock_app_resource_account(a.id,true,false) c ON true
 WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND e.id=$3::uuid AND a.status<>'deleted'
-FOR UPDATE OF a,c
+FOR UPDATE OF a
 `
 
 type EnvironmentWorkloadIntentContextParams struct {
@@ -46436,10 +46436,10 @@ func (q *Queries) LockApplicationStandardLogConsumerRegistration(ctx context.Con
 }
 
 const lockApplicationStandardLogInventoryParents = `-- name: LockApplicationStandardLogInventoryParents :one
-SELECT a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id = a.id
+SELECT a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
  JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid
- FOR SHARE OF a,o,acct,e NOWAIT
+ FOR SHARE OF a,o,e NOWAIT
 `
 
 type LockApplicationStandardLogInventoryParentsParams struct {
@@ -48244,8 +48244,8 @@ func (q *Queries) LockEventWorkflowRecipient(ctx context.Context, db DBTX, arg L
 const lockEventWorkflowTarget = `-- name: LockEventWorkflowTarget :one
 SELECT a.account_id, a.status AS app_status, a.maintenance_mode, a.platform_tenant_required,
  ac.plan, ac.status AS account_status, ac.abuse_hold_at
-FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
-WHERE a.id = $1 FOR SHARE OF a, ac
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
+WHERE a.id = $1 FOR SHARE OF a
 `
 
 type LockEventWorkflowTargetRow struct {
@@ -51111,7 +51111,7 @@ func (q *Queries) LockTenantWorkflowScheduleSurfaceLink(ctx context.Context, db 
 const lockTenantWorkflowScheduleTarget = `-- name: LockTenantWorkflowScheduleTarget :one
 SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id, d.workflows)::jsonb AS workflows, ac.plan
 FROM apps a
-JOIN app_resource_accounts ac ON ac.app_id = a.id
+JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 JOIN platform_tenants t ON t.id = $1::uuid AND t.account_id = a.account_id
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = $2::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode
@@ -51120,7 +51120,7 @@ WHERE a.id = $2::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode
   AND d.id = (SELECT dep.id FROM deployments dep WHERE dep.app_id = a.id
       AND dep.status = 'live' AND dep.scope = 'default'
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1)
-FOR SHARE OF a, ac, t, d
+FOR SHARE OF a,t,d
 `
 
 type LockTenantWorkflowScheduleTargetParams struct {
@@ -51321,7 +51321,7 @@ func (q *Queries) LockWorkflowResumeRun(ctx context.Context, db DBTX, arg LockWo
 
 const lockWorkflowResumeTarget = `-- name: LockWorkflowResumeTarget :one
 SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
-FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = $1 AND a.status <> 'deleted' AND NOT a.maintenance_mode
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
@@ -51330,7 +51330,7 @@ WHERE a.id = $1 AND a.status <> 'deleted' AND NOT a.maintenance_mode
       WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
   )
-FOR SHARE OF a, ac, d
+FOR SHARE OF a,d
 `
 
 type LockWorkflowResumeTargetRow struct {
@@ -51454,7 +51454,7 @@ func (q *Queries) LockWorkflowScheduleOccurrenceForReplay(ctx context.Context, d
 
 const lockWorkflowScheduleTarget = `-- name: LockWorkflowScheduleTarget :one
 SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
-FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = $1 AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
@@ -51463,7 +51463,7 @@ WHERE a.id = $1 AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.p
       WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
   )
-FOR SHARE OF a, ac, d
+FOR SHARE OF a,d
 `
 
 type LockWorkflowScheduleTargetRow struct {
@@ -51741,9 +51741,9 @@ func (q *Queries) ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, a
 
 const managedWorkflowEffectAppScope = `-- name: ManagedWorkflowEffectAppScope :one
 SELECT a.account_id::text AS account_id, ac.status AS account_status
-FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 WHERE a.id=$1::text::uuid AND a.status<>'deleted'
-FOR SHARE OF a, ac
+FOR SHARE OF a
 `
 
 type ManagedWorkflowEffectAppScopeRow struct {
@@ -73527,7 +73527,7 @@ const recordApplicationStandardLogDelivery = `-- name: RecordApplicationStandard
 WITH guarded AS MATERIALIZED (
  SELECT d.id
 FROM app_log_drains d
- JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id = a.id
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
  JOIN app_application_standards e ON e.app_id=a.id
  JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
  JOIN application_standard_log_destinations r ON r.id=b.resource_id
@@ -73545,7 +73545,7 @@ FROM app_log_drains d
  AND r.id=$5::uuid AND e.desired_revision=$6::bigint
  AND e.effective_hash=$7::text AND r.config_hash=$8::text
  AND application_standard_log_drain_hash(d)=$9::text
- FOR SHARE OF d,a,o,acct,e,b,r,i NOWAIT
+ FOR SHARE OF d,a,o,e,b,r,i NOWAIT
 ), inserted AS (
  INSERT INTO application_standard_log_deliveries(app_id,org_id,drain_id,resource_id,desired_revision,effective_hash,resource_config_hash,drain_config_hash,source_instance_id,sequence,observed_at)
  SELECT $3::uuid,$4::uuid,$2::uuid,$5::uuid,

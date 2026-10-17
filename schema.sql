@@ -689,8 +689,8 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
   RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
- JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+ JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
  PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
   AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
@@ -1324,8 +1324,8 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||application_id::text,0)) THEN
   RAISE EXCEPTION 'application standard controls are busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
- WHERE a.id=application_id FOR SHARE OF o,acct NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+ WHERE a.id=application_id FOR SHARE OF o NOWAIT;
  PERFORM p.id FROM projects p JOIN apps a ON a.project_id=p.id WHERE a.id=application_id FOR SHARE OF p NOWAIT;
  PERFORM d.id FROM app_log_drains d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
  PERFORM b.app_id FROM application_standard_control_bindings b WHERE b.app_id=application_id
@@ -1669,8 +1669,8 @@ BEGIN
  END IF;
  PERFORM h.app_id FROM application_standard_log_health h
   WHERE h.app_id=NEW.app_id AND h.drain_id=NEW.drain_id AND h.node_id=NEW.node_id FOR UPDATE NOWAIT;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
-  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM d.id FROM app_log_drains d JOIN application_standard_control_bindings b ON b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text
   JOIN application_standard_log_destinations r ON r.id=b.resource_id
   WHERE d.app_id=NEW.app_id AND d.id=NEW.drain_id FOR SHARE OF d,b,r NOWAIT;
@@ -1741,9 +1741,9 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
   RAISE EXCEPTION 'logging inventory is busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
  JOIN app_application_standards e ON e.app_id=a.id
- WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
  WHERE c.node_id=NEW.node_id FOR SHARE OF c,n NOWAIT;
  NEW.observed_at:=clock_timestamp();
@@ -16379,6 +16379,203 @@ $$;
 
 
 --
+-- Name: accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    email public.citext NOT NULL,
+    plan text DEFAULT 'free'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    provider_customer_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deletion_requested_at timestamp with time zone,
+    stripe_subscription_item text,
+    last_quota_warning_at timestamp with time zone,
+    past_due_at timestamp with time zone,
+    mfa_enrolled_at timestamp with time zone,
+    mfa_secret_encrypted bytea,
+    mfa_recovery_codes_hash bytea[],
+    mfa_required boolean DEFAULT false NOT NULL,
+    overage_cap_cents bigint,
+    key_grace_window_days integer,
+    egress_allowlist_extra integer DEFAULT 0 NOT NULL,
+    email_verified_at timestamp with time zone,
+    business_name text,
+    billing_address text,
+    tax_id text,
+    suspended_reason text,
+    abuse_hold_at timestamp with time zone,
+    abuse_hold_reason text,
+    CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
+    CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
+    CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
+    CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
+    CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
+    CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
+    CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
+    CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
+    CONSTRAINT accounts_suspended_reason_check CHECK (((suspended_reason IS NULL) OR ((suspended_reason = 'free_quota'::text) AND (status = 'suspended'::text)))),
+    CONSTRAINT accounts_tax_id_length_chk CHECK (((tax_id IS NULL) OR ((char_length(tax_id) >= 1) AND (char_length(tax_id) <= 128))))
+);
+
+
+--
+-- Name: orgs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.orgs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    slug text NOT NULL,
+    name text NOT NULL,
+    personal_org boolean DEFAULT false NOT NULL,
+    personal_owner_account_id uuid,
+    plan text DEFAULT 'free'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    provider_customer_id text,
+    stripe_subscription_item text,
+    deleted_pending boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    resource_ownership_enabled boolean DEFAULT false NOT NULL,
+    past_due_at timestamp with time zone,
+    last_quota_warning_at timestamp with time zone,
+    suspended_reason text,
+    abuse_hold_at timestamp with time zone,
+    abuse_hold_reason text,
+    billing_email text DEFAULT ''::text NOT NULL,
+    business_name text DEFAULT ''::text NOT NULL,
+    billing_address text DEFAULT ''::text NOT NULL,
+    tax_id text DEFAULT ''::text NOT NULL,
+    object_storage_owned_from timestamp with time zone,
+    CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
+    CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
+    CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
+    CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
+    CONSTRAINT orgs_suspended_reason_check CHECK (((suspended_reason IS NULL) OR (suspended_reason = 'free_quota'::text)))
+);
+
+
+--
+-- Name: app_resource_accounts; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.app_resource_accounts AS
+ SELECT a.id AS app_id,
+    a.account_id AS id,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.past_due_at
+            ELSE ac.past_due_at
+        END AS past_due_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN NULL::timestamp with time zone
+            ELSE ac.deletion_requested_at
+        END AS deletion_requested_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.last_quota_warning_at
+            ELSE ac.last_quota_warning_at
+        END AS last_quota_warning_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.suspended_reason
+            ELSE ac.suspended_reason
+        END AS suspended_reason,
+    COALESCE(
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.plan
+            ELSE ac.plan
+        END, ''::text) AS plan,
+    COALESCE(
+        CASE
+            WHEN ((o.personal_org = false) AND (o.resource_ownership_enabled OR (o.status <> ALL (ARRAY['active'::text, 'past_due'::text])) OR o.deleted_pending)) THEN
+            CASE
+                WHEN o.deleted_pending THEN 'deleted_pending'::text
+                ELSE o.status
+            END
+            ELSE ac.status
+        END, ''::text) AS status,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.abuse_hold_at
+            ELSE ac.abuse_hold_at
+        END AS abuse_hold_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.abuse_hold_reason
+            ELSE ac.abuse_hold_reason
+        END AS abuse_hold_reason,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN 0
+            ELSE ac.egress_allowlist_extra
+        END AS egress_allowlist_extra,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.created_at
+            ELSE ac.created_at
+        END AS created_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.billing_email
+            ELSE (ac.email)::text
+        END AS email,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.provider_customer_id
+            ELSE ac.provider_customer_id
+        END AS provider_customer_id,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.stripe_subscription_item
+            ELSE ac.stripe_subscription_item
+        END AS stripe_subscription_item
+   FROM ((public.apps a
+     LEFT JOIN public.orgs o ON ((o.id = a.org_id)))
+     LEFT JOIN public.accounts ac ON ((ac.id = a.account_id)));
+
+
+--
+-- Name: lock_app_resource_account(uuid, boolean, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_app_resource_account(application_id uuid, exclusive_lock boolean, fail_fast boolean) RETURNS SETOF public.app_resource_accounts
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_org uuid; target_namespace uuid; legacy_owner boolean;
+BEGIN
+ SELECT org_id,account_id INTO target_org,target_namespace FROM apps WHERE id=application_id;
+ IF NOT FOUND THEN RETURN; END IF;
+ IF exclusive_lock AND fail_fast THEN
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR UPDATE NOWAIT;
+ ELSIF exclusive_lock THEN
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR UPDATE;
+ ELSIF fail_fast THEN
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR SHARE NOWAIT;
+ ELSE
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR SHARE;
+ END IF;
+ IF NOT FOUND THEN RETURN; END IF;
+ IF legacy_owner THEN
+  IF exclusive_lock AND fail_fast THEN
+   PERFORM id FROM accounts WHERE id=target_namespace FOR UPDATE NOWAIT;
+  ELSIF exclusive_lock THEN
+   PERFORM id FROM accounts WHERE id=target_namespace FOR UPDATE;
+  ELSIF fail_fast THEN
+   PERFORM id FROM accounts WHERE id=target_namespace FOR SHARE NOWAIT;
+  ELSE
+   PERFORM id FROM accounts WHERE id=target_namespace FOR SHARE;
+  END IF;
+  IF NOT FOUND THEN RETURN; END IF;
+ END IF;
+ IF exclusive_lock AND fail_fast THEN
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR UPDATE NOWAIT;
+ ELSIF exclusive_lock THEN
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR UPDATE;
+ ELSIF fail_fast THEN
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR SHARE NOWAIT;
+ ELSE
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR SHARE;
+ END IF;
+ IF NOT FOUND THEN RETURN; END IF;
+ RETURN QUERY SELECT * FROM app_resource_accounts WHERE app_id=application_id;
+END $$;
+
+
+--
 -- Name: lock_build_export_publication(jsonb, text, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -22389,49 +22586,6 @@ CREATE TABLE public.account_spend_snapshot (
 
 
 --
--- Name: accounts; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.accounts (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    email public.citext NOT NULL,
-    plan text DEFAULT 'free'::text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    provider_customer_id text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    deletion_requested_at timestamp with time zone,
-    stripe_subscription_item text,
-    last_quota_warning_at timestamp with time zone,
-    past_due_at timestamp with time zone,
-    mfa_enrolled_at timestamp with time zone,
-    mfa_secret_encrypted bytea,
-    mfa_recovery_codes_hash bytea[],
-    mfa_required boolean DEFAULT false NOT NULL,
-    overage_cap_cents bigint,
-    key_grace_window_days integer,
-    egress_allowlist_extra integer DEFAULT 0 NOT NULL,
-    email_verified_at timestamp with time zone,
-    business_name text,
-    billing_address text,
-    tax_id text,
-    suspended_reason text,
-    abuse_hold_at timestamp with time zone,
-    abuse_hold_reason text,
-    CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
-    CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
-    CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
-    CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
-    CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
-    CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
-    CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
-    CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
-    CONSTRAINT accounts_suspended_reason_check CHECK (((suspended_reason IS NULL) OR ((suspended_reason = 'free_quota'::text) AND (status = 'suspended'::text)))),
-    CONSTRAINT accounts_tax_id_length_chk CHECK (((tax_id IS NULL) OR ((char_length(tax_id) >= 1) AND (char_length(tax_id) <= 128))))
-);
-
-
---
 -- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23932,113 +24086,6 @@ CREATE TABLE public.app_registry_credentials (
     CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
     CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
 );
-
-
---
--- Name: orgs; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.orgs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    slug text NOT NULL,
-    name text NOT NULL,
-    personal_org boolean DEFAULT false NOT NULL,
-    personal_owner_account_id uuid,
-    plan text DEFAULT 'free'::text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    provider_customer_id text,
-    stripe_subscription_item text,
-    deleted_pending boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    resource_ownership_enabled boolean DEFAULT false NOT NULL,
-    past_due_at timestamp with time zone,
-    last_quota_warning_at timestamp with time zone,
-    suspended_reason text,
-    abuse_hold_at timestamp with time zone,
-    abuse_hold_reason text,
-    billing_email text DEFAULT ''::text NOT NULL,
-    business_name text DEFAULT ''::text NOT NULL,
-    billing_address text DEFAULT ''::text NOT NULL,
-    tax_id text DEFAULT ''::text NOT NULL,
-    object_storage_owned_from timestamp with time zone,
-    CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
-    CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
-    CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
-    CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
-    CONSTRAINT orgs_suspended_reason_check CHECK (((suspended_reason IS NULL) OR (suspended_reason = 'free_quota'::text)))
-);
-
-
---
--- Name: app_resource_accounts; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.app_resource_accounts AS
- SELECT a.id AS app_id,
-    a.account_id AS id,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.past_due_at
-            ELSE ac.past_due_at
-        END AS past_due_at,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN NULL::timestamp with time zone
-            ELSE ac.deletion_requested_at
-        END AS deletion_requested_at,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.last_quota_warning_at
-            ELSE ac.last_quota_warning_at
-        END AS last_quota_warning_at,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.suspended_reason
-            ELSE ac.suspended_reason
-        END AS suspended_reason,
-    COALESCE(
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.plan
-            ELSE ac.plan
-        END, ''::text) AS plan,
-    COALESCE(
-        CASE
-            WHEN ((o.personal_org = false) AND (o.resource_ownership_enabled OR (o.status <> ALL (ARRAY['active'::text, 'past_due'::text])) OR o.deleted_pending)) THEN
-            CASE
-                WHEN o.deleted_pending THEN 'deleted_pending'::text
-                ELSE o.status
-            END
-            ELSE ac.status
-        END, ''::text) AS status,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.abuse_hold_at
-            ELSE ac.abuse_hold_at
-        END AS abuse_hold_at,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.abuse_hold_reason
-            ELSE ac.abuse_hold_reason
-        END AS abuse_hold_reason,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN 0
-            ELSE ac.egress_allowlist_extra
-        END AS egress_allowlist_extra,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.created_at
-            ELSE ac.created_at
-        END AS created_at,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.billing_email
-            ELSE (ac.email)::text
-        END AS email,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.provider_customer_id
-            ELSE ac.provider_customer_id
-        END AS provider_customer_id,
-        CASE
-            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.stripe_subscription_item
-            ELSE ac.stripe_subscription_item
-        END AS stripe_subscription_item
-   FROM ((public.apps a
-     LEFT JOIN public.orgs o ON ((o.id = a.org_id)))
-     LEFT JOIN public.accounts ac ON ((ac.id = a.account_id)));
 
 
 --

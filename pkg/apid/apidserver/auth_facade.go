@@ -70,6 +70,13 @@ func (s *server) authLimited(next accountHandler) http.HandlerFunc {
 	return s.authMw.RequireLimited(pkgNext)
 }
 
+// Project publishing checks the human's verification before resolving the
+// project, so a missing resource cannot bypass the verification response.
+func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))
+	return s.authMw.RequireLimited(pkgNext)
+}
+
 // The handler account remains the storage/quota subject, while the request
 // principal remains the actor for scope, MFA, verification and audit checks.
 func (s *server) authorizeAppResource(next accountHandler) accountHandler {

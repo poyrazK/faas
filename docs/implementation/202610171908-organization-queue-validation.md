@@ -100,3 +100,33 @@ compatibility updates. The protocol check matches all ten services, 296 messages
 five enums and 156 guest JSON keys against this base. No ancestor `v*` release
 tag was available, so that comparison does not establish compatibility with an
 independently identified deployed release.
+
+## PR #4882 CI follow-up
+
+The first CI run exposed row locks against the nullable creator join in
+`app_resource_accounts`. Admission and logging observation queries now lock the
+actual organization or legacy personal account, then recheck the app namespace.
+PostgreSQL regressions cover personal billing, adopted company billing, erased
+creators, competing owner updates, and independent creator billing. Focused
+state and workflow recovery tests pass (174.248s, without race detection).
+
+Gateway logging (9.416s), managed PostgreSQL cutover schema coverage (8.106s),
+scheduler workflow and application-standard regressions (30.630s), and log
+retention (15.560s) pass. Retention preserves the account-plan fallback for
+missing apps and the company plan after creator erasure. Nine runtime journal
+tables and seven fencing columns are explicitly classified in the clone schema
+registry. Project publishing checks human email verification before project
+resolution; verification and organization-project HTTP regressions pass (10.235s).
+
+The Go SDK's full tests and `go vet` pass after replacing Go 1.24-only test
+contexts with APIs supported by its Go 1.23 module minimum. The storage starter
+job keeps every qualification command and now allows 20 minutes after its first
+run reached the 15-minute deadline just after the final test command reported
+success.
+
+Fresh schema generation, SQL binding generation, migration lint, apply-and-walk,
+replay of all seven ownership migrations, and ownership down/up recovery pass.
+The migration checks take 25.729s with session-scoped parallel query and index
+workers disabled: the local PostgreSQL 16 container's 64 MiB shared-memory mount
+was exhausted by the initial run. Final GitHub checks are tracked on
+[PR #4882](https://github.com/poyrazK/faas/pull/4882) and must pass before merge.

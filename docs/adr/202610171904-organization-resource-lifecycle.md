@@ -28,6 +28,13 @@ created after cutover belongs to the organization billing subject. Existing
 usage, delivery receipts and provider IDs keep their original attribution;
 replaying an existing minute must not move it to another subject.
 
+Admission and observation transactions lock the persisted billing owner before
+reading its policy. Personal and unadopted apps retain the account row fence;
+adopted apps lock the organization and recheck the app's namespace. The optional
+creator join in the runtime projection is never a row-lock target. Company
+log retention follows the organization plan after creator erasure. Logs whose
+app is gone retain their existing account-plan fallback and one-day orphan floor.
+
 Core lifecycle coverage includes apps, deployments, builds, snapshots, env,
 sealed app secrets, signers, registry credentials, invocations and ordinary
 runtime telemetry. Projects and app-bound data services require explicit

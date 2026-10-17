@@ -50,6 +50,7 @@ BEGIN
     AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('apps') AND conname='apps_streaming_enabled_plan_check')
     AND to_regclass('resource_namespaces') IS NOT NULL
     AND to_regclass('app_resource_accounts') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='lock_app_resource_account')
     AND to_regclass('billing_resource_accounts') IS NOT NULL
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='seed_resource_namespace')
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='activate_org_resource_ownership')
@@ -249,6 +250,51 @@ SELECT a.id AS app_id, a.account_id AS id,
     (CASE WHEN o.personal_org = false AND o.resource_ownership_enabled THEN o.stripe_subscription_item ELSE ac.stripe_subscription_item END)::text AS stripe_subscription_item
 FROM apps a LEFT JOIN orgs o ON o.id = a.org_id LEFT JOIN accounts ac ON ac.id = a.account_id;
 
+-- A row lock on the projection above would also lock the nullable creator
+-- join. Lock the actual billing owner first, then recheck the app identity.
+-- Personal/unadopted apps retain their account fence; adopted apps lock the
+-- organization even after the creator identity has been erased.
+CREATE FUNCTION lock_app_resource_account(application_id uuid, exclusive_lock boolean, fail_fast boolean)
+RETURNS SETOF app_resource_accounts LANGUAGE plpgsql VOLATILE AS $$
+DECLARE target_org uuid; target_namespace uuid; legacy_owner boolean;
+BEGIN
+ SELECT org_id,account_id INTO target_org,target_namespace FROM apps WHERE id=application_id;
+ IF NOT FOUND THEN RETURN; END IF;
+ IF exclusive_lock AND fail_fast THEN
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR UPDATE NOWAIT;
+ ELSIF exclusive_lock THEN
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR UPDATE;
+ ELSIF fail_fast THEN
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR SHARE NOWAIT;
+ ELSE
+  SELECT personal_org OR NOT resource_ownership_enabled INTO legacy_owner FROM orgs WHERE id=target_org FOR SHARE;
+ END IF;
+ IF NOT FOUND THEN RETURN; END IF;
+ IF legacy_owner THEN
+  IF exclusive_lock AND fail_fast THEN
+   PERFORM id FROM accounts WHERE id=target_namespace FOR UPDATE NOWAIT;
+  ELSIF exclusive_lock THEN
+   PERFORM id FROM accounts WHERE id=target_namespace FOR UPDATE;
+  ELSIF fail_fast THEN
+   PERFORM id FROM accounts WHERE id=target_namespace FOR SHARE NOWAIT;
+  ELSE
+   PERFORM id FROM accounts WHERE id=target_namespace FOR SHARE;
+  END IF;
+  IF NOT FOUND THEN RETURN; END IF;
+ END IF;
+ IF exclusive_lock AND fail_fast THEN
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR UPDATE NOWAIT;
+ ELSIF exclusive_lock THEN
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR UPDATE;
+ ELSIF fail_fast THEN
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR SHARE NOWAIT;
+ ELSE
+  PERFORM id FROM apps WHERE id=application_id AND org_id=target_org AND account_id=target_namespace FOR SHARE;
+ END IF;
+ IF NOT FOUND THEN RETURN; END IF;
+ RETURN QUERY SELECT * FROM app_resource_accounts WHERE app_id=application_id;
+END $$;
+
 -- The reviewed core FK list above is deliberately explicit. Unknown app-bound
 -- account FKs fail erasure closed, including indirect children and new tables.
 CREATE FUNCTION org_app_identity_erasure_blocked(identity_id uuid) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
@@ -428,8 +474,8 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
   RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
- JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+ JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
  PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
   AND state IN ('waking','cold_booting','running','snapshotting','migrating','warm','draining') FOR SHARE NOWAIT;
@@ -471,8 +517,8 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||application_id::text,0)) THEN
   RAISE EXCEPTION 'application standard controls are busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
- WHERE a.id=application_id FOR SHARE OF o,acct NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+ WHERE a.id=application_id FOR SHARE OF o NOWAIT;
  PERFORM p.id FROM projects p JOIN apps a ON a.project_id=p.id WHERE a.id=application_id FOR SHARE OF p NOWAIT;
  PERFORM d.id FROM app_log_drains d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
  PERFORM b.app_id FROM application_standard_control_bindings b WHERE b.app_id=application_id
@@ -518,8 +564,8 @@ BEGIN
  END IF;
  PERFORM h.app_id FROM application_standard_log_health h
   WHERE h.app_id=NEW.app_id AND h.drain_id=NEW.drain_id AND h.node_id=NEW.node_id FOR UPDATE NOWAIT;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
-  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
+  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM d.id FROM app_log_drains d JOIN application_standard_control_bindings b ON b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text
   JOIN application_standard_log_destinations r ON r.id=b.resource_id
   WHERE d.app_id=NEW.app_id AND d.id=NEW.drain_id FOR SHARE OF d,b,r NOWAIT;
@@ -580,9 +626,9 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
   RAISE EXCEPTION 'logging inventory is busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
  JOIN app_application_standards e ON e.app_id=a.id
- WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
+ WHERE a.id=NEW.app_id FOR SHARE OF a,o,e NOWAIT;
  PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
  WHERE c.node_id=NEW.node_id FOR SHARE OF c,n NOWAIT;
  NEW.observed_at:=clock_timestamp();
@@ -2082,6 +2128,7 @@ BEGIN
 END $$;
 DROP TRIGGER org_app_resource_policy ON orgs;
 DROP FUNCTION notify_org_app_resource_policy();
+DROP FUNCTION lock_app_resource_account(uuid,boolean,boolean);
 DROP VIEW app_resource_accounts;
 CREATE OR REPLACE FUNCTION guard_account_shared_app_purge() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
