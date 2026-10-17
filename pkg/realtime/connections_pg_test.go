@@ -47,6 +47,20 @@ func (n *pgConnectionsNode) delivered(t *testing.T) int64 {
 	return value.(*endpointState).usage.deliveredMessages.Load()
 }
 
+// waitDelivered waits for the endpoint's delivered-message usage to reach
+// want. SSE counts an event after flushing it, so the client can read the
+// event before the count moves.
+func (n *pgConnectionsNode) waitDelivered(t *testing.T, want int64, why string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for got := n.delivered(t); got != want; got = n.delivered(t) {
+		if got > want || time.Now().After(deadline) {
+			t.Fatalf("delivered usage = %d, want %d %s", got, want, why)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func startPGConnectionsNode(t *testing.T) *pgConnectionsNode {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
@@ -244,9 +258,7 @@ func TestSSETicketStreamsPostgresHistoryAndEndsOnRevoke(t *testing.T) {
 	}
 	expectSSEMessage(t, resumed, "3", "dGhyZWU=")
 	// Usage counts message events only: 3 on the first stream, 1 on the resume.
-	if got := node.delivered(t); got != 4 {
-		t.Fatalf("delivered usage = %d, want 4 SSE message events", got)
-	}
+	node.waitDelivered(t, 4, "SSE message events")
 
 	if status, _ := node.openSSE(t, ticket, "other", ""); status != http.StatusForbidden {
 		t.Fatalf("channel outside the ticket status = %d, want 403", status)
