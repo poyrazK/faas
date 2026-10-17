@@ -109,12 +109,10 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    # Light-tier budget: about 10 minutes. golangci-lint (govet included) runs
-    # on the changed packages; compiling their importers moved to the mega
-    # tier, because a pkg/api change recompiles most of the module. Main
-    # pushes also lint the three large packages to keep their analysis in
-    # the cache, which takes longer.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # Lint all changed packages with the same budget as main. Changes spanning
+    # CLI, API and stores can take over 20 minutes with a cold analysis cache.
+    # Main also warms the three large packages for later pull requests.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
