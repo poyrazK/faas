@@ -7,6 +7,18 @@
 # Verify:    make sqlc-check
 version: "2"
 sql:
+  # Internal CI metadata, execution ledger and dormant Jobs intent adapter;
+  # no task claiming or VM ownership in this package.
+  - engine: "postgresql"
+    queries: ["pkg/ci/db/queries.sql", "pkg/ci/db/storage.sql", "pkg/ci/db/dispatch.sql", "pkg/ci/db/profiles.sql", "pkg/ci/db/automation.sql", "pkg/ci/db/automation_paths.sql", "pkg/ci/db/automation_branches.sql", "pkg/ci/db/automation_pull_requests.sql", "pkg/ci/db/automation_recovery.sql", "pkg/ci/db/execution_checks.sql", "pkg/ci/db/check_recovery.sql", "pkg/ci/db/source_check_recovery.sql", "pkg/ci/db/progress.sql", "pkg/ci/db/archive.sql", "pkg/ci/db/health.sql"]
+    schema: "pkg/ci/db/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/ci/db/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   - engine: "postgresql"
     queries: "pkg/state/realtimettl/queries.sql"
     schema: "pkg/state/realtimettl/schema.sql"

@@ -1428,3 +1428,7 @@ func (s *server) PrepareGitOpsSourceForTest(ctx context.Context, lease state.Env
 func (s *server) ReadGitOpsSourceForTest(ctx context.Context, source state.EnvironmentGitSource) (state.EnvironmentGitSourcePollResult, error) {
 	return (&environmentGitSourceReader{server: s}).ReadEnvironmentGitSource(ctx, source)
 }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
+}

@@ -1478,6 +1478,50 @@ where (kind <> 'wake.boot_started' or boot_rank = 1)
 order by at asc, id asc
 limit $3;
 
+-- name: ListAppWakeTimelinePage :many
+-- ADR-1637: app scope/canonical selection before a total-order seek and limit.
+WITH wake_events AS (
+  SELECT id, at, actor, kind, subject, data,
+         row_number() OVER (PARTITION BY kind ORDER BY (actor = 'schedd') DESC, at ASC, id ASC) AS boot_rank
+  FROM events
+  WHERE data->>'wake_id' = sqlc.arg(wake_id)::text
+    AND data->>'app_id' = sqlc.arg(app_id)::text
+)
+SELECT id, at, actor, kind, subject, data
+FROM wake_events
+WHERE (kind <> 'wake.boot_started' OR boot_rank = 1)
+  AND at > sqlc.arg(since)::timestamptz
+  AND (sqlc.arg(after_id)::bigint = 0 OR (at, id) > (sqlc.arg(after_at)::timestamptz, sqlc.arg(after_id)::bigint))
+ORDER BY at ASC, id ASC
+LIMIT sqlc.arg(page_limit)::int;
+
+-- ADR-1638: retained history is scoped and windowed before limiting. Metadata
+-- is scoped to the same app for both the canonical boot and completion reads.
+-- name: ListAppWakeHistoryPage :many
+WITH page AS MATERIALIZED (
+ SELECT id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = sqlc.arg(app_id)::uuid
+   AND started_at >= sqlc.arg(since)::timestamptz
+   AND started_at <= sqlc.arg(until)::timestamptz
+   AND (sqlc.arg(after_id)::text = '' OR (started_at,id) < (sqlc.arg(after_at)::timestamptz, NULLIF(sqlc.arg(after_id)::text,'')::uuid))
+ ORDER BY started_at DESC, id DESC LIMIT sqlc.arg(page_limit)::int
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at DESC, p.id DESC;
+
 -- name: ListAllEventsPaged :many
 -- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 -- Reads the live events table (NOT audit_log — distinct source of

@@ -368,6 +368,11 @@ jobs:
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
           python3 scripts/ci/slo_gate_test.py
+      - name: per-unit release selection and planning tests
+        run: |
+          python3 scripts/ci/affected_units_test.py
+          python3 scripts/ci/plan_unit_deploy_test.py
+          bash scripts/unit-release-verify_test.sh
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract
