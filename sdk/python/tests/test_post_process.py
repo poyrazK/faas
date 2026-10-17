@@ -258,6 +258,18 @@ def test_postprocessing_cannot_modify_preserved_handwritten_source(tmp_path, mon
     assert {name: (output / name).read_bytes() for name in originals} == originals
 
 
+def test_postprocessing_preserves_authored_test_bytes(tmp_path, monkeypatch):
+    """ADR-1623: SDK regeneration retains current handwritten test inputs."""
+    generator, output, _originals = _fixture_generator(tmp_path, monkeypatch)
+    authored = output / "tests" / "nested" / "test_local_edit.py"
+    authored.parent.mkdir(parents=True)
+    original = b"# uncommitted test input\nvalue= 'original'\n"
+    authored.write_bytes(original)
+    with generator._preserve_handwritten_sdk(output):
+        authored.write_text("# rewritten by import fixer/formatter\n")
+    assert authored.read_bytes() == original
+
+
 def test_restore_failure_retains_recoverable_source_backup(tmp_path, monkeypatch):
     """ADR-521: interrupted restoration must retain the original runtime bytes."""
     generator, output, originals = _fixture_generator(tmp_path, monkeypatch)

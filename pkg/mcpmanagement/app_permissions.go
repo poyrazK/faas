@@ -26,6 +26,31 @@ func (m *management) authorizeArgs(ctx context.Context, args any) error {
 }
 
 func (m *management) authorizeToolArgs(ctx context.Context, args any, write bool) error {
+	if diagnostic, ok := args.(profilesArgs); ok {
+		if write {
+			return invalid("request_access_denied", "profile diagnostics are read-only")
+		}
+		// Profile selection is app-wide diagnostics. The handler pins exact
+		// deployment ownership/scope without granting environment inspection.
+		args = appArgs{App: diagnostic.App}
+	}
+	if diagnostic, ok := args.(compareDeploymentsArgs); ok {
+		if write {
+			return invalid("request_access_denied", "deployment comparison is read-only")
+		}
+		// Exact deployment ownership/scope is guarded under app-wide diagnostic
+		// consent by the comparison handler, independently of environment reads.
+		args = appArgs{App: diagnostic.App}
+	}
+	if diagnostic, ok := args.(requestsArgs); ok {
+		if write {
+			return invalid("request_access_denied", "request discovery is read-only")
+		}
+		// This deployment ID is a filter under app-wide diagnostic consent.
+		// The discovery handler pins its app/scope, including named scopes;
+		// ordinary deployment tools retain their environment authorization.
+		args = appArgs{App: diagnostic.App}
+	}
 	if m.opts.AllowedApps == nil && m.opts.Environments == nil {
 		return nil
 	}

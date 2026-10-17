@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "0179ba2813e39a57377b1ef7f4af180d551fd7d9728df443c71e9c31ed56b0fe",
+      "revision": "be625f0f09a0c67cb10b0e52d03620c1ba11f9e9ed30ec19ab4bab7d57a9c000",
       "files": [
         "faas.rules.yml"
       ],
@@ -4357,11 +4357,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasDeployVersionSkew",
           "definition": {
-            "expression_hash": "27f7d1ec8b2a82db16727c5dc22552605d60ee89f1f676181076a3cc80652279",
+            "expression_hash": "81b699b04949dbb8ec1669f6dbd6fcd1f90cea8327b04c7e1b2a5923aa8ec36e",
             "labels_hash": "f1e2beba4affb503dff051d3078f0996a31f19bf855772149a37c7ad9892f8a9",
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "e74a6425cc31c46a6fe63292a73892f0ad899836a4591457350784462ad141b3"
+            "fingerprint": "3fd2fbcf44dfbf8fa095a278a11d7eedc264577d183434b2b2bdbdc5f75644e0"
           }
         },
         {
@@ -4407,7 +4407,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "533be1af70f79aa8f101633adb9e923f5dd1d0a620cfc9ea1205ecd30ea2250a",
+      "revision": "eec22658a8d7185eee4a96eafe79586fcb21d290a922e7998c0001dd27aded21",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8945,11 +8945,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasDeployVersionSkew",
           "definition": {
-            "expression_hash": "27f7d1ec8b2a82db16727c5dc22552605d60ee89f1f676181076a3cc80652279",
+            "expression_hash": "81b699b04949dbb8ec1669f6dbd6fcd1f90cea8327b04c7e1b2a5923aa8ec36e",
             "labels_hash": "f1e2beba4affb503dff051d3078f0996a31f19bf855772149a37c7ad9892f8a9",
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "e74a6425cc31c46a6fe63292a73892f0ad899836a4591457350784462ad141b3"
+            "fingerprint": "3fd2fbcf44dfbf8fa095a278a11d7eedc264577d183434b2b2bdbdc5f75644e0"
           }
         },
         {
