@@ -14,8 +14,8 @@ async function port() {
   await new Promise(resolve => server.close(resolve))
   return value
 }
-async function until(check) {
-  const deadline = performance.now() + 10000
+async function until(check, timeout = 10000) {
+  const deadline = performance.now() + timeout
   while (!await check()) {
     if (performance.now() >= deadline) throw Error('Pool observation fixture did not reach its expected state')
     await new Promise(resolve => setTimeout(resolve, 20))
@@ -28,6 +28,7 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   const { runtimeConfig, limits } = await import(new URL('config.mjs', runtime))
   const { inspect, fingerprint } = await import(new URL('types.mjs', runtime))
   const { createServer } = await import(new URL('server.mjs', runtime))
+  const { createPoolObservation } = await import(new URL('pool.mjs', runtime))
   const suffix = `${process.pid}_${Date.now()}`, database = `pool_${suffix}`, role = `pool_login_${suffix}`
   const admin = new pg.Client({ connectionString: process.env.DATA_API_TEST_DATABASE_URL })
   await admin.connect()
@@ -93,17 +94,24 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   assert.equal(Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE usename=$1', [role])).rows[0].count), limits.pool, 'diagnostics did not open a SQL connection pool')
   await owner.query('COMMIT')
   for (const result of await Promise.all(writes)) { assert.equal(result.status, 201); await result.text() }
-  // The engine retires waiters asynchronously after the writes finish. Wait
-  // for the observed queue to drain instead of sampling that transition once.
+  // Health probes run readiness and metrics concurrently and can themselves
+  // briefly queue in the engine. Check quiescence with only the metrics probe
+  // issuing new diagnostic SQL, allowing the retained probes their hard cap.
+  const observePool = createPoolObservation(readyPort, limits.pool)
+  let drained
+  await until(async () => {
+    drained = await observePool()
+    return drained.state === 'observed' && drained.waiting === 0
+  }, limits.queryMs + limits.healthProbeMs)
+  assert.equal(drained.waiting, 0)
+  assert.ok(drained.timeouts_total > 0)
   let recoveredResponse, recovered
   await until(async () => {
     recoveredResponse = await fetch(base + '/healthz')
     recovered = await recoveredResponse.json()
-    return recoveredResponse.status === 200 && recovered.pool.state === 'observed' && recovered.pool.waiting === 0
+    return recoveredResponse.status === 200 && recovered.pool.state === 'observed'
   })
   assert.equal(recoveredResponse.status, 200)
-  assert.equal(recovered.pool.waiting, 0)
-  assert.ok(recovered.pool.timeouts_total > 0)
   const bob = await fetch(base + '/rest/v1/notes', { headers: { Authorization: 'Bearer bob' } })
   assert.deepEqual(await bob.json(), [])
   assert.equal((await owner.query('SELECT count(*) FROM api.notes')).rows[0].count, '2')
@@ -119,5 +127,5 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   assert.equal(restartedResponse.status, 200)
   assert.equal(restarted.pool.state, 'observed')
   assert.equal(restarted.pool.timeouts_total, 0)
-  assert.doesNotMatch(JSON.stringify([healthy, saturated, recovered, stopped, restarted, records]), /test-only|alice|bob|postgres:/)
+  assert.doesNotMatch(JSON.stringify([healthy, saturated, drained, recovered, stopped, restarted, records]), /test-only|alice|bob|postgres:/)
 })
