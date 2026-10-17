@@ -38,6 +38,10 @@ export type RealtimeConsumerGroup = {
   active_workers: number;
   history_unavailable: boolean;
   capacity_blocked: boolean;
+  /**
+   * Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly.
+   */
+  trigger_id?: string;
   lease_seconds: number;
   max_attempts: number;
   created_at: string;

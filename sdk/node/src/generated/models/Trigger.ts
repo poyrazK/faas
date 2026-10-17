@@ -46,6 +46,10 @@ export type Trigger = {
    */
   max_attempts: number;
   /**
+   * record invokes the function once per record; batch invokes it once per dispatch batch with every record (ADR-1321).
+   */
+  delivery?: 'record' | 'batch';
+  /**
    * Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap.
    */
   retry_policy?: RetryPolicyDTO;

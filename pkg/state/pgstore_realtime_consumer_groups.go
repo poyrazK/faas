@@ -31,6 +31,7 @@ type realtimeGroupRow struct {
 	expiredDead               string
 	orderingField, deadPolicy string
 	paused                    bool
+	triggerID                 string
 	id                        string
 	assigned                  int64
 	leaseSeconds, maxAttempts int
@@ -45,8 +46,8 @@ func (s *PgStore) lockRealtimeGroup(ctx context.Context, ep, ch, name string) (p
 	if err != nil {
 		return nil, g, err
 	}
-	err = tx.QueryRow(ctx, `select id,assigned_sequence,lease_seconds,max_attempts,paused_at is not null,ordering_metadata_key,dead_letter_policy,dead_letter_retention_seconds,expired_dead_letters::text,retry_policy,deadline_metadata_key,claim_rate_per_second,message_filter from managed_realtime_consumer_groups
- where endpoint_id=$1 and channel=$2 and name=$3 for update`, ep, ch, name).Scan(&g.id, &g.assigned, &g.leaseSeconds, &g.maxAttempts, &g.paused, &g.orderingField, &g.deadPolicy, &g.retentionSeconds, &g.expiredDead, &g.retryPolicy, &g.deadlineField, &g.claimRate, &g.filter)
+	err = tx.QueryRow(ctx, `select id,assigned_sequence,lease_seconds,max_attempts,paused_at is not null,ordering_metadata_key,dead_letter_policy,dead_letter_retention_seconds,expired_dead_letters::text,retry_policy,deadline_metadata_key,claim_rate_per_second,message_filter,coalesce(trigger_id::text,'') from managed_realtime_consumer_groups
+ where endpoint_id=$1 and channel=$2 and name=$3 for update`, ep, ch, name).Scan(&g.id, &g.assigned, &g.leaseSeconds, &g.maxAttempts, &g.paused, &g.orderingField, &g.deadPolicy, &g.retentionSeconds, &g.expiredDead, &g.retryPolicy, &g.deadlineField, &g.claimRate, &g.filter, &g.triggerID)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -218,7 +219,7 @@ func (s *PgStore) ListRealtimeConsumerGroups(ctx context.Context, ep, ch string)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `select g.id,g.name,g.assigned_sequence,g.completed::text,g.lease_seconds,g.max_attempts,g.created_at,g.paused_at,g.draining,g.ordering_metadata_key,g.dead_letter_policy,g.last_fencing_token::text,g.dead_letter_retention_seconds,g.expired_dead_letters::text,g.deadline_metadata_key,g.expired_deliveries::text,g.message_filter,g.filtered_messages::text,
+	rows, err := tx.Query(ctx, `select g.id,g.name,g.assigned_sequence,g.completed::text,g.lease_seconds,g.max_attempts,g.created_at,g.paused_at,g.draining,g.ordering_metadata_key,g.dead_letter_policy,g.last_fencing_token::text,g.dead_letter_retention_seconds,g.expired_dead_letters::text,g.deadline_metadata_key,g.expired_deliveries::text,g.message_filter,g.filtered_messages::text,coalesce(g.trigger_id::text,''),
  count(m.sequence) filter(where m.status='ready'),count(m.sequence) filter(where m.status='leased' and m.lease_until>clock_timestamp()),
  count(m.sequence) filter(where m.status='leased' and m.lease_until<=clock_timestamp()),count(m.sequence) filter(where m.status='dead'),
  count(distinct m.worker) filter(where m.status='leased' and m.lease_until>clock_timestamp()),
@@ -232,7 +233,7 @@ func (s *PgStore) ListRealtimeConsumerGroups(ctx context.Context, ep, ch string)
 	for rows.Next() {
 		var g RealtimeConsumerGroup
 		var assigned int64
-		if err = rows.Scan(&g.GroupID, &g.Name, &assigned, &g.Completed, &g.LeaseSeconds, &g.MaxAttempts, &g.CreatedAt, &g.PausedAt, &g.Draining, &g.OrderingMetadataKey, &g.DeadLetterPolicy, &g.LastFencingToken, &g.DeadLetterRetentionSeconds, &g.ExpiredDeadLetters, &g.DeadlineMetadataKey, &g.ExpiredDeliveries, &g.Filter, &g.FilteredMessages, &g.Ready, &g.Leased, &g.ExpiredLeases, &g.Dead, &g.ActiveWorkers, &g.OrderingBlocked); err != nil {
+		if err = rows.Scan(&g.GroupID, &g.Name, &assigned, &g.Completed, &g.LeaseSeconds, &g.MaxAttempts, &g.CreatedAt, &g.PausedAt, &g.Draining, &g.OrderingMetadataKey, &g.DeadLetterPolicy, &g.LastFencingToken, &g.DeadLetterRetentionSeconds, &g.ExpiredDeadLetters, &g.DeadlineMetadataKey, &g.ExpiredDeliveries, &g.Filter, &g.FilteredMessages, &g.TriggerID, &g.Ready, &g.Leased, &g.ExpiredLeases, &g.Dead, &g.ActiveWorkers, &g.OrderingBlocked); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -332,6 +333,9 @@ func (s *PgStore) ClaimRealtimeConsumerGroupBatch(ctx context.Context, ep, ch, n
 		return result, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = requireRealtimeGroupConsumer(ctx, g); err != nil {
+		return result, err
+	}
 	if err = expireRealtimeGroupLeases(ctx, tx, g); err != nil {
 		return result, err
 	}
@@ -612,6 +616,9 @@ func (s *PgStore) SettleRealtimeConsumerGroup(ctx context.Context, ep, ch, name 
 		return result, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = requireRealtimeGroupConsumer(ctx, g); err != nil {
+		return result, err
+	}
 	receipt, found, err := prepareRealtimeSettlementReceipt(ctx, tx, g.id, req.IdempotencyKey, "single", []realtimeBatchSettlementInput{{request: req, sequence: seq, hash: hash}}, &result)
 	if err != nil {
 		return result, err

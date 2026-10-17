@@ -166,7 +166,14 @@ export interface RealtimeSignal {
 
 export interface RealtimeEphemeralRejection {
   channel: string;
-  code: 'presence_rate_limited' | 'signal_rate_limited' | 'signal_relay_unavailable';
+  code: 'presence_rate_limited' | 'signal_rate_limited' | 'signal_relay_unavailable' | 'occupancy_limit';
+}
+
+/** A channel's subscriber count across every realtime node (ADR-1324). */
+export interface RealtimeOccupancy {
+  channel: string;
+  /** Open subscriptions on every transport, including this one. */
+  subscribers: number;
 }
 
 export interface RealtimeChannelActions extends RealtimeReadActions {
@@ -216,6 +223,11 @@ export interface RealtimeChannelConsumerOptions {
   onPresence?(event: RealtimePresenceEvent): void | Promise<void>;
   /** Receive transient JSON signals. They are not stored in channel history. */
   onSignal?(signal: RealtimeSignal): void | Promise<void>;
+  /**
+   * Receive the channel's subscriber count across all realtime nodes after
+   * subscribing and whenever it changes, at most once a second.
+   */
+  onOccupancy?(occupancy: RealtimeOccupancy): void | Promise<void>;
   /** Current named activity; expiry and lifecycle changes call this synchronously. */
   onActivityChange?(activities: RealtimeActivity[]): void;
   /** Bound tracked identities including expiry markers; default 1024, maximum 8192. */
@@ -224,6 +236,13 @@ export interface RealtimeChannelConsumerOptions {
   onEphemeralRejected?(event: RealtimeEphemeralRejection): void | Promise<void>;
   /** Per-channel recovery hook for a cursor older than retained history. */
   onResync?(error: RealtimeResyncRequiredError): number | Promise<number>;
+  /**
+   * Called when the server refuses or ends this channel's subscription, with
+   * its code (for example `not_authorized` or `access_revoked`). With it the
+   * channel is dropped and the connection's other channels continue; without
+   * it the consumer fails.
+   */
+  onSubscriptionError?(code: string): void | Promise<void>;
 }
 
 export interface RealtimeConnectionOptions {
@@ -246,6 +265,8 @@ export interface RealtimeConnectionOptions {
   stableConnectionMs?: number;
   /** Receive live-only backend messages addressed to this verified principal. */
   onDirectMessage?(message: RealtimeDirectMessage): void | Promise<void>;
+  /** Learn when the WebSocket connects and when it drops; the consumer reconnects by itself. */
+  onConnectionChange?(state: 'connected' | 'disconnected'): void;
 }
 
 /** Consume one channel over a dedicated v2 WebSocket connection. */
@@ -253,7 +274,21 @@ export interface ConsumeRealtimeChannelOptions extends RealtimeConnectionOptions
 
 /** Consume several independent channels over one shared v2 WebSocket. */
 export interface ConsumeRealtimeChannelsOptions extends RealtimeConnectionOptions {
+  /** Channels to subscribe from the start; may be empty when `controller` adds them later. */
   channels: readonly RealtimeChannelConsumerOptions[];
+  /** Receives a controller for adding and removing channels on the live connection. */
+  controller?(controller: RealtimeChannelController): void;
+}
+
+/**
+ * Adds and removes channels while the consumer runs. A channel added here is
+ * subscribed on the current connection and on every reconnect; a removed
+ * channel is unsubscribed, and frames still in flight for it are dropped.
+ */
+export interface RealtimeChannelController {
+  add(options: RealtimeChannelConsumerOptions): Promise<void>;
+  remove(channel: string): void;
+  channels(): string[];
 }
 
 export interface ConsumeRealtimeInboxOptions extends RealtimeConnectionOptions {
@@ -640,14 +675,14 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
       (!Number.isSafeInteger(inbox.initialSequence) || inbox.initialSequence < 0)))) {
     throw new TypeError('invalid realtime inbox consumer');
   }
-  if (!Array.isArray(options.channels) || (options.channels.length === 0 && !inbox) ||
+  if (!Array.isArray(options.channels) || (options.channels.length === 0 && !inbox && !options.controller) ||
       options.channels.length + (inbox ? 1 : 0) > REALTIME_MAX_CHANNELS_PER_CONNECTION) {
     throw new TypeError(`realtime connection allows up to ${REALTIME_MAX_CHANNELS_PER_CONNECTION} subscriptions, including the inbox`);
   }
   let inboxAfter = inbox?.initialSequence ?? 0;
   const readWatermarks = new Map<string, { sequence: number; latest: number; oldest: number }>();
   const states = new Map<string, ChannelState>();
-  for (const channelOptions of options.channels) {
+  const createChannelState = (channelOptions: RealtimeChannelConsumerOptions): ChannelState => {
     if (!channelOptions || typeof channelOptions !== 'object') throw new TypeError('invalid realtime channel options');
     validateChannel(channelOptions.channel);
  validateRealtimeMetadata(channelOptions.filter);
@@ -718,11 +753,85 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
         state.actions.sendTemporarySignal(name, null, 0);
       },
     };
-    states.set(channelOptions.channel, state);
-  }
-  const loadedCursors = await Promise.all([...states.values()].map((state) =>
+    return state;
+  };
+  for (const channelOptions of options.channels) states.set(channelOptions.channel, createChannelState(channelOptions));
+  const sendSubscribe = (socket: RealtimeSocket, channel: string, state: ChannelState): void => {
+    state.subscribed = false;
+    state.socket = socket;
+    state.pendingReset = undefined;
+    const subscription = state.options.durableSubscription;
+    const presenceOptions = {
+      ...((state.options.onReadProgress || state.options.onReadError) ? { read_receipts: true } : {}),
+      ...(state.presenceState === undefined ? {} : { state: state.presenceState }),
+      ...(state.options.presenceScope === undefined ? {} : { presence_scope: state.options.presenceScope }),
+      ...(state.options.onOccupancy ? { occupancy: true } : {}),
+    };
+    const directMessageOption = options.onDirectMessage === undefined ? {} : { direct_messages: true };
+    socket.send(JSON.stringify(subscription === undefined
+      ? { type: 'subscribe', channel, after: state.after, filter: state.options.filter, ...presenceOptions, ...directMessageOption }
+      : { type: 'subscribe', channel, subscription,
+          ...(state.options.initialSequence === undefined ? {} : { after: state.options.initialSequence }),
+          filter: state.options.filter, ...presenceOptions, ...directMessageOption }));
+  };
+  // The open socket, once subscriptions may be sent on it.
+  let liveSocket: RealtimeSocket | undefined;
+  let subscribedCount = 0;
+  // Removed channels whose unsubscribe the server has not confirmed; their
+  // frames are dropped. A channel added again meanwhile waits in pendingAdds.
+  const unsubscribing = new Set<string>();
+  const pendingAdds = new Map<string, ChannelState>();
+  const dropChannelState = (channel: string, state: ChannelState): void => {
+    states.delete(channel);
+    if (state.subscribed) subscribedCount--;
+    state.subscribed = false;
+    state.socket = undefined;
+    try { state.activity?.reset(channel); } catch { /* activity reset never blocks removal */ }
+  };
+  // Called before any await, so the caller holds the controller as soon as
+  // the consumer starts.
+  options.controller?.({
+    async add(channelOptions) {
+      if (options.signal?.aborted) throw new RealtimeConfigurationError('realtime connection is closed');
+      const channel = channelOptions?.channel;
+      const check = () => {
+        if (states.has(channel) || pendingAdds.has(channel)) throw new TypeError(`duplicate realtime channel: ${channel}`);
+        if (states.size + pendingAdds.size + (inbox ? 1 : 0) >= REALTIME_MAX_CHANNELS_PER_CONNECTION) {
+          throw new TypeError(`realtime connection allows up to ${REALTIME_MAX_CHANNELS_PER_CONNECTION} subscriptions, including the inbox`);
+        }
+      };
+      check();
+      const state = createChannelState(channelOptions);
+      state.after = sequence(await (channelOptions.cursorStore?.load() ?? channelOptions.initialSequence ?? 0), 'stored cursor');
+      check();
+      if (unsubscribing.has(channel)) {
+        pendingAdds.set(channel, state);
+        return;
+      }
+      states.set(channel, state);
+      if (liveSocket) {
+        try { sendSubscribe(liveSocket, channel, state); } catch { /* the socket is closing; the next connection subscribes it */ }
+      }
+    },
+    remove(channel) {
+      if (pendingAdds.delete(channel)) return;
+      const state = states.get(channel);
+      if (!state) return;
+      const live = liveSocket !== undefined && state.socket === liveSocket;
+      dropChannelState(channel, state);
+      if (live) {
+        unsubscribing.add(channel);
+        try { liveSocket!.send(JSON.stringify({ type: 'unsubscribe', channel })); } catch { /* reconnecting drops it anyway */ }
+      }
+    },
+    channels: () => [...states.keys(), ...pendingAdds.keys()],
+  });
+
+  // A channel added while these load sets its own cursor, so keep the list.
+  const initialStates = [...states.values()];
+  const loadedCursors = await Promise.all(initialStates.map((state) =>
     state.options.cursorStore?.load() ?? state.options.initialSequence ?? 0));
-  [...states.values()].forEach((state, index) => {
+  initialStates.forEach((state, index) => {
     state.after = sequence(loadedCursors[index], 'stored cursor');
   });
 
@@ -748,7 +857,7 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
     const socket = creation.socket;
     const events = eventsFor(socket, options.signal, connectTimeoutMs);
     let connected = false;
-    let subscribedCount = 0;
+    subscribedCount = 0;
     let inboxSubscribed = false;
     const inboxPushActions: RealtimePushActions = {
       setNotificationPreferences(preferences) {
@@ -800,29 +909,19 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
             throw new RealtimeProtocolError('realtime v2 subprotocol was not negotiated');
           }
           connected = true;
+          unsubscribing.clear();
+          for (const [channel, state] of pendingAdds) states.set(channel, state);
+          pendingAdds.clear();
+          liveSocket = socket;
+          try { options.onConnectionChange?.('connected'); } catch { /* observers never break the connection */ }
           try {
-            for (const [channel, state] of states) {
-              state.subscribed = false;
-              state.socket = socket;
-              state.pendingReset = undefined;
-              const subscription = state.options.durableSubscription;
-              const presenceOptions = {
-                ...((state.options.onReadProgress || state.options.onReadError) ? { read_receipts: true } : {}),
-                ...(state.presenceState === undefined ? {} : { state: state.presenceState }),
-                ...(state.options.presenceScope === undefined ? {} : { presence_scope: state.options.presenceScope }),
-              };
-              const directMessageOption = options.onDirectMessage === undefined ? {} : { direct_messages: true };
-              socket.send(JSON.stringify(subscription === undefined
-                ? { type: 'subscribe', channel, after: state.after, filter: state.options.filter, ...presenceOptions, ...directMessageOption }
-                : { type: 'subscribe', channel, subscription,
-                    ...(state.options.initialSequence === undefined ? {} : { after: state.options.initialSequence }),
-                    filter: state.options.filter, ...presenceOptions, ...directMessageOption }));
-            }
+            for (const [channel, state] of states) sendSubscribe(socket, channel, state);
             if (inbox) socket.send(JSON.stringify({ type: 'inbox_subscribe', consumer: inbox.consumerId,
               ...((inbox.onReadProgress || inbox.onReadActions || inbox.onReadError) ? { read_receipts: true } : {}),
               after: inbox.initialSequence ?? 0, ...(options.onDirectMessage ? { direct_messages: true } : {}) }));
           } catch { throw new SocketSendError(); }
-          events.armTimeout();
+          // A connection with nothing to subscribe yet stays open for adds.
+          if (states.size === 0 && !inbox) events.clearTimeout(); else events.armTimeout();
           continue;
         }
         if (!connected) throw new RealtimeProtocolError('realtime message before WebSocket open');
@@ -975,6 +1074,18 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
         }
         if (typeof frame.channel !== 'string') throw new RealtimeProtocolError('realtime frame has no channel');
         const channel = frame.channel;
+        if (unsubscribing.has(channel)) {
+          if (frame.type === 'unsubscribed' || (frame.type === 'error' && frame.code === 'not_subscribed')) {
+            unsubscribing.delete(channel);
+            const readded = pendingAdds.get(channel);
+            if (readded) {
+              pendingAdds.delete(channel);
+              states.set(channel, readded);
+              try { sendSubscribe(socket, channel, readded); } catch { throw new SocketSendError(); }
+            }
+          }
+          continue;
+        }
         const state = states.get(channel);
         if (!state) throw new RealtimeProtocolError('unexpected realtime channel');
         switch (frame.type) {
@@ -1014,6 +1125,7 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
             if (next !== state.after + 1) throw new RealtimeProtocolError('filter checkpoint gap');
             if (frame.code === 'message_expired') notifyRealtimeMessageExpiry(state.options.onMessageExpired, {code: 'message_expired', channel, sequence: String(next), transport: 'websocket'});
             await state.options.cursorStore?.save(next);
+            if (states.get(channel) !== state) break;
             state.after = next;
             try { socket.send(JSON.stringify({ type: 'ack', channel, sequence: next })); }
             catch { throw new SocketSendError(); }
@@ -1023,6 +1135,8 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
             if (!state.subscribed) throw new RealtimeProtocolError('realtime message before subscription');
             const message = decodeMessage(frame, channel, state.after);
             await state.options.onMessage(message);
+            // Removed while the handler ran: its subscription is gone, so no ack.
+            if (states.get(channel) !== state) break;
             if (state.options.cursorStore) await state.options.cursorStore.save(message.sequence);
             state.after = message.sequence;
             try { socket.send(JSON.stringify({ type: 'ack', channel, sequence: state.after })); }
@@ -1044,6 +1158,14 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
             const presence = decodePresence(frame, channel);
             if (presence.event === 'left' && presence.memberId !== undefined) state.activity?.removeMember(channel, presence.memberId);
             await state.options.onPresence?.(presence);
+            break;
+          }
+          case 'occupancy': {
+            const subscribers = frame.subscribers;
+            if (!state.subscribed || typeof subscribers !== 'number' || !Number.isSafeInteger(subscribers) || subscribers < 0) {
+              throw new RealtimeProtocolError('invalid realtime occupancy');
+            }
+            await state.options.onOccupancy?.({ channel, subscribers });
             break;
           }
           case 'signal': {
@@ -1112,8 +1234,13 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
           case 'error':
             if (frame.code === 'history_read_failed' || frame.code === 'checkpoint_write_failed') break;
             if (frame.code === 'presence_rate_limited' || frame.code === 'signal_rate_limited' ||
-                frame.code === 'signal_relay_unavailable') {
+                frame.code === 'signal_relay_unavailable' || frame.code === 'occupancy_limit') {
               await state.options.onEphemeralRejected?.({ channel, code: frame.code });
+              break;
+            }
+            if (state.options.onSubscriptionError) {
+              dropChannelState(channel, state);
+              await state.options.onSubscriptionError(String(frame.code));
               break;
             }
             throw new RealtimeProtocolError(`realtime subscription failed: ${String(frame.code)}`);
@@ -1125,6 +1252,10 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
     } catch (error) {
       if (!(error instanceof SocketSendError)) throw error;
     } finally {
+      liveSocket = undefined;
+      if (connected) {
+        try { options.onConnectionChange?.('disconnected'); } catch { /* observers never break reconnection */ }
+      }
       if (stableTimer) clearTimeout(stableTimer);
       events.dispose();
       let activityCleanupError: unknown;
@@ -1153,10 +1284,10 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
  * rebuilds application state and returns the sequence represented by it.
  */
 export async function consumeRealtimeChannel(options: ConsumeRealtimeChannelOptions): Promise<void> {
-  const { channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync, ...connection } = options;
+  const { channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onOccupancy, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync, ...connection } = options;
   return consumeRealtimeChannels({
     ...connection,
-    channels: [{ channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync }],
+    channels: [{ channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onOccupancy, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync }],
   });
 }
 

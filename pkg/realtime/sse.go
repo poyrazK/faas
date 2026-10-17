@@ -140,7 +140,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !m.tryReserve(node) {
+	if refusal, ok := m.tryReserve(node); !ok {
+		if refusal.scope != "" {
+			api.WriteProblem(w, refusal.problem())
+			return
+		}
 		http.Error(w, "connection limit reached", http.StatusTooManyRequests)
 		return
 	}
@@ -164,6 +168,9 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	occupancyKey := channelKey{endpointID: id, channel: channel}
+	m.occupancy.add(occupancyKey, 1)
+	defer m.occupancy.add(occupancyKey, -1)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
@@ -183,7 +190,13 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		if _, e = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded); e != nil {
 			return false
 		}
-		return controller.Flush() == nil
+		if controller.Flush() != nil {
+			return false
+		}
+		if event == "message" {
+			node.usage.delivered(len(encoded))
+		}
+		return true
 	}
 	if !auth.admit(ctx, send) {
 		return
@@ -195,6 +208,18 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		"latest_sequence": strconv.FormatInt(page.LatestSequence, 10),
 	}) {
 		return
+	}
+	// ?occupancy=1 adds live occupancy events (ADR-1324), written while the
+	// stream waits for new history.
+	var occupancy <-chan int
+	if value := r.URL.Query().Get("occupancy"); m.cfg.OccupancyPreview && (value == "1" || value == "true") {
+		watcher := newSSEOccupancyWatcher()
+		if m.watchOccupancy(id, channel, watcher) {
+			defer m.unwatchOccupancy(id, channel, watcher)
+			occupancy = watcher.updates
+		} else if !send("error", "", map[string]string{"channel": channel, "code": "occupancy_limit"}) {
+			return
+		}
 	}
 	for {
 		if !auth.admit(ctx, send) {
@@ -232,21 +257,35 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 			if !send("heartbeat", "", map[string]string{"channel": channel}) {
 				return
 			}
-			timer := time.NewTimer(min(m.cfg.ResumePollInterval, realtimeAccessRefreshInterval))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !m.waitSSE(ctx, min(m.cfg.ResumePollInterval, realtimeAccessRefreshInterval), channel, occupancy, send) {
 				return
-			case <-m.ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
 			}
 		}
 		page, err = read()
 		if err != nil {
 			// Transient: end the stream so the client reconnects from its cursor.
 			return
+		}
+	}
+}
+
+// waitSSE waits for the next history poll, writing live occupancy counts as
+// they arrive. It reports false when the stream should end.
+func (m *Manager) waitSSE(ctx context.Context, interval time.Duration, channel string, occupancy <-chan int, send func(string, string, any) bool) bool {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-m.ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		case count := <-occupancy:
+			if !send("occupancy", "", map[string]any{"channel": channel, "subscribers": count}) {
+				return false
+			}
 		}
 	}
 }

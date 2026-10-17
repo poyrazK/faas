@@ -12,6 +12,27 @@ The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
 application-owned raw Upgrade sessions are unaffected.
 
+## Rollout flags
+
+These features stay off until realtime has been tested end to end. Each flag
+defaults to `0`; with all of them off, realtimed, apid and schedd behave as
+they did before the features existed.
+
+| Flag | Daemons | Turns on |
+|---|---|---|
+| `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | plan connection limits per account, the 50% per-node account share, and the 6,000 node connection default (otherwise 10,000) (ADR-1323) |
+| `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | the node outbound budget, slow-consumer shedding, and a 384 MiB soft memory limit unless `GOMEMLIMIT` is set (ADR-1323) |
+| `FAAS_REALTIME_USAGE_ENABLED` | apid, realtimed | usage recording on realtimed and `GET /v1/usage/realtime` on apid (ADR-1323) |
+| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `GET …/occupancy` on apid, live occupancy frames and SSE events on realtimed (ADR-1324) |
+| `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `delivery: batch` on triggers; off, apid refuses it with 422 (ADR-1321) |
+| `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | the `trigger_records` reaper (default ages 7 days, 30 for dead letters) |
+
+Set a two-daemon flag on apid and on every realtime node. Realtime function
+triggers (ADR-1322) stay behind `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`, and
+the v2 protocol behind `FAAS_REALTIME_RESUME_PREVIEW_ENABLED`.
+
+## Endpoints
+
 Disabling or deleting an endpoint stops new handshakes and closes its existing
 managed sockets on every node reached by the control-plane operation. The
 control plane compares the credential-free registration inventory on active
@@ -522,6 +543,24 @@ repairs presence event delivery after a transient relay failure. These frames
 remain behind the v2 preview flags and the endpoint's channel authorization
 callback.
 
+With `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED=1` on realtimed, add
+`"occupancy": true` to a subscribe frame to receive the channel's fleet-wide
+subscriber count (ADR-1324); without it the field is ignored:
+
+```json
+{"type":"subscribe","channel":"room-a","after":0,"occupancy":true}
+{"type":"occupancy","channel":"room-a","subscribers":23}
+```
+
+The count covers every transport and node and is sent after subscribing and on
+each change, at most once a second. SSE streams ask with `&occupancy=1` and get
+`event: occupancy` with the same data. Compute-only realtimed reads the other
+nodes' counts from apid over `RealtimeFleet/OccupancyOperation` every 5 seconds
+(apid caches each channel for 2 seconds); single-box realtimed counts locally.
+A node follows at most 1,000 live-count channels; past that, subscribers get an
+`occupancy_limit` error frame and no counts. `GET …/occupancy` answers the same
+question for backends once apid has the same flag; until then it returns 404.
+
 To let Gregale keep the checkpoint, add a stable name for each logical
 consumer. Optionally send `after` as that name's first-use baseline:
 
@@ -682,7 +721,21 @@ reported by `realtimed_outbound_pending_bytes` and the per-connection
 `realtimed_outbound_queue_bytes_limit` gauge. Separate
 `realtimed_outbound_queue_count_limit_drops_total` and
 `realtimed_outbound_queue_byte_limit_drops_total` counters identify which
-bounded queue limit rejected a frame. In a split deployment, the control-plane
+bounded queue limit rejected a frame.
+
+The node outbound budget (ADR-1323, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
+default 64 MiB) bounds queued bytes across every connection on the node, shown
+by `realtimed_outbound_node_bytes_limit`. It applies only with
+`FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`, which also sets a 384 MiB soft memory
+limit unless `GOMEMLIMIT` is set; without it the limit metric is 0 and nothing
+is shed. Above 75% of it, realtimed closes the
+connections holding the largest backlogs (at least 1/16 of the per-connection
+byte limit) with close code 1013 until queued bytes fall to 50%, counted by
+`realtimed_outbound_shed_disconnects_total`. A frame that would exceed the
+budget is refused and counted by `realtimed_outbound_node_budget_drops_total`.
+Sustained shedding means slow clients or broadcasts larger than the node can
+buffer; raise the budget only together with the unit's `MemoryMax` and
+`GOMEMLIMIT`. In a split deployment, the control-plane
 Prometheus discovers active realtime owners from apid; sum counters across
 nodes and sum the pending-bytes gauge for fleet usage.
 
@@ -690,6 +743,9 @@ nodes and sum the pending-bytes gauge for fleet usage.
 sum(rate(realtimed_outbound_queue_count_limit_drops_total[5m]))
 sum(rate(realtimed_outbound_queue_byte_limit_drops_total[5m]))
 sum(realtimed_outbound_pending_bytes)
+max(realtimed_outbound_pending_bytes / realtimed_outbound_node_bytes_limit)
+sum(rate(realtimed_outbound_shed_disconnects_total[5m]))
+sum(rate(realtimed_outbound_node_budget_drops_total[5m]))
 ```
 
 Resumable-channel health is visible through `realtimed_current_resume_subscriptions`,
@@ -719,7 +775,7 @@ sum(rate(realtimed_resume_slow_consumer_disconnects_total[5m]))
 
 Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_MAX_MESSAGE_BYTES`, `FAAS_REALTIME_OUTBOUND_QUEUE`,
-`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`,
+`FAAS_REALTIME_OUTBOUND_QUEUE_BYTES`, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
 `FAAS_REALTIME_HEARTBEAT`, `FAAS_REALTIME_PONG_WAIT`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
@@ -3064,7 +3120,7 @@ Content-Type: application/json
 ```
 
 The API requires normal app ownership, realtime plan eligibility, MFA and write
-scopes. Returns 201 with `{ "ticket": "grt_...", "expires_at": "..." }` and
+scopes. Returns 201 with `{ "ticket": "grt_...", "ticket_id": "...", "expires_at": "..." }` and
 Cache-Control: no-store. TTL is 1-300 seconds, with 1-32 unique exact channels.
 Endpoint must be enabled. At most 1115 unexpired tickets per endpoint; expired
 records are pruned on subsequent issuance and endpoint deletion removes all.
@@ -3107,6 +3163,23 @@ reconnects with a new ticket. WebSocket tickets expire and close active sockets;
 the normal channel consumer reconnects using the factory. Renewal changes neither
 history retention nor resync requirements. A ticket may be reused before expiry;
 it is not a single-use nonce.
+
+Revoke a ticket before it expires with the `ticket_id` returned at issue, so the
+backend never keeps the bearer token, or revoke every live ticket of a principal
+(for example at logout). Migration `20261014223807582_realtime_ticket_ids.sql`
+adds the ID. Both require the same app ownership, MFA and write scopes as
+issuance:
+
+```http
+DELETE /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets/{ticket_id}
+DELETE /v1/apps/demo/realtime/endpoints/{endpoint_id}/tickets?principal=customer-42
+```
+
+The first returns 204, or 404 when the ticket is unknown or already expired; the
+second returns `{"revoked": n}`. WebSockets and SSE streams re-read their ticket
+every second, so a revoked ticket's connections close within about a second and
+reconnecting with it returns 401. Revocation does not touch other tickets of the
+same principal unless they are revoked by principal.
 
 Set `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1` on apid to use the existing principal
 access APIs for ticket endpoints, including non-OIDC endpoints. Session revocation
@@ -3581,6 +3654,155 @@ requests continue to use the existing `failure_code` field.
 
 Migration `20261012102700479_realtime_consumer_group_dead_letter_webhooks.sql`
 and runtime/UI verification remain pending. See ADR-1033.
+
+## Realtime function triggers
+
+ADR-1322 delivers a consumer group's messages to a function instead of a
+customer-run worker. It requires the retained-realtime preview
+(`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) on apid, migration
+`20261013210513485_realtime_function_triggers.sql`, and a schedd that
+registers the `realtime` poller. Hobby, Pro and Scale may create the kind; it
+counts against the per-app trigger caps.
+
+```http
+POST /v1/triggers
+Authorization: Bearer <backend-account-api-key>
+Content-Type: application/json
+
+{"app_id":"<app>","kind":"realtime","slug":"orders",
+ "config":{"endpoint_id":"<endpoint>","channel":"orders","group":"billing","max_concurrency":4}}
+```
+
+Creation checks that the account owns the endpoint, that the group exists with
+`lease_seconds` of at least `RealtimeTriggerMinLeaseSeconds` (120, a 30 s
+invocation plus wake), and that no other trigger consumes it. The trigger is
+created disabled, bound, then enabled; a failed binding deletes it again.
+`batch_window_ms`, `max_attempts`, `retry_policy`, `broker_poison_strategy`
+and `filter_criteria` are rejected (configure them on the group).
+`batch_size_max` is 1 unless the trigger uses `delivery: batch` (ADR-1321,
+`FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1` on apid), which allows up to 16
+(default 10). The binding is immutable; PATCH may change
+`max_concurrency`, `delivery` and `batch_size_max`.
+
+With `delivery: batch`, one invocation receives `{"records": [...]}` with up to
+`batch_size_max` messages (each as `data`, the JSON body below, plus
+`item_identifier`) and reports failures in `batchItemFailures`; the gateway
+retries only the listed messages. Otherwise each message is one invocation with
+a JSON body carrying `endpoint_id`,
+`channel`, `group`, `sequence`, `message_id`, `event`, `version`, `deleted`,
+`data_base64`, `binary`, `metadata`, `created_at`, `attempt` and
+`fencing_token`. Handlers return an empty or JSON body.
+
+| Dispatch result | Group settlement |
+| --- | --- |
+| succeeded | `complete` |
+| `function_failed`, `function_state_<state>`, `invoke_timeout`, `response_malformed` | `retry` with that `failure_code` |
+| `invoke_error`, `batch_timeout`, wake rate limit, transport or claim failure | `release`; the attempt is returned |
+
+Permanent failure codes in the group's retry policy (for example
+`function_failed`) dead-letter on the first failure. Dead letters, export and
+replay jobs stay on the group; realtime triggers write no `trigger_dead_letter`
+rows. Each delivery has its own trigger ledger record, which ends `succeeded`
+or `superseded`.
+
+Lanes run up to `min(max_concurrency, plan MaxConcurrency, 32)` messages in
+parallel and share the push-queue dispatch pool. The group serializes messages
+that share an ordering key. While bound, worker and account claims or
+settlements on the group return 409 `realtime_group_bound_to_trigger`; status,
+metrics, dead letters, replay, export, pause, drain and resume remain
+available, and pause or drain stops dispatch. Deleting the trigger unbinds the
+group and keeps its messages. Delivery metrics use `schedd_esm_*` with
+`source="realtime"`; group status reports `trigger_id`.
+
+A message inserted on a bound channel notifies `trigger_ready` at commit, so
+dispatch starts immediately instead of on the next 1 s tick. The group's
+waiting work (unassigned plus ready) is reported as broker lag, so an app with a
+`queue_lag` scaling target scales out ahead of a realtime backlog.
+
+Rollback: delete realtime triggers before running the migration's Down step,
+which refuses while any exist.
+
+## Fair-use connection limits
+
+Realtime is free (ADR-1323); plans cap the resource it holds. Enforcement
+needs `FAAS_REALTIME_FAIR_USE_ENABLED=1` on apid and every realtime node;
+without it apid sends no allowance and realtimed refuses only at the node and
+endpoint caps. apid sends each endpoint's account allowance (`ConnectionsPerAccount` in `pkg/api/limits.go`:
+Hobby 200, Pro 1,000, Scale 5,000) to realtimed with the endpoint, so plan
+changes apply at the next endpoint reconcile (30 s). realtimed refuses a
+connection with HTTP 429 `realtime_connection_limit` when:
+
+- the account's connections on this node plus the other nodes' last reported
+  connections reach the plan allowance, or
+- the account already holds `RealtimeAccountNodeSharePercent` (50%) of this
+  node's connection cap.
+
+Each realtimed exchanges per-account counts with apid every 5 s over the
+private `RealtimeFleet` service, using the same target and TLS settings as the
+resume preview; the exchange runs with `FAAS_REALTIME_FAIR_USE_ENABLED=1` or
+`FAAS_REALTIME_USAGE_ENABLED=1`. Without a fresh exchange (none in the
+last 30 s), a node enforces the allowance against its own connections only, so
+an apid outage never refuses connections a node could hold; the allowance then
+holds per node rather than per fleet. Multi-node deployments should therefore
+enable the exchange.
+
+With fair use on, the node cap defaults to 6,000 connections
+(`FAAS_REALTIME_MAX_CONNECTIONS`; 10,000 without it).
+An idle connection measured about 52 KB of realtimed memory on 2026-10-14, so
+6,000 idle connections use about 310 MB of the unit's 512 MB `MemoryMax`, leaving
+room for queued frames and subscription pumps. Raise the cap only with
+`MemoryMax`.
+
+Watch `realtimed_connection_limit_refusals_total{scope}` (`account` is the plan
+allowance, `account_node` the per-node share),
+`realtimed_connection_sync_failures_total`, and
+`realtimed_connection_sync_last_success_timestamp_seconds`: more than 30 s old
+means accounts are capped per node. apid stores the counts in
+`realtime_node_connections`; a node silent for an hour is removed.
+
+## Realtime usage recording
+
+ADR-1323 records realtime usage per endpoint to review the fair-use limits and
+spot abuse. Realtime is free; nothing bills from these rows. Enable it on every realtimed node with
+`FAAS_REALTIME_USAGE_ENABLED=1`; realtimed then reaches apid's private
+listener exactly like the resume preview (`FAAS_REALTIME_HISTORY_TARGET` and,
+for a TCP target, the `FAAS_REALTIME_HISTORY_TLS_*` paths). The node name
+(`FAAS_NODE_NAME`) must be a registered compute node, or apid refuses the
+report with `NotFound`.
+
+Each realtimed process sends its cumulative totals for the current UTC hour
+once a minute, and on shutdown. apid stores one row per endpoint, hour,
+node and process run in `realtime_usage_hours`; a repeated or late report can
+only raise a row's values. meterd deletes rows older than 13 months.
+
+| Column | Meaning |
+|---|---|
+| `minute_peak_connections` | 60 values: the most connections open at once on that process in each minute |
+| `connection_seconds` | connections held × seconds, sampled every second |
+| `delivered_messages`, `delivered_bytes` | payload frames sent to clients, one per recipient (control frames excluded) |
+| `received_messages`, `received_bytes` | client messages forwarded to the app |
+
+An account's fleet usage per endpoint and hour, with the peak taken as the
+largest per-minute sum across nodes:
+
+```sql
+WITH m AS (
+  SELECT endpoint_id, hour, i, sum(v) AS connections
+  FROM realtime_usage_hours, unnest(minute_peak_connections) WITH ORDINALITY AS u(v, i)
+  WHERE account_id = $1 AND hour >= now() - interval '1 day'
+  GROUP BY endpoint_id, hour, i)
+SELECT endpoint_id, hour, max(connections) AS peak_connections
+FROM m GROUP BY endpoint_id, hour ORDER BY hour;
+```
+
+Customers read the same data, plus their open connections and plan limit,
+through `GET /v1/usage/realtime` and `gregale realtime usage`, served once apid
+also has `FAAS_REALTIME_USAGE_ENABLED=1` (404 until then).
+
+Watch `realtimed_usage_report_failures_total` (apid unreachable or rejecting
+reports), `realtimed_usage_held_hours` (above 1 means completed hours are
+waiting to be delivered) and `realtimed_usage_dropped_hours_total` (hours lost
+after 24 h undelivered).
 
 ## Batch claims and concurrent workers
 

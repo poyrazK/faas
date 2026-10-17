@@ -241,8 +241,8 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 		}
 	}
 	for i, trigger := range m.Triggers {
-		if trigger.Kind != TriggerKindCron {
-			return fmt.Errorf("trigger[%d]: functions support cron triggers only; declare %q triggers with `gregale triggers add` after deploy", i, trigger.Kind)
+		if trigger.Kind != TriggerKindCron && trigger.Kind != TriggerKindRealtime {
+			return fmt.Errorf("trigger[%d]: functions support cron and realtime triggers only; declare %q triggers with `gregale triggers add` after deploy", i, trigger.Kind)
 		}
 		if _, ok := names[trigger.App]; !ok {
 			return fmt.Errorf("trigger[%d].app %q must name one of the functions", i, trigger.App)

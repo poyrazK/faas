@@ -12,9 +12,9 @@ import (
 func TestAllowedTriggerKindsByPlan(t *testing.T) {
 	want := map[Plan][]TriggerKind{
 		PlanFree:  {},
-		PlanHobby: {TriggerKindSQSCompat, TriggerKindQueue},
-		PlanPro:   {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue},
-		PlanScale: {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue},
+		PlanHobby: {TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime},
+		PlanPro:   {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime},
+		PlanScale: {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime},
 	}
 	for plan, kinds := range want {
 		t.Run(string(plan), func(t *testing.T) {

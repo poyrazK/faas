@@ -16,6 +16,7 @@ import type { ManagedRealtimeInboxResponse } from '../models/ManagedRealtimeInbo
 import type { ManagedRealtimeMessageMutationRequest } from '../models/ManagedRealtimeMessageMutationRequest.js';
 import type { ManagedRealtimeMessageMutationResponse } from '../models/ManagedRealtimeMessageMutationResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
+import type { ManagedRealtimeOccupancyResponse } from '../models/ManagedRealtimeOccupancyResponse.js';
 import type { ManagedRealtimePrincipalMessageRequest } from '../models/ManagedRealtimePrincipalMessageRequest.js';
 import type { ManagedRealtimePrincipalReceiptResponse } from '../models/ManagedRealtimePrincipalReceiptResponse.js';
 import type { ManagedRealtimePrincipalSendResponse } from '../models/ManagedRealtimePrincipalSendResponse.js';
@@ -73,6 +74,7 @@ import type { RealtimeReplayJob } from '../models/RealtimeReplayJob.js';
 import type { RealtimeReplayJobRequest } from '../models/RealtimeReplayJobRequest.js';
 import type { RealtimeTicketRequest } from '../models/RealtimeTicketRequest.js';
 import type { RealtimeTicketResponse } from '../models/RealtimeTicketResponse.js';
+import type { RealtimeTicketsRevokeResponse } from '../models/RealtimeTicketsRevokeResponse.js';
 import type { RealtimeWorkerBatchClaimRequest } from '../models/RealtimeWorkerBatchClaimRequest.js';
 import type { RealtimeWorkerClaimRequest } from '../models/RealtimeWorkerClaimRequest.js';
 import type { RealtimeWorkerCredential } from '../models/RealtimeWorkerCredential.js';
@@ -3029,6 +3031,64 @@ export class RealtimeService {
     });
   }
   /**
+   * Count a managed realtime channel's subscribers and presence members.
+   * Returns fleet-wide counts for each requested channel (ADR-1324).
+   * `subscribers` counts every open subscription: WebSocket, read-only
+   * ticket and SSE. `presence_members` counts distinct presence members;
+   * a principal-scoped member with several connections counts once.
+   * Counts are a point-in-time snapshot. `partial` is true when one or
+   * more active realtime nodes could not be asked; the counts then cover
+   * the nodes that answered.
+   *
+   * @returns ManagedRealtimeOccupancyResponse Channel occupancy.
+   * @throws ApiError
+   */
+  public static getManagedRealtimeOccupancy({
+    slug,
+    id,
+    channel,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Channel to count; repeat the parameter for up to 20 channels.
+     */
+    channel: Array<string>,
+  }): CancelablePromise<ManagedRealtimeOccupancyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/occupancy',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'channel': channel,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Close a bounded or explicitly all-matching set of live managed realtime connections.
    * Selects connections from a point-in-time fleet inventory by channel,
    * principal, or explicit connection IDs. `dry_run` returns the selected
@@ -3217,6 +3277,88 @@ export class RealtimeService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Revoke every live subscription ticket of one principal
+   * Operator preview. Backend-only app-scoped write with MFA, for example at logout. Connections using a revoked ticket close within about a second, when they next re-read their ticket. Expired tickets are not counted.
+   * @returns RealtimeTicketsRevokeResponse Number of live tickets revoked.
+   * @throws ApiError
+   */
+  public static revokeRealtimeSubscriptionTickets({
+    slug,
+    id,
+    principal,
+  }: {
+    /**
+     * Application slug owning the endpoint whose principal tickets are revoked.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint whose principal tickets are revoked.
+     */
+    id: string,
+    /**
+     * Principal whose tickets are revoked.
+     */
+    principal: string,
+  }): CancelablePromise<RealtimeTicketsRevokeResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'principal': principal,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Revoke one subscription ticket
+   * Operator preview. Backend-only app-scoped write with MFA. Uses the ticket_id returned when the ticket was issued, so the backend never needs to keep the bearer token. Connections using the ticket close within about a second.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeRealtimeSubscriptionTicket({
+    slug,
+    id,
+    ticket,
+  }: {
+    /**
+     * Application slug owning the endpoint of the revoked ticket.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint that issued the revoked ticket.
+     */
+    id: string,
+    /**
+     * ticket_id returned when the ticket was issued.
+     */
+    ticket: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'ticket': ticket,
+      },
+      errors: {
+        400: `code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.`,
+        401: `code: unauthorized`,
+        402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
+        404: `code: not_found`,
+      },
     });
   }
   /**

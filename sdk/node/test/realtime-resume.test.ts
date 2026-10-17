@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   consumeRealtimeChannel,
+  consumeRealtimeChannels,
   REALTIME_RESUME_SUBPROTOCOL,
   RealtimeProtocolError,
   RealtimeResyncRequiredError,
+  type RealtimeChannelController,
   type RealtimeMessage,
   type RealtimeSocket,
 } from '../src/index.js';
@@ -166,4 +168,163 @@ test('rejects out-of-order delivery rather than persisting a gap', async () => {
   socket.receive({ type: 'message', channel: 'updates', sequence: 3,
     message_id: 'id-3', data_base64: 'dGhyZWU=' });
   await assert.rejects(consuming, RealtimeProtocolError);
+});
+
+test('asks for live occupancy and reports each count', async () => {
+  const sockets: FakeSocket[] = [];
+  const controller = new AbortController();
+  const counts: number[] = [];
+  const rejected: string[] = [];
+  const consuming = consumeRealtimeChannel({
+    url: 'wss://app.example.test/__gregale/realtime/endpoint-1',
+    channel: 'lobby', signal: controller.signal, retryInitialMs: 0, retryMaxMs: 0,
+    cursorStore: { load: () => 0, save: () => {} },
+    onMessage: () => {},
+    onOccupancy: ({ channel, subscribers }) => { assert.equal(channel, 'lobby'); counts.push(subscribers); },
+    onEphemeralRejected: ({ code }) => { rejected.push(code); },
+    webSocketFactory: async () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+  });
+  await until(() => sockets[0]?.sent.length === 1);
+  assert.deepEqual(sockets[0]?.sent[0], { type: 'subscribe', channel: 'lobby', after: 0, occupancy: true });
+  sockets[0]!.receive({ type: 'subscribed', channel: 'lobby', sequence: 0 });
+  sockets[0]!.receive({ type: 'occupancy', channel: 'lobby', subscribers: 23 });
+  sockets[0]!.receive({ type: 'occupancy', channel: 'lobby', subscribers: 24 });
+  sockets[0]!.receive({ type: 'error', channel: 'lobby', code: 'occupancy_limit' });
+  await until(() => counts.length === 2 && rejected.length === 1);
+  assert.deepEqual(counts, [23, 24]);
+  assert.deepEqual(rejected, ['occupancy_limit']);
+  controller.abort();
+  await consuming;
+});
+
+function memoryCursor(): { load(): number; save(next: number): void } {
+  let cursor = 0;
+  return { load: () => cursor, save: (next) => { cursor = next; } };
+}
+
+test('adds and removes channels on a live connection', async () => {
+  const sockets: FakeSocket[] = [];
+  const controller = new AbortController();
+  const connection: string[] = [];
+  const seen: string[] = [];
+  let channels!: RealtimeChannelController;
+  const consuming = consumeRealtimeChannels({
+    url: 'wss://app.example.test/__gregale/realtime/endpoint-1', channels: [],
+    signal: controller.signal, retryInitialMs: 0, retryMaxMs: 0,
+    controller: (value) => { channels = value; },
+    onConnectionChange: (state) => { connection.push(state); },
+    webSocketFactory: async () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+  });
+  const onMessage = (message: RealtimeMessage) => { seen.push(`${message.channel}:${message.sequence}`); };
+  await until(() => connection.length === 1);
+  const socket = sockets[0]!;
+  assert.equal(socket.sent.length, 0, 'an empty connection waits for channels');
+
+  await channels.add({ channel: 'a', cursorStore: memoryCursor(), onMessage });
+  assert.deepEqual(socket.sent.at(-1), { type: 'subscribe', channel: 'a', after: 0 });
+  socket.receive({ type: 'subscribed', channel: 'a', sequence: 0 });
+  socket.receive({ type: 'message', channel: 'a', sequence: 1, message_id: 'a1' });
+  await until(() => seen.length === 1);
+  await channels.add({ channel: 'b', cursorStore: memoryCursor(), onMessage });
+  assert.deepEqual(socket.sent.at(-1), { type: 'subscribe', channel: 'b', after: 0 });
+  socket.receive({ type: 'subscribed', channel: 'b', sequence: 0 });
+
+  // Frames still in flight for a removed channel are dropped.
+  channels.remove('a');
+  assert.deepEqual(socket.sent.at(-1), { type: 'unsubscribe', channel: 'a' });
+  socket.receive({ type: 'message', channel: 'a', sequence: 2, message_id: 'a2' });
+  socket.receive({ type: 'unsubscribed', channel: 'a' });
+  // Re-adding before the server confirms waits for that confirmation.
+  channels.remove('b');
+  await channels.add({ channel: 'b', cursorStore: memoryCursor(), onMessage });
+  assert.deepEqual(socket.sent.at(-1), { type: 'unsubscribe', channel: 'b' });
+  socket.receive({ type: 'unsubscribed', channel: 'b' });
+  await until(() => JSON.stringify(socket.sent.at(-1)) === JSON.stringify({ type: 'subscribe', channel: 'b', after: 0 }));
+  socket.receive({ type: 'subscribed', channel: 'b', sequence: 0 });
+  socket.receive({ type: 'message', channel: 'b', sequence: 1, message_id: 'b1' });
+  await until(() => seen.length === 2);
+  assert.deepEqual(seen, ['a:1', 'b:1']);
+  assert.deepEqual(channels.channels(), ['b']);
+
+  // A reconnect subscribes the current channels again.
+  socket.close();
+  await until(() => sockets[1]?.sent.length === 1);
+  assert.deepEqual(connection, ['connected', 'disconnected', 'connected']);
+  assert.deepEqual(sockets[1]!.sent[0], { type: 'subscribe', channel: 'b', after: 1 });
+  await assert.rejects(channels.add({ channel: 'b', cursorStore: memoryCursor(), onMessage }), /duplicate/);
+  controller.abort();
+  await consuming;
+});
+
+test('drops a refused channel and keeps the others', async () => {
+  const sockets: FakeSocket[] = [];
+  const controller = new AbortController();
+  const refused: string[] = [];
+  const seen: string[] = [];
+  const consuming = consumeRealtimeChannels({
+    url: 'wss://app.example.test/__gregale/realtime/endpoint-1',
+    signal: controller.signal, retryInitialMs: 0, retryMaxMs: 0,
+    channels: [
+      { channel: 'secret', cursorStore: memoryCursor(), onMessage: () => {}, onSubscriptionError: (code) => { refused.push(code); } },
+      { channel: 'public', cursorStore: memoryCursor(), onMessage: (message) => { seen.push(message.channel); } },
+    ],
+    webSocketFactory: async () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+  });
+  await until(() => sockets[0]?.sent.length === 2);
+  sockets[0]!.receive({ type: 'error', channel: 'secret', code: 'not_authorized' });
+  sockets[0]!.receive({ type: 'subscribed', channel: 'public', sequence: 0 });
+  sockets[0]!.receive({ type: 'message', channel: 'public', sequence: 1, message_id: 'p1' });
+  await until(() => seen.length === 1 && refused.length === 1);
+  assert.deepEqual(refused, ['not_authorized']);
+  controller.abort();
+  await consuming;
+});
+
+test('limits a connection to eight channels', async () => {
+  const controller = new AbortController();
+  let channels!: RealtimeChannelController;
+  const consuming = consumeRealtimeChannels({
+    url: 'wss://app.example.test/__gregale/realtime/endpoint-1', channels: [],
+    signal: controller.signal, controller: (value) => { channels = value; },
+    webSocketFactory: async () => { const socket = new FakeSocket(); queueMicrotask(() => socket.open()); return socket; },
+  });
+  for (let i = 0; i < 8; i++) await channels.add({ channel: `c${i}`, cursorStore: memoryCursor(), onMessage: () => {} });
+  await assert.rejects(channels.add({ channel: 'c8', cursorStore: memoryCursor(), onMessage: () => {} }), /up to 8/);
+  controller.abort();
+  await consuming;
+});
+
+test('does not acknowledge a message whose channel was removed during its handler', async () => {
+  const sockets: FakeSocket[] = [];
+  const controller = new AbortController();
+  let channels!: RealtimeChannelController;
+  const consuming = consumeRealtimeChannels({
+    url: 'wss://app.example.test/__gregale/realtime/endpoint-1', channels: [],
+    signal: controller.signal, controller: (value) => { channels = value; },
+    webSocketFactory: async () => { const socket = new FakeSocket(); sockets.push(socket); queueMicrotask(() => socket.open()); return socket; },
+  });
+  await channels.add({ channel: 'a', cursorStore: memoryCursor(), onMessage: () => { channels.remove('a'); } });
+  await until(() => sockets[0]?.sent.length === 1);
+  sockets[0]!.receive({ type: 'subscribed', channel: 'a', sequence: 0 });
+  sockets[0]!.receive({ type: 'message', channel: 'a', sequence: 1, message_id: 'a1' });
+  await until(() => sockets[0]!.sent.length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(sockets[0]!.sent.slice(1), [{ type: 'unsubscribe', channel: 'a' }], 'no ack after the unsubscribe');
+  controller.abort();
+  await consuming;
 });

@@ -18,6 +18,7 @@ from ..models.create_trigger_request_broker_poison_strategy_type_3_type_1 import
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
     check_create_trigger_request_broker_poison_strategy_type_3_type_1,
 )
+from ..models.create_trigger_request_delivery import CreateTriggerRequestDelivery, check_create_trigger_request_delivery
 from ..models.trigger_kind import TriggerKind, check_trigger_kind
 from ..types import UNSET, Unset
 
@@ -48,10 +49,18 @@ class CreateTriggerRequest:
     enabled: bool | None | Unset = UNSET
     config: CreateTriggerRequestConfig | Unset = UNSET
     """Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before
-    persistence."""
+    persistence.
+    For `kind: realtime` (ADR-1322) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+    `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group
+    owns them,
+    and `batch_size_max` may only be 1.
+    """
     batch_size_max: int | None | Unset = UNSET
     batch_window_ms: int | None | Unset = UNSET
     max_attempts: int | None | Unset = UNSET
+    delivery: CreateTriggerRequestDelivery | Unset = UNSET
+    """Defaults to record. batch delivers every claimed record in one invocation; not available for cron or queue
+    triggers (ADR-1321)."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
     """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
@@ -120,6 +129,10 @@ class CreateTriggerRequest:
         else:
             max_attempts = self.max_attempts
 
+        delivery: str | Unset = UNSET
+        if not isinstance(self.delivery, Unset):
+            delivery = self.delivery
+
         retry_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
@@ -178,6 +191,8 @@ class CreateTriggerRequest:
             field_dict["batch_window_ms"] = batch_window_ms
         if max_attempts is not UNSET:
             field_dict["max_attempts"] = max_attempts
+        if delivery is not UNSET:
+            field_dict["delivery"] = delivery
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
         if payload_max_bytes is not UNSET:
@@ -248,6 +263,13 @@ class CreateTriggerRequest:
             return cast(int | None | Unset, data)
 
         max_attempts = _parse_max_attempts(d.pop("max_attempts", UNSET))
+
+        _delivery = d.pop("delivery", UNSET)
+        delivery: CreateTriggerRequestDelivery | Unset
+        if isinstance(_delivery, Unset):
+            delivery = UNSET
+        else:
+            delivery = check_create_trigger_request_delivery(_delivery)
 
         _retry_policy = d.pop("retry_policy", UNSET)
         retry_policy: RetryPolicyDTO | Unset
@@ -351,6 +373,7 @@ class CreateTriggerRequest:
             batch_size_max=batch_size_max,
             batch_window_ms=batch_window_ms,
             max_attempts=max_attempts,
+            delivery=delivery,
             retry_policy=retry_policy,
             payload_max_bytes=payload_max_bytes,
             broker_poison_strategy=broker_poison_strategy,

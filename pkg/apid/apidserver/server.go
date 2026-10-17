@@ -432,6 +432,9 @@ type server struct {
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
+	// triggerBatchDeliveryEnabled admits `delivery: batch` on triggers
+	// (ADR-1321, FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED).
+	triggerBatchDeliveryEnabled bool
 	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
@@ -854,6 +857,31 @@ func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
 
 func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
 	s.realtime.HistoryPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeOccupancyPreviewEnabled serves channel occupancy (ADR-1324).
+func (s *server) WithRealtimeOccupancyPreviewEnabled(enabled bool) *server {
+	s.realtime.OccupancyPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeUsageEnabled serves GET /v1/usage/realtime (ADR-1323).
+func (s *server) WithRealtimeUsageEnabled(enabled bool) *server {
+	s.realtime.UsageEnabled = enabled
+	return s
+}
+
+// WithRealtimeFairUseEnabled sends each endpoint's account connection limit
+// to realtimed (ADR-1323).
+func (s *server) WithRealtimeFairUseEnabled(enabled bool) *server {
+	s.realtime.FairUseEnabled = enabled
+	return s
+}
+
+// WithTriggerBatchDeliveryEnabled admits `delivery: batch` (ADR-1321).
+func (s *server) WithTriggerBatchDeliveryEnabled(enabled bool) *server {
+	s.triggerBatchDeliveryEnabled = enabled
 	return s
 }
 
@@ -3199,6 +3227,7 @@ func (s *server) handler() http.Handler {
 	// never address a connection or channel outside an app it owns. The same
 	// owner seam serves the local Unix fast path and leased cross-node resolver.
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ListManagedRealtimeConnections))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeOccupancy))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.DrainManagedRealtimeConnections)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeDrainOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SendManagedRealtimeConnection))))
@@ -3327,6 +3356,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.ResumeRealtimeConsumerGroup))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeAcknowledgement))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IssueRealtimeTicket))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RevokeRealtimeTickets))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RevokeRealtimeTicket))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManageRealtimeAccess))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManageRealtimeAccess))))
 	// Customer runtime log drains (issue #1398 O4). Each destination is
@@ -3893,6 +3924,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/usage/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageSummary))))
 	mux.HandleFunc("GET /v1/usage/daily", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageDaily))))
 	mux.HandleFunc("GET /v1/usage/storage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageStorage))))
+	mux.HandleFunc("GET /v1/usage/realtime", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.realtime.RealtimeUsage))))
 	// Billing history (issue #259). Listing one's own invoices is the
 	// same access tier as usage/summary — usage:read is enough.
 	// Wrapped in requireMFA for consistency with the other

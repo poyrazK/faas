@@ -123,6 +123,28 @@ Things to know:
 1. If your endpoint had any tags on it, the first tag will be used as a module name for the function (my_tag above)
 1. Any endpoint which did not have a tag will be in `faas_sdk.api.default`
 
+## Batched trigger delivery
+
+A trigger with `delivery: batch` sends one request with several records
+(ADR-1321). `handle_trigger_batch` parses the body, runs your handler for each
+record in delivery order and returns the response body; a record whose handler
+raises is retried, the rest are complete:
+
+```python
+from faas_sdk.trigger_batch import handle_trigger_batch, is_trigger_batch
+
+def handler(request):
+    # record.is_json, record.data, record.payload, record.text(), record.metadata
+    return handle_trigger_batch(request.body, lambda record: save_order(record.data))
+```
+
+`is_trigger_batch(headers)` tells batch and single-record deliveries apart.
+`handle_trigger_batch_async` takes async handlers and a `concurrency` (1-100)
+for records that do not depend on each other's order. `stop_on_failure` retries
+every record after a failure in order, and `on_error` sees each failure. A
+malformed body raises `TriggerBatchError`; let the request fail so the whole
+batch is retried.
+
 ## Transactional operation handlers
 
 Customer Operations HTTP definitions explicitly enable

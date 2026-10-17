@@ -19,7 +19,7 @@ import (
 // observability contract: manager counters are exported without endpoint,
 // app, principal, or connection labels.
 func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
-	manager := NewManager(Config{}, NopHooks{})
+	manager := NewManager(Config{OutboundNodeBytes: 64 << 20}, NopHooks{})
 	defer func() { _ = manager.Close() }()
 	manager.acceptedConnections.Store(3)
 	manager.receivedBytes.Store(128)
@@ -27,6 +27,8 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 	manager.callbackOutboxFull.Store(2)
 	manager.callbackOutboxAdmissionErrors.Store(3)
 	manager.callbackUnpersistedFailures.Store(4)
+	manager.outboundNodeBudgetDrops.Store(5)
+	manager.outboundShedDisconnects.Store(6)
 	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeAccepted)
 	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeRejected)
 	manager.recordAuthOutcome(authMetricModeStaticBearer, authMetricOutcomeRejected)
@@ -48,6 +50,9 @@ func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
 		`realtimed_callback_outbox_admission_errors_total 3`,
 		`realtimed_callback_unpersisted_failures_total 4`,
 		`realtimed_callback_pending_capacity_bytes 0`,
+		`realtimed_outbound_node_bytes_limit 6.7108864e+07`,
+		`realtimed_outbound_node_budget_drops_total 5`,
+		`realtimed_outbound_shed_disconnects_total 6`,
 		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="accepted"} 1`,
 		`realtimed_auth_outcomes_total{mode="static_bearer",outcome="rejected"} 2`,
 	} {

@@ -115,6 +115,32 @@ func RetentionOnce(ctx context.Context, db retentionExecer) (int64, error) {
 	return total, ErrRetentionBatchCap
 }
 
+// retentionRealtimeUsageBatchSQL ages out realtime usage rows (ADR-1323) on
+// the same 13-month window as usage_minutes. realtime_usage_hours_hour keeps
+// the scan to expired rows.
+const retentionRealtimeUsageBatchSQL = `DELETE FROM public.realtime_usage_hours
+                          WHERE ctid IN (
+                              SELECT ctid FROM public.realtime_usage_hours
+                              WHERE hour < (now() - interval '13 months')
+                              LIMIT $1
+                          )`
+
+// RetentionOnceRealtimeUsage is RetentionOnce for realtime_usage_hours.
+func RetentionOnceRealtimeUsage(ctx context.Context, db retentionExecer) (int64, error) {
+	var total int64
+	for i := 0; i < MaxRetentionBatches; i++ {
+		tag, err := db.Exec(ctx, retentionRealtimeUsageBatchSQL, RetentionBatchSize)
+		if err != nil {
+			return total, fmt.Errorf("realtime usage retention delete (batch %d, deleted so far %d): %w", i, total, err)
+		}
+		total += tag
+		if tag < RetentionBatchSize {
+			return total, nil
+		}
+	}
+	return total, ErrRetentionBatchCap
+}
+
 // RetentionLoop is the free-function goroutine that calls
 // RetentionOnce every Interval. Returns on ctx.Done(). Matches
 // the cadence contract for the other meterd ticks.
@@ -148,6 +174,11 @@ func RetentionLoop(ctx context.Context, db retentionExecer, interval time.Durati
 				if log != nil {
 					log.Error("retention tick failed", "err", err)
 				}
+			}
+			if n, err := RetentionOnceRealtimeUsage(ctx, db); err != nil && log != nil {
+				log.Warn("realtime usage retention tick incomplete; will resume next tick", "rows_deleted", n, "err", err)
+			} else if log != nil {
+				log.Info("realtime usage retention tick ok", "rows_deleted", n)
 			}
 		}
 	}

@@ -82,7 +82,7 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"bad delivery path", "functions:\n  - name: a\n    root: f\n    webhooks:\n      - name: w\n        provider: generic\n        signing_secret_env: S\n        delivery_path: hook\n", api.PlanPro, "must start with /"},
 		{"combined with function", "function:\n  runtime: node24\n  handler: handler.handler\nfunctions:\n  - name: a\n    root: f\n", api.PlanPro, "cannot be combined with function:"},
 		{"combined with scaling", "scaling:\n  min_instances: 1\nfunctions:\n  - name: a\n    root: f\n", api.PlanPro, "cannot be combined with scaling:"},
-		{"non-cron trigger", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: queue\n    app: a\n    config:\n      mode: queue\n", api.PlanPro, "cron triggers only"},
+		{"non-cron trigger", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: queue\n    app: a\n    config:\n      mode: queue\n", api.PlanPro, "cron and realtime triggers only"},
 		{"trigger for unknown function", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: cron\n    app: b\n    schedule: \"* * * * *\"\n    path: /\n", api.PlanPro, "must name one of the functions"},
 		// ADR-1342 per-function settings.
 		// The bound comes from limits.go, which plan revisions change (ADR-1430).

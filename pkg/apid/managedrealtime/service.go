@@ -68,6 +68,14 @@ type Service struct {
 	// channel grants and the versioned reconnect protocol are ready.
 	HistoryPreviewEnabled bool
 	HistoryMetrics        *ManagedRealtimeHistoryMetrics
+	// OccupancyPreviewEnabled serves channel occupancy (ADR-1324).
+	OccupancyPreviewEnabled bool
+	// UsageEnabled serves the account's realtime usage (ADR-1323), recorded
+	// only by realtimed nodes with the same flag.
+	UsageEnabled bool
+	// FairUseEnabled sends each endpoint's account connection limit to
+	// realtimed (ADR-1323); off, endpoints register without one.
+	FairUseEnabled bool
 
 	publishIdempotencySweep atomic.Uint64
 }

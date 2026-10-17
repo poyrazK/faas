@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -66,9 +67,12 @@ func (r *TriggersRetention) WithClock(now func() time.Time) *TriggersRetention {
 //     counted, and the loop continues.
 func (r *TriggersRetention) SweepOnce(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 {
-		limit = 1000
+		limit = api.TriggerRetentionBatchMax
 	}
 	now := r.now()
+	if reaper, ok := r.store.(state.TriggerRecordReaper); ok {
+		return r.sweepBatches(ctx, reaper, now, limit)
+	}
 	ids, err := r.store.ListExpiredTriggerRecordsForReaper(ctx, now, limit)
 	if err != nil {
 		return 0, err
@@ -86,6 +90,24 @@ func (r *TriggersRetention) SweepOnce(ctx context.Context, limit int) (int, erro
 	}
 	if deleted > 0 {
 		r.log.Info("trigger_records retention sweep", "deleted", deleted, "cutoff", now.Format(time.RFC3339))
+	}
+	return deleted, nil
+}
+
+// sweepBatches deletes expired rows, including unpinned terminal rows past
+// the default ages, in bounded batches until a batch comes back short or the
+// per-sweep pass budget is spent.
+func (r *TriggersRetention) sweepBatches(ctx context.Context, reaper state.TriggerRecordReaper, now time.Time, limit int) (int, error) {
+	deleted := 0
+	for pass := 0; pass < api.TriggerRetentionPassesMax; pass++ {
+		n, err := reaper.DeleteExpiredTriggerRecords(ctx, now, limit)
+		deleted += n
+		if err != nil {
+			return deleted, err
+		}
+		if n < limit {
+			break
+		}
 	}
 	return deleted, nil
 }
