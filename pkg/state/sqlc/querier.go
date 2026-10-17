@@ -2841,6 +2841,7 @@ type Querier interface {
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
 	OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg OperatorAlertWorkloadBucketsParams) ([]OperatorAlertWorkloadBucketsRow, error)
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
+	OperatorBuildRecoverySnapshot(ctx context.Context, db DBTX) (OperatorBuildRecoverySnapshotRow, error)
 	// The API catalog is the single source of named shapes. Unmatched shapes
 	// share one custom bucket, keeping the result bounded as the fleet grows.
 	// Aggregate instances before joining so app reservations are counted once.

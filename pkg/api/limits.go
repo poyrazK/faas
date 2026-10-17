@@ -8899,6 +8899,11 @@ const (
 	ObsBuildQueueCollectionBudget   = 3 * time.Second
 	ObsBuildQueueFreshnessMaxAge    = 2 * time.Minute
 
+	// Recovery observations have the same bounded, scrape-independent cadence.
+	ObsBuildRecoveryCollectionInterval = 30 * time.Second
+	ObsBuildRecoveryCollectionBudget   = 3 * time.Second
+	ObsBuildRecoveryFreshnessMaxAge    = 2 * time.Minute
+
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100

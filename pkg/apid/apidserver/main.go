@@ -1780,6 +1780,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// count and oldest timestamps from separate database snapshots.
 	queueReader, _ := srv.store.(operatorobs.BuildQueueReader)
 	go buildQueueMetrics.Run(queueMetricsCtx, queueReader, log)
+	recoveryMetrics := operatorobs.NewBuildRecoveryMetrics(srv.ops.Registry())
+	recoveryReader, _ := srv.store.(state.BuildRecoveryObservationStore)
+	go recoveryMetrics.Run(queueMetricsCtx, recoveryReader, log)
 	alertMetrics := operatorobs.NewMaintenanceMetrics(srv.ops.Registry())
 	go operatorobs.RunAlertCollector(ctx, srv.store, srv.promqlClient, log, alertMetrics)
 	go operatorobs.RunAlertRetention(ctx, srv.store, log, alertMetrics)

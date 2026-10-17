@@ -1287,11 +1287,13 @@ type builderUsageRow struct {
 }
 
 type builderVMCleanupRow struct {
+	createdAt     time.Time
 	nextAttemptAt time.Time
 	claimedAt     *time.Time
 	claimToken    string
 	attempts      int
 	lastError     string
+	failedAttempt bool // Includes failed attempts whose error text is empty.
 }
 
 // NewMemStore returns an empty in-memory store with the synthetic
@@ -11169,7 +11171,9 @@ func (m *MemStore) enqueueBuildVMCleanupLocked(buildID string, now time.Time) {
 	if _, exists := m.builderVMCleanup[buildID]; exists {
 		return
 	}
-	m.builderVMCleanup[buildID] = builderVMCleanupRow{nextAttemptAt: now}
+	// Match PostgreSQL's created_at DEFAULT now(), independently of a
+	// caller-supplied historical cancellation timestamp used for retry due time.
+	m.builderVMCleanup[buildID] = builderVMCleanupRow{createdAt: time.Now().UTC(), nextAttemptAt: now}
 }
 
 // ClaimBuildVMCleanup claims due or abandoned builder-VM teardown rows. The
@@ -11235,6 +11239,7 @@ func (m *MemStore) CompleteBuildVMCleanup(_ context.Context, buildID, claimToken
 	row.claimToken = ""
 	row.nextAttemptAt = time.Now().UTC()
 	row.lastError = cleanupErr.Error()
+	row.failedAttempt = true
 	row.lastError = safetext.Truncate(row.lastError, builderVMCleanupErrorMaxBytes)
 	m.builderVMCleanup[buildID] = row
 	return nil

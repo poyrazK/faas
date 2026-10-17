@@ -47,6 +47,12 @@ func ReaperLoop(ctx context.Context, store state.Store, interval, threshold time
 // transaction, then its cleanup obligation is claimed and sent to vmmd. A nil
 // VM keeps the row-only behavior for callers that do not own builder processes.
 func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, threshold time.Duration, log *slog.Logger) {
+	ReaperLoopWithMetrics(ctx, store, vm, interval, threshold, log, nil)
+}
+
+// ReaperLoopWithMetrics preserves recovery behavior while reporting whole-pass
+// health separately from the number of rows recovered by its sweep.
+func ReaperLoopWithMetrics(ctx context.Context, store state.Store, vm VM, interval, threshold time.Duration, log *slog.Logger, metrics *ReaperMetrics) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -56,7 +62,10 @@ func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, t
 		case <-t.C:
 		}
 		cutoff := time.Now().Add(-threshold)
-		n, err := sweepStuckBuilds(ctx, store, vm, cutoff, log)
+		metrics.begin()
+		result := sweepStuckBuildsWithMetrics(ctx, store, vm, cutoff, log, metrics)
+		metrics.finish(result)
+		n, err := result.swept, result.err
 		if err != nil {
 			// Sweep failures are operator-visible but not fatal —
 			// the next tick retries. A persistent failure (e.g.,
@@ -83,49 +92,70 @@ func ReaperLoopWithVM(ctx context.Context, store state.Store, vm VM, interval, t
 // optional ID-returning seam remains a safe fallback for custom stores that
 // predate durable VM cleanup.
 func sweepStuckBuilds(ctx context.Context, store state.Store, vm VM, cutoff time.Time, log *slog.Logger) (int, error) {
+	result := sweepStuckBuildsWithMetrics(ctx, store, vm, cutoff, log, nil)
+	return result.swept, result.err
+}
+
+type reaperPassResult struct {
+	swept         int
+	err           error
+	cleanupFailed bool
+}
+
+type runningBuildSweeper interface {
+	SweepStuckRunningBuilds(context.Context, time.Time) (int, error)
+}
+
+func sweepStuckBuildsWithMetrics(ctx context.Context, store runningBuildSweeper, vm VM, cutoff time.Time, log *slog.Logger, metrics *ReaperMetrics) reaperPassResult {
 	if vm == nil {
-		return store.SweepStuckRunningBuilds(ctx, cutoff)
+		n, err := store.SweepStuckRunningBuilds(ctx, cutoff)
+		return reaperPassResult{swept: n, err: err}
 	}
 	if cleanupStore, ok := store.(state.BuildVMCleanupStore); ok {
 		n, err := store.SweepStuckRunningBuilds(ctx, cutoff)
 		if err != nil {
-			return 0, err
+			return reaperPassResult{err: err}
 		}
-		if err := drainBuildVMCleanup(ctx, cleanupStore, vm, log); err != nil {
-			return n, err
-		}
-		return n, nil
+		failed, err := drainBuildVMCleanupWithMetrics(ctx, cleanupStore, vm, log, metrics)
+		return reaperPassResult{swept: n, err: err, cleanupFailed: failed}
 	}
 	sweeper, ok := store.(state.StuckBuildSweepStore)
 	if !ok {
-		return store.SweepStuckRunningBuilds(ctx, cutoff)
+		n, err := store.SweepStuckRunningBuilds(ctx, cutoff)
+		return reaperPassResult{swept: n, err: err}
 	}
 	ids, err := sweeper.SweepStuckRunningBuildsWithIDs(ctx, cutoff)
 	if err != nil {
-		return 0, err
+		return reaperPassResult{err: err}
 	}
+	failed := false
 	for _, buildID := range ids {
 		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reaperVMCancelTimeout)
 		cancelErr := vm.Cancel(cancelCtx, buildID)
 		cancel()
+		metrics.observeCleanup("cancel", cancelErr)
+		failed = failed || cancelErr != nil
 		if cancelErr != nil && !errors.Is(cancelErr, context.Canceled) {
 			log.Warn("builderd: stuck-running VM cleanup", "build", buildID, "err", cancelErr)
 		}
 	}
-	return len(ids), nil
+	return reaperPassResult{swept: len(ids), cleanupFailed: failed}
 }
 
 const builderVMCleanupBatchSize = 64
 
-func drainBuildVMCleanup(ctx context.Context, store state.BuildVMCleanupStore, vm VM, log *slog.Logger) error {
+func drainBuildVMCleanupWithMetrics(ctx context.Context, store state.BuildVMCleanupStore, vm VM, log *slog.Logger, metrics *ReaperMetrics) (bool, error) {
 	claims, err := store.ClaimBuildVMCleanup(ctx, builderVMCleanupBatchSize)
 	if err != nil {
-		return err
+		return true, err
 	}
+	failed := false
 	for _, claim := range claims {
 		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reaperVMCancelTimeout)
 		cleanupErr := vm.Cancel(cancelCtx, claim.BuildID)
 		cancel()
+		metrics.observeCleanup("cancel", cleanupErr)
+		failed = failed || cleanupErr != nil
 		if cleanupErr != nil && !errors.Is(cleanupErr, context.Canceled) {
 			log.Warn("builderd: builder VM cleanup", "build", claim.BuildID, "err", cleanupErr)
 		}
@@ -133,9 +163,11 @@ func drainBuildVMCleanup(ctx context.Context, store state.BuildVMCleanupStore, v
 		completeCtx, completeCancel := context.WithTimeout(context.WithoutCancel(ctx), reaperVMCancelTimeout)
 		completeErr := store.CompleteBuildVMCleanup(completeCtx, claim.BuildID, claim.ClaimToken, cleanupErr)
 		completeCancel()
+		metrics.observeCleanup("record", completeErr)
+		failed = failed || completeErr != nil
 		if completeErr != nil {
 			log.Warn("builderd: record builder VM cleanup", "build", claim.BuildID, "err", completeErr)
 		}
 	}
-	return nil
+	return failed, nil
 }

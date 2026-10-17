@@ -966,6 +966,44 @@ func (q *Queries) OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since
 	return ratio, err
 }
 
+const operatorBuildRecoverySnapshot = `-- name: OperatorBuildRecoverySnapshot :one
+WITH running AS (
+    SELECT count(*)::bigint AS running,
+           count(*) FILTER (WHERE started_at IS NULL)::bigint AS missing_started_at,
+           min(started_at)::timestamptz AS oldest_started_at
+    FROM builds WHERE status = 'running'
+), cleanup AS (
+    SELECT count(*)::bigint AS pending_cleanup,
+           min(created_at)::timestamptz AS oldest_cleanup_created_at,
+           count(*) FILTER (WHERE last_error IS NOT NULL)::bigint AS retried_cleanup
+    FROM builder_vm_cleanup
+)
+SELECT running.running, running.missing_started_at, running.oldest_started_at, cleanup.pending_cleanup, cleanup.oldest_cleanup_created_at, cleanup.retried_cleanup FROM running CROSS JOIN cleanup
+`
+
+type OperatorBuildRecoverySnapshotRow struct {
+	Running                int64
+	MissingStartedAt       int64
+	OldestStartedAt        pgtype.Timestamptz
+	PendingCleanup         int64
+	OldestCleanupCreatedAt pgtype.Timestamptz
+	RetriedCleanup         int64
+}
+
+func (q *Queries) OperatorBuildRecoverySnapshot(ctx context.Context, db DBTX) (OperatorBuildRecoverySnapshotRow, error) {
+	row := db.QueryRow(ctx, operatorBuildRecoverySnapshot)
+	var i OperatorBuildRecoverySnapshotRow
+	err := row.Scan(
+		&i.Running,
+		&i.MissingStartedAt,
+		&i.OldestStartedAt,
+		&i.PendingCleanup,
+		&i.OldestCleanupCreatedAt,
+		&i.RetriedCleanup,
+	)
+	return i, err
+}
+
 const operatorCapacityProfiles = `-- name: OperatorCapacityProfiles :many
 WITH catalog AS (
     SELECT p.value->>'name' AS name,

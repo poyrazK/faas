@@ -46,7 +46,6 @@ BuildByID
 BuildProvenanceByBuildID
 BumpFirst5xxCount
 BumpInstanceTailCount
-CancelDeploymentTx
 CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
@@ -399,7 +398,6 @@ MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
 MarkAllSnapshotsStaleByFCVersion
 MarkAppRegistryCredentialUsed
-MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
@@ -532,7 +530,6 @@ SumOpenUploadSessionBytesByAccount
 SweepExpiredWebhookDeliveries
 SweepExpiredWorkflowEvents
 SweepExpiredWorkflowRuns
-SweepStuckRunningBuilds
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta

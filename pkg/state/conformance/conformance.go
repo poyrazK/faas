@@ -53,6 +53,7 @@ func Run(t *testing.T, open Open) {
 		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
 		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
 		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
+		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},

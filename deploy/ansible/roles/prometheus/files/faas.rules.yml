@@ -3588,6 +3588,170 @@ groups:
           description: "A scraped apid has no successful, complete build queue observation at most 120 seconds old for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's successful fleet snapshot cannot establish this collector's health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
+      # Recovery is observed separately from queue wait. Fleet gauges are
+      # coherent per apid; never sum replicas. Timing uses effective config
+      # from every discovered builder. Age warnings measure overdue work;
+      # the stalled-loop allowance also includes all serial cleanup timeouts.
+      - record: faas_build_recovery_observation_healthy
+        expr: |
+          (apid_build_recovery_collection_success{job="apid"} == 1)
+          and on (job, instance) (up{job="apid"} == 1)
+          and on (job, instance) (apid_build_recovery_collection_last_success_timestamp_seconds{job="apid"} > 0)
+          and on (job, instance) (time() - apid_build_recovery_collection_last_success_timestamp_seconds{job="apid"} >= 0)
+          and on (job, instance) (time() - apid_build_recovery_collection_last_success_timestamp_seconds{job="apid"} <= 120)
+          and on (job, instance) (faas_build_vm_cleanup_retry_pending{job="apid"} >= 0)
+          and on (job, instance) (faas_build_vm_cleanup_retry_pending{job="apid"} <= faas_build_vm_cleanup_pending{job="apid"})
+          and on (job, instance)
+          (((faas_build_running_count{job="apid"} == 0) and on (job, instance) (faas_build_running_oldest_started_timestamp_seconds{job="apid"} == 0))
+           or ((faas_build_running_count{job="apid"} > 0) and on (job, instance) (faas_build_running_oldest_started_timestamp_seconds{job="apid"} > 0)
+               and on (job, instance) (faas_build_running_oldest_started_timestamp_seconds{job="apid"} <= time())))
+          and on (job, instance)
+          (((faas_build_vm_cleanup_pending{job="apid"} == 0) and on (job, instance) (faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"} == 0))
+           or ((faas_build_vm_cleanup_pending{job="apid"} > 0) and on (job, instance) (faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"} > 0)
+               and on (job, instance) (faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"} <= time())))
+      - record: faas_build_running_oldest_age_seconds
+        expr: |
+          ((time() - faas_build_running_oldest_started_timestamp_seconds{job="apid"})
+           and on (job, instance) (faas_build_running_count{job="apid"} > 0)
+           and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+          or ((faas_build_running_count{job="apid"} == 0)
+              and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+      - record: faas_build_vm_cleanup_oldest_age_seconds
+        expr: |
+          ((time() - faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"})
+           and on (job, instance) (faas_build_vm_cleanup_pending{job="apid"} > 0)
+           and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+          or ((faas_build_vm_cleanup_pending{job="apid"} == 0)
+              and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+      - record: builderd_build_reaper_observation_healthy
+        expr: |
+          (up{job="builderd"} == 1)
+          and on (job, instance) (builderd_build_reaper_started_timestamp_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_started_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_interval_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_threshold_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_cleanup_budget_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_last_completed_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_completed_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_last_pass_success{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_pass_success{job="builderd"} <= 1)
+      - record: builderd_build_reaper_progress_allowance_seconds
+        expr: |
+          (2 * builderd_build_reaper_interval_seconds{job="builderd"}
+           + on (job, instance) builderd_build_reaper_cleanup_budget_seconds{job="builderd"})
+          and on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+      - record: faas_build_running_recovery_allowance_seconds
+        expr: |
+          max((builderd_build_reaper_threshold_seconds{job="builderd"} + on (job, instance) 2 * builderd_build_reaper_interval_seconds{job="builderd"}) and on (job, instance) (builderd_build_reaper_observation_healthy == 1))
+          and on () (count(builderd_build_reaper_observation_healthy == 1) == count(up{job="builderd"}))
+      - record: faas_build_vm_cleanup_allowance_seconds
+        expr: |
+          max((2 * builderd_build_reaper_interval_seconds{job="builderd"}) and on (job, instance) (builderd_build_reaper_observation_healthy == 1))
+          and on () (count(builderd_build_reaper_observation_healthy == 1) == count(up{job="builderd"}))
+      - alert: FaasBuildRecoveryTelemetryUnavailable
+        expr: |
+          (up{job="apid"} == 1)
+          unless on (job, instance) (faas_build_recovery_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: build_recovery_telemetry
+          public_status: internal
+        annotations:
+          summary: Build recovery state is unavailable
+          description: The running-build and durable VM cleanup snapshot is missing, failed, inconsistent or older than
+            120 seconds. Backlog state is unknown; inspect apid database access and the observation poller.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuilderReaperTelemetryUnavailable
+        expr: |
+          (up{job="builderd"} == 1)
+          unless on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery_telemetry
+          public_status: internal
+        annotations:
+          summary: Builder recovery loop telemetry is unavailable
+          description: The builder is scraped but its reaper configuration or progress timestamps are missing or invalid.
+            Recovery health and fleet timing allowances are unknown.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuildRunningOverdue
+        expr: |
+          faas_build_running_oldest_age_seconds
+          > on () group_left faas_build_running_recovery_allowance_seconds
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: A running build is overdue for recovery
+          description: A running claim has exceeded the largest configured recovery threshold plus two sweep intervals
+            for 5m. Inspect reaper progress and cleanup workload; this is overdue customer work, not proof that its VM
+            is still running.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuildVMCleanupOverdue
+        expr: |
+          faas_build_vm_cleanup_oldest_age_seconds
+          > on () group_left faas_build_vm_cleanup_allowance_seconds
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: Builder VM cleanup is overdue
+          description: A durable cleanup obligation has remained outstanding beyond two configured sweep intervals for
+            5m. Age survives retries and live claims. Inspect cancel and result-record errors and batch throughput before
+            intervening.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuilderReaperFailing
+        expr: |
+          (builderd_build_reaper_last_pass_success{job="builderd"} == 0)
+          and on (job, instance) (builderd_build_reaper_last_completed_timestamp_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: Builder recovery pass failed
+          description: The latest completed reaper pass has remained unsuccessful for 5m. A successful row sweep does
+            not imply successful VM cleanup or durable result recording. Inspect operation outcomes and logs.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuilderReaperStalled
+        expr: |
+          (((time() - builderd_build_reaper_last_success_timestamp_seconds{job="builderd"}
+             > on (job, instance) builderd_build_reaper_progress_allowance_seconds)
+            and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} > 0))
+           or ((time() - builderd_build_reaper_started_timestamp_seconds{job="builderd"}
+                > on (job, instance) builderd_build_reaper_progress_allowance_seconds)
+               and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} == 0)))
+          and on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: Builder recovery has stopped succeeding
+          description: No whole recovery pass has succeeded within two configured intervals plus the full serial cleanup
+            call budget, for 5m. This also detects a loop that never starts on an otherwise idle builder. Capture logs
+            and goroutine evidence before restarting.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+
       # Issue #2418: builder VM exports are node-local, transient handoffs.
       # builderd inventories the tree at startup and every five minutes; the
       # default cap is 8 GiB. Both alerts stay operator-internal because they

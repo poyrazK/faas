@@ -6,6 +6,20 @@ SELECT count(*)::bigint AS queued,
        min(enqueued_at)::timestamptz AS oldest_enqueued_at
 FROM builds WHERE status = 'queued';
 
+-- name: OperatorBuildRecoverySnapshot :one
+WITH running AS (
+    SELECT count(*)::bigint AS running,
+           count(*) FILTER (WHERE started_at IS NULL)::bigint AS missing_started_at,
+           min(started_at)::timestamptz AS oldest_started_at
+    FROM builds WHERE status = 'running'
+), cleanup AS (
+    SELECT count(*)::bigint AS pending_cleanup,
+           min(created_at)::timestamptz AS oldest_cleanup_created_at,
+           count(*) FILTER (WHERE last_error IS NOT NULL)::bigint AS retried_cleanup
+    FROM builder_vm_cleanup
+)
+SELECT running.*, cleanup.* FROM running CROSS JOIN cleanup;
+
 -- name: OperatorOverviewTotals :one
 WITH accounts_summary AS (
     SELECT count(*) FILTER (WHERE status = 'active')::bigint AS accounts_active,

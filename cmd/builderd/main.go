@@ -374,7 +374,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if reapThreshold <= 0 {
 		reapThreshold = 15 * time.Minute
 	}
-	go builderdpkg.ReaperLoopWithVM(runCtx, store, driver, reapInterval, reapThreshold, log)
+	reaperMetrics := builderdpkg.NewReaperMetrics(ops.Registry(), reapInterval, reapThreshold)
+	go builderdpkg.ReaperLoopWithMetrics(runCtx, store, driver, reapInterval, reapThreshold, log, reaperMetrics)
 
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
 	// cfg.CacheDir grows forever as builds accumulate; a daily sweep
