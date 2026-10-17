@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -40,6 +41,39 @@ func TestServiceProxyWakerProjectsTargetApp(t *testing.T) {
 	}
 	if got.AccountID != app.AccountID {
 		t.Errorf("account = %q, want %q", got.AccountID, app.AccountID)
+	}
+}
+
+func TestServiceProxyDeploymentWakerUsesExactIngressAndRefusesForeignDeployment(t *testing.T) {
+	store := state.NewMemStore()
+	app := seedApp(t, store, "deployment-wake", api.PlanPro)
+	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Status: state.DeployLive,
+		Sidecars: json.RawMessage(`[{"name":"proxy","type":"sidecar","port":8081,"primary_ingress":true}]`)}); err != nil {
+		t.Fatal(err)
+	}
+	stage, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "staging", Status: state.DeployLive,
+		Sidecars: json.RawMessage(`[{"name":"proxy","type":"sidecar","port":8082,"primary_ingress":true}]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	wake := newServiceProxyDeploymentWaker(store, func(_ context.Context, resolved gateway.App, deployment string) error {
+		calls++
+		if resolved.PrimaryIngressPort != 8082 || resolved.Scope != "staging" || deployment != stage.ID || resolved.AccountID != app.AccountID {
+			t.Fatalf("deployment wake inherited other ingress: %+v / %s", resolved, deployment)
+		}
+		return nil
+	})
+	if err := wake(t.Context(), app.ID, stage.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := seedApp(t, store, "foreign-wake", api.PlanPro)
+	foreign, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: other.ID, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wake(t.Context(), app.ID, foreign.ID); err == nil || calls != 1 {
+		t.Fatalf("foreign deployment invoked wake: %v calls=%d", err, calls)
 	}
 }
 

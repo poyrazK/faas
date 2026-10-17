@@ -33,7 +33,9 @@ func (s *PgStore) CreateProjectEnvironmentCloneOperation(ctx context.Context, op
 	if err := validateProjectEnvironmentCloneOperation(op); err != nil || (op.Status != "" && op.Status != CloneOperationPending) {
 		return ProjectEnvironmentCloneOperation{}, ErrInvalidProjectEnvironmentCloneOperation
 	}
-	tx, err := s.pool.Begin(ctx)
+	// Reserve before any competing environment writer takes its policy snapshot.
+	// A project row lock alone cannot refresh an already-started snapshot.
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(op.AccountID))
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}

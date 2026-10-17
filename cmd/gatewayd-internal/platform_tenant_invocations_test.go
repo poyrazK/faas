@@ -1,3 +1,4 @@
+// adr: 570 — durable tenant delivery also verifies the committed target.
 package main
 
 import (
@@ -83,6 +84,17 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: state.DefaultEnvScope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), app.RAMMB, "node", "tenant-jail")
+	if err != nil {
+		t.Fatal(err)
+	}
 	tenant, _, err := store.CreatePlatformTenant(ctx, account.ID, "alice", "Alice", 250)
 	if err != nil {
 		t.Fatal(err)
@@ -129,18 +141,7 @@ func TestSynthAdapterPlatformTenantDurableAdmission(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 	}}
-	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:tenant"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
-		t.Fatal(err)
-	}
-	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "node", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: dep.ID, WakeID: instance.WakeID}
+	target := gateway.Target{InstanceID: instance.ID, NodeID: instance.NodeID, DeploymentID: deployment.ID, WakeID: instance.WakeID}
 	for _, tenantID := range []string{"", "forged"} {
 		wire := inv
 		wire.PlatformTenantID = tenantID

@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ResponseCachePurgeChange is one durable app-scoped cache purge request.
@@ -152,7 +154,8 @@ func (s *PgStore) ListResponseCachePurgesAfter(ctx context.Context, afterID int6
 }
 
 // BootstrapGatewayResponseCachePurgeCursor resumes a known gateway's last
-// durable position. A new gateway starts from the highest position already
+// fenced durable position, even across a process replacement. Legacy rows
+// are ignored. A new gateway starts from the highest position already
 // applied by a serving peer: the shared Redis tier has seen every purge up to
 // that point, while the new process's local cache starts empty. If no peer has
 // reported yet, replay starts at zero.
@@ -164,23 +167,10 @@ func (s *PgStore) BootstrapGatewayResponseCachePurgeCursor(ctx context.Context, 
 	if nodeName == "" {
 		return 0, ErrInvalidArgument
 	}
-	var cursor int64
-	if err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(
-		    (SELECT last_change_id
-		     FROM gateway_response_cache_purge_watermarks
-	     WHERE node_name = $1),
-		    (SELECT MAX(w.last_change_id)
-		     FROM compute_nodes n
-		     JOIN gateway_response_cache_purge_watermarks w ON w.node_name = n.name
-		     WHERE n.name <> $1
-		       AND n.active = true
-		       AND n.role IN ('compute-only', 'compute-node')
-		       AND n.gateway_target_url IS NOT NULL
-		       AND btrim(n.gateway_target_url) <> ''),
-		    0
-		)
-	`, nodeName).Scan(&cursor); err != nil {
+	cursor, err := sqlc.New().BootstrapFencedGatewayCachePurgeCursor(ctx, s.pool, sqlc.BootstrapFencedGatewayCachePurgeCursorParams{
+		NodeName: nodeName, FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(),
+	})
+	if err != nil {
 		return 0, fmt.Errorf("state: bootstrap response cache purge cursor: %w", err)
 	}
 	return cursor, nil
@@ -215,26 +205,11 @@ func (s *PgStore) PruneResponseCachePurgeChangeLog(ctx context.Context, before t
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: response cache purge log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM response_cache_purge_change_log
-		WHERE created_at < $1
-		  AND id <= COALESCE((
-		      SELECT MIN(COALESCE(w.last_change_id, 0))
-		      FROM compute_nodes n
-		      LEFT JOIN gateway_response_cache_purge_watermarks w ON w.node_name = n.name
-		      WHERE n.active = true
-	        AND n.role IN ('compute-only', 'compute-node')
-	        AND n.gateway_target_url IS NOT NULL
-	        AND btrim(n.gateway_target_url) <> ''
-		  ), 9223372036854775807::bigint)
-		  AND id < (
-		      SELECT MAX(current.id)
-		      FROM response_cache_purge_change_log current
-		      WHERE current.app_id = response_cache_purge_change_log.app_id
-		  )
-	`, before.UTC())
+	n, err := sqlc.New().PruneFencedResponseCachePurgeChangeLog(ctx, s.pool, sqlc.PruneFencedResponseCachePurgeChangeLogParams{
+		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: prune response cache purge log: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }

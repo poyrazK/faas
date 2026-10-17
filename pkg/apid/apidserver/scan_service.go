@@ -46,6 +46,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -2208,7 +2209,7 @@ func (s *server) scanService(
 			if mapped.Quota != nil {
 				prob = quotaProblem(acct.Plan, limits, mapped.Quota)
 			} else {
-				prob = api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, "")
+				prob = trafficproblem.Policy(recErr, api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, ""))
 			}
 			capturedProb = prob
 			return resp, state.Project{}, nil, nil, nil, nil, prob

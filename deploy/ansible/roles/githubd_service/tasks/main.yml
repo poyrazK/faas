@@ -47,6 +47,16 @@
     group: root
     mode: "0755"
 
+# Preview/reconcile app writes validate the same URLs the gateway serves.
+- name: githubd_service — install FAAS_APPS_DOMAIN drop-in
+  notify: restart faas-githubd
+  ansible.builtin.template:
+    src: 99-faas-apps-domain.conf.j2
+    dest: /etc/systemd/system/faas-githubd.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into the githubd unit. Drop-in mirrors deploy/ansible/
 # roles/control_plane_service/templates/99-faas-node-name.conf.j2

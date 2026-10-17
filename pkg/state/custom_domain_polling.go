@@ -65,11 +65,13 @@ func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx co
 }
 
 func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry *OrgActivity) (CustomDomain, int64, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficDomainPublication(ctx, domain, appID)
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// The binding guard holds the destination account before locking the app;
+	// pending claims also change reservation and wildcard selection.
 	var accountID string
 	if err = tx.QueryRow(ctx, `select a.account_id from apps a
 		left join project_environments e on e.id = nullif($2, '')::uuid
@@ -86,9 +88,6 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		return CustomDomain{}, 0, &CustomDomainQuotaError{"app", appLimit}
 	}
 	// The account row serializes creates made concurrently for different apps.
-	if err = tx.QueryRow(ctx, `select 1 from accounts where id=$1 for update`, accountID).Scan(&n); err != nil {
-		return CustomDomain{}, 0, mapErr(err)
-	}
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains d join apps a on a.id=d.app_id where a.account_id=$1 and d.verified_at is null and d.verification_expires_at > now()`, accountID).Scan(&n); err != nil {
 		return CustomDomain{}, 0, err
 	}
@@ -194,10 +193,10 @@ func (m *MemStore) CreateCustomDomainInEnvironmentIfUnderQuota(ctx context.Conte
 	return m.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit)
 }
 
-func (m *MemStore) createCustomDomainIfUnderQuota(_ context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+func (m *MemStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit)
+	return m.createCustomDomainIfUnderQuotaLocked(ctx, domain, appID, environmentID, token, appLimit, accountLimit)
 }
 
 func (m *MemStore) CreateCustomDomainIfUnderQuotaWithActivity(ctx context.Context, domain, appID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
@@ -211,21 +210,21 @@ func (m *MemStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx c
 	return m.createCustomDomainWithActivity(ctx, domain, appID, environmentID, token, appLimit, accountLimit, entry)
 }
 
-func (m *MemStore) createCustomDomainWithActivity(_ context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
+func (m *MemStore) createCustomDomainWithActivity(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
 	entry, err := normalizeOrgActivity(entry, time.Now())
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	d, err := m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit)
+	d, err := m.createCustomDomainIfUnderQuotaLocked(ctx, domain, appID, environmentID, token, appLimit, accountLimit)
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
 	return d, m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
 	a, ok := m.apps[appID]
 	if !ok {
 		return CustomDomain{}, ErrNotFound
@@ -264,6 +263,9 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(domain, appID, environme
 		return CustomDomain{}, &CustomDomainQuotaError{"account", accountLimit}
 	}
 	d := CustomDomain{Domain: domain, AppID: appID, EnvironmentID: environmentID, ChallengeToken: token, CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return CustomDomain{}, err
+	}
 	m.domains[domain] = d
 	return d, nil
 }

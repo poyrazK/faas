@@ -4,13 +4,98 @@ import httpx
 
 from faas_sdk import (
     GREGALE_RELEASE_HEADER,
+    GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
     AsyncGregaleReleaseTransport,
     GregaleReleaseMiddleware,
     GregaleReleaseTransport,
     current_gregale_release,
+    current_gregale_request_deadline,
     with_gregale_release,
+    with_gregale_request_context,
 )
+
+
+def test_sync_deadline_context_wins_and_never_escapes_managed_hosts():
+    seen = []
+    client = httpx.Client(
+        transport=GregaleReleaseTransport(
+            httpx.MockTransport(lambda request: seen.append(request) or httpx.Response(204))
+        )
+    )
+    deadline = "v1.key.root.signature"
+    try:
+        with with_gregale_request_context({GREGALE_REQUEST_DEADLINE_HEADER: deadline}):
+            assert current_gregale_request_deadline() == deadline
+            client.get(
+                "http://billing.svc.gregale/", headers={GREGALE_REQUEST_DEADLINE_HEADER: "v1.key.override.signature"}
+            )
+            client.get("http://billing.internal/")
+            client.get(
+                "https://payments.example.test/",
+                headers={GREGALE_REQUEST_DEADLINE_HEADER: deadline, "X-Customer": "preserved"},
+            )
+    finally:
+        client.close()
+    assert seen[0].headers[GREGALE_REQUEST_DEADLINE_HEADER] == deadline
+    assert seen[1].headers[GREGALE_REQUEST_DEADLINE_HEADER] == deadline
+    assert GREGALE_REQUEST_DEADLINE_HEADER not in seen[2].headers
+    assert seen[2].headers["X-Customer"] == "preserved"
+    assert current_gregale_request_deadline() is None
+
+
+def test_asgi_deadlines_are_isolated_and_reset_after_handler_failure():
+    seen = []
+
+    async def app(scope, receive, send):
+        deadline = current_gregale_request_deadline()
+        await asyncio.sleep(0.01 if "first" in (deadline or "") else 0)
+        async with httpx.AsyncClient(
+            transport=AsyncGregaleReleaseTransport(
+                httpx.MockTransport(
+                    lambda request: (
+                        seen.append(request.headers.get(GREGALE_REQUEST_DEADLINE_HEADER)) or httpx.Response(204)
+                    )
+                )
+            )
+        ) as client:
+            await client.get("http://identity.svc.gregale/")
+        if scope.get("fail"):
+            raise RuntimeError("handler failed")
+
+    middleware = GregaleReleaseMiddleware(app)
+
+    async def run():
+        scopes = [
+            {"type": "http", "headers": [(GREGALE_REQUEST_DEADLINE_HEADER.lower().encode(), value.encode())]}
+            for value in ("v1.key.first.signature", "v1.key.second.signature")
+        ]
+        await asyncio.gather(*(middleware(scope, None, None) for scope in scopes))
+        try:
+            await middleware({**scopes[0], "fail": True}, None, None)
+        except RuntimeError:
+            pass
+        assert current_gregale_request_deadline() is None
+
+    asyncio.run(run())
+    assert sorted(seen[:2]) == ["v1.key.first.signature", "v1.key.second.signature"]
+
+
+def test_httpx_redirect_removes_deadline_at_external_destination():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.host == "billing.svc.gregale":
+            return httpx.Response(302, headers={"Location": "https://payments.example.test/"})
+        return httpx.Response(204)
+
+    with httpx.Client(transport=GregaleReleaseTransport(httpx.MockTransport(handler)), follow_redirects=True) as client:
+        with with_gregale_request_context({GREGALE_REQUEST_DEADLINE_HEADER: "v1.key.root.signature"}):
+            response = client.get("http://billing.svc.gregale/")
+    assert response.status_code == 204
+    assert seen[0].headers[GREGALE_REQUEST_DEADLINE_HEADER] == "v1.key.root.signature"
+    assert GREGALE_REQUEST_DEADLINE_HEADER not in seen[1].headers
 
 
 def test_sync_transport_propagates_release_only_to_managed_service():

@@ -63,6 +63,7 @@ func admitRequestBody(w http.ResponseWriter, r *http.Request, app App) bool {
 }
 
 func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration) bool {
+	defer measureTrafficPhase(r.Context(), trafficBody)()
 	if r.Body == nil || r.Body == http.NoBody || isUpgradeRequest(r) {
 		return false
 	}
@@ -140,6 +141,12 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 		if readErr == nil {
 			continue
 		}
+		if trafficRevocationCause(r.Context()) != nil {
+			cleanupSpool()
+			_ = original.Close()
+			writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
+			return true
+		}
 		if errors.Is(readErr, io.EOF) {
 			if expectedLength >= 0 && total != expectedLength {
 				cleanupSpool()
@@ -158,6 +165,10 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 			return true
 		}
 		var netErr net.Error
+		if requestBudgetExpired(r.Context()) {
+			writeRequestBudgetExceededForRequest(w, r)
+			return true
+		}
 		if errors.Is(uploadCtx.Err(), context.DeadlineExceeded) || (errors.As(readErr, &netErr) && netErr.Timeout()) {
 			api.WriteProblem(w, api.ErrRequestUploadTimeout(allowance))
 			return true

@@ -12,6 +12,7 @@ import (
 )
 
 const pruneEdgeRuleReplayHistory = `-- name: PruneEdgeRuleReplayHistory :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
 DELETE FROM edge_rule_change_log AS old
 WHERE created_at < $1::timestamptz
   -- Preserve each account's cursor and the unknown-owner compatibility floor.
@@ -23,19 +24,28 @@ WHERE created_at < $1::timestamptz
       WHERE newer.id > old.id AND newer.account_ids @> ARRAY[owner.account_id]
     )
   )
-  AND id <= COALESCE((
-      SELECT MIN(COALESCE(w.last_change_id, 0))
-      FROM compute_nodes n
-      LEFT JOIN gateway_edge_rule_watermarks w ON w.node_name = n.name
-      WHERE n.active = true
-        AND n.role IN ('compute-only', 'compute-node')
-        AND n.gateway_target_url IS NOT NULL
-        AND btrim(n.gateway_target_url) <> ''
+  AND old.id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'edge_rules'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
   ), 9223372036854775807::bigint)
 `
 
-func (q *Queries) PruneEdgeRuleReplayHistory(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
-	result, err := db.Exec(ctx, pruneEdgeRuleReplayHistory, before)
+type PruneEdgeRuleReplayHistoryParams struct {
+	Before           pgtype.Timestamptz
+	FreshnessSeconds float64
+}
+
+// ADR-570: the replay floor is each serving gateway's fresh, boot-scoped
+// observation; a stale or missing gateway keeps the history it may replay.
+func (q *Queries) PruneEdgeRuleReplayHistory(ctx context.Context, db DBTX, arg PruneEdgeRuleReplayHistoryParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEdgeRuleReplayHistory, arg.Before, arg.FreshnessSeconds)
 	if err != nil {
 		return 0, err
 	}

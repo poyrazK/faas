@@ -54,6 +54,8 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 	if decision.Allowed {
 		return true
 	}
+	recordTrafficLimiter(r.Context(), "tenant")
+	recordTrafficRefusal(r.Context(), "rate_limited")
 	suppressFinancialUsage(r)
 	if decision.RetryAfterSeconds < 1 {
 		decision.RetryAfterSeconds = 1
@@ -67,6 +69,8 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) denyTenantBudgetUnavailable(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) {
+	recordTrafficLimiter(r.Context(), "tenant")
+	recordTrafficRefusal(r.Context(), "rate_limit_unavailable")
 	suppressFinancialUsage(r)
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "tenant_request_budget_unavailable",
 		"Customer request budget unavailable", "request admission could not be verified"))

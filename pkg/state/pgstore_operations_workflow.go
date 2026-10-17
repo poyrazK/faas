@@ -21,7 +21,11 @@ func (s *PgStore) OperationForWorkflowRun(ctx context.Context, runID string) (Op
 		// handle them just as MemStore does.
 		return Operation{}, false, nil
 	}
-	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, s.pool, id)
+	return readOperationForWorkflowRun(ctx, s.pool, id)
+}
+
+func readOperationForWorkflowRun(ctx context.Context, db sqlc.DBTX, id pgtype.UUID) (Operation, bool, error) {
+	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, db, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, false, nil
 	}

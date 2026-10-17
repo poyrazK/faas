@@ -51,9 +51,9 @@ assert_equal "shared-mode gateways" "$shared_gateways" "$EXPECTED_GATEWAY_COUNT"
 assert_equal "reported backend identities" "$backend_series" "$EXPECTED_GATEWAY_COUNT"
 assert_equal "unique shared backends" "$backend_ids" 1
 if ! awk -v errors="$backend_errors" 'BEGIN { exit (errors + 0 == 0) ? 0 : 1 }'; then
-	echo "retry-budget Redis errors in the last 10m=$backend_errors, want 0" >&2
+	echo "retry-budget backend errors in the last 10m=$backend_errors, want 0" >&2
 	exit 1
 fi
 
-printf 'shared retry-budget gate passed: gateways=%s backend_ids=%s redis_errors_10m=%s\n' \
+printf 'shared retry-budget gate passed: gateways=%s backend_ids=%s backend_errors_10m=%s\n' \
 	"$active_gateways" "$backend_ids" "$backend_errors"

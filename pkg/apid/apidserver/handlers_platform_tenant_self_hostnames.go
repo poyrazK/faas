@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -79,7 +80,7 @@ func (s *server) createPlatformTenantSelfHostname(w http.ResponseWriter, r *http
 			api.WriteProblem(w, api.ErrTenantHostnameQuota(acct.Plan, surfaceQuota.SurfaceID, surfaceQuota.Limit, surfaceQuota.Observed))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not add delegated tenant hostname"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrCapacity("could not add delegated tenant hostname")))
 		return
 	}
 	if result.Action == "created" {

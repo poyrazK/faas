@@ -51,7 +51,9 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 	if err := validateCloneCaptureRequest(request); err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	// Share the environment writer's session guard before the snapshot starts.
+	// Waiting for only the project row would retain a stale reservation view.
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(request.AccountID))
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}

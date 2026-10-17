@@ -312,9 +312,16 @@ func TestMemStore_OpenAPIImport_IfUnderQuota(t *testing.T) {
 		t.Fatalf("first upsert at planMax=1: %v", err)
 	}
 
-	// --- Branch 2: quota-exceeded — second upsert at planMax=1
-	// trips the observed >= planMax branch.
-	err := m.UpsertAppOpenAPIDocIfUnderQuota(ctx, app, acct, doc, 1, "3.1.0", 1)
+	// An existing document reuses its slot, including at the quota boundary.
+	if err := m.UpsertAppOpenAPIDocIfUnderQuota(ctx, app, acct, doc, 1, "3.1.0", 1); err != nil {
+		t.Fatalf("replacement at planMax=1: %v", err)
+	}
+	other, err := m.CreateApp(ctx, App{AccountID: acct, Slug: "import-quota-other", Status: AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different app still needs another slot and must refuse at the cap.
+	err = m.UpsertAppOpenAPIDocIfUnderQuota(ctx, other.ID, acct, doc, 1, "3.1.0", 1)
 	if err == nil {
 		t.Fatal("second upsert at planMax=1: expected QuotaError, got nil")
 	}

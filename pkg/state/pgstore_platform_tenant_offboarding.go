@@ -21,17 +21,20 @@ func (s *PgStore) PlanPlatformTenantOffboarding(ctx context.Context, accountID, 
 	if _, err := uuid.Parse(tenantID); err != nil {
 		return api.PlatformTenantOffboardingPlanResponse{}, ErrNotFound
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := s.beginTrafficTenantBinding(ctx, accountID, nil)
 	if err != nil {
 		return api.PlatformTenantOffboardingPlanResponse{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	now, err := platformTenantOffboardingDatabaseTime(ctx, tx)
 	if err != nil {
 		return api.PlatformTenantOffboardingPlanResponse{}, err
 	}
 	snapshot, err := platformTenantOffboardingSnapshotTx(ctx, tx, accountID, tenantID, now, false)
 	if err != nil {
+		return api.PlatformTenantOffboardingPlanResponse{}, err
+	}
+	if err := tx.ValidateProposal(ctx, trafficTenantOffboardingProposal(snapshot)); err != nil {
 		return api.PlatformTenantOffboardingPlanResponse{}, err
 	}
 	return buildPlatformTenantOffboardingPlan(snapshot)
@@ -47,11 +50,11 @@ func (s *PgStore) ApplyPlatformTenantOffboarding(ctx context.Context, accountID,
 	if !validPlatformTenantPlanHash(expectedPlanHash) {
 		return api.PlatformTenantOffboardingApplyResponse{}, ErrInvalidArgument
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficTenantBinding(ctx, accountID, nil)
 	if err != nil {
 		return api.PlatformTenantOffboardingApplyResponse{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if err := lockPlatformTenantAccount(ctx, tx, accountID); err != nil {
 		return api.PlatformTenantOffboardingApplyResponse{}, err
 	}
@@ -69,6 +72,9 @@ func (s *PgStore) ApplyPlatformTenantOffboarding(ctx context.Context, accountID,
 	}
 	if !platformTenantPlanHashMatches(expectedPlanHash, plan.PlanHash) {
 		return api.PlatformTenantOffboardingApplyResponse{}, ErrPlatformTenantPlanStale
+	}
+	if err := tx.ValidateProposal(ctx, trafficTenantOffboardingProposal(snapshot)); err != nil {
+		return api.PlatformTenantOffboardingApplyResponse{}, err
 	}
 	if err := applyPlatformTenantOffboardingTx(ctx, tx, accountID, tenantID, now, plan.Actions); err != nil {
 		return api.PlatformTenantOffboardingApplyResponse{}, err

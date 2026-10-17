@@ -3,7 +3,7 @@ package sched
 // The probe → breaker feed (ADR-201 §3).
 //
 // meterd writes one data_upstream_probes row per (host, region) every 30s.
-// schedd reads the opted-in upstreams, folds the newest probe outcome for
+// schedd reads the opted-in upstreams, folds distinct recent probe outcomes for
 // each into the breaker, and the breaker pushes the resulting circuit set to
 // vmmd.
 //
@@ -18,22 +18,24 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sort"
 	"time"
 )
 
-// EgressCircuitCandidate is one opted-in upstream plus the newest probe
+// EgressCircuitCandidate is one opted-in upstream plus the recent probe
 // verdict for it. The reader is responsible for the join; this package stays
 // free of SQL.
 type EgressCircuitCandidate struct {
 	Upstream EgressUpstream
-	// OK is the newest probe outcome. Sampled is its timestamp.
+	// OK is one actual probe outcome. Sampled is its timestamp.
 	OK      bool
 	Sampled time.Time
 }
 
 // EgressCircuitCandidateReader returns every opted-in upstream with its
-// newest probe verdict. Returning candidates with no probe at all is fine —
+// recent probe verdicts in timestamp order. Returning candidates with no probe at all is fine —
 // the loop skips them; an upstream nothing has measured must not be broken.
 type EgressCircuitCandidateReader func(ctx context.Context) ([]EgressCircuitCandidate, error)
 
@@ -44,8 +46,7 @@ type EgressCircuitLoop struct {
 	interval time.Duration
 	// maxAge bounds how stale a probe may be and still count. Past it the
 	// upstream is treated as unmeasured and skipped, so a stalled meterd
-	// cannot freeze a circuit open (or closed) on evidence nobody is
-	// refreshing.
+	// cannot freeze a circuit open on evidence nobody is refreshing.
 	maxAge time.Duration
 	log    *slog.Logger
 	now    func() time.Time
@@ -53,7 +54,9 @@ type EgressCircuitLoop struct {
 	// has not advanced is NOT re-observed: the breaker's window counts
 	// observations, so re-folding the same row every tick would manufacture
 	// evidence and trip a circuit on a single real sample.
-	seen map[string]time.Time
+	seen    map[string]time.Time
+	tracked map[string]EgressUpstream
+	apps    func(context.Context) ([]string, error)
 }
 
 // NewEgressCircuitLoop wires the loop. A zero interval uses 30s, matching the
@@ -77,6 +80,7 @@ func NewEgressCircuitLoop(breaker *EgressCircuitBreaker, read EgressCircuitCandi
 		log:      log,
 		now:      time.Now,
 		seen:     make(map[string]time.Time),
+		tracked:  make(map[string]EgressUpstream),
 	}
 }
 
@@ -119,46 +123,93 @@ func (l *EgressCircuitLoop) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now := l.now()
-	for _, c := range candidates {
-		if c.Upstream.AppID == "" || c.Upstream.Hash == "" {
-			continue
-		}
-		// No probe, or one too old to trust. Skipping is the safe direction:
-		// an unmeasured upstream must never be broken, and a circuit already
-		// open stays open until fresh evidence closes it.
-		if c.Sampled.IsZero() || now.Sub(c.Sampled) > l.maxAge {
-			continue
-		}
-		key := c.Upstream.key()
-		if last, ok := l.seen[key]; ok && !c.Sampled.After(last) {
-			continue
-		}
-		l.seen[key] = c.Sampled
-		if err := l.breaker.Observe(ctx, c.Upstream, c.OK); err != nil {
-			// Keep going: one app's vmmd being unreachable must not stop the
-			// rest of the fleet from converging.
-			l.log.Warn("sched: egress circuit observe failed",
-				"app", c.Upstream.AppID, "upstream", c.Upstream.Hash, "err", err)
-		}
+	live, freshest, apps, err := l.indexCandidates(ctx, candidates)
+	if err != nil {
+		return err
 	}
-	l.forgetRetired(candidates)
-	return nil
-}
-
-// forgetRetired drops per-key dedupe state for upstreams that are no longer
-// candidates, so the map cannot outlive the rows it describes. The breaker's
-// own Forget is NOT called here: an upstream can drop out of the candidate set
-// because the customer opted out, and that has to close the circuit rather
-// than merely stop tracking it — which the opt-out path does explicitly.
-func (l *EgressCircuitLoop) forgetRetired(candidates []EgressCircuitCandidate) {
-	live := make(map[string]struct{}, len(candidates))
-	for _, c := range candidates {
-		live[c.Upstream.key()] = struct{}{}
+	l.foldCandidates(candidates, live)
+	l.selectFreshUpstreams(live, freshest, apps)
+	var failures []error
+	for appID, upstreams := range apps {
+		if err := l.breaker.RefreshApp(ctx, appID, upstreams); err != nil {
+			failures = append(failures, err)
+			l.log.Warn("sched: egress circuit reconcile failed", "app", appID)
+		}
 	}
 	for key := range l.seen {
 		if _, ok := live[key]; !ok {
 			delete(l.seen, key)
 		}
 	}
+	l.tracked = live
+	return errors.Join(failures...)
+}
+
+func (l *EgressCircuitLoop) indexCandidates(ctx context.Context, candidates []EgressCircuitCandidate) (map[string]EgressUpstream, map[string]time.Time, map[string][]EgressUpstream, error) {
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Sampled.Before(candidates[j].Sampled) })
+	live := make(map[string]EgressUpstream)
+	freshest := make(map[string]time.Time)
+	apps := make(map[string][]EgressUpstream)
+	for _, c := range candidates {
+		if c.Upstream.AppID == "" || c.Upstream.Hash == "" {
+			continue
+		}
+		key := c.Upstream.key()
+		live[key], freshest[key] = c.Upstream, c.Sampled
+		apps[c.Upstream.AppID] = nil
+	}
+	for key, up := range l.tracked {
+		apps[up.AppID] = nil
+		if current, ok := live[key]; !ok || egressUpstreamConfig(current) != egressUpstreamConfig(up) {
+			delete(l.seen, key)
+			l.breaker.forgetProbeState(up)
+		}
+	}
+	if l.apps != nil {
+		ids, err := l.apps(ctx)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, id := range ids {
+			apps[id] = nil
+		}
+	}
+	return live, freshest, apps, nil
+}
+
+func (l *EgressCircuitLoop) foldCandidates(candidates []EgressCircuitCandidate, live map[string]EgressUpstream) {
+	now := l.now()
+	for _, c := range candidates {
+		key := c.Upstream.key()
+		if _, ok := live[key]; !ok || c.Sampled.IsZero() || now.Sub(c.Sampled) > l.maxAge || c.Sampled.After(now) {
+			continue
+		}
+		if last, ok := l.seen[key]; ok && !c.Sampled.After(last) {
+			continue
+		}
+		l.breaker.observeProbe(c.Upstream, c.OK, c.Sampled)
+		l.seen[key] = c.Sampled
+	}
+}
+
+func (l *EgressCircuitLoop) selectFreshUpstreams(live map[string]EgressUpstream, freshest map[string]time.Time, apps map[string][]EgressUpstream) {
+	now := l.now()
+	for key, up := range live {
+		latest := freshest[key]
+		if latest.IsZero() || now.Sub(latest) > l.maxAge || latest.After(now) {
+			// Release expired rejection and discard counts. Fresh evidence
+			// starts a new window after a stalled probe feed recovers.
+			l.breaker.forgetProbeState(up)
+			delete(l.seen, key)
+			continue
+		}
+		apps[up.AppID] = append(apps[up.AppID], up)
+	}
+}
+
+// WithAppLister includes durable policies whose final upstream was removed
+// while schedd was down, allowing an empty set to clear missed closes.
+func (l *EgressCircuitLoop) WithAppLister(list func(context.Context) ([]string, error)) *EgressCircuitLoop {
+	l.apps = list
+	return l
 }
