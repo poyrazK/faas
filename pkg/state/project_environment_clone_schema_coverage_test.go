@@ -177,6 +177,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
+
+		"project_release_sets": CloneSchemaConfiguration,
+
+		// Evidence and expiring execution plans belong to the source environment.
+		"binding_verification_runs":         CloneSchemaOperational,
+		"binding_verification_run_steps":    CloneSchemaOperational,
+		"project_binding_verification_runs": CloneSchemaOperational,
+		"project_release_stages":            CloneSchemaOperational,
+		"queue_binding_canaries":            CloneSchemaOperational,
 	}
 	for _, policy := range policies {
 		if kind, ok := wanted[policy.TableName]; ok {

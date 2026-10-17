@@ -7,27 +7,73 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres/guestqualification"
+	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// PostgresGuestAppArtifacts selects the full-OCI workloads' actual deployed
+// layers and retained source archives, never function-runtime release bases.
+func PostgresGuestAppArtifacts(workload, storageRoot, sourceArchive string, app state.App, deployment state.Deployment, build state.Build, provenance state.BuildProvenance) (map[string]string, error) {
+	supported := false
+	for _, candidate := range guestqualification.SuiteContract().Workloads {
+		supported = supported || workload == candidate
+	}
+	if !supported {
+		return nil, errors.New("unsupported PostgreSQL acceptance workload")
+	}
+	return guestAppArtifacts(workload+"_app_layer", workload+"_source_archive", storageRoot, sourceArchive, app, deployment, build, provenance)
+}
+
+func guestAppArtifacts(appArtifact, sourceArtifact, storageRoot, sourceArchive string, app state.App, deployment state.Deployment, build state.Build, provenance state.BuildProvenance) (map[string]string, error) {
+	imageDigest, digestErr := hex.DecodeString(strings.TrimPrefix(deployment.ImageDigest, "sha256:"))
+	if app.Type != state.AppTypeApp || app.Runtime != "" || app.ID != deployment.AppID ||
+		deployment.RootfsKey != sched.AppLayerKey(app.Slug, deployment.ID) ||
+		!strings.HasPrefix(deployment.ImageDigest, "sha256:") || digestErr != nil || len(imageDigest) != sha256.Size {
+		return nil, errors.New("guest deployment OCI artifact identity missing")
+	}
+	if build.Status != state.BuildSucceeded || build.DeploymentID != deployment.ID || provenance.BuildID != build.ID {
+		return nil, errors.New("guest source build provenance missing")
+	}
+	source, err := PostgresGuestArtifactDigest(sourceArchive)
+	if err != nil || source != deployment.SourceSHA256 || source != provenance.SourceSHA256 {
+		return nil, errors.New("guest build did not use the exact source archive")
+	}
+	return map[string]string{
+		"deploy_base":  filepath.Join(storageRoot, sched.BaseKeyForArch("", "amd64")),
+		appArtifact:    deployment.RootfsPath,
+		sourceArtifact: sourceArchive,
+	}, nil
+}
 
 // PostgresGuestRuntimeManifest fingerprints the files the isolated harness
 // actually uses. Cached Go binaries must carry this clean checkout's revision.
 func PostgresGuestRuntimeManifest(paths map[string]string, revision string, complete bool) (guestqualification.RuntimeManifest, error) {
 	result := guestqualification.RuntimeManifest{Version: guestqualification.Version, SourceRevision: revision, Artifacts: make(map[string]string)}
-	if len(paths) > len(guestqualification.SuiteContract().Artifacts) {
-		return result, errors.New("unexpected guest qualification artifact")
+	contract := guestqualification.SuiteContract()
+	allowed := make(map[string]bool, len(contract.Artifacts))
+	for _, name := range contract.Artifacts {
+		allowed[name] = true
 	}
-	for _, name := range guestqualification.SuiteContract().Artifacts {
+	for name := range paths {
+		if !allowed[name] {
+			return result, errors.New("unexpected guest qualification artifact")
+		}
+	}
+	for _, name := range contract.Artifacts {
 		path := paths[name]
-		if !complete && path == "" && (name == "probe_base" || name == "node22_base") {
+		deployed := name == "deploy_base" || strings.HasSuffix(name, "_app_layer") || strings.HasSuffix(name, "_source_archive")
+		if !complete && path == "" && deployed {
 			continue
 		}
 		if path == "" {
 			return result, errors.New("missing guest qualification artifact")
 		}
-		if name != "kernel" && name != "builder_base" && name != "probe_base" && name != "node22_base" && name != "firecracker" && name != "jailer" {
+		if !deployed && name != "kernel" && name != "builder_base" && name != "firecracker" && name != "jailer" {
 			info, err := buildinfo.ReadFile(path)
 			if err != nil || !postgresGuestBinaryRevision(info, revision) {
 				return result, errors.New("guest qualification binary revision mismatch")

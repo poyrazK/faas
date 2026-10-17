@@ -24,6 +24,7 @@ type Policy struct {
 	AllowUnsupported          bool
 	RequireApplicationAck     bool
 	ObjectStorageRequirements map[string]string
+	QueueRequirements         map[string]string
 }
 
 type Finding = api.BindingCheckFinding
@@ -34,6 +35,9 @@ type Report api.BindingCheckReport
 // performs no I/O and does not mutate the inventory or schedule probes/restarts.
 func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (Report, error) {
 	if err := api.ValidateObjectStorageRequirements(policy.ObjectStorageRequirements); err != nil {
+		return Report{}, err
+	}
+	if err := api.ValidateQueueReleaseRequirements(policy.QueueRequirements); err != nil {
 		return Report{}, err
 	}
 	if !api.ValidAppSlug(policy.App) || policy.MaxVerificationAge <= 0 || now.IsZero() {
@@ -52,7 +56,9 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	}
 	report.checkInventory(inventory, policy)
 	report.ObjectStorageRequirements = cloneStorageRequirements(policy.ObjectStorageRequirements)
+	report.QueueRequirements = cloneStorageRequirements(policy.QueueRequirements)
 	report.checkObjectStorageRequirements(inventory, policy)
+	report.checkQueueRequirements(inventory, policy)
 	bindings := append([]api.AppBindingInventoryItem{}, inventory.Bindings...)
 	sort.Slice(bindings, func(i, j int) bool {
 		a, b := bindings[i], bindings[j]
@@ -141,6 +147,9 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 	before := len(r.Blockers)
 	switch item.Type {
 	case api.BindingTypeService:
+		if item.ServiceTargetDeploymentID != "" && (item.Verification == nil || item.Verification.TargetDeploymentID != item.ServiceTargetDeploymentID) {
+			r.bindingBlock(item, "service_target_unverified", "The proposed service target requires deployment-specific probe evidence.")
+		}
 		if item.State != "declared" && item.State != "enforced" {
 			r.bindingBlock(item, "binding_not_ready", "Service binding configuration is unknown.")
 		}
@@ -148,6 +157,11 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 	case api.BindingTypePostgres, api.BindingTypeObjectStorage:
 		if item.Scope != r.Scope {
 			result.Status, result.Reason = "skipped", "outside_scope"
+			break
+		}
+		if item.Type == api.BindingTypePostgres && item.Access == "migration" {
+			result.Status, result.Reason = "skipped", "release_only"
+			r.Warnings = append(r.Warnings, bindingFinding(item, "binding_release_only", "Migration credentials are restricted to deployment release tasks; their release gate is evaluated separately from runtime binding verification."))
 			break
 		}
 		if item.Type == api.BindingTypePostgres && item.State != "ready" || item.Type == api.BindingTypeObjectStorage && item.State != "active" {
@@ -179,11 +193,33 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 		}
 		r.checkUnsupported(item, policy, &result)
 	case api.BindingTypeQueue:
-		if item.State == "disabled" {
+		if !api.QueueBindingInScope(item, r.Scope) {
+			result.Status, result.Reason = "skipped", "outside_scope"
+			break
+		}
+		result.RequiredQueueEvidence = policy.QueueRequirements[item.Binding]
+		if item.State == "disabled" && result.RequiredQueueEvidence == "" {
 			result.Status, result.Reason = "skipped", "disabled"
 			break
 		}
-		r.checkUnsupported(item, policy, &result)
+		switch result.RequiredQueueEvidence {
+		case api.QueueEvidenceHandlerCompletion:
+			r.checkQueueCanary(item, policy, &result)
+		case api.QueueEvidenceConsumerReadiness:
+			r.Coverage = "partial"
+			r.Warnings = append(r.Warnings, bindingFinding(item, "queue_connectivity_unverified", "The explicit queue requirement checks scheduler consumer readiness only; guest connectivity and message delivery remain unverified."))
+			if item.State != "enabled" {
+				r.bindingBlock(item, "binding_not_ready", "The required queue binding must be enabled.")
+			}
+			if item.QueueEnvironment == nil {
+				r.bindingBlock(item, "queue_scope_unconfirmed", "The server did not publish the queue environment; update the server before requiring consumer readiness.")
+			}
+			if item.Access != "push" {
+				r.bindingBlock(item, "queue_readiness_unsupported", "Consumer readiness requires a push binding observed by the scheduler; external pull consumers cannot satisfy it.")
+			}
+		default:
+			r.checkUnsupported(item, policy, &result)
+		}
 		if code, message := queueConsumerBlocker(item, r.CheckedAt); code != "" {
 			r.bindingBlock(item, code, message)
 			result.Status, result.Reason = "blocked", code

@@ -4404,6 +4404,64 @@ $$;
 
 
 --
+-- Name: authorize_binding_release_deactivation(uuid, text, uuid, text, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_binding_release_deactivation(target_project uuid, target_environment text, receipt_id uuid, prior_release text, members jsonb, fences jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g jsonb;
+BEGIN
+ IF prior_release='' THEN RAISE EXCEPTION 'active graph required' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
+ IF EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id WHERE a.project_id=target_project AND a.status<>'deleted' AND coalesce(a.preview_of_slug,'')='' AND d.scope=target_environment AND d.environment_workload_runtime IS NOT NULL) THEN
+  RAISE EXCEPTION 'managed workload requires GitOps graph' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ PERFORM authorize_binding_release_graph(target_project,target_environment,receipt_id,prior_release,members,fences);
+ g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ -- This grant can retire the exact current graph, never insert a replacement.
+ PERFORM set_config('gregale.binding_release_graph',(g || jsonb_build_object('new_id','','action','deactivate','receipt_id',receipt_id))::text,true);
+ RETURN true;
+END $$;
+
+
+--
+-- Name: authorize_binding_release_graph(uuid, text, uuid, text, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.authorize_binding_release_graph(target_project uuid, target_environment text, next_release uuid, prior_release text, members jsonb, fences jsonb) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; f jsonb; ready_count integer; latest text;
+BEGIN
+ IF jsonb_typeof(members) <> 'object' OR (SELECT count(*) FROM jsonb_each(members)) = 0 THEN
+  RAISE EXCEPTION 'invalid checked graph' USING ERRCODE='23514', CONSTRAINT='binding_release_changed';
+ END IF;
+ -- publishProjectReleaseSetTx already holds the project and app locks.
+ SELECT id::text INTO latest FROM project_release_sets WHERE project_id=target_project AND environment_slug=target_environment AND active;
+ IF coalesce(latest,'') <> prior_release THEN RAISE EXCEPTION 'active graph changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed'; END IF;
+ PERFORM authorize_binding_release_traffic(fences);
+ IF (SELECT count(*) FROM apps WHERE project_id=target_project AND status<>'deleted' AND coalesce(preview_of_slug,'')='') <> (SELECT count(*) FROM jsonb_each(members)) THEN
+  RAISE EXCEPTION 'graph membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ FOR a IN SELECT * FROM apps WHERE project_id=target_project AND status<>'deleted' AND coalesce(preview_of_slug,'')='' ORDER BY id LOOP
+  SELECT value INTO f FROM jsonb_array_elements(fences) WHERE value->>'app_id'=a.id::text;
+  IF f IS NULL OR f->>'deployment_id' IS DISTINCT FROM members->>a.id::text OR f->>'account_id' IS DISTINCT FROM a.account_id::text OR f->>'scope' IS DISTINCT FROM target_environment OR
+    NOT EXISTS (SELECT 1 FROM app_binding_release_policies p WHERE p.app_id=a.id AND p.scope=target_environment AND p.mode='enforce') THEN
+   RAISE EXCEPTION 'graph member lacks enforced evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+  END IF;
+  IF coalesce(a.manifest->>'execution_mode','')='service' THEN
+   SELECT count(*) INTO ready_count FROM (SELECT id FROM instances WHERE app_id=a.id AND deployment_id=(members->>a.id::text)::uuid AND mode='service' AND state='running' FOR SHARE) ready;
+   IF ready_count < greatest(1,coalesce((a.manifest->'service_replicas'->>'desired')::integer,1)) THEN
+    RAISE EXCEPTION 'graph service recipient is not ready' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+   END IF;
+  END IF;
+ END LOOP;
+ PERFORM set_config('gregale.binding_release_graph',jsonb_build_object('project_id',target_project,'environment',target_environment,'new_id',next_release,'old_id',prior_release,'members',members,'fences',fences)::text,true);
+ RETURN true;
+END $$;
+
+
+--
 -- Name: authorize_binding_release_traffic(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4427,7 +4485,7 @@ BEGIN
    RAISE EXCEPTION 'binding evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
   END IF;
   SELECT * INTO p FROM app_binding_release_policies WHERE app_id=d.app_id AND scope=d.scope;
-  IF p.mode='enforce' AND NOT coalesce((f->>'policy_revision')::bigint=p.revision AND (f->>'max_age_seconds')::numeric>0 AND (f->>'max_age_seconds')::numeric<=p.max_age_seconds AND NOT (f->>'allow_unsupported')::boolean AND (NOT p.require_application_ack OR (f->>'require_application_ack')::boolean) AND coalesce(NULLIF(f->'object_storage_requirements','null'::jsonb),'{}'::jsonb)=p.object_storage_requirements,false) THEN
+  IF p.mode='enforce' AND NOT coalesce((f->>'policy_revision')::bigint=p.revision AND (f->>'max_age_seconds')::numeric>0 AND (f->>'max_age_seconds')::numeric<=p.max_age_seconds AND NOT (f->>'allow_unsupported')::boolean AND (NOT p.require_application_ack OR (f->>'require_application_ack')::boolean) AND coalesce(NULLIF(f->'object_storage_requirements','null'::jsonb),'{}'::jsonb)=p.object_storage_requirements AND coalesce(NULLIF(f->'queue_requirements','null'::jsonb),'{}'::jsonb)=p.queue_requirements,false) THEN
    RAISE EXCEPTION 'binding release policy changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
   END IF;
  END LOOP;
@@ -4966,6 +5024,23 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: capture_queue_canary_invocation_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_queue_canary_invocation_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE affected_app uuid;
+BEGIN
+ IF ROW(OLD.state,OLD.attempts,OLD.replay_generation,OLD.received_at,OLD.completed_at,OLD.headers,OLD.queue_binding_id,OLD.deployment_scope,OLD.deadline_at,OLD.account_id,OLD.app_id)
+ IS NOT DISTINCT FROM ROW(NEW.state,NEW.attempts,NEW.replay_generation,NEW.received_at,NEW.completed_at,NEW.headers,NEW.queue_binding_id,NEW.deployment_scope,NEW.deadline_at,NEW.account_id,NEW.app_id) THEN RETURN NEW; END IF;
+ SELECT app_id INTO affected_app FROM queue_binding_canaries WHERE id=NEW.id;
+ IF affected_app IS NOT NULL THEN PERFORM bump_binding_promotion_revision(affected_app); END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -5952,15 +6027,26 @@ $$;
 CREATE FUNCTION public.enforce_binding_release_graph() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE app uuid;
+DECLARE grant_value jsonb; f jsonb;
 BEGIN
- IF (TG_OP='UPDATE' AND NEW.active=OLD.active) OR (TG_OP='INSERT' AND NOT NEW.active) THEN RETURN NEW; END IF;
- FOR app IN SELECT id FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' ORDER BY id LOOP
-  PERFORM 1 FROM app_binding_promotion_revisions WHERE app_id=app FOR UPDATE;
-  IF EXISTS(SELECT 1 FROM app_binding_release_policies WHERE app_id=app AND scope=NEW.environment_slug AND mode='enforce') THEN
-   RAISE EXCEPTION 'project release switching requires a binding release gate' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ IF TG_OP='UPDATE' AND NEW.active=OLD.active THEN RETURN NEW; END IF;
+ IF TG_OP='INSERT' AND NOT NEW.active THEN RETURN NEW; END IF;
+ PERFORM 1 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
+ WHERE a.project_id=NEW.project_id ORDER BY r.app_id FOR UPDATE OF r;
+ IF EXISTS (SELECT 1 FROM app_binding_release_policies p JOIN apps a ON a.id=p.app_id
+ WHERE a.project_id=NEW.project_id AND p.scope=NEW.environment_slug AND p.mode='enforce') THEN
+  grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+  IF grant_value IS NULL OR grant_value->>'project_id' IS DISTINCT FROM NEW.project_id::text OR grant_value->>'environment' IS DISTINCT FROM NEW.environment_slug OR
+   (TG_OP='INSERT' AND (NOT NEW.active OR grant_value->>'new_id' IS DISTINCT FROM NEW.id::text)) OR
+   (TG_OP='UPDATE' AND (NEW.active OR grant_value->>'old_id' IS DISTINCT FROM NEW.id::text)) THEN
+   RAISE EXCEPTION 'project graph requires checked binding evidence' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
   END IF;
- END LOOP;
+  FOR f IN SELECT value FROM jsonb_array_elements(grant_value->'fences') LOOP
+   IF nullif(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN
+    RAISE EXCEPTION 'graph evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+   END IF;
+  END LOOP;
+ END IF;
  RETURN NEW;
 END $$;
 
@@ -14009,6 +14095,28 @@ END $$;
 
 
 --
+-- Name: guard_project_deactivation_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_deactivation_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g jsonb;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF NEW.deactivation IS NOT NULL THEN RAISE EXCEPTION 'receipt requires retirement' USING ERRCODE='23514',CONSTRAINT='binding_release_required'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.deactivation IS NOT DISTINCT FROM OLD.deactivation THEN RETURN NEW; END IF;
+ g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF OLD.deactivation IS NOT NULL OR NEW.deactivation IS NULL OR g->>'action' IS DISTINCT FROM 'deactivate' OR g->>'old_id' IS DISTINCT FROM NEW.id::text OR NEW.deactivation->>'id' IS DISTINCT FROM g->>'receipt_id' THEN
+  RAISE EXCEPTION 'immutable checked deactivation receipt' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_queue_binding_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20369,6 +20477,128 @@ END $$;
 
 
 --
+-- Name: valid_queue_release_requirements(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.valid_queue_release_requirements(requirements jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE entry record; count integer:=0;
+BEGIN
+ IF requirements IS NULL OR jsonb_typeof(requirements)<>'object' THEN RETURN false; END IF;
+ FOR entry IN SELECT key,value FROM jsonb_each(requirements) LOOP
+  count:=count+1;
+  IF count>32 OR entry.key !~ '^[a-z][a-z0-9-]{0,62}$'
+   OR jsonb_typeof(entry.value)<>'string' OR entry.value #>> '{}' NOT IN ('consumer_readiness','handler_completion') THEN RETURN false; END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: validate_checked_binding_release_graph(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_checked_binding_release_graph() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE grant_value jsonb; actual_members jsonb; f jsonb;
+BEGIN
+ grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF grant_value IS NULL OR NEW.id::text IS DISTINCT FROM grant_value->>'new_id' THEN RETURN NEW; END IF;
+ SELECT coalesce(jsonb_object_agg(app_id::text,deployment_id::text),'{}'::jsonb) INTO actual_members FROM project_release_members WHERE release_id=NEW.id;
+ IF actual_members IS DISTINCT FROM grant_value->'members' THEN
+  RAISE EXCEPTION 'checked graph members changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ FOR f IN SELECT value FROM jsonb_array_elements(grant_value->'fences') LOOP
+  IF nullif(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN
+   RAISE EXCEPTION 'graph evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: validate_checked_project_deactivation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_checked_project_deactivation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE g jsonb; receipt jsonb; selected jsonb; actual jsonb; a apps%ROWTYPE; expected text; f jsonb;
+BEGIN
+ g:=nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF g->>'action' IS DISTINCT FROM 'deactivate' THEN
+  IF OLD.active AND NOT NEW.active AND g->>'old_id'=NEW.id::text AND NOT EXISTS (SELECT 1 FROM project_release_sets WHERE id=(g->>'new_id')::uuid AND active AND project_id=NEW.project_id AND environment_slug=NEW.environment_slug) THEN
+   RAISE EXCEPTION 'forward grant requires replacement graph' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF g->>'old_id' IS DISTINCT FROM NEW.id::text THEN RETURN NEW; END IF;
+ SELECT deactivation INTO receipt FROM project_release_sets WHERE id=NEW.id AND NOT active;
+ IF receipt IS NULL OR receipt->>'id' IS DISTINCT FROM g->>'receipt_id' OR EXISTS (SELECT 1 FROM project_release_sets WHERE project_id=NEW.project_id AND environment_slug=NEW.environment_slug AND active) THEN
+  RAISE EXCEPTION 'deactivation lacks exact receipt' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ SELECT jsonb_object_agg(value->>'app_id',value->>'deployment_id') INTO selected FROM jsonb_array_elements(receipt->'fallback_members');
+ IF selected IS DISTINCT FROM g->'members' OR jsonb_array_length(receipt->'fallback_members')<>(SELECT count(*) FROM jsonb_each(g->'members')) THEN
+  RAISE EXCEPTION 'deactivation recipients changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ IF (SELECT count(*) FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='')<>(SELECT count(*) FROM jsonb_each(selected)) THEN
+  RAISE EXCEPTION 'fallback membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ FOR a IN SELECT * FROM apps WHERE project_id=NEW.project_id AND status<>'deleted' AND coalesce(preview_of_slug,'')='' ORDER BY id LOOP
+  expected:=selected->>a.id::text;
+  SELECT jsonb_object_agg(id::text,traffic_percent) INTO actual FROM deployments WHERE app_id=a.id AND scope=NEW.environment_slug AND status='live' AND traffic_percent>0;
+  IF expected IS NULL OR actual IS DISTINCT FROM jsonb_build_object(expected,100) OR NOT EXISTS (SELECT 1 FROM deployments WHERE id=expected::uuid AND app_id=a.id AND scope=NEW.environment_slug AND status='live' AND NOT environment_workload_held AND coalesce(rootfs_key,'')<>'' AND coalesce(image_digest,'')<>'') THEN
+   RAISE EXCEPTION 'fallback routing or eligibility changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+ END LOOP;
+ FOR f IN SELECT value FROM jsonb_array_elements(g->'fences') LOOP
+  IF nullif(f->>'valid_until','')::timestamptz<=clock_timestamp() THEN
+   RAISE EXCEPTION 'deactivation evidence expired' USING ERRCODE='23514',CONSTRAINT='binding_release_expired';
+  END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: validate_checked_project_rollback(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.validate_checked_project_rollback() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE source project_release_sets%ROWTYPE; prior project_release_sets%ROWTYPE; grant_value jsonb; selected jsonb; historical jsonb;
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW.rollback_source_release_id IS DISTINCT FROM OLD.rollback_source_release_id OR NEW.rollback_previous_release_id IS DISTINCT FROM OLD.rollback_previous_release_id THEN
+   RAISE EXCEPTION 'immutable recovery identity' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF NEW.rollback_source_release_id IS NULL THEN RETURN NEW; END IF;
+ grant_value := nullif(current_setting('gregale.binding_release_graph',true),'')::jsonb;
+ IF grant_value IS NULL OR grant_value->>'new_id' IS DISTINCT FROM NEW.id::text OR grant_value->>'old_id' IS DISTINCT FROM NEW.rollback_previous_release_id::text THEN
+  RAISE EXCEPTION 'rollback requires checked graph authorization' USING ERRCODE='23514',CONSTRAINT='binding_release_required';
+ END IF;
+ SELECT * INTO source FROM project_release_sets WHERE id=NEW.rollback_source_release_id FOR SHARE;
+ SELECT * INTO prior FROM project_release_sets WHERE id=NEW.rollback_previous_release_id FOR SHARE;
+ IF source.account_id IS DISTINCT FROM NEW.account_id OR source.project_id IS DISTINCT FROM NEW.project_id OR source.environment_slug IS DISTINCT FROM NEW.environment_slug OR source.active OR source.expires_at IS NULL OR source.expires_at <= clock_timestamp()
+  OR prior.account_id IS DISTINCT FROM NEW.account_id OR prior.project_id IS DISTINCT FROM NEW.project_id OR prior.environment_slug IS DISTINCT FROM NEW.environment_slug OR prior.active THEN
+  RAISE EXCEPTION 'rollback history expired or changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO selected FROM project_release_members WHERE release_id=NEW.id;
+ SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO historical FROM project_release_members WHERE release_id=source.id;
+ IF selected IS DISTINCT FROM historical THEN
+  RAISE EXCEPTION 'rollback membership changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: validate_financial_evidence_insert(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -21354,12 +21584,14 @@ CREATE TABLE public.app_binding_release_policies (
     reason text DEFAULT ''::text NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     object_storage_requirements jsonb DEFAULT '{}'::jsonb NOT NULL,
+    queue_requirements jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT app_binding_release_policies_max_age_seconds_check CHECK (((max_age_seconds >= 1) AND (max_age_seconds <= 86400))),
     CONSTRAINT app_binding_release_policies_mode_check CHECK ((mode = ANY (ARRAY['off'::text, 'enforce'::text]))),
     CONSTRAINT app_binding_release_policies_reason_check CHECK (((octet_length(reason) <= 256) AND (reason !~ '[[:cntrl:]]'::text))),
     CONSTRAINT app_binding_release_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT app_binding_release_policies_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
-    CONSTRAINT object_storage_release_requirements CHECK (public.valid_object_storage_release_requirements(object_storage_requirements))
+    CONSTRAINT object_storage_release_requirements CHECK (public.valid_object_storage_release_requirements(object_storage_requirements)),
+    CONSTRAINT queue_release_requirements CHECK (public.valid_queue_release_requirements(queue_requirements))
 );
 
 
@@ -22196,13 +22428,17 @@ CREATE TABLE public.app_tasks (
     exclusive_generation bigint,
     binding_verification jsonb,
     CONSTRAINT app_tasks_artifact_key_chk CHECK (((octet_length(artifact_key) >= 1) AND (octet_length(artifact_key) <= 2048))),
-    CONSTRAINT app_tasks_binding_verification_check CHECK (((binding_verification IS NULL) OR COALESCE(((jsonb_typeof(binding_verification) = 'object'::text) AND (binding_verification ?& ARRAY['type'::text, 'binding'::text, 'revision'::text]) AND ((binding_verification ->> 'type'::text) = ANY (ARRAY['service'::text, 'postgres'::text, 'object_storage'::text, 'outbound'::text])) AND ((NOT (binding_verification ? 'object_storage_mode'::text)) OR ((binding_verification ->> 'object_storage_mode'::text) = ''::text) OR (((binding_verification ->> 'type'::text) = 'object_storage'::text) AND ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text])) AND ((binding_verification ->> 'object_storage_mode'::text) = command[3]))) AND ((binding_verification ->> 'binding'::text) = command[2]) AND ((binding_verification ->> 'revision'::text) ~ '^[a-f0-9]{64}$'::text) AND (cardinality(command) =
+    CONSTRAINT app_tasks_binding_verification_check CHECK ((((binding_verification IS NULL) OR COALESCE(((jsonb_typeof(binding_verification) = 'object'::text) AND (binding_verification ?& ARRAY['type'::text, 'binding'::text, 'revision'::text]) AND ((binding_verification ->> 'type'::text) = ANY (ARRAY['service'::text, 'postgres'::text, 'object_storage'::text, 'outbound'::text])) AND ((NOT (binding_verification ? 'object_storage_mode'::text)) OR ((binding_verification ->> 'object_storage_mode'::text) = ''::text) OR (((binding_verification ->> 'type'::text) = 'object_storage'::text) AND ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text])) AND ((binding_verification ->> 'object_storage_mode'::text) = command[3]))) AND ((binding_verification ->> 'binding'::text) = command[2]) AND ((binding_verification ->> 'revision'::text) ~ '^[a-f0-9]{64}$'::text) AND (cardinality(command) =
 CASE
-    WHEN (((binding_verification ->> 'type'::text) = 'outbound'::text) OR ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text]))) THEN 3
+    WHEN (((binding_verification ->> 'type'::text) = 'outbound'::text) OR ((binding_verification ->> 'object_storage_mode'::text) = ANY (ARRAY['write'::text, 'read_write'::text])) OR (COALESCE((binding_verification ->> 'target_deployment_id'::text), ''::text) <> ''::text)) THEN 3
     ELSE 2
 END) AND (NOT command_shell) AND (kind = 'manual'::text) AND (command[1] =
 CASE (binding_verification ->> 'type'::text)
-    WHEN 'service'::text THEN '__gregale_service_binding_probe_v1__'::text
+    WHEN 'service'::text THEN
+    CASE
+        WHEN (COALESCE((binding_verification ->> 'target_deployment_id'::text), ''::text) <> ''::text) THEN '__gregale_service_binding_probe_v2__'::text
+        ELSE '__gregale_service_binding_probe_v1__'::text
+    END
     WHEN 'postgres'::text THEN '__gregale_postgres_binding_probe_v1__'::text
     WHEN 'object_storage'::text THEN
     CASE
@@ -22210,7 +22446,7 @@ CASE (binding_verification ->> 'type'::text)
         ELSE '__gregale_object_storage_binding_probe_v1__'::text
     END
     ELSE '__gregale_outbound_binding_probe_v1__'::text
-END)), false))),
+END)), false)) AND ((binding_verification IS NULL) OR (COALESCE((binding_verification ->> 'target_deployment_id'::text), ''::text) = ''::text) OR COALESCE((((binding_verification ->> 'type'::text) = 'service'::text) AND ((binding_verification ->> 'target_deployment_id'::text) ~ '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'::text) AND ((binding_verification ->> 'target_deployment_id'::text) = command[3])), false)))),
     CONSTRAINT app_tasks_command_chk CHECK ((((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1)))),
     CONSTRAINT app_tasks_exclusive_generation_check CHECK ((((exclusive_operation_id IS NULL) AND (exclusive_generation IS NULL)) OR ((exclusive_operation_id IS NOT NULL) AND (exclusive_generation > 0)))),
     CONSTRAINT app_tasks_exit_code_chk CHECK (((exit_code IS NULL) OR ((exit_code >= 0) AND (exit_code <= 255)))),
@@ -23064,6 +23300,42 @@ CREATE TABLE public.billing_usage_deliveries (
     delivered_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT billing_usage_deliveries_mb_seconds_check CHECK ((mb_seconds >= 0)),
     CONSTRAINT billing_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: binding_verification_run_steps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.binding_verification_run_steps (
+    run_id uuid NOT NULL,
+    step_index integer NOT NULL,
+    resource_id uuid NOT NULL,
+    resource_kind text NOT NULL,
+    CONSTRAINT binding_verification_run_steps_resource_kind_check CHECK ((resource_kind = ANY (ARRAY['task'::text, 'queue'::text]))),
+    CONSTRAINT binding_verification_run_steps_step_index_check CHECK (((step_index >= 0) AND (step_index < 128)))
+);
+
+
+--
+-- Name: binding_verification_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.binding_verification_runs (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    scope text NOT NULL,
+    status text NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    graph_run_id uuid,
+    CONSTRAINT binding_verification_runs_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:10:00'::interval)))),
+    CONSTRAINT binding_verification_runs_scope_check CHECK ((scope <> ''::text)),
+    CONSTRAINT binding_verification_runs_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT binding_verification_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'passed'::text, 'cancelled'::text])))
 );
 
 
@@ -24057,6 +24329,11 @@ CREATE TABLE public.project_release_sets (
     ttl_seconds integer NOT NULL,
     expires_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollback_source_release_id uuid,
+    rollback_previous_release_id uuid,
+    deactivation jsonb,
+    CONSTRAINT project_release_deactivation_receipt CHECK (((deactivation IS NULL) OR ((NOT active) AND (jsonb_typeof(deactivation) = 'object'::text) AND (jsonb_typeof((deactivation -> 'id'::text)) = 'string'::text) AND (((deactivation ->> 'id'::text))::uuid IS NOT NULL) AND ((deactivation ->> 'release_id'::text) = (id)::text) AND (jsonb_typeof((deactivation -> 'completed_at'::text)) = 'string'::text) AND (((deactivation ->> 'completed_at'::text))::timestamp with time zone IS NOT NULL) AND (jsonb_typeof((deactivation -> 'fallback_members'::text)) = 'array'::text) AND ((jsonb_array_length((deactivation -> 'fallback_members'::text)) >= 1) AND (jsonb_array_length((deactivation -> 'fallback_members'::text)) <= 100)) AND (deactivation ?& ARRAY['id'::text, 'release_id'::text, 'completed_at'::text, 'fallback_members'::text])))),
+    CONSTRAINT project_release_rollback_pair CHECK ((((rollback_source_release_id IS NULL) AND (rollback_previous_release_id IS NULL)) OR ((rollback_source_release_id IS NOT NULL) AND (rollback_previous_release_id IS NOT NULL) AND (rollback_source_release_id <> rollback_previous_release_id) AND (rollback_source_release_id <> id) AND (rollback_previous_release_id <> id)))),
     CONSTRAINT project_release_set_expiry_state CHECK (((active AND (expires_at IS NULL)) OR ((NOT active) AND (expires_at IS NOT NULL)))),
     CONSTRAINT project_release_sets_ttl_seconds_check CHECK (((ttl_seconds >= 1) AND (ttl_seconds <= 604800)))
 );
@@ -33557,6 +33834,26 @@ CREATE TABLE public.profile_route_alert_state (
 
 
 --
+-- Name: project_binding_verification_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_binding_verification_runs (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    status text NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT project_binding_verification_runs_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:10:00'::interval)))),
+    CONSTRAINT project_binding_verification_runs_environment_slug_check CHECK ((environment_slug <> ''::text)),
+    CONSTRAINT project_binding_verification_runs_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text)),
+    CONSTRAINT project_binding_verification_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'passed'::text, 'cancelled'::text])))
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35540,6 +35837,27 @@ CREATE TABLE public.project_environment_workload_specs (
 
 
 --
+-- Name: project_release_stages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_release_stages (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    manifest jsonb NOT NULL,
+    targets jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    cancelled boolean DEFAULT false NOT NULL,
+    CONSTRAINT project_release_stages_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '00:30:00'::interval)))),
+    CONSTRAINT project_release_stages_environment_slug_check CHECK ((environment_slug ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
+    CONSTRAINT project_release_stages_manifest_check CHECK ((jsonb_typeof(manifest) = 'object'::text)),
+    CONSTRAINT project_release_stages_targets_check CHECK (((jsonb_typeof(targets) = 'object'::text) AND (targets <> '{}'::jsonb)))
+);
+
+
+--
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35568,6 +35886,32 @@ CREATE TABLE public.provisioned_static_egress_ips (
     customer_ip inet NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT provisioned_static_egress_ips_family_check CHECK ((family(customer_ip) = 4))
+);
+
+
+--
+-- Name: queue_binding_canaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.queue_binding_canaries (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    trigger_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    snapshot jsonb NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    cancelled boolean DEFAULT false NOT NULL,
+    completed_deployment_id uuid,
+    completed_attempt integer,
+    completed_generation bigint,
+    CONSTRAINT queue_binding_canaries_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '00:10:00'::interval)))),
+    CONSTRAINT queue_binding_canaries_check1 CHECK ((((completed_deployment_id IS NULL) AND (completed_attempt IS NULL) AND (completed_generation IS NULL)) OR ((completed_deployment_id IS NOT NULL) AND (completed_attempt IS NOT NULL) AND (completed_generation IS NOT NULL)))),
+    CONSTRAINT queue_binding_canaries_completed_attempt_check CHECK ((completed_attempt = 1)),
+    CONSTRAINT queue_binding_canaries_completed_generation_check CHECK ((completed_generation = 0)),
+    CONSTRAINT queue_binding_canaries_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
 );
 
 
@@ -39930,6 +40274,30 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_pkey PRIMARY KEY (provider, account_id, window_start);
+
+
+--
+-- Name: binding_verification_run_steps binding_verification_run_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_run_steps
+    ADD CONSTRAINT binding_verification_run_steps_pkey PRIMARY KEY (run_id, step_index);
+
+
+--
+-- Name: binding_verification_run_steps binding_verification_run_steps_resource_kind_resource_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_run_steps
+    ADD CONSTRAINT binding_verification_run_steps_resource_kind_resource_id_key UNIQUE (resource_kind, resource_id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_pkey PRIMARY KEY (id);
 
 
 --
@@ -44389,6 +44757,14 @@ ALTER TABLE ONLY public.profile_route_alert_state
 
 
 --
+-- Name: project_binding_verification_runs project_binding_verification_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_binding_verification_runs
+    ADD CONSTRAINT project_binding_verification_runs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45429,6 +45805,14 @@ ALTER TABLE ONLY public.project_release_sets
 
 
 --
+-- Name: project_release_stages project_release_stages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: projects projects_account_slug_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45450,6 +45834,14 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.provisioned_static_egress_ips
     ADD CONSTRAINT provisioned_static_egress_ips_pkey PRIMARY KEY (account_id, customer_ip);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_pkey PRIMARY KEY (id);
 
 
 --
@@ -47920,6 +48312,27 @@ CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_u
 --
 
 CREATE INDEX billing_usage_deliveries_window_idx ON public.billing_usage_deliveries USING btree (window_start);
+
+
+--
+-- Name: binding_verification_runs_app_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX binding_verification_runs_app_time_idx ON public.binding_verification_runs USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: binding_verification_runs_graph_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX binding_verification_runs_graph_idx ON public.binding_verification_runs USING btree (graph_run_id) WHERE (graph_run_id IS NOT NULL);
+
+
+--
+-- Name: binding_verification_runs_listing_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX binding_verification_runs_listing_idx ON public.binding_verification_runs USING btree (account_id, app_id, created_at DESC, id DESC);
 
 
 --
@@ -52347,6 +52760,20 @@ CREATE INDEX profile_route_alert_state_app_idx ON public.profile_route_alert_sta
 
 
 --
+-- Name: project_binding_verification_runs_listing_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_binding_verification_runs_listing_idx ON public.project_binding_verification_runs USING btree (account_id, project_id, environment_slug, created_at DESC, id DESC);
+
+
+--
+-- Name: project_binding_verification_runs_project_time_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_binding_verification_runs_project_time_idx ON public.project_binding_verification_runs USING btree (project_id, created_at DESC);
+
+
+--
 -- Name: project_environment_approvals_id_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -52543,6 +52970,13 @@ CREATE INDEX project_release_sets_history_idx ON public.project_release_sets USI
 
 
 --
+-- Name: project_release_stages_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_release_stages_scope ON public.project_release_stages USING btree (project_id, environment_slug, expires_at);
+
+
+--
 -- Name: projects_install_repo_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -52561,6 +52995,13 @@ CREATE INDEX projects_org_id_idx ON public.projects USING btree (org_id) WHERE (
 --
 
 CREATE INDEX provisioned_static_egress_ips_customer_ip_idx ON public.provisioned_static_egress_ips USING btree (customer_ip);
+
+
+--
+-- Name: queue_binding_canaries_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX queue_binding_canaries_lookup ON public.queue_binding_canaries USING btree (app_id, binding_id, deployment_id, published_at DESC);
 
 
 --
@@ -55434,6 +55875,13 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 
 
 --
+-- Name: queue_binding_canaries binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.queue_binding_canaries FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('id,app_id,binding_id,trigger_id,deployment_id,snapshot,published_at,expires_at,cancelled,completed_deployment_id,completed_attempt,completed_generation');
+
+
+--
 -- Name: queue_bindings binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -55494,6 +55942,34 @@ CREATE TRIGGER capture_environment_qualification_execution AFTER INSERT ON publi
 --
 
 CREATE TRIGGER capture_instance_capacity BEFORE INSERT OR UPDATE OF capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu ON public.instances FOR EACH ROW EXECUTE FUNCTION public.capture_instance_capacity();
+
+
+--
+-- Name: project_release_sets checked_binding_release_graph_members; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER checked_binding_release_graph_members AFTER INSERT ON public.project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_checked_binding_release_graph();
+
+
+--
+-- Name: project_release_sets checked_project_deactivation_commit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER checked_project_deactivation_commit AFTER UPDATE ON public.project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_checked_project_deactivation();
+
+
+--
+-- Name: project_release_sets checked_project_rollback_commit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER checked_project_rollback_commit AFTER INSERT ON public.project_release_sets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.validate_checked_project_rollback();
+
+
+--
+-- Name: project_release_sets checked_project_rollback_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER checked_project_rollback_identity BEFORE UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.validate_checked_project_rollback();
 
 
 --
@@ -58122,6 +58598,13 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 
 
 --
+-- Name: project_release_sets project_deactivation_receipt_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_deactivation_receipt_identity BEFORE INSERT OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_project_deactivation_receipt();
+
+
+--
 -- Name: project_environment_workload_heads project_environment_workload_head_changed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -58168,6 +58651,13 @@ CREATE TRIGGER queue_binding_environment_scope_guard BEFORE INSERT OR UPDATE ON 
 --
 
 CREATE TRIGGER queue_binding_retirement_guard BEFORE DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_queue_binding_retirement();
+
+
+--
+-- Name: invocations queue_canary_invocation_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_canary_invocation_revision AFTER UPDATE OF state, attempts, replay_generation, received_at, completed_at, headers, queue_binding_id, deployment_scope, deadline_at, account_id, app_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.capture_queue_canary_invocation_revision();
 
 
 --
@@ -60746,6 +61236,46 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 ALTER TABLE ONLY public.billing_usage_deliveries
     ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: binding_verification_run_steps binding_verification_run_steps_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_run_steps
+    ADD CONSTRAINT binding_verification_run_steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.binding_verification_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: binding_verification_runs binding_verification_runs_graph_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.binding_verification_runs
+    ADD CONSTRAINT binding_verification_runs_graph_run_id_fkey FOREIGN KEY (graph_run_id) REFERENCES public.project_binding_verification_runs(id);
 
 
 --
@@ -66245,6 +66775,22 @@ ALTER TABLE ONLY public.profile_route_alert_state
 
 
 --
+-- Name: project_binding_verification_runs project_binding_verification_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_binding_verification_runs
+    ADD CONSTRAINT project_binding_verification_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_binding_verification_runs project_binding_verification_runs_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_binding_verification_runs
+    ADD CONSTRAINT project_binding_verification_runs_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67645,6 +68191,46 @@ ALTER TABLE ONLY public.project_release_sets
 
 
 --
+-- Name: project_release_sets project_release_sets_rollback_previous_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_sets
+    ADD CONSTRAINT project_release_sets_rollback_previous_release_id_fkey FOREIGN KEY (rollback_previous_release_id) REFERENCES public.project_release_sets(id);
+
+
+--
+-- Name: project_release_sets project_release_sets_rollback_source_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_sets
+    ADD CONSTRAINT project_release_sets_rollback_source_release_id_fkey FOREIGN KEY (rollback_source_release_id) REFERENCES public.project_release_sets(id);
+
+
+--
+-- Name: project_release_stages project_release_stages_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: project_release_stages project_release_stages_project_id_environment_slug_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_project_id_environment_slug_fkey FOREIGN KEY (project_id, environment_slug) REFERENCES public.project_environments(project_id, slug);
+
+
+--
+-- Name: project_release_stages project_release_stages_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_release_stages
+    ADD CONSTRAINT project_release_stages_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
 -- Name: projects projects_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67658,6 +68244,54 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.projects
     ADD CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.queue_bindings(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_completed_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_completed_deployment_id_fkey FOREIGN KEY (completed_deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id);
+
+
+--
+-- Name: queue_binding_canaries queue_binding_canaries_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_binding_canaries
+    ADD CONSTRAINT queue_binding_canaries_id_fkey FOREIGN KEY (id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --

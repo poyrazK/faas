@@ -1,0 +1,9 @@
+# ADR-1382: Queue canary CLI deployment intent
+
+- **Date:** 2026-10-16
+- **Status:** accepted
+- **Context:** The queue starter supports safe handler-completion canaries, but its quickstart requires raw API requests to enable revision pinning and declare the exact deployment's capability.
+- **Decision:** Add `gregale app APP --revision-pin-ttl DURATION`, preserving omitted versus explicit zero and the API's whole-second, seven-day maximum. Add repeatable `gregale deploy --queue-canary-binding NAME` for single source deployments. Validate unique names against enabled push HTTP bindings in the selected archive manifest before mutations. Respect archive wrappers and selected workspace roots; never infer capability from a dirty checkout or app-wide environment. Include the canonical binding list in human and JSON deployment previews, and deployment overrides in automatic idempotency identity. Preserve other internal deployment overrides.
+- **Scope:** Unsupported project, function-set, image, remote source, developer sync, plan, create-only and no-triggers combinations fail explicitly. Apply the declaration again on each new deployment; omission does not copy a prior deployment's capability. The CLI does not certify the customer's handler implementation.
+- **Consent:** Deployment capability declares safe handler support only. Publishing a verification message still requires the existing explicit `--queue-publish` consent. Neither flag changes promotion requirements or publishes messages automatically.
+- **Validation:** Portable CLI tests exercise duration bounds and explicit disable, selected source manifests, unsupported combinations, mutation-free invalid binding failure, multipart deployment and redeployment without opt-in, preview projection and retry identity. Native completion acceptance remains governed by ADR-1381.

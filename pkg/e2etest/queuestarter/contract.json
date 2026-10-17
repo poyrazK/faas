@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "package": "github.com/onebox-faas/faas/cmd/e2e",
+  "root": "TestQueueBindingNativeMetal",
+  "template": "queue-worker",
+  "runtime": "node22",
+  "phases": [
+    "starter_deploy_and_park",
+    "consent_and_review_without_publication",
+    "parked_delivery_and_release_qualification",
+    "scheduler_restart_receipt_resume",
+    "cancelled_evidence_rejected",
+    "expired_evidence_rejected",
+    "completed_replay_rejected",
+    "wrong_deployment_evidence_rejected",
+    "independent_cleanup"
+  ],
+  "artifacts": [
+    "apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public",
+    "meterd", "builderd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge",
+    "vmmd-udp-bridge", "vmmd-jail-helper", "guest_init", "kernel", "builder_base",
+    "firecracker", "jailer", "e2e_test", "node22_base",
+    "initial_app_layer", "candidate_app_layer", "source_archive"
+  ]
+}

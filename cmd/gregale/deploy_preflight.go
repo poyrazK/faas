@@ -15,17 +15,18 @@ import (
 // uploads source. It deliberately contains no environment values, credentials,
 // source contents, or local absolute paths.
 type deployPreflightSummary struct {
-	Slug              string
-	Source            string
-	LocalChanges      string
-	Environment       string
-	BuildPlan         *api.BuildPlan
-	RuntimeResolution string
-	SimpleAppPlan     *simpleapp.Plan
-	ResourceProfile   string
-	ResourceBehavior  string
-	ExecutionMode     string
-	Release           string
+	QueueCanaryBindings []string
+	Slug                string
+	Source              string
+	LocalChanges        string
+	Environment         string
+	BuildPlan           *api.BuildPlan
+	RuntimeResolution   string
+	SimpleAppPlan       *simpleapp.Plan
+	ResourceProfile     string
+	ResourceBehavior    string
+	ExecutionMode       string
+	Release             string
 	// Healthcheck is the resolved --healthcheck-path / --healthcheck-grpc
 	// override, when one was given.
 	Healthcheck *api.DeploymentHealthcheck
@@ -136,6 +137,9 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 		w = osStderr
 	}
 	_, _ = fmt.Fprintln(w, "Deployment plan:")
+	if len(summary.QueueCanaryBindings) > 0 {
+		_, _ = fmt.Fprintf(w, "  queue canary:  %s (this deployment; no publication)\n", strings.Join(summary.QueueCanaryBindings, ", "))
+	}
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "app:", summary.Slug)
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "source:", summary.Source)
 	if summary.LocalChanges != "" {

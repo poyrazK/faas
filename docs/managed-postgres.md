@@ -154,7 +154,8 @@ restore callback; both must succeed before it accepts traffic.
 
 The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
 joins provider v8 evidence with a versioned report from actual execution of all
-thirteen guest phases. `managed-postgres-qualify --verify --rollout` checks the
+nineteen guest phases, including both shipped Node and Python starters.
+`managed-postgres-qualify --verify --rollout` checks the
 approved qualification-bundle manifest, PostgreSQL major, native host class,
 cleanup and expiry without making provider or SQL calls. Before a staging
 canary, opt in with `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`
@@ -1170,3 +1171,24 @@ marker, reconnection with existing writer/reader credentials, stable request
 replay and restoration of the original class whenever resizing is advertised.
 Requalify Neon before reopening provisioning; prior approvals cannot prove this
 new capability. Local tests do not replace live Neon qualification.
+
+### PostgreSQL starter credential adoption
+
+New `rest-api-postgres` and `secret-reload-node` scaffolds use the canonical pool
+binding and secret coordinator. They validate fresh credentials before applied
+ACKs, drain pools after leased transactions release their driver connections,
+and block new work on failed adoption or revocation. The REST starter preserves
+TLS verification, migration isolation and its bounded restore hook; restores read
+the latest atomic snapshot rather than stale startup environment values. Existing
+apps need redeployment to adopt these changes. See the
+[pool runtime and starter guide](postgres-pool-runtime.md#built-in-postgresql-starters).
+
+Python applications can start with
+`gregale init --template rest-api-postgres-python --path notes-api`. This
+self-contained FastAPI/psycopg starter uses the canonical async runtime, verified
+TLS, schema-backed readiness, managed release-only migration credentials and a
+two-second restore hook with a 1.5-second application budget. It fences captured
+SQL work, rereads current credentials even at the same revision, validates a new
+pool and drains old resources before reopening readiness. A failed hook stays
+unready for the existing cold-boot fallback. See the
+[Python deployment and recovery guide](../cmd/gregale/templates/rest-api-postgres-python/README.md).

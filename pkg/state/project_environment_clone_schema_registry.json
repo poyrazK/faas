@@ -451,6 +451,7 @@
       "max_age_seconds",
       "mode",
       "object_storage_requirements",
+      "queue_requirements",
       "reason",
       "require_application_ack",
       "revision",
@@ -1760,6 +1761,32 @@
       "mb_seconds",
       "provider",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_run_steps",
+    "columns": [
+      "resource_id",
+      "resource_kind",
+      "run_id",
+      "step_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_runs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "graph_run_id",
+      "id",
+      "scope",
+      "snapshot",
+      "status"
     ],
     "kind": "operational"
   },
@@ -8617,6 +8644,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_binding_verification_runs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "project_id",
+      "snapshot",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
@@ -9936,13 +9977,31 @@
       "account_id",
       "active",
       "created_at",
+      "deactivation",
       "environment_slug",
       "expires_at",
       "id",
       "project_id",
+      "rollback_previous_release_id",
+      "rollback_source_release_id",
       "ttl_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "project_release_stages",
+    "columns": [
+      "account_id",
+      "cancelled",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "manifest",
+      "project_id",
+      "targets"
+    ],
+    "kind": "operational"
   },
   {
     "table": "projects",
@@ -9968,6 +10027,25 @@
       "customer_ip"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "queue_binding_canaries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "cancelled",
+      "completed_attempt",
+      "completed_deployment_id",
+      "completed_generation",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "published_at",
+      "snapshot",
+      "trigger_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "queue_bindings",

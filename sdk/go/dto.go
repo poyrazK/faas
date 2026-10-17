@@ -30,6 +30,9 @@ type (
 	AppConfiguredResources    = api.AppConfiguredResources
 	AppServiceBinding         = api.AppServiceBinding
 	ServiceReliabilityPolicy  = api.ServiceReliabilityPolicy
+	ServiceBindingTransport   = api.ServiceBindingTransport
+	ServiceCallScope          = api.ServiceCallScope
+	ServiceCallerScopes       = api.ServiceCallerScopes
 	ServiceBindingPolicy      = api.ServiceBindingPolicy
 	PreviewServiceCallsPolicy = api.PreviewServiceCallsPolicy
 	DeclaredRoute             = api.DeclaredRoute
@@ -284,6 +287,8 @@ type (
 )
 
 const (
+	ServiceBindingTransportHTTP  = api.ServiceBindingTransportHTTP
+	ServiceBindingTransportHTTPS = api.ServiceBindingTransportHTTPS
 	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
 	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
 	PreviewServiceCallsAllow     = api.PreviewServiceCallsAllow
