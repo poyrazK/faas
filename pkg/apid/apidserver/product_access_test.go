@@ -1,4 +1,4 @@
-// ADR-1338: customer permissions use live Auth roles and the latest product policy.
+// ADR-1542: customer permissions use live Auth roles and the latest product policy.
 package apidserver_test
 
 import (

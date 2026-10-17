@@ -1,4 +1,4 @@
-// ADR-1339: plan changes use live customer authority, reviewed terms and receipts.
+// ADR-1543: plan changes use live customer authority, reviewed terms and receipts.
 package apidserver_test
 
 import (

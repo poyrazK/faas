@@ -1,4 +1,4 @@
-// ADR-1339: reviewed plan choices preserve product identity and reviewed catalog terms.
+// ADR-1543: reviewed plan choices preserve product identity and reviewed catalog terms.
 package main
 
 import (

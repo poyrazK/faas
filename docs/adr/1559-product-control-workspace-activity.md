@@ -1,4 +1,4 @@
-# ADR-1356 · Product Control customer workspace activity
+# ADR-1559 · Product Control customer workspace activity
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17
@@ -15,7 +15,7 @@ cannot replace a customer session. The store rechecks account/app ownership,
 active tenant, current Auth app identity, organization mapping and effective role
 policy before selecting any records. Empty/unknown roles have no access.
 
-The customer DTO is separate from ADR-1344's owner evidence. It contains a stable
+The customer DTO is separate from ADR-1547's owner evidence. It contains a stable
 `kind/source_uuid` identity, reference UUID, occurrence time and only the fields
 needed to describe that event. No owner review URL or raw retained object is
 returned. Source-specific visibility applies before pagination:

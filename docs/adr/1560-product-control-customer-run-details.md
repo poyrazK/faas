@@ -1,4 +1,4 @@
-# ADR-1357 · Product Control customer run details
+# ADR-1560 · Product Control customer run details
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// ADR-1337: verified workspace onboarding, retained setup and activation evidence.
+// ADR-1541: verified workspace onboarding, retained setup and activation evidence.
 package state
 
 import "testing"

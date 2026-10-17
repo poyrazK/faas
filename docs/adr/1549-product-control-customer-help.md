@@ -1,4 +1,4 @@
-# ADR-1346 · Product Control Customer Help
+# ADR-1549 · Product Control Customer Help
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

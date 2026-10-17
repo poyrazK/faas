@@ -71,4 +71,3 @@ INSERT INTO product_control_invoice_handoffs(document_id,account_id,external_inv
 SELECT EXISTS(SELECT 1 FROM apps a JOIN product_control_heads h ON h.app_id=a.id AND h.account_id=a.account_id
  JOIN platform_tenants t ON t.account_id=a.account_id
  WHERE a.account_id=$1 AND a.id=$2 AND t.id=$3 AND a.status<>'deleted')::boolean;
-

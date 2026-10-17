@@ -1,4 +1,4 @@
-# ADR-1348 · Product Control Customer Notifications
+# ADR-1551 · Product Control Customer Notifications
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

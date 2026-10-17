@@ -1,4 +1,4 @@
-# ADR-1345 · Product Control customer usage guidance
+# ADR-1548 · Product Control customer usage guidance
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16

@@ -1,4 +1,4 @@
-# ADR-1335 · Internal Product Control owner console
+# ADR-1539 · Internal Product Control owner console
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15

@@ -370,7 +370,7 @@ test('a stale billing month response cannot replace a newer selection', async ()
   assert.match(b.get('billing-summary').textContent, /2026-09/);
 });
 
-// ADR-1338: permission projections remove actions and fence revoked access.
+// ADR-1542: permission projections remove actions and fence revoked access.
 test('viewers can follow results without paid-run or billing controls', async () => {
   const b = browser(async path => {
     if (path.endsWith('/product')) {
@@ -456,7 +456,7 @@ test('view-only recovery never offers a retry the current role cannot perform', 
   assert.equal(b.get('features').children.length, 0); assert.equal(b.calls.filter(c => c.path.endsWith('/start')).length, 0);
 });
 
-// ADR-1339: plan changes are explicit and recoverable independently of paid work.
+// ADR-1543: plan changes are explicit and recoverable independently of paid work.
 const jsonResponse = data => ({ ok: true, status: 200, json: async () => data });
 const missingPlan = () => ({ ok: false, status: 404, json: async () => ({ detail: 'Not recorded' }) });
 const planTerms = plan => ({ plan, label: plan === 'pro' ? '<script>Pro</script>' : 'Starter', revision: quote, currency: 'EUR', features: [{ name: 'export', label: 'Export', monthly_starts: plan === 'pro' ? 100 : 10, unit_price_millicents: plan === 'pro' ? 10000 : 25000, starts: 1, remaining_starts: plan === 'pro' ? 99 : 9 }] });
@@ -482,7 +482,7 @@ function planAPI(custom = () => undefined) {
 const reviewPlan = async b => { b.get('plan-options').value = 'pro'; await b.get('plan-review-form').onsubmit({ preventDefault() {} }); await settle(); };
 const textTree = el => `${el.textContent} ${el.children.map(textTree).join(' ')}`;
 
-// ADR-1346: help submission is explicit, scoped and recoverable without retaining messages locally.
+// ADR-1549: help submission is explicit, scoped and recoverable without retaining messages locally.
 function helpBrowser(custom = () => undefined, storage = new Map(), url, rows = new Map()) {
   const state = { rows, posts: 0 };
   state.record = request => { const now = new Date().toISOString(); const record = { account_id: ids.account, app_id: ids.app, tenant_id: ids.tenant, request, context: { observed_at: now, revision: quote, policy_revision: quote, period: now.slice(0, 7), plan: 'starter', suspended: false, reason: request.kind === 'run' ? 'run_reported' : 'workspace_reported' }, status: 'open', response: '', version: 1, created_at: now, updated_at: now }; state.rows.set(request.id, record); return record; };
@@ -574,7 +574,7 @@ test('feature and run help links prefill the form without sending a request', as
   await b.get('work').children[0].children.at(-1).onclick(); assert.equal(b.get('help-kind').value, 'run'); assert.equal(b.get('help-run').value, ids.op); assert.equal(b.helpState.posts, 0);
 });
 
-// ADR-1345: current-month guidance shares the portal's scoped allowance facts.
+// ADR-1548: current-month guidance shares the portal's scoped allowance facts.
 function guidanceView({ starts = 8, limit = 10, run = true, billing = true, manage = false, suspended = false, available = true, action = 'ask_workspace_admin' } = {}) {
   const data = fixture(), observed = new Date(), reset = new Date(Date.UTC(observed.getUTCFullYear(), observed.getUTCMonth() + 1, 1));
   const remaining = Math.max(0, limit - starts), allowance = limit === 0 ? 'no_allowance' : starts >= limit ? 'exhausted' : starts * 100 >= limit * 80 ? 'near_limit' : 'available';
@@ -753,7 +753,7 @@ test('plan history uses explicit cursors and a prior recorded confirmation repor
   assert.equal(b.calls.filter(c => c.path.endsWith('/plans/confirm')).length, 0);
 });
 
-// ADR-1348: the inbox observes retained sources; acknowledgement changes only shared read metadata.
+// ADR-1551: the inbox observes retained sources; acknowledgement changes only shared read metadata.
 function notificationBrowser(custom = () => undefined) {
   const id = randomUUID();
   const state = { items: [{ id: `help/${id}`, reference_id: id, kind: 'help_replied', help_kind: 'workspace', occurred_at: new Date().toISOString(), revision: quote, read: false, read_version: 0 }] };

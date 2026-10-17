@@ -1,4 +1,4 @@
-// ADR-1345: allowance guidance follows UTC admission counts and current authority.
+// ADR-1548: allowance guidance follows UTC admission counts and current authority.
 package productcontrol
 
 import (

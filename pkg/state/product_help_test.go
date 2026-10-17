@@ -1,4 +1,4 @@
-// ADR-1346: shared customer help retains scoped observations and never repairs work.
+// ADR-1549: shared customer help retains scoped observations and never repairs work.
 package state
 
 import (

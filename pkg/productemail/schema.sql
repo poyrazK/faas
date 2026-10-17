@@ -119,4 +119,3 @@ CREATE TABLE product_control_email_opt_outs (
  UNIQUE(subscription_id,expected_version)
 );
 CREATE INDEX product_email_opt_out_recent ON product_control_email_opt_outs(subscription_id,unsubscribed_at DESC,id DESC);
-

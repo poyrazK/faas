@@ -1,4 +1,4 @@
-# ADR-1354 · Product Control notification recovery
+# ADR-1557 · Product Control notification recovery
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17
@@ -94,5 +94,5 @@ PostgreSQL exercise the implementation without credentials or external mail;
 live Auth, replacement-address verification and provider policy qualification
 remain separate release evidence.
 
-See [ADR-1353](1353-product-control-email-provider-feedback.md) and the
+See [ADR-1556](1556-product-control-email-provider-feedback.md) and the
 [recovery runbook](../ops/product-control.md#recovering-notifications-after-a-hard-bounce).

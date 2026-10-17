@@ -1,4 +1,4 @@
-// ADR-1338: access policies are immutable catalog revisions, independent of prices.
+// ADR-1542: access policies are immutable catalog revisions, independent of prices.
 package state
 
 import (

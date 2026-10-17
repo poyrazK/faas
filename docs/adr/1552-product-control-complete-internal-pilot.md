@@ -1,4 +1,4 @@
-# ADR-1349 · Product Control complete internal pilot
+# ADR-1552 · Product Control complete internal pilot
 
 - **Status:** accepted for internal preparation; deployed pilot pending
 - **Date:** 2026-10-17
@@ -61,6 +61,6 @@ customer work, billing or access. Missing target/access leaves live scenarios
 pending. Frozen runtime artifacts retain their original source fingerprint;
 new verifier tooling receives separate source/build evidence.
 
-See [ADR-1347](1347-product-control-internal-pilot-evidence.md),
-[ADR-1348](1348-product-control-customer-notifications.md) and the
+See [ADR-1550](1550-product-control-internal-pilot-evidence.md),
+[ADR-1551](1551-product-control-customer-notifications.md) and the
 [pilot guide](../../examples/customer-operation-export/product-control/README.md).

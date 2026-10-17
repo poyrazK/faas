@@ -1,4 +1,4 @@
-// ADR-1339: a customer confirms reviewed terms without resetting consumed starts.
+// ADR-1543: a customer confirms reviewed terms without resetting consumed starts.
 package state
 
 import (

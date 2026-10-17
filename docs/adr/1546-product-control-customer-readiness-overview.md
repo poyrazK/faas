@@ -1,4 +1,4 @@
-# ADR-1342 · Product Control customer readiness and activation overview
+# ADR-1546 · Product Control customer readiness and activation overview
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16

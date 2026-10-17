@@ -1,4 +1,4 @@
-# ADR-1355 · Product Control notification unsubscribe
+# ADR-1558 · Product Control notification unsubscribe
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

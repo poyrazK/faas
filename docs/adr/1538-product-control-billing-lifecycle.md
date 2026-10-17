@@ -1,4 +1,4 @@
-# ADR-1334 · Product Control billing review, finalization and invoice handoff
+# ADR-1538 · Product Control billing review, finalization and invoice handoff
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15

@@ -1,4 +1,4 @@
-# ADR-1358 · Product Control customer work history
+# ADR-1561 · Product Control customer work history
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

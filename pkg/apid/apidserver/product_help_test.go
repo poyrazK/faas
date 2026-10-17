@@ -1,4 +1,4 @@
-// ADR-1346: Customer Help reuses live workspace authority and separate owner review.
+// ADR-1549: Customer Help reuses live workspace authority and separate owner review.
 package apidserver_test
 
 import (

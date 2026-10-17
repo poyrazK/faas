@@ -43,7 +43,7 @@ template change that must re-run the migration overlay check below.
 
 ### Packaging
 
-[ADR-1341](1341-verified-application-auth-release-migrations.md) supersedes the
+[ADR-1545](1545-verified-application-auth-release-migrations.md) supersedes the
 upstream migration invocation below: the release runner applies verified files
 directly because the pinned GoTrue binary's `migrate` command uses embedded SQL.
 

@@ -1,4 +1,4 @@
-# ADR-1350 · Product Control customer account recovery
+# ADR-1553 · Product Control customer account recovery
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17
@@ -64,4 +64,4 @@ without making that pending deployment a prerequisite for implementation.
 
 See [Application Auth](../application-auth.md),
 [the login runbook](../ops/product-control.md#customer-account-recovery) and
-[ADR-1333](1333-product-control-customer-portal-and-consent.md).
+[ADR-1537](1537-product-control-customer-portal-and-consent.md).

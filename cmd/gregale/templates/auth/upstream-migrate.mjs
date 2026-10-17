@@ -1,4 +1,4 @@
-// ADR-1341: GoTrue's migrate command uses embedded SQL, not the image's overlay.
+// ADR-1545: GoTrue's migrate command uses embedded SQL, not the image's overlay.
 import { createHash } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'

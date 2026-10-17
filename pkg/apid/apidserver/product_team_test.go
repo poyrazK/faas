@@ -1,4 +1,4 @@
-// ADR-1340: delegated team control stays scoped to live Application Auth authority.
+// ADR-1544: delegated team control stays scoped to live Application Auth authority.
 package apidserver_test
 
 import (

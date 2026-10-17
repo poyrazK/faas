@@ -1,4 +1,4 @@
-# ADR-1336 · Product Control guided setup and observed readiness
+# ADR-1540 · Product Control guided setup and observed readiness
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15

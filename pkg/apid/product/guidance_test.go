@@ -1,4 +1,4 @@
-// ADR-1345: guidance fails changed source reads and preserves role privacy.
+// ADR-1548: guidance fails changed source reads and preserves role privacy.
 package product
 
 import (

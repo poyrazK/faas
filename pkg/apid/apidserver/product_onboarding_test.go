@@ -1,4 +1,4 @@
-// ADR-1337: verified workspace onboarding, retained setup and activation evidence.
+// ADR-1541: verified workspace onboarding, retained setup and activation evidence.
 package apidserver_test
 
 import (

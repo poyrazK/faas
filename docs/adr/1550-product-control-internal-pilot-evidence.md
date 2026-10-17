@@ -1,4 +1,4 @@
-# ADR-1347 · Product Control internal pilot evidence
+# ADR-1550 · Product Control internal pilot evidence
 
 - **Status:** accepted for internal implementation; deployed pilot pending
 - **Date:** 2026-10-17
