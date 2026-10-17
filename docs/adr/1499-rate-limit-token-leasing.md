@@ -1,4 +1,4 @@
-# ADR-1341 · Rate-limit token leasing
+# ADR-1499 · Rate-limit token leasing
 
 - **Status:** proposed
 - **Date:** 2026-10-15

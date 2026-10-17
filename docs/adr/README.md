@@ -1300,3 +1300,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1497: Native Slack OAuth installation](1497-native-slack-oauth-installation.md)
 
 - [ADR-1498: Native Slack channel routing rules](1498-native-slack-channel-routing.md)
+
+- [ADR-1499: Rate-limit token leasing](1499-rate-limit-token-leasing.md)
