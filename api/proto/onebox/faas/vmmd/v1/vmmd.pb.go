@@ -10591,7 +10591,7 @@ func (x *FreezeInstanceRequest) GetReclaim() bool {
 // FreezeInstanceResponse (ADR-1151) reports one freeze. Resident bytes are the
 // VM cgroup's memory.current before and after reclaim (equal when no reclaim
 // ran; zero when vmmd could not read the cgroup). All zero when the instance
-// was already frozen.
+// was already frozen and no reclaim was asked for.
 type FreezeInstanceResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Instance            string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`

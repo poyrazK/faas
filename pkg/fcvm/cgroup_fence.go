@@ -38,6 +38,10 @@ type cgroupFence struct {
 	memoryMax string // bytes; raised while a snapshot is captured
 	cpuWeight string
 	cpuMax    string // "<quota> <period>"
+	// swapMax is "0", or "max" while the VM is frozen on a host with
+	// memory-only swap; empty where the fence does not manage it (builders,
+	// hosts without swap accounting).
+	swapMax string
 }
 
 // CgroupFenceRepairReport records one RepairCgroupFences pass.
@@ -81,17 +85,24 @@ func newCgroupFence(l Lease) (*cgroupFence, error) {
 	}
 	f.memoryMax = memoryMaxValue(api.BillableRAMMB(l.MemoryMaxMiB))
 	f.cpuMax = cpuMax
+	if swapMaxSupported(f.scope) {
+		f.swapMax = swapClosed
+	}
 	return f, nil
 }
 
 type fenceFile struct{ name, want string }
 
 func (f *cgroupFence) files() []fenceFile {
-	return []fenceFile{
+	files := []fenceFile{
 		{"memory.max", f.memoryMax},
 		{"cpu.weight", f.cpuWeight},
 		{"cpu.max", f.cpuMax},
 	}
+	if f.swapMax != "" {
+		files = append(files, fenceFile{"memory.swap.max", f.swapMax})
+	}
+	return files
 }
 
 // drift names the fence files whose content differs from the record. A
@@ -168,6 +179,7 @@ func (v *JailerVMM) trackFenceValue(instance string, field func(*cgroupFence) *s
 
 func fenceCPUMax(f *cgroupFence) *string    { return &f.cpuMax }
 func fenceMemoryMax(f *cgroupFence) *string { return &f.memoryMax }
+func fenceSwapMax(f *cgroupFence) *string   { return &f.swapMax }
 
 // widenSnapshotFence raises memory.max for a snapshot capture and keeps the
 // record in step, so a repair during the capture restores the widened limit

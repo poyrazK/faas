@@ -8,6 +8,9 @@ import { pathToFileURL } from 'node:url'
 import { captureContract, qualifyRollout } from './rollout.mjs'
 import { CanaryFailure, requireValue } from './checks.mjs'
 import { verifiedSync, verifiedContract, matchingRuntimeLog, verifiedDiagnostic } from './workflow.mjs'
+import { qualifyHostedLoad } from './load.mjs'
+import { options as loadOptions } from '../load/contracts.mjs'
+import { setTimeout as delay } from 'node:timers/promises'
 export { CanaryFailure, requireValue } from './checks.mjs'
 
 export function httpsOrigin(value) {
@@ -27,7 +30,9 @@ export function validateConfig(raw, env) {
   requireValue(typeof raw.app_host_suffix === 'string' && /^\.[a-z0-9.-]+$/.test(raw.app_host_suffix), 'staging_app_host_suffix_required')
   requireValue(Boolean(env.FAAS_TOKEN), 'staging_token_required')
   requireValue(/^[a-f0-9]{40}$/.test(env.FAAS_DATA_API_SOURCE_COMMIT || ''), 'source_commit_required')
-  return { ...raw, api, token: env.FAAS_TOKEN, sourceCommit: env.FAAS_DATA_API_SOURCE_COMMIT }
+  let load
+  try { load = loadOptions(raw.load) } catch { throw new CanaryFailure('invalid_load_options') }
+  return { ...raw, api, load, token: env.FAAS_TOKEN, sourceCommit: env.FAAS_DATA_API_SOURCE_COMMIT }
 }
 
 // Never include argv, output or child errors in evidence: commands and provider
@@ -63,7 +68,7 @@ export async function apiRequest(config, path, { method = 'GET', body, fetchImpl
 export class Canary {
   constructor(config, { evidence, cli, sdkTarball, repoRoot, runCommand = command, request, signal, loadModule = path => import(pathToFileURL(path)) } ) {
     Object.assign(this, { config, evidence, cli, sdkTarball, repoRoot, runCommand, signal, loadModule })
-    this.request = request || ((path, options) => apiRequest(config, path, { ...options, signal: this.signal }))
+    this.request = request || ((path, options) => apiRequest(config, path, { ...options, signal: options?.signal && this.signal ? AbortSignal.any([options.signal, this.signal]) : options?.signal ?? this.signal }))
     this.prefix = `dapi-${randomBytes(8).toString('hex')}`
     this.report = { schema_version: 1, scope: 'staging-canary', run_id: this.prefix, source_commit: config.sourceCommit, target: { api: config.api, account_id: config.account_id, region: config.region }, result: 'running', checks: [], resources: [], deployments: [], instances: [], syncs: [], requests: [], cleanup: { result: 'pending', pending: [] } }
     this.deadline = Date.now() + 60 * 60_000
@@ -81,21 +86,21 @@ export class Canary {
     this.report.checks.push(name); await this.save()
     return value
   }
-  async exec(args, cwd = this.workspace, stdin = '', applicationToken) {
+  async exec(args, cwd = this.workspace, stdin = '', applicationToken, signal = this.signal) {
     const stdout = await this.runCommand(this.cli, ['--json', ...args], {
-      cwd, stdin, signal: this.signal, timeout: Math.min(1_200_000, Math.max(1, this.deadline - Date.now())),
+      cwd, stdin, signal, timeout: Math.min(1_200_000, Math.max(1, this.deadline - Date.now())),
       env: { ...process.env, FAAS_API: this.config.api, FAAS_TOKEN: this.config.token, ...(applicationToken ? { GREGALE_DATA_API_ACCESS_TOKEN: applicationToken } : {}) },
     })
     try { return JSON.parse(stdout) } catch { throw new CanaryFailure('invalid_cli_receipt') }
   }
-  async wait(read, ready, timeout = 180_000) {
+  async wait(read, ready, timeout = 180_000, signal = this.signal) {
     const end = Math.min(this.deadline, Date.now() + timeout)
     while (Date.now() < end) {
-      requireValue(!this.signal?.aborted, 'canary_interrupted')
+      requireValue(!signal?.aborted, 'canary_interrupted')
       const value = await read()
       if (ready(value)) return value
       requireValue(!['failed', 'cancelled', 'error'].includes(value?.state || value?.status), 'operation_failed')
-      await new Promise(r => setTimeout(r, 2000))
+      await delay(2000, undefined, { signal })
     }
     throw new CanaryFailure('operation_timeout')
   }
@@ -130,13 +135,14 @@ export class Canary {
     requireValue(binding.id && binding.app_id === app.id && binding.access === 'migration', 'invalid_migration_binding_receipt')
     await this.wait(() => this.exec(['postgres', 'bindings', 'get', binding.id]), x => x.state === 'ready')
   }
-  async refresh(app) {
-    const receipt = await this.exec(['data-api', 'refresh', app.slug, '--wait', '--timeout', '5m'])
+  async refresh(app, signal = this.signal) {
+    const receipt = await this.exec(['data-api', 'refresh', app.slug, '--wait', '--timeout', '5m'], this.workspace, '', undefined, signal)
     requireValue(receipt.wake_id, 'restart_receipt_missing')
     requireValue(receipt.status === 'completed' && receipt.ready === true, 'schema_refresh_not_ready')
+    return receipt
   }
   publicFetch(input, init = {}) {
-    return fetch(input, { ...init, redirect: 'error', signal: this.signal ? AbortSignal.any([this.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) })
+    return fetch(input, { ...init, redirect: 'error', signal: AbortSignal.any([this.signal, init.signal, AbortSignal.timeout(30_000)].filter(Boolean)) })
   }
   async sync(app, migrator, migrationDir, clientDir, applicationToken) {
     const compiler = join(this.repoRoot, 'sdk/data/node_modules/.bin/tsc')
@@ -163,8 +169,9 @@ export class Canary {
   }
   captureContract(...args) { return captureContract(this, ...args) }
   qualifyRollout(options) { return qualifyRollout(this, options) }
-  async contract(url, token, expected) {
-    const response = await this.publicFetch(url + '/__gregale/schema', { headers: { Authorization: `Bearer ${token}` } })
+  qualifyLoad(options) { return qualifyHostedLoad(this, options) }
+  async contract(url, token, expected, signal = this.signal) {
+    const response = await this.publicFetch(url + '/__gregale/schema', { signal, headers: { Authorization: `Bearer ${token}` } })
     requireValue(response.ok, 'serving_contract_unavailable')
     verifiedContract(await response.json(), expected)
   }
@@ -257,7 +264,7 @@ export class Canary {
       await this.request(`/v1/apps/${migrator.slug}`, { method: 'PATCH', body: { egress_ports: [5432] } })
       const migrationDir = join(this.workspace, 'migration'); await mkdir(migrationDir)
       for (const file of ['package.json', 'package-lock.json']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, file))
-      for (const file of ['migrate.mjs', 'migration-server.mjs']) await cp(join(this.repoRoot, 'tests/data-api/staging', file), join(migrationDir, file))
+      for (const file of ['migrate.mjs', 'migration-server.mjs', 'load-fixture.sql']) await cp(join(this.repoRoot, 'tests/data-api/staging', file), join(migrationDir, file))
       await mkdir(join(migrationDir, 'rpc-runtime'))
       for (const file of ['types.mjs', 'type-render.mjs', 'config.mjs']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, 'rpc-runtime', file))
       for (const [source, target] of [['release.mjs', 'release.mjs'], ['rpc-permissions.mjs', 'rpc-permissions.mjs']])
@@ -365,6 +372,7 @@ export class Canary {
       })
       const currentPath = await this.captureContract(app, clientDir, 'current')
       await this.qualifyRollout({ app, url, token: () => jwt('alice'), createDataClient, olderPath, currentPath, clientDir })
+      await this.qualifyLoad({ app, url, jwt, clientDir })
       this.report.result = 'passed'
     } catch (error) {
       this.report.result = 'failed'

@@ -22,7 +22,7 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !ok {
 		return nil
 	}
-	policy, enabled := sink.ObjectStorageLineItemPolicy()
+	_, enabled := sink.ObjectStorageLineItemPolicy()
 	if !enabled {
 		return nil
 	}
@@ -35,8 +35,9 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !registry.Pricing.Valid() {
 		return errors.New("apid: object storage billing requires a valid object-storage rate card")
 	}
-	if policy.Provider == "polar" && registry.Pricing.Currency != "EUR" {
-		return fmt.Errorf("apid: Polar object storage billing requires EUR pricing, got %q", registry.Pricing.Currency)
+	// Every Gregale charge is in the billing currency (ADR-1430).
+	if registry.Pricing.Currency != api.BillingCurrency {
+		return fmt.Errorf("apid: object storage billing requires %s pricing, got %q", api.BillingCurrency, registry.Pricing.Currency)
 	}
 	return nil
 }
@@ -263,6 +264,7 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.InventoryWake:
 		}
 	}
 }

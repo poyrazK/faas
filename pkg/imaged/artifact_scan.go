@@ -121,7 +121,13 @@ func (h *Handler) runProducedComponentScan(ctx context.Context, app state.App, d
 }
 
 func (h *Handler) readProducedArtifactScan(ctx context.Context, be storage.StorageBackend, expected scanArtifactTarget) (*ScanResult, string) {
-	path, cleanup, err := stageProducedScanArtifact(ctx, be, h.appsRoot, expected)
+	// Stage under the temp dir, not the apps root: the imaged units run with
+	// ProtectSystem=strict, never list the apps root as writable, and on
+	// production nodes it does not exist. Every produced scan failed with
+	// artifact_read there, so each new verified base stayed fail-closed and
+	// builder VMs refused to boot on fsn-2 after the rc.266 pre-stage (hunt
+	// #10, H10-93). Both units point TMPDIR at writable artifact storage.
+	path, cleanup, err := stageProducedScanArtifact(ctx, be, os.TempDir(), expected)
 	if err != nil {
 		if errors.Is(err, errScanArtifactMismatch) {
 			return nil, "artifact_mismatch"

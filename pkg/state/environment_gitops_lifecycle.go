@@ -16,6 +16,11 @@ func (m *MemStore) detachGitSourceLocked(accountID, sourceID string, generation 
 	if memory.source.Detached || memory.source.Generation != generation || memory.source.Spec.Mode != "report" {
 		return ErrConflict
 	}
+	for _, r := range memory.retirements {
+		if r.Phase != "recovered" && r.Phase != "cancelled" {
+			return ErrConflict
+		}
+	}
 	for _, effect := range memory.effects {
 		if effect.CompletedAt == nil {
 			return ErrConflict

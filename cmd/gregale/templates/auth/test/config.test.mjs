@@ -86,7 +86,9 @@ test('one signing key and up to three verification-only keys, each its own secre
   const jwk = JSON.parse(keySecret('0A1B2C3D').AUTH_JWT_KEY_0A1B2C3D)
   const { d, ...publicOnly } = jwk
   assert.ok(d)
-  for (const bad of [publicOnly, { ...jwk, kid: 'gregale-ffff0001' }, { ...jwk, alg: 'RS256' }, { ...jwk, d: 'AAAA' }]) {
+  const different = JSON.parse(keySecret('FFFF0001').AUTH_JWT_KEY_FFFF0001)
+  for (const bad of [publicOnly, { ...jwk, kid: 'gregale-ffff0001' }, { ...jwk, alg: 'RS256' }, { ...jwk, d: 'AAAA' },
+    { ...jwk, d: Buffer.alloc(32).toString('base64url') }, { ...jwk, d: different.d }]) {
     assert.throws(() => signingKeys({ AUTH_JWT_KEY_0A1B2C3D: JSON.stringify(bad), AUTH_JWT_SIGNER_0A1B2C3D: '1700000000' }), /ES256 private key gregale-0a1b2c3d/)
   }
   assert.throws(() => signingKeys({ AUTH_JWT_KEY_0A1B2C3D: 'not json', AUTH_JWT_SIGNER_0A1B2C3D: '1700000000' }), /Invalid AUTH_JWT_KEY_0A1B2C3D/)
@@ -108,11 +110,16 @@ test('enabled providers get this app\'s callback, and settings report only publi
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
     signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
-    mfa: { totp: false }, email: { configured: false }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    mfa: { totp: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
+    passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
+    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, phone: { enabled: false, provider: null }, sso: { enabled: false, entity_id: null, acs_url: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
   assert.equal(runtimeConfig(env()).settings.mfa.totp, true)
+  const withEmail = runtimeConfig(env({ AUTH_EMAIL_PROVIDER: 'resend', AUTH_EMAIL_FROM: 'Shop <auth@shop.example.com>', AUTH_EMAIL_API_KEY: 're_sealed_key_1' })).settings
+  assert.deepEqual(withEmail.email, { configured: true, provider: 'resend', from: 'Shop <auth@shop.example.com>' })
+  assert.ok(!JSON.stringify(withEmail).includes('re_sealed_key_1'))
 })
 
 test('migrations lift the statement timeout for the release task only', () => {
@@ -129,4 +136,61 @@ test('accepts a declarative AUTH_AUTHZ object and derives browser origins', () =
   for (const bad of ['[]', 'null', '"x"', 'not json', JSON.stringify({ roles: { r: ['x'.repeat(70000)] } })]) {
     assert.throws(() => authzConfig(bad), undefined, bad.slice(0, 20))
   }
+})
+
+test('passkeys belong to the Auth host unless a shared parent domain is named', () => {
+  const own = runtimeConfig(env({ GOTRUE_PASSKEY_ENABLED: 'true', AUTH_REDIRECT_URLS: 'https://shop-auth.gregale.app/after' }))
+  assert.equal(own.gotrueEnv.GOTRUE_PASSKEY_ENABLED, 'true')
+  assert.equal(own.gotrueEnv.GOTRUE_WEBAUTHN_RP_ID, 'shop-auth.gregale.app')
+  assert.equal(own.gotrueEnv.GOTRUE_WEBAUTHN_RP_ORIGINS, 'https://shop-auth.gregale.app')
+  assert.equal(own.gotrueEnv.GOTRUE_WEBAUTHN_RP_DISPLAY_NAME, 'shop.example.com')
+  assert.equal(own.settings.passkeys.enabled, true)
+  const shared = runtimeConfig(env({ AUTH_EXTERNAL_URL: 'https://auth.example.com', AUTH_SITE_URL: 'https://shop.example.com', AUTH_PASSKEY_RP_ID: 'example.com',
+    AUTH_REDIRECT_URLS: 'https://admin.example.com/cb,https://other.test/cb,http://localhost:3000/cb', AUTH_UI_NAME: 'Shop' }))
+  assert.equal(shared.gotrueEnv.GOTRUE_WEBAUTHN_RP_ID, 'example.com')
+  assert.equal(shared.gotrueEnv.GOTRUE_WEBAUTHN_RP_ORIGINS, 'https://auth.example.com,https://shop.example.com,https://admin.example.com')
+  assert.equal(shared.gotrueEnv.GOTRUE_WEBAUTHN_RP_DISPLAY_NAME, 'Shop')
+  for (const rpID of ['gregale.app.evil.com', 'other.example', 'Example.com', 'com.', '-bad.com']) {
+    assert.throws(() => runtimeConfig(env({ AUTH_EXTERNAL_URL: 'https://auth.example.com', AUTH_PASSKEY_RP_ID: rpID })), /AUTH_PASSKEY_RP_ID/, rpID)
+  }
+  for (const managed of ['GOTRUE_WEBAUTHN_RP_ID', 'GOTRUE_WEBAUTHN_RP_ORIGINS']) {
+    assert.throws(() => runtimeConfig(env({ [managed]: 'evil.com' })), /managed by Gregale/, managed)
+  }
+})
+
+test('branding and CAPTCHA settings are validated', () => {
+  const branded = runtimeConfig(env({ AUTH_UI_NAME: 'Shop', AUTH_UI_COLOR: '#4f46e5', AUTH_UI_LOGO_URL: 'https://cdn.example.com/logo.svg' }))
+  assert.equal(branded.app, 'Shop')
+  assert.deepEqual(branded.settings.branding, { name: 'Shop', color: '#4f46e5', logo_url: 'https://cdn.example.com/logo.svg' })
+  assert.equal(branded.gotrueEnv.GOTRUE_WEBAUTHN_RP_DISPLAY_NAME, 'Shop')
+  for (const [name, value] of [['AUTH_UI_NAME', 'x'.repeat(61)], ['AUTH_UI_NAME', '<script>'], ['AUTH_UI_COLOR', 'red'], ['AUTH_UI_COLOR', '#4F46E5'], ['AUTH_UI_LOGO_URL', 'http://cdn.example.com/a.png'], ['AUTH_UI_LOGO_URL', 'https://u:p@cdn.example.com/a.png']]) {
+    assert.throws(() => runtimeConfig(env({ [name]: value })), undefined, `${name}=${value}`)
+  }
+  const turnstile = { GOTRUE_SECURITY_CAPTCHA_ENABLED: 'true', GOTRUE_SECURITY_CAPTCHA_PROVIDER: 'turnstile', GOTRUE_SECURITY_CAPTCHA_SECRET: 'secret-key', AUTH_CAPTCHA_SITE_KEY: '1x00000000000000000000AA' }
+  const config = runtimeConfig(env(turnstile))
+  assert.deepEqual(config.settings.captcha, { provider: 'turnstile', site_key: '1x00000000000000000000AA' })
+  assert.equal(config.gotrueEnv.GOTRUE_SECURITY_CAPTCHA_PROVIDER, 'turnstile')
+  assert.ok(!JSON.stringify(config.settings).includes('secret-key'))
+  for (const broken of [{ GOTRUE_SECURITY_CAPTCHA_PROVIDER: 'recaptcha' }, { AUTH_CAPTCHA_SITE_KEY: '' }, { GOTRUE_SECURITY_CAPTCHA_SECRET: '' }]) {
+    assert.throws(() => runtimeConfig(env({ ...turnstile, ...broken })), /CAPTCHA/, JSON.stringify(broken))
+  }
+})
+
+test('phone sign-in needs a known SMS provider and names the app in the message', () => {
+  const twilio = { GOTRUE_EXTERNAL_PHONE_ENABLED: 'true', GOTRUE_SMS_PROVIDER: 'twilio', GOTRUE_SMS_TWILIO_ACCOUNT_SID: 'AC1', GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID: 'MG1', GOTRUE_SMS_TWILIO_AUTH_TOKEN: 'token-secret' }
+  const config = runtimeConfig(env({ ...twilio, AUTH_UI_NAME: 'Shop {{ .Evil }}' }))
+  assert.equal(config.gotrueEnv.GOTRUE_SMS_TWILIO_AUTH_TOKEN, 'token-secret')
+  assert.equal(config.gotrueEnv.GOTRUE_SMS_TEMPLATE, 'Your Shop  .Evil  code is {{ .Code }}')
+  assert.equal(config.gotrueEnv.GOTRUE_SMS_OTP_EXP, '300')
+  assert.equal(runtimeConfig(env({ ...twilio, GOTRUE_SMS_OTP_EXP: '120' })).gotrueEnv.GOTRUE_SMS_OTP_EXP, '120')
+  assert.deepEqual(config.settings.phone, { enabled: true, provider: 'twilio' })
+  assert.ok(!JSON.stringify(config.settings).includes('token-secret'))
+  assert.equal(runtimeConfig(env({ ...twilio, GOTRUE_SMS_TEMPLATE: '{{ .Code }} is your code' })).gotrueEnv.GOTRUE_SMS_TEMPLATE, '{{ .Code }} is your code')
+  assert.throws(() => runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'true', GOTRUE_SMS_PROVIDER: 'sinch' })), /GOTRUE_SMS_PROVIDER must be one of/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'true' })), /GOTRUE_SMS_PROVIDER must be one of/)
+  const off = runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'false', GOTRUE_SMS_PROVIDER: 'twilio' }))
+  assert.equal(off.gotrueEnv.GOTRUE_SMS_TEMPLATE, undefined)
+  assert.equal(off.gotrueEnv.GOTRUE_SMS_OTP_EXP, undefined)
+  assert.deepEqual(off.settings.phone, { enabled: false, provider: null })
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_SMS_SENT: '1000' })), /managed by Gregale/)
 })

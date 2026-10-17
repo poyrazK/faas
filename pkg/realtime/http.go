@@ -147,7 +147,14 @@ func (h HTTPHooks) AuthorizeChannel(ctx context.Context, event Event) (bool, err
 	if err != nil {
 		return false, err
 	}
-	return response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices, nil
+	switch {
+	case response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices:
+		return true, nil
+	case response.statusCode == http.StatusUnauthorized || response.statusCode == http.StatusForbidden:
+		return false, nil
+	default:
+		return false, fmt.Errorf("realtime: channel authorization returned HTTP %d", response.statusCode)
+	}
 }
 
 func (h HTTPHooks) Message(ctx context.Context, event Event) error {

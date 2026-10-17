@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
@@ -139,5 +140,41 @@ func TestCorsAllowRejectsCredentialedWildcardHeaders(t *testing.T) {
 	resetJSONOut(t)
 	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--credentials", "--allow-header", "*"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
+	}
+}
+
+// TestCorsAllowIsIdempotent pins H10-119: on production-us two identical
+// `cors allow` calls left two identical rules. An existing match is reported
+// and nothing is created; a different origin still creates a rule.
+func TestCorsAllowIsIdempotent(t *testing.T) {
+	resetJSONOut(t)
+	existing := api.EdgeRuleCORSAction{AllowOrigins: []string{"https://app.example"}, AllowMethods: []string{"GET", "POST"}, AllowHeaders: []string{"*"}, MaxAgeSeconds: 600}
+	raw, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/edge-rules":
+			writeJSONTest(w, []api.EdgeRuleResponse{{ID: "rule-1", Kind: "cors", Enabled: true, MatchHost: "demo.gregale.dev", MatchPath: "/*", MatchMethods: []string{"POST", "GET"}, Action: raw}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/edge-rules":
+			posts++
+			w.WriteHeader(http.StatusCreated)
+			writeJSONTest(w, api.EdgeRuleResponse{ID: "rule-2", Kind: "cors"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	_, restore := captureStdout(t)
+	defer restore()
+	if code := cmdCorsAllow([]string{"demo", "https://app.example", "--host", "demo.gregale.dev", "--method", "GET", "--method", "POST"}); code != 0 || posts != 0 {
+		t.Fatalf("identical allow: exit=%d posts=%d, want 0 and 0", code, posts)
+	}
+	if code := cmdCorsAllow([]string{"demo", "https://other.example", "--host", "demo.gregale.dev", "--method", "GET", "--method", "POST"}); code != 0 || posts != 1 {
+		t.Fatalf("different origin: exit=%d posts=%d, want 0 and 1", code, posts)
 	}
 }

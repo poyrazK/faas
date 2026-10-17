@@ -615,6 +615,129 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "Frozen compressions by outcome",
+      "id": 18,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(schedd_frozen_compress_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Memory pressure compresses a frozen VM into memory-only swap before it would park it (ADR-906 decision 6). compressed keeps it frozen; unavailable means the node has no zswap setup."
+    },
+    {
+      "type": "timeseries",
+      "title": "zswap pool by node",
+      "id": 19,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (node_memory_Zswap_bytes)",
+          "legendFormat": "{{instance}} compressed",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (instance) (node_memory_Zswapped_bytes)",
+          "legendFormat": "{{instance}} uncompressed",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "RAM the compressed pool takes and the memory it holds, from node_exporter."
+    },
+    {
       "type": "row",
       "title": "Quiet pause",
       "id": 12,
@@ -622,7 +745,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 37
       },
       "collapsed": false,
       "panels": []
@@ -635,7 +758,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 38
       },
       "datasource": {
         "type": "prometheus",
@@ -693,7 +816,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 38
       },
       "datasource": {
         "type": "prometheus",
@@ -751,7 +874,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 38
+        "y": 46
       },
       "datasource": {
         "type": "prometheus",
@@ -815,7 +938,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 38
+        "y": 46
       },
       "datasource": {
         "type": "prometheus",
@@ -874,7 +997,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 46
+        "y": 54
       },
       "datasource": {
         "type": "prometheus",

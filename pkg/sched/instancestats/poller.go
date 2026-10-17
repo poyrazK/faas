@@ -319,17 +319,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
 		if p.Metrics != nil && len(rows) < len(instances) {
-			reported := make(map[string]struct{}, len(rows))
-			for _, row := range rows {
-				reported[row.InstanceID] = struct{}{}
-			}
-			missingNodes := make(map[string]struct{})
-			for _, instance := range instances {
-				if _, ok := reported[instance.ID]; !ok && instance.NodeID != "" {
-					missingNodes[instance.NodeID] = struct{}{}
-				}
-			}
-			for nodeID := range missingNodes {
+			for nodeID := range telemetryMissingNodes(instances, rows) {
 				p.Metrics.InstanceStatsPartialError(nodeID)
 			}
 		}
@@ -625,6 +615,29 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		return nil, nil
 	}
 	return p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+}
+
+// telemetryMissingNodes names the nodes whose stream left out a live instance.
+// A waking or cold-booting row has no VM in vmmd's stats yet, so it is not
+// missing: a worker's ~10 s cold boot alone counted ~50 partial errors a
+// minute and took FaasScheddInstanceStatsPartialErrors to pending
+// (production-us hunt #10, H10-138).
+func telemetryMissingNodes(instances []state.Instance, rows []InstanceStat) map[string]struct{} {
+	reported := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		reported[row.InstanceID] = struct{}{}
+	}
+	missing := make(map[string]struct{})
+	for _, instance := range instances {
+		switch state.State(instance.State) {
+		case state.StateWaking, state.StateColdBooting:
+			continue
+		}
+		if _, ok := reported[instance.ID]; !ok && instance.NodeID != "" {
+			missing[instance.NodeID] = struct{}{}
+		}
+	}
+	return missing
 }
 
 // deploymentSidecarMBs returns the sidecar RAM slice for every deployment in

@@ -342,7 +342,10 @@ func TestApplicationStandardLedgerRecoveryCanceledReceiptRollsBackEvents(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	// Both attempts perform complete schema verification, including pg_dump.
+	// Keep the same bounded budget for that work on slower CI runners.
+	const verificationTimeout = 45 * time.Second
+	applyCtx, cancel := context.WithTimeout(ctx, verificationTimeout)
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
@@ -364,11 +367,17 @@ func TestApplicationStandardLedgerRecoveryCanceledReceiptRollsBackEvents(t *test
 		t.Fatal(err)
 	}
 	recoveryAssertStillMissing(t, pool, versions)
-	retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Second)
+	retryCtx, retryCancel := context.WithTimeout(ctx, verificationTimeout)
 	defer retryCancel()
-	if _, err := db.ApplyApplicationStandardLedgerRecovery(retryCtx, pool, plan.ApprovalHash); err != nil {
+	retryStarted := time.Now().UTC()
+	receipt, err := db.ApplyApplicationStandardLedgerRecovery(retryCtx, pool, plan.ApprovalHash)
+	if err != nil {
 		t.Fatalf("retry after transaction rollback: %v", err)
 	}
+	if !reflect.DeepEqual(receipt.RepairedVersions, versions) {
+		t.Fatal("retry did not repair the exact rolled-back ledger versions")
+	}
+	recoveryAssertFreshEvents(t, pool, versions, retryStarted)
 }
 
 func recoveryWaitBlocked(t *testing.T, ctx context.Context, pool *pgxpool.Pool, blocker int) bool {

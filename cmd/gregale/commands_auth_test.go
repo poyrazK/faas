@@ -227,7 +227,11 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys} {
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys,
+		"uiNameChars": api.AuthUINameMaxChars, "auditRetentionMaxDays": api.AuthAuditRetentionMaxDays, "auditPruneBatch": api.AuthAuditPruneBatch,
+		"auditPruneBatches": api.AuthAuditPruneBatches, "auditPruneIntervalSeconds": api.AuthAuditPruneIntervalSeconds,
+		"eventBatch": api.AuthEventBatch, "eventLeaseSeconds": api.AuthEventLeaseSeconds, "eventMaxBackoffSeconds": api.AuthEventMaxBackoffSeconds, "eventRetentionSeconds": api.AuthEventRetentionSeconds, "smsCodeSeconds": api.AuthSMSCodeSeconds,
+		"ssoMetadataBytes": api.AuthSSOMetadataBytes, "ssoDomains": api.AuthSSOMaxDomains} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}

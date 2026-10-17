@@ -638,6 +638,8 @@ export class AuthService {
    * the cookie is `faas_csrf_github_connect` and clients send the
    * token as a form field in a native browser POST to
    * `/dashboard/install/connect`, which redirects to GitHub.
+   * For `bind_app_to_repo`, the cookie is `faas_csrf_github_bind`;
+   * send the token in the JSON body of `POST /v1/apps/{slug}/install/bind`.
    * This route remains reachable while the session is `mfa_pending` so the dashboard
    * can complete MFA enrollment or recovery.
    *
@@ -651,7 +653,7 @@ export class AuthService {
     /**
      * Exact mutation action the token will authorize.
      */
-    action: 'auth.logout' | 'auth.session.revoke' | 'auth.sessions.revoke_all' | 'mfa_confirm' | 'mfa_recover' | 'mfa_disable' | 'mfa_disable_email' | 'mfa_disable_email_confirm' | 'set_password' | 'connect_github',
+    action: 'auth.logout' | 'auth.session.revoke' | 'auth.sessions.revoke_all' | 'mfa_confirm' | 'mfa_recover' | 'mfa_disable' | 'mfa_disable_email' | 'mfa_disable_email_confirm' | 'set_password' | 'connect_github' | 'bind_app_to_repo',
     /**
      * Dashboard session cookie. Sealed; opaque to the client
      * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.

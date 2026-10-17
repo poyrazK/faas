@@ -47,7 +47,9 @@ const cases = [
 
 const sorted = changes => changes.map(({ path, reason, breaking }) => ({ path, reason, breaking })).sort((a, b) => (a.path + a.reason).localeCompare(b.path + b.reason))
 
-test('RPC schema drift CI compares real catalog snapshots and never waives stale types', { skip: !enabled, timeout: 60000 }, async t => {
+// Every catalog change also compiles a real TypeScript client and exercises the
+// CLI, so budget the complete matrix separately from individual HTTP deadlines.
+test('RPC schema drift CI compares real catalog snapshots and never waives stale types', { skip: !enabled, timeout: 180000 }, async t => {
   const runtime = pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/')
   const require = createRequire(new URL('package.json', runtime)), pg = require('pg')
   const { inspect, generate, fingerprint } = await import(new URL('types.mjs', runtime))

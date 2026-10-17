@@ -115,7 +115,8 @@ snapshot, with its in-memory state (caches, sessions)
 intact. Requests still answer `x-faas-wake: restored`. A frozen instance
 holds no concurrency and is not billed; the dashboard shows it as
 `◌ sleeping`. It parks after 10 minutes, or sooner when the node needs the
-memory or you deploy again. Only deployments with a snapshot are frozen, so
+memory or you deploy again; on some nodes it is compressed in memory
+instead, and then resumes a little more slowly. Only deployments with a snapshot are frozen, so
 the first idle period after a deploy still parks. If your app declares an
 `after_restore` hook, it runs when the instance resumes, as after a restore;
 if it fails, the instance is discarded and the request restores from the
@@ -175,4 +176,4 @@ ceiling is physics, the floor is budget).
 Every parked app costs nothing to keep. A box that runs 100 apps
 and serves 5 of them looks the same as a box that serves 1 of
 them — most apps are idle most of the time. Scale-to-zero is
-what makes the hobby plan affordable at €9/month.
+what makes the hobby plan affordable at $10/month.

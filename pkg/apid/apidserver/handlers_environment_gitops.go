@@ -231,6 +231,11 @@ func (s *server) getEnvironmentGitOps(w http.ResponseWriter, r *http.Request, ac
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
+	response.WorkloadRetirements, err = s.environmentGitOpsWorkloadRetirements(r.Context(), acct.ID, source.ID)
+	if err != nil {
+		writeEnvironmentGitOpsError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 

@@ -58,6 +58,10 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 	if err != nil {
 		return data, err
 	}
+	data.Status.WorkloadRetirements, err = s.environmentGitOpsWorkloadRetirements(r.Context(), acct.ID, source.ID)
+	if err != nil {
+		return data, err
+	}
 	setEnvironmentGitOpsDashboardFreshness(&data, time.Now().UTC())
 	for _, run := range runs {
 		view := dashboard.EnvironmentGitOpsRunView{Run: run}

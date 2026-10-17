@@ -132,6 +132,7 @@ type Metrics struct {
 	usageOutboxPending          prometheus.Gauge
 	usageOutboxBytes            prometheus.Gauge
 	usageOutboxFailures         prometheus.Counter
+	usageCommitAborts           prometheus.Counter
 	usageDelivered              prometheus.Counter
 	usageDeliveryFailures       prometheus.Counter
 	wakeLatency                 prometheus.Histogram
@@ -722,7 +723,15 @@ type Metrics struct {
 	// are intentionally not labels.
 	serviceDependencyCalls *prometheus.CounterVec
 	// Unsampled caller-to-target outcome and latency, labelled only by UUIDs.
-	serviceDependencyEdges    *prometheus.CounterVec
+	serviceDependencyEdges *prometheus.CounterVec
+	// serviceDependencyEdgeWakes counts the edge calls that had to restore a
+	// parked target (ADR-196); the service map divides it by the edge calls
+	// for its cold-call share (ADR-1131).
+	serviceDependencyEdgeWakes *prometheus.CounterVec
+	// serviceTCPEdgeSessions and serviceTCPEdgeWakes put private TCP
+	// sessions (ADR-576) on the service map's caller -> target edges.
+	serviceTCPEdgeSessions    *prometheus.CounterVec
+	serviceTCPEdgeWakes       *prometheus.CounterVec
 	serviceDependencyDuration *prometheus.HistogramVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
@@ -999,6 +1008,7 @@ func NewMetrics() *Metrics {
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
 		usageOutboxBytes:      prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_bytes", Help: "Unacknowledged financial usage bytes on local disk."}),
 		usageOutboxFailures:   prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_outbox_failures_total", Help: "Financial usage events that could not be appended to the durable outbox."}),
+		usageCommitAborts:     prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_usage_commit_aborts_total", Help: "Billable responses withheld because their usage could not be made durable (ADR-1505)."}),
 		usageDelivered:        prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivered_total", Help: "Financial usage events acknowledged by apid."}),
 		usageDeliveryFailures: prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivery_failures_total", Help: "Failed financial usage delivery attempts retained for replay."}),
 		// ADR-089 PR 3 — kind=route substitution outcomes.
@@ -1606,6 +1616,24 @@ func NewMetrics() *Metrics {
 				Help: "Unsampled service calls by trusted caller and target app UUID and final outcome; excludes identity and authorization failures.",
 			}, []string{"caller_app", "target_app", "outcome"},
 		),
+		serviceDependencyEdgeWakes: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_dependency_edge_wakes_total",
+				Help: "Unsampled service calls, by trusted caller and target app UUID, that found the target parked and were held while it was restored (ADR-196). Divided by gateway_service_dependency_edge_calls_total it is the edge's cold-call share (ADR-1131).",
+			}, []string{"caller_app", "target_app"},
+		),
+		serviceTCPEdgeSessions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_tcp_edge_sessions_total",
+				Help: "Authorized private TCP service sessions (ADR-576) by trusted caller and target app UUID and outcome (success or error); excludes identity, authorization and plan-limit refusals (ADR-1131).",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
+		serviceTCPEdgeWakes: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_tcp_edge_wakes_total",
+				Help: "Authorized private TCP service sessions that found the target parked and waited for it to restore, by trusted caller and target app UUID (ADR-1131).",
+			}, []string{"caller_app", "target_app"},
+		),
 		serviceDependencyDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_dependency_duration_seconds",
@@ -2016,10 +2044,11 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
 	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
-	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
+	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
+	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
-	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
+	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -3695,6 +3724,47 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 	observeWithTraceExemplar(m.serviceDependencyDuration.WithLabelValues(labels...), duration.Seconds(), traceID)
 }
 
+// ObserveServiceTCPEdge records one authorized private TCP session on its
+// caller -> target edge. Labels are trusted UUIDs only.
+func (m *Metrics) ObserveServiceTCPEdge(callerAppID, targetAppID string, failed, woke bool) {
+	if m == nil || m.serviceTCPEdgeSessions == nil || m.serviceTCPEdgeWakes == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	outcome := "success"
+	if failed {
+		outcome = "error"
+	}
+	m.serviceTCPEdgeSessions.WithLabelValues(caller.String(), target.String(), outcome).Inc()
+	if woke {
+		m.serviceTCPEdgeWakes.WithLabelValues(caller.String(), target.String()).Inc()
+	}
+}
+
+// IncServiceDependencyEdgeWake counts one edge call that restored a parked
+// target. Labels follow ObserveServiceDependencyEdge: trusted UUIDs only.
+func (m *Metrics) IncServiceDependencyEdgeWake(callerAppID, targetAppID string) {
+	if m == nil || m.serviceDependencyEdgeWakes == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	m.serviceDependencyEdgeWakes.WithLabelValues(caller.String(), target.String()).Inc()
+}
+
 // ObserveServiceWakeLatency records how long an internal caller waited for a
 // parked target to come back. Only the cold path calls this.
 // IncServiceWakeAhead counts one wake-ahead outcome (ADR-977).
@@ -3896,6 +3966,14 @@ func (m *Metrics) IncRequestIDJournalDropped() {
 func (m *Metrics) IncUsageOutboxFailure() {
 	if m != nil {
 		m.usageOutboxFailures.Inc()
+	}
+}
+
+// IncUsageCommitAbort counts a billable response withheld because its usage
+// could not be made durable (ADR-1505).
+func (m *Metrics) IncUsageCommitAbort() {
+	if m != nil {
+		m.usageCommitAborts.Inc()
 	}
 }
 

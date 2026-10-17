@@ -18,6 +18,9 @@ func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(_ context.Context, r
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
+	if m.workloadAdmissionRetiredLocked(set.AppID, set.EnvironmentSlug) {
+		return ProjectEnvironmentQueueDelivery{}, ErrEnvironmentWorkloadRetired
+	}
 	consumer, err := queueConsumerByName(set, req.BindingName)
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err

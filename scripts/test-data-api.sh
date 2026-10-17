@@ -15,7 +15,7 @@ fi
 # in the CLI/template archive. Test a temporary copy of the exact runtime source.
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/gregale-data-api.XXXXXX")"
 trap 'rm -rf "$runtime_dir"' EXIT
-cp cmd/gregale/templates/data-api/{config.mjs,server.mjs,types.mjs,type-render.mjs,refresh.mjs,logging.mjs,dev.mjs,dev-project.mjs,dev-upgrade.mjs,dev-explain.mjs,dev-access.mjs,guided-access.mjs,guided-mutations.mjs,mutation-observer.mjs,fixture-builder.mjs,starter-verification.json,dev-inspector.mjs,dev-requests.mjs,request-replay.mjs,hosted-replay.mjs,inspector.html,inspector.mjs,inspector-data.mjs,csv-import.mjs,csv-export.mjs,bulk-write.mjs,bulk-history.mjs,package.json,package-lock.json} "$runtime_dir/"
+cp cmd/gregale/templates/data-api/{config.mjs,server.mjs,types.mjs,type-render.mjs,refresh.mjs,logging.mjs,timing.mjs,admission.mjs,health.mjs,pool.mjs,deadline.mjs,response-limit.mjs,rate-limit.mjs,dev.mjs,dev-project.mjs,dev-upgrade.mjs,dev-explain.mjs,dev-access.mjs,guided-access.mjs,guided-mutations.mjs,mutation-observer.mjs,fixture-builder.mjs,starter-verification.json,dev-inspector.mjs,dev-requests.mjs,request-replay.mjs,hosted-replay.mjs,inspector.html,inspector.mjs,inspector-data.mjs,csv-import.mjs,csv-export.mjs,bulk-write.mjs,bulk-history.mjs,package.json,package-lock.json} "$runtime_dir/"
 cp cmd/gregale/templates/data-api-starter/migrations/{migrate.mjs,rpc-permissions.mjs} "$runtime_dir/"
 mkdir -p "$runtime_dir/rpc-runtime"
 cp cmd/gregale/templates/data-api/{types.mjs,type-render.mjs,config.mjs} "$runtime_dir/rpc-runtime/"
@@ -44,12 +44,16 @@ node --test tests/data-api/install-sdk.test.mjs
 node --test tests/data-api/artifacts.test.mjs
 node --test tests/data-api/browser-inspector.test.mjs tests/data-api/browser-cors.test.mjs cmd/gregale/templates/data-api-teams/workers/order-webhooks.test.mjs
 node --test tests/data-api/staging/*.test.mjs
+node --test tests/data-api/load/*.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then
+  DATA_API_RUNTIME_DIR="$runtime_dir" node tests/data-api/load/verify.mjs --output "${DATA_API_LOAD_REPORT:-$runtime_dir/load-report.json}"
+  DATA_API_LOAD_FAILURE_TESTS=1 DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/load/integration.test.mjs
+  DATA_API_HOSTED_LOAD_SQL_TEST=1 DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/staging/load-postgres.test.mjs
   DATA_API_SUPPORT_CONSOLE_DIR="$support_console_dir" DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/support-console-postgres.test.mjs
   DATA_API_SUPPORT_CONSOLE_DIR="$support_console_dir" node --test tests/data-api/support-audit-postgres.test.mjs tests/data-api/support-actions-postgres.test.mjs
-  DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/starter.test.mjs
+  DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/starter.test.mjs tests/data-api/admission.test.mjs tests/data-api/deadline.test.mjs tests/data-api/pool.test.mjs
   go build -o "$runtime_dir/gregale-dev-diff" ./cmd/gregale
-  DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/diagnostics.test.mjs tests/data-api/composites.test.mjs tests/data-api/view-relationships.test.mjs tests/data-api/computed-relationships.test.mjs tests/data-api/json-projections.test.mjs tests/data-api/cursor-pagination.test.mjs tests/data-api/cancellation.test.mjs tests/data-api/validated-rpc.test.mjs tests/data-api/rpc-contract-drift.test.mjs tests/data-api/optimistic-concurrency.test.mjs tests/data-api/idempotency.test.mjs tests/data-api/transaction.test.mjs tests/data-api/team-orders.test.mjs tests/data-api/outbox.test.mjs tests/data-api/bulk-mutations.test.mjs tests/data-api/import-preview.test.mjs tests/data-api/coordinated-refresh.test.mjs
+  DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/diagnostics.test.mjs tests/data-api/health.test.mjs tests/data-api/response-limit.test.mjs tests/data-api/rate-limit.test.mjs tests/data-api/composites.test.mjs tests/data-api/view-relationships.test.mjs tests/data-api/computed-relationships.test.mjs tests/data-api/json-projections.test.mjs tests/data-api/cursor-pagination.test.mjs tests/data-api/cancellation.test.mjs tests/data-api/validated-rpc.test.mjs tests/data-api/rpc-contract-drift.test.mjs tests/data-api/optimistic-concurrency.test.mjs tests/data-api/idempotency.test.mjs tests/data-api/transaction.test.mjs tests/data-api/team-orders.test.mjs tests/data-api/outbox.test.mjs tests/data-api/bulk-mutations.test.mjs tests/data-api/import-preview.test.mjs tests/data-api/coordinated-refresh.test.mjs
   DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/dev.test.mjs
   DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/fixture-builder.test.mjs
   DATA_API_DEV_CLI="$runtime_dir/gregale-dev-diff" DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" DATA_API_EXPLAIN_NATIVE=1 node --test tests/data-api/explain.test.mjs

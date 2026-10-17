@@ -485,3 +485,63 @@ func TestRenderManifestAnsibleFiles_CustomDomainEdge(t *testing.T) {
 		t.Errorf("compute host vars carry public-edge custom-domain switches:\n%s", computeVars)
 	}
 }
+
+// ADR-1343: public_edge.compute_nodes runs the app edge on the compute nodes.
+// The control plane gets a private listener for the edges' forwarded routes,
+// each compute node gets that listener as its target and admits its peers'
+// edges for the compute-pool fallback; with the switch off nothing renders.
+func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		enabled bool
+	}{
+		{name: "off", yaml: base},
+		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := manifest.Parse([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var controlVars, computeVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				}
+			}
+			if !tc.enabled {
+				if strings.Contains(controlVars+computeVars, "faas_edge_") {
+					t.Fatalf("edge switches rendered with public_edge.compute_nodes off:\n%s\n%s", controlVars, computeVars)
+				}
+				return
+			}
+			for _, want := range []string{"faas_edge_on_compute_nodes: true", `faas_edge_private_listen_addr: "10.42.0.1:8090"`} {
+				if !strings.Contains(controlVars, want) {
+					t.Errorf("control host vars missing %q:\n%s", want, controlVars)
+				}
+			}
+			for _, want := range []string{"faas_edge_on_compute_nodes: true", `faas_edge_control_plane_target: "http://10.42.0.1:8090"`, `faas_edge_peer_cidrs: ["10.42.0.2/32"]`} {
+				if !strings.Contains(computeVars, want) {
+					t.Errorf("compute host vars missing %q:\n%s", want, computeVars)
+				}
+			}
+			if strings.Contains(controlVars, "faas_edge_control_plane_target") || strings.Contains(computeVars, "faas_edge_private_listen_addr") {
+				t.Errorf("edge switches rendered on the wrong role:\n%s\n%s", controlVars, computeVars)
+			}
+		})
+	}
+}

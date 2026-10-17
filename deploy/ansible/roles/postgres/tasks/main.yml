@@ -291,9 +291,24 @@
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_command\\s*="
-    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
+    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet && touch /var/lib/pgsql/archive/.offhost-last-success || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
     create: false
   register: pg_archive_cmd
+  failed_when: false
+  notify: reload postgresql
+
+# ADR-1344 §3: bound the data-loss window. Without archive_timeout a quiet
+# server can hold committed WAL in the current segment indefinitely, so the
+# off-host copy (and a restore from it) can be arbitrarily far behind.
+# Forcing a segment switch every 60 s caps the RPO of an off-host restore at
+# about a minute. Reload-only (PGC_SIGHUP).
+- name: postgres — set archive_timeout = 60s (reload-only) — ADR-1344
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?archive_timeout\\s*="
+    line: "archive_timeout = 60s"
+    create: false
+  register: pg_archive_timeout
   failed_when: false
   notify: reload postgresql
 

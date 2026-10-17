@@ -78,7 +78,7 @@ accounting. Divergent (this is the whole services-tier build):
 | Scheduler | wake gate + idle reaper (`pkg/sched/reaper.go`) | **reconcile loop** (desired vs actual), health checks, rolling deploy |
 | Reaper | idle-reap after 30–600 s | **exempt** from idle reap; min-instances pin RAM |
 | Networking | identical inner world → N-from-1 snapshot reuse | stable per-replica identity, LB fan-out; snapshot reuse mostly N/A |
-| Billing | GB-h per running-second, €0 when parked | per-second **while up**, continuous floor |
+| Billing | GB-h per running-second, $0 when parked | per-second **while up**, continuous floor |
 
 Two concrete code touch-points when the tier lands: `SelectEvictions`/`ReapIdle`
 grow a workload-class guard so a service is never parked, and `schedd` grows a

@@ -21,11 +21,20 @@ type frozenFakeVMM struct {
 	freezeErr      error
 	thawErr        error
 	thawReqs       []ThawRequest
+	// compresses counts reclaim requests for a frozen instance; they answer
+	// compressReport and compressErr.
+	compresses     int
+	compressReport FreezeReport
+	compressErr    error
 	// skipAfterRestore answers like a vmmd that predates run_after_restore.
 	skipAfterRestore bool
 }
 
-func (f *frozenFakeVMM) FreezeInstance(context.Context, string, string, bool) (FreezeReport, error) {
+func (f *frozenFakeVMM) FreezeInstance(_ context.Context, _, _ string, reclaim bool) (FreezeReport, error) {
+	if reclaim {
+		f.compresses++
+		return f.compressReport, f.compressErr
+	}
 	f.freezes++
 	return FreezeReport{}, f.freezeErr
 }
@@ -415,6 +424,75 @@ func TestFrozenCandidatesPreferTheSessionInstance(t *testing.T) {
 	}
 	if got, _ := f.e.frozenCandidates(WithPreferredInstance(t.Context(), "elsewhere"), f.app, f.dep); got[0].ID != plain[0].ID {
 		t.Fatal("a hint naming no candidate reordered them")
+	}
+}
+
+func TestLedgerShrinkFrozenCharge(t *testing.T) {
+	l := NewNodeLedger()
+	if err := l.Admit(Request{Instance: "i1", AppID: "a1", Plan: api.PlanScale, RAMMB: 1024, VCPU: 2,
+		CPUMillicores: 1000, MaxConcurrency: 4, NodeID: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	if l.ShrinkFrozenCharge("i1", 100) {
+		t.Fatal("a running reservation was rebooked as frozen")
+	}
+	l.Freeze("i1", 500)
+	if !l.ShrinkFrozenCharge("i1", 120) || l.ResidentRAMForNode("n1") != 120 {
+		t.Fatalf("after compression resident = %d MB, want 120", l.ResidentRAMForNode("n1"))
+	}
+	if !l.ShrinkFrozenCharge("i1", 300) || l.ResidentRAMForNode("n1") != 120 {
+		t.Fatal("a compression grew the frozen charge")
+	}
+	if !l.ShrinkFrozenCharge("i1", 1) || l.ResidentRAMForNode("n1") != api.MeasuredChargeFloorMB {
+		t.Fatalf("frozen charge fell below the floor: %d MB", l.ResidentRAMForNode("n1"))
+	}
+}
+
+// Memory pressure compresses a frozen VM into memory-only swap before it
+// parks it (ADR-906 decision 6): a VM that compression shrinks by half stays
+// frozen and books the smaller footprint; anything else parks as before.
+func TestEvictUnderPressureCompressesFrozenInstances(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		report    FreezeReport
+		err       error
+		wantState state.State
+	}{
+		{name: "compressed", report: FreezeReport{ResidentBytesBefore: 400 << 20, ResidentBytesAfter: 80 << 20}, wantState: state.StateFrozen},
+		{name: "barely shrinks", report: FreezeReport{ResidentBytesBefore: 400 << 20, ResidentBytesAfter: 380 << 20}, wantState: state.StateParked},
+		{name: "no memory-only swap", err: api.NewProblem(409, api.CodeFrozenCompressUnavailable, "Compression unavailable", "no zswap"), wantState: state.StateParked},
+		{name: "vmmd error", err: errors.New("vmmd unavailable"), wantState: state.StateParked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFrozenFixture(t, true)
+			f.e.EnableFrozenTier()
+			if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 400); err != nil || !handled {
+				t.Fatalf("FreezeIdle: %v, %v", handled, err)
+			}
+			booked := f.e.Ledger().ResidentRAMForNode(f.ins.NodeID)
+			f.vmm.compressReport, f.vmm.compressErr = tc.report, tc.err
+			if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID); err != nil {
+				t.Fatal(err)
+			}
+			if f.vmm.compresses != 1 || f.state(t) != tc.wantState {
+				t.Fatalf("compresses %d, state %s; want one compression and %s", f.vmm.compresses, f.state(t), tc.wantState)
+			}
+			if tc.wantState == state.StateFrozen {
+				if now := f.e.Ledger().ResidentRAMForNode(f.ins.NodeID); now >= booked || !f.e.Ledger().IsFrozen(f.ins.ID) {
+					t.Fatalf("booked %d MB after compression, %d before; want the smaller footprint", now, booked)
+				}
+			}
+		})
+	}
+}
+
+func TestEvictUnderPressureEvictsRunningInstances(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f.vmm.compresses != 0 || f.state(t) != state.StateStopped {
+		t.Fatalf("compresses %d, state %s; want an ordinary eviction", f.vmm.compresses, f.state(t))
 	}
 }
 

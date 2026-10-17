@@ -165,6 +165,7 @@ func TestFrozenRefusalsMapToFailedPrecondition(t *testing.T) {
 		{err: fmt.Errorf("park vm-a: %w", fcvm.ErrInstanceFrozen), code: api.CodeFrozenInstanceRefused},
 		{err: fmt.Errorf("freeze vm-a: %w: builder VM", fcvm.ErrNotFreezable), code: api.CodeInstanceNotFreezable},
 		{err: fmt.Errorf("freeze vm-a: %w", fcvm.ErrInstanceBusy), code: api.CodeInstanceBusy},
+		{err: fmt.Errorf("freeze vm-a: %w", fcvm.ErrCompressUnavailable), code: api.CodeFrozenCompressUnavailable},
 	} {
 		err := grpcerr.ToStatus(toProblem(tc.err))
 		if status.Code(err) != codes.FailedPrecondition || problemCode(t, err) != tc.code {

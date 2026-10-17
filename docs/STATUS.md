@@ -7,6 +7,199 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Read-only all-binding verification preview — 2026-10-16
+
+`gregale bindings verify APP --all --dry-run` shares preparation and selection
+with batch execution. Its separate preview report describes planned operations,
+consent flags, exclusions, prospective coverage, and structured blockers.
+`plan_ready` and `complete_coverage_possible` express metadata readiness and
+potential coverage, never a passed verification gate. Both queue and storage
+consent flags remain inert during preview. Strict mode evaluates whether the
+plan could cover every eligible binding; default partial-coverage behavior is
+preserved. See [preview before execution](bindings-verify-all-queues.md#preview-before-execution).
+
+## Writable storage in all-binding verification — 2026-10-16
+
+`gregale bindings verify APP --all --deployment ID|vN --object-storage-write`
+uses existing disposable-object canaries for writable bindings and read-only
+probes for read-only bindings. Upload, download where granted, and cleanup
+evidence must match the requested prefix and mode. The combined report and
+strict gate reject failed operations, failed cleanup, incompatible guest
+reports, and mismatched deployment/scope receipts. Storage write consent remains
+separate from queue publication; omitted consent preserves existing behavior.
+See [writable storage](bindings-verify-all-queues.md#verify-writable-object-storage).
+
+## Strict all-binding verification coverage — 2026-10-16
+
+`gregale bindings verify APP --all --require-complete` adds a CI gate to the
+existing batch verifier. Its JSON `gate` and human output explain failed probes,
+unsupported or unchecked eligible bindings, incomplete inventory, and empty
+eligible selections. Disabled, out-of-scope, and release-only bindings remain
+explicit exclusions. Default verification semantics, explicit write/publication
+consent, and interruption exit 130 are preserved. See
+[strict coverage](bindings-verify-all-queues.md#require-complete-coverage-in-ci).
+
+## Queue canaries in all-binding verification — 2026-10-16
+
+`gregale bindings verify APP --all --deployment ID|vN --queue-publish`
+includes eligible push queues in the existing combined report using the existing
+completion-canary runner. Publication is opt-in and deployment-pinned; receipts
+must match the selected scope, binding, and deployment and confirm handler
+completion. Missing consent or capability remains explicit partial coverage;
+disabled and out-of-scope bindings are skipped. Interrupted and unsuccessful
+canaries use existing cancellation cleanup. See
+[all-binding queue verification](bindings-verify-all-queues.md).
+
+## Service authorization explanation — 2026-10-16
+
+`gregale bindings service explain CALLER TARGET --method GET --path /path`
+reads app-level policies and reports allowed, denied, or indeterminate with
+structured rules, reasons, and settings to review. It uses the shared scope
+normalizer and gateway matcher, preserves caller-policy intersections, and
+makes no application requests. Previews, unavailable apps, and unsupported
+policy contracts remain indeterminate; runtime and environment resolution are
+outside this snapshot explanation. See
+[service binding configuration](service-binding-configuration.md).
+
+## Service policy export and drift checks — 2026-10-16
+
+`gregale bindings service export` produces reusable six-field policy JSON in a
+new private file or on stdout. `service check` compares normalized live values
+against supplied fields without mutation, retaining null versus deny-all caller
+semantics. CI exits distinguish match (0), drift (1), and errors (2). Checks are
+snapshots; reviewed plans remain the guarded write path. See
+[service binding configuration](service-binding-configuration.md).
+
+## Reviewed service binding plans — 2026-10-16
+
+[ADR-1386](adr/1386-reviewed-service-binding-plans.md) adds private saved plans
+with app/account/endpoint identity and service-settings fingerprints. Apply
+checks its precondition under the app lock in both ordinary and activity-aware
+store transactions. Stale plans conflict before mutation, and unrelated manifest
+edits survive guarded updates. Direct configuration retains its existing
+unguarded behavior. See the [workflow](service-binding-configuration.md#save-and-apply-a-reviewed-plan).
+
+## Service binding reliability and transport CLI — 2026-10-16
+
+[ADR-1384](adr/1384-service-binding-reliability-cli.md) extends the service policy
+file with dependency timeouts/retries and canonical URL transport. Validation
+uses the resulting target list before mutation; previews and saved receipts
+expose implicit reliability pruning when a target is removed. Omitted settings
+remain partial updates, non-idempotent retries require explicit per-target
+opt-in, and URL selection does not certify running-guest adoption.
+
+## Service binding CLI configuration — 2026-10-16
+
+[ADR-1383](adr/1383-service-binding-cli-configuration.md) adds policy-file
+configuration for standalone service targets, declared-only authorization,
+caller restrictions and method/path scopes. Read-only previews preserve the
+API's omitted/null/empty distinctions; apply uses one partial app update and
+reports saved values. See the [configuration guide](service-binding-configuration.md).
+Runtime adoption and connectivity still require inspection and verification.
+
+## Queue canary CLI setup — 2026-10-16
+
+[ADR-1382](adr/1382-queue-canary-cli-deployment-intent.md) adds bounded revision
+pin lifetime updates and repeatable per-deployment queue canary declarations.
+Source archive validation precedes deployment mutations, previews expose the
+selected bindings, and redeployments require fresh opt-in. The queue worker
+quickstart now uses the CLI throughout; message publication retains separate
+explicit consent. Native acceptance qualification remains pending below.
+
+## Queue worker completion acceptance — 2026-10-15
+
+[ADR-1381](adr/1381-queue-worker-completion-acceptance.md) gives the shipped
+queue worker a safe reserved canary path with exact deployment opt-in and
+publication consent. The [native queue journey](ops/queue-bindings-native-acceptance.md)
+requires nine phases covering real parked delivery, exact handler completion,
+scheduler restart, durable receipt/message recovery, cancellation, expiry,
+completed-work replay rejection and a zero-traffic candidate's release fence.
+Fresh completion on the old serving revision cannot qualify the candidate.
+Independent invocation counts, source/build/runtime provenance, published Node
+base hashes, registered cleanup and host leak checks constrain the report.
+Portable starter/source/artifact and PostgreSQL-backed authority race checks,
+CLI quickstart materialization, API consent/receipt-recovery regressions,
+13 queue runner/verdict regressions, the existing
+49 PostgreSQL/storage runner/verdict regressions, real fragmented Go JSON parsing,
+Python lint and combined native-tag compilation passed. Tagged Go lint has no
+new findings; the same 18 existing issues remain. This workspace has no `/dev/kvm`;
+supported native execution and host leak qualification remain pending. No
+provisioning or rollout gate is enabled.
+
+## Python PostgreSQL native acceptance — 2026-10-15
+
+[ADR-1380](adr/1380-python-postgres-native-acceptance.md) extends the
+[PostgreSQL native journey](ops/managed-postgres-native-acceptance.md) to the
+unchanged Python starter. Nineteen phases now require the probe and both shipped
+starters, private-CA trust, release-only migration credentials, disconnected-pool
+restore, failed-hook cold fallback, running/parked rotation and scheduler recovery.
+Starter reads require current credential/version/process adoption ACKs, and
+independent SQL checks preserve the shared Node/Python notes dataset. Version-3
+reports/manifests require separate Python source and deployed app-layer hashes;
+old or partial Node-only evidence must be regenerated. Portable Go race checks,
+the exact materialized Python lifecycle/SQL recovery suite, real pinned-driver
+TLS success and negative trust cases, 23 PostgreSQL verdict regressions, 26 storage
+runner/verdict regressions, rollout/CLI checks, real fragmented Go JSON parsing,
+canonical starter drift, Python lint and combined native-tag compilation passed.
+Tagged Go lint has no new findings; the same 18 existing issues remain. This
+workspace has no `/dev/kvm`; supported native execution and host leak qualification
+remain pending. No provisioning or rollout gate is enabled.
+
+## PostgreSQL native acceptance repair — 2026-10-15
+
+[ADR-1379](adr/1379-postgres-native-acceptance-repair.md) repairs the existing
+thirteen-phase [PostgreSQL native harness](ops/managed-postgres-native-acceptance.md):
+the fixture CA is packaged under the shipped runtime COPY, provenance identifies
+actual OCI app layers/source archives and the minimal base, and the verdict
+handles bounded fragmented Go cleanup logs. Version-2 guest reports/manifests
+replace the inapplicable function-runtime base identities; old guest evidence
+cannot satisfy combined readiness. Portable source/provenance and cross-language
+Go race tests, 21 PostgreSQL verdict regressions, the existing 26 storage
+runner/verdict tests, rollout/CLI checks, real Go JSON cleanup-log parsing,
+Python lint and combined native-tag compilation passed. Tagged Go lint has no
+new findings; 18 existing issues remain. This workspace has no `/dev/kvm`; supported native execution and
+host leak qualification remain pending. No provisioning or rollout gate is enabled.
+
+## Native storage starter runtime matrix — 2026-10-15
+
+[ADR-1378](adr/1378-native-storage-starter-runtime-matrix.md) extends the
+[deployed storage acceptance journey](ops/object-storage-native-acceptance.md) to
+both unchanged Node and Python starters. Each runs eight phases with isolated
+fixtures, strict TLS trust and its own source/build/app-layer evidence. The
+Dockerfile starters are full OCI apps; this replaces the earlier harness's
+inapplicable function-runtime release lookup with actual deployed artifacts. Version-2
+reports require both cleanup identities, the same revision and shared artifact
+hashes; Node-only or reused Node evidence cannot qualify Python. Portable Go race
+checks, 26 storage runner/verdict tests, real Go JSON cleanup-log parsing,
+Python lint and combined native-tag compilation passed. Changed-file Go lint is
+clean; full tagged lint retains 18 unrelated existing issues. This workspace has no `/dev/kvm`;
+supported native execution and host leak qualification remain pending for both
+starters. No feature or rollout gate is enabled.
+
+## Python storage explicit TLS trust — 2026-10-15
+
+[ADR-1377](adr/1377-python-storage-explicit-tls-trust.md) makes the Python storage
+starter honor its explicit `AWS_CA_BUNDLE` while preserving certificate-chain and
+hostname verification. Default public CA trust remains enabled; invalid bundles
+and certificates fail adoption/readiness. New transports reread the configured
+file on reload and restore. The exact materialized starter passed all 35 portable
+tests, including signed HTTPS operations, negative trust cases, the real handler
+process and corrected-bundle recovery. Fresh dependency isolation, canonical drift,
+Python/Go lint and packaging checks passed. Live-provider and native VM execution
+remain separate qualification work.
+
+## Object-storage starter native acceptance harness — 2026-10-15
+
+[ADR-1376](adr/1376-native-object-storage-starter-acceptance.md) adds a strict
+[deployed storage acceptance journey](ops/object-storage-native-acceptance.md)
+for the unchanged Node starter, public credential rotation, real snapshot/restore,
+failed-hook cold fallback, independent byte/replay checks and credential cleanup.
+Portable race, runner/verdict checks and tagged compilation passed; changed-file
+lint is clean. These checks are separate from native execution. This
+implementation workspace has no `/dev/kvm`; supported native
+execution and host leak qualification remain pending. No feature or rollout gate
+is enabled. Python guest and live-provider qualification remain separate.
+
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
 - **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),

@@ -8,11 +8,14 @@ package authsettings
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -47,7 +50,30 @@ const (
 	secretLeakedPasswords = "GOTRUE_PASSWORD_HIBP_ENABLED"
 	secretTOTPEnroll      = "GOTRUE_MFA_TOTP_ENROLL_ENABLED"
 	secretTOTPVerify      = "GOTRUE_MFA_TOTP_VERIFY_ENABLED"
+	secretPasskeys        = "GOTRUE_PASSKEY_ENABLED"
+	secretPasskeyRPID     = "AUTH_PASSKEY_RP_ID"
+	secretUIName          = "AUTH_UI_NAME"
+	secretUIColor         = "AUTH_UI_COLOR"
+	secretUILogoURL       = "AUTH_UI_LOGO_URL"
+	secretCaptchaEnabled  = "GOTRUE_SECURITY_CAPTCHA_ENABLED"
+	secretCaptchaProvider = "GOTRUE_SECURITY_CAPTCHA_PROVIDER"
+	secretCaptchaSecret   = "GOTRUE_SECURITY_CAPTCHA_SECRET"
+	secretCaptchaSiteKey  = "AUTH_CAPTCHA_SITE_KEY"
+	secretAuditRetention  = "AUTH_AUDIT_RETENTION_DAYS"
 )
+
+// CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
+// pages render.
+var CaptchaProviders = []string{"turnstile", "hcaptcha"}
+
+var (
+	brandColor  = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+	captchaSite = regexp.MustCompile(`^[A-Za-z0-9_-]{8,100}$`)
+)
+
+// hostname matches a lowercase DNS name; the Auth app also checks that the
+// passkey domain is its own host or a parent of it.
+var hostname = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 // Change is a settings change; nil fields stay as they are.
 type Change struct {
@@ -65,7 +91,33 @@ type Change struct {
 	// MFA turns TOTP enrolment on or off. Verification stays on, so users
 	// who already enrolled an authenticator keep using it.
 	MFA *bool
+	// Passkeys turns passkey sign-in on or off. PasskeyRPID names a parent
+	// domain the Auth app shares with the site so both use the same
+	// passkeys; empty returns to the Auth app's own host.
+	Passkeys    *bool
+	PasskeyRPID *string
+	// UIName, UIColor (#rrggbb) and UILogoURL (HTTPS) brand the hosted
+	// pages; empty removes a value.
+	UIName    *string
+	UIColor   *string
+	UILogoURL *string
+	// Captcha turns the CAPTCHA check on (a provider, its site key and
+	// secret) or off (an empty provider).
+	Captcha *Captcha
+	// ActivityRetentionDays prunes older activity; 0 keeps it forever.
+	ActivityRetentionDays *int
+	// Email sets the HTTPS email provider, or removes it (empty Provider).
+	Email *Email
+	// SMS turns phone sign-in by text message on with a provider, or off
+	// (empty Provider).
+	SMS *SMS
+	// SSO turns organization single sign-on (SAML) on or off. Turning it on
+	// also needs SAMLKeySecret, which the caller creates once.
+	SSO *bool
 }
+
+// Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
+type Captcha struct{ Provider, SiteKey, Secret string }
 
 // Empty reports whether the change sets nothing.
 func (c Change) Empty() bool {
@@ -123,7 +175,112 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	if c.MFA != nil {
 		set[secretTOTPEnroll], set[secretTOTPVerify] = strconv.FormatBool(*c.MFA), "true"
 	}
+	if c.Passkeys != nil {
+		set[secretPasskeys] = strconv.FormatBool(*c.Passkeys)
+	}
+	if err := c.brandingSecrets(set, &unset); err != nil {
+		return nil, nil, err
+	}
+	if err := c.captchaSecrets(set, &unset); err != nil {
+		return nil, nil, err
+	}
+	if c.ActivityRetentionDays != nil {
+		days := *c.ActivityRetentionDays
+		switch {
+		case days == 0:
+			unset = append(unset, secretAuditRetention)
+		case days < 0 || days > api.AuthAuditRetentionMaxDays:
+			return nil, nil, fmt.Errorf("activity retention must be 1 to %d days, or 0 to keep activity forever; got %d", api.AuthAuditRetentionMaxDays, days)
+		default:
+			set[secretAuditRetention] = strconv.Itoa(days)
+		}
+	}
+	if c.Email != nil {
+		if c.Email.Provider == "" {
+			unset = append(unset, EmailSecrets...)
+		} else {
+			email, err := c.Email.secrets()
+			if err != nil {
+				return nil, nil, err
+			}
+			maps.Copy(set, email)
+		}
+	}
+	if c.SSO != nil {
+		set["AUTH_SSO"] = flag(*c.SSO)
+	}
+	if c.SMS != nil {
+		sms, removed, err := c.SMS.secrets()
+		if err != nil {
+			return nil, nil, err
+		}
+		maps.Copy(set, sms)
+		unset = append(unset, removed...)
+	}
+	if c.PasskeyRPID != nil {
+		switch {
+		case *c.PasskeyRPID == "":
+			unset = append(unset, secretPasskeyRPID)
+		case len(*c.PasskeyRPID) > 253 || !hostname.MatchString(*c.PasskeyRPID):
+			return nil, nil, fmt.Errorf("passkey domain %q must be a lowercase domain name such as example.com", *c.PasskeyRPID)
+		default:
+			set[secretPasskeyRPID] = *c.PasskeyRPID
+		}
+	}
 	return set, unset, nil
+}
+
+func (c Change) brandingSecrets(set map[string]string, unset *[]string) error {
+	optional := func(value *string, name string, valid func(string) bool, problem string) error {
+		switch {
+		case value == nil:
+		case *value == "":
+			*unset = append(*unset, name)
+		case !valid(*value):
+			return errors.New(problem)
+		default:
+			set[name] = *value
+		}
+		return nil
+	}
+	if c.UIColor != nil {
+		lower := strings.ToLower(*c.UIColor)
+		c.UIColor = &lower
+	}
+	if err := optional(c.UIName, secretUIName, func(v string) bool {
+		return utf8.RuneCountInString(v) <= api.AuthUINameMaxChars && !strings.ContainsAny(v, "<>") && !strings.ContainsFunc(v, unicode.IsControl)
+	}, fmt.Sprintf("the display name must be at most %d characters without angle brackets or control characters", api.AuthUINameMaxChars)); err != nil {
+		return err
+	}
+	if err := optional(c.UIColor, secretUIColor, brandColor.MatchString, "the brand colour must be #rrggbb"); err != nil {
+		return err
+	}
+	return optional(c.UILogoURL, secretUILogoURL, func(v string) bool {
+		u, err := url.Parse(v)
+		return err == nil && len(v) <= 2048 && u.Scheme == "https" && u.Host != "" && u.User == nil
+	}, "the logo URL must be an HTTPS URL without credentials")
+}
+
+func (c Change) captchaSecrets(set map[string]string, unset *[]string) error {
+	if c.Captcha == nil {
+		return nil
+	}
+	if c.Captcha.Provider == "" {
+		set[secretCaptchaEnabled] = "false"
+		*unset = append(*unset, secretCaptchaProvider, secretCaptchaSecret, secretCaptchaSiteKey)
+		return nil
+	}
+	if !slices.Contains(CaptchaProviders, c.Captcha.Provider) {
+		return fmt.Errorf("unknown CAPTCHA provider %q; use %s", c.Captcha.Provider, strings.Join(CaptchaProviders, " or "))
+	}
+	if !captchaSite.MatchString(c.Captcha.SiteKey) {
+		return errors.New("the CAPTCHA site key is required and must be 8 to 100 letters, digits, - or _")
+	}
+	if !credential(c.Captcha.Secret, api.AuthProviderSecretMaxBytes) {
+		return errors.New("the CAPTCHA secret is required and must not contain spaces or control characters")
+	}
+	set[secretCaptchaEnabled], set[secretCaptchaProvider], set[secretCaptchaSecret], set[secretCaptchaSiteKey] = "true", c.Captcha.Provider, c.Captcha.Secret, c.Captcha.SiteKey
+	return nil
 }
 
 func requiredCharacters(classes []string) (string, error) {

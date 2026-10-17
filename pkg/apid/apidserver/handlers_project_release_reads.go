@@ -118,6 +118,7 @@ func parseProjectReleasePageLimit(w http.ResponseWriter, r *http.Request) (int, 
 
 func projectReleaseSetResponse(release state.ProjectReleaseSet) api.ProjectReleaseSetResponse {
 	response := api.ProjectReleaseSetResponse{
+		Deactivation: release.Deactivation, RollbackSourceReleaseID: release.RollbackSourceReleaseID, RollbackPreviousReleaseID: release.RollbackPreviousReleaseID,
 		ID: release.ID, AccountID: release.AccountID, ProjectID: release.ProjectID,
 		Environment: release.EnvironmentSlug, Active: release.Active, TTLSeconds: release.TTLSeconds,
 		ExpiresAt: release.ExpiresAt, CreatedAt: release.CreatedAt,

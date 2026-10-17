@@ -55,7 +55,7 @@ func TestDevSessionWatchModeIsStoredReportedAndCleared(t *testing.T) {
 
 func TestDevSessionWatchModeRefusals(t *testing.T) {
 	t.Run("too little RAM", func(t *testing.T) {
-		e := apidserver.Setup(t, api.PlanHobby)
+		e := apidserver.Setup(t, api.PlanFree)
 		resp := e.Do(t, "PUT", "/v1/dev/sessions/watch-small", api.UpsertDevSessionRequest{Watch: &api.DevWatch{Command: "npm run dev"}}, nil)
 		var problem api.Problem
 		_ = json.Unmarshal(resp.Body.Bytes(), &problem)
