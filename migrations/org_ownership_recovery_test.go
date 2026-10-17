@@ -28,13 +28,13 @@ func TestOrganizationOwnershipDownUpPreservesCapacityAccounting(t *testing.T) {
 	constraints := replayConstraintFingerprint(t, pool)
 	sources := migrations.SourcesForSchema(schema)
 	names := []string{
-		"20261017190000001_org_access_revocation.sql",
-		"20261017190000002_org_app_quota_ownership.sql",
-		"20261017190000003_org_resource_lifecycle.sql",
-		"20261017190000004_org_project_ownership.sql",
-		"20261017190000005_org_managed_postgres_ownership.sql",
-		"20261017190000006_org_object_storage_ownership.sql",
-		"20261017190000007_org_queue_ownership.sql",
+		"20261018003100001_org_access_revocation.sql",
+		"20261018003100002_org_app_quota_ownership.sql",
+		"20261018003100003_org_resource_lifecycle.sql",
+		"20261018003100004_org_project_ownership.sql",
+		"20261018003100005_org_managed_postgres_ownership.sql",
+		"20261018003100006_org_object_storage_ownership.sql",
+		"20261018003100007_org_queue_ownership.sql",
 	}
 	ups, downs := make([]string, len(names)), make([]string, len(names))
 	for i, name := range names {

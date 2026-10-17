@@ -178,6 +178,7 @@ func (m *MemStore) EventReceiptAttempts(ctx context.Context, accountID, source, 
 // Centralize memory writes to mirror the PostgreSQL transition trigger.
 func (m *MemStore) setInvocationLocked(id string, inv Invocation) {
 	old := m.invocations[id]
+	m.captureScenarioManagedWorkLocked(old, inv)
 	now := time.Now().UTC()
 	m.captureEventExecutionTransitionLocked(old, inv, now, false)
 	if old.ID != "" && (old.ReplayGeneration != inv.ReplayGeneration || !old.CreatedAt.Equal(inv.CreatedAt) || !sameMemUUID(old.AccountID, inv.AccountID) || !sameMemUUID(old.AppID, inv.AppID) || old.ReplayRootInvocationID != inv.ReplayRootInvocationID || old.ReplayedFromInvocationID != inv.ReplayedFromInvocationID || (old.State == InvocationCompleted && (inv.State != InvocationCompleted || !equalCoverageTime(old.CompletedAt, inv.CompletedAt)))) {
@@ -259,6 +260,9 @@ func invocationAttemptOutcome(old, inv Invocation) string {
 }
 
 func (m *MemStore) deleteInvocationAttemptsLocked(id string) {
+	if inv, ok := m.invocations[id]; ok {
+		m.failScenarioManagedWorkLocked(inv.AppID)
+	}
 	for key, row := range m.invocationAttemptHistory {
 		if row.InvocationID == id {
 			m.loseExecutionCoverageLocked(row.appID, "attempt_deleted", time.Now().UTC())

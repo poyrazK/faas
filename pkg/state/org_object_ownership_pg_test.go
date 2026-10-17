@@ -38,7 +38,7 @@ func TestPostgresOrgObjectOwnershipBackfill(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			ctx := t.Context()
-			raw, err := migrations.FS.ReadFile("20261017190000006_org_object_storage_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261018003100006_org_object_storage_ownership.sql")
 			if err != nil {
 				t.Fatal(err)
 			}

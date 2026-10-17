@@ -47,6 +47,10 @@ Internal CI pipeline, run, execution-profile and automation metadata require
 separate ownership coverage. Creator erasure blocks while those unreviewed
 records still reference the identity.
 
+Rehearsal policies and fixture/runtime journals likewise remain unreviewed.
+Their account references block erasure, including completed fixture evidence
+that the rehearsal service could otherwise purge.
+
 Denormalized core child organization references follow the app root. The
 migration repairs legacy personal-org references without changing billing
 subject UUIDs, encrypted bytes or usage quantities. New writes enforce the same

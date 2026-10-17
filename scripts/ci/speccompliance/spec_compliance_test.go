@@ -480,6 +480,8 @@ var dtoExclude = map[string]bool{
 	// Parsed ARN routing helper; notification wire requests carry a string destination.
 	"ObjectNotificationTarget":          true,
 	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
+	"ScenarioSimulationRequest":         true, // ADR-20261017201006: authenticated host-to-store command; never a customer JSON request.
+	"ScenarioSimulationDecision":        true, // ADR-20261017201006: internal persisted decision and fixture response; not a public response DTO.
 	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
 	"CliAuthCodeRequest":                true, // Optional purpose on the private browser/device-code mint
 	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
@@ -1493,6 +1495,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
+		filepath.Join(root, "pkg", "api", "scenario_actions.go"),
+		filepath.Join(root, "pkg", "api", "scenario_simulation.go"),
 		filepath.Join(root, "pkg", "api", "operations.go"),
 		filepath.Join(root, "pkg", "api", "operations_job.go"),
 		filepath.Join(root, "pkg", "api", "operations_recovery.go"),
@@ -1563,6 +1567,44 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
 		dtos[schema] = financialDTOs[name]
+	}
+	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})
+	if err != nil {
+		t.Fatalf("scan rehearsal object DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Spec": "ScenarioObjectsSpec", "Data": "ScenarioObjectsData", "Object": "ScenarioObjectsObject", "CreateRequest": "CreateScenarioObjectsRequest", "SealRequest": "SealScenarioObjectsRequest", "Receipt": "ScenarioObjectsReceipt", "Mutation": "ScenarioObjectsMutation", "Evidence": "ScenarioObjectsEvidence"} {
+		dtos[schema] = objectDTOs[name]
+	}
+	resumeDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalresume", "protocol.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range map[string]string{"Spec": "ScenarioSuspendResumeSpec", "Receipt": "ScenarioSuspendResumeReceipt", "Evidence": "ScenarioSuspendResumeEvidence"} {
+		dtos[schema] = resumeDTOs[name]
+	}
+	coldDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalcold", "protocol.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range map[string]string{"Spec": "ScenarioColdStartSpec", "Preparation": "ScenarioColdPreparation", "Evidence": "ScenarioColdStartEvidence"} {
+		dtos[schema] = coldDTOs[name]
+	}
+	workDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalwork", "protocol.go"), filepath.Join(root, "pkg", "rehearsalwork", "fault.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range map[string]string{"Plan": "ScenarioManagedWorkPlan", "Participant": "ScenarioManagedWorkParticipant", "Binding": "ScenarioManagedWorkBinding", "Attempt": "ScenarioManagedWorkAttempt", "Job": "ScenarioManagedWorkJob", "Evidence": "ScenarioManagedWorkEvidence"} {
+		dtos[schema] = workDTOs[name]
+	}
+	for name, schema := range map[string]string{"WorkerTermination": "ScenarioWorkerTermination", "WorkerFault": "ScenarioWorkerFault"} {
+		dtos[schema] = workDTOs[name]
+	}
+	postgresDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalpg", "protocol.go")})
+	if err != nil {
+		t.Fatalf("scan rehearsal PostgreSQL DTOs: %v", err)
+	}
+	for name, schema := range map[string]string{"Table": "ScenarioPostgresTable", "Spec": "ScenarioPostgresSpec", "CreateRequest": "CreateScenarioPostgresRequest", "SealRequest": "SealScenarioPostgresRequest", "Receipt": "ScenarioPostgresReceipt", "Snapshot": "ScenarioPostgresSnapshot", "Delta": "ScenarioPostgresDelta", "Evidence": "ScenarioPostgresEvidence"} {
+		dtos[schema] = postgresDTOs[name]
 	}
 
 	// Git approval evidence is shared with githubd and the state transaction

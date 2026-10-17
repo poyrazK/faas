@@ -42,7 +42,7 @@ func TestPostgresOrgQueueBackfill(t *testing.T) {
 			store := state.NewPgStore(pool)
 			f := setupOffboarding(t, store)
 			adoptObjectCompany(t, f)
-			raw, err := migrations.FS.ReadFile("20261017190000007_org_queue_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261018003100007_org_queue_ownership.sql")
 			if err != nil {
 				t.Fatal(err)
 			}

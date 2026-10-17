@@ -30,7 +30,7 @@ func TestPostgresOrgProjectOwnershipBackfill(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			store := state.NewPgStore(pool)
 			ctx := t.Context()
-			raw, err := migrations.FS.ReadFile("20261017190000004_org_project_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261018003100004_org_project_ownership.sql")
 			if err != nil {
 				t.Fatal(err)
 			}

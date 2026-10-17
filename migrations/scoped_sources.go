@@ -37,7 +37,7 @@ func (s scopedMigrationFS) Open(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if name == "20261017190000003_org_resource_lifecycle.sql" {
+	if name == "20261018003100003_org_resource_lifecycle.sql" {
 		// This issued expansion copies migration-owned functions from a public
 		// schema dump. Keep every copied declaration/reference in the target.
 		body = bytes.ReplaceAll(body, []byte("public.%I"), []byte(strings.ReplaceAll(s.schema, "'", "''")+".%I"))
@@ -55,7 +55,7 @@ func issuedPublicDeclarationMigration(name string) bool {
 		"20261004232943929_application_standard_retained_native_admission.sql",
 		"20261004234710285_application_standard_retained_native_protocol.sql",
 		"20261012080000001_application_standard_shared_base_read_fences.sql",
-		"20261017190000003_org_resource_lifecycle.sql":
+		"20261018003100003_org_resource_lifecycle.sql":
 		return true
 	default:
 		return false

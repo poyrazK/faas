@@ -186,3 +186,27 @@ OpenAPI duplicate-key/parity checks pass. Four credential-access models in each
 of the Node and Python clients are regenerated to match the public schema.
 Python Auth and organization PostgreSQL, storage and queue client tests pass
 (42 tests); only the four Python models were copied from isolated generation.
+
+## Integration with backend rehearsals
+
+Main through `49ecac58d` is integrated. The seven unreleased ownership migrations
+are now `20261018003100001` through `20261018003100007`, after main's rehearsal
+migration tail. Their dependent source adapters and recovery fixtures use those
+identifiers. The new main migrations do not overwrite the runtime functions
+adapted by ownership. Invocation claiming retains the organization queue-policy
+lock before resetting a rehearsal binding.
+
+All nine erasure-guard definitions retain the seven new account-scoped rehearsal
+tables. A completed PostgreSQL rehearsal fixture blocks both erasure entry
+points and retains its evidence. Existing organization/rehearsal state cases
+passed; the new fixture case was corrected to supply its required backend
+identity, and focused erasure plus clone-catalogue checks pass (10.860s).
+The clone registry explicitly classifies eleven rehearsal tables and four new
+effect fields, covering 859 migrated tables.
+
+Fresh canonical schema and SQL generation/checks, migration lint, apply-and-walk,
+replay of the seven renumbered migrations and ownership down/up recovery pass
+(27.578s for the migration suite). OpenAPI duplicate-key/parity checks, Node
+generation/build, full Go SDK tests/vet, 42 Python Auth/organization client tests
+and 36 CI selector tests pass. These local reruns use Go 1.26.9 and PostgreSQL 16
+without race detection. The fresh GitHub checks must pass before merge.

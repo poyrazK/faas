@@ -21,8 +21,11 @@ import (
 
 const (
 	ServiceDiscoveryDNSPort = 53
-	serviceDiscoveryTTL     = 5
-	serviceDiscoveryTimeout = 2 * time.Second
+	// RehearsalServiceDiscoveryDNSPort mirrors netns's private-only DNS port.
+	// The vmmd protocol test keeps this agreement across the ownership boundary.
+	RehearsalServiceDiscoveryDNSPort = 5354
+	serviceDiscoveryTTL              = 5
+	serviceDiscoveryTimeout          = 2 * time.Second
 )
 
 // ServiceDiscoveryDNSHandler answers private service names on a compute
@@ -38,6 +41,15 @@ type ServiceDiscoveryDNSHandler struct {
 	onResolved    ResolvedEgressHook
 	serviceAddr   ServiceAddressLookup
 	scenarioChaos *serviceDiscoveryDNSChaos
+	privateOnly   bool
+}
+
+// WithPrivateServiceNamesOnly configures the dedicated rehearsal listener.
+// It never forwards upstream, resolves aliases or returns direct service
+// addresses, including before a caller has published its runtime identity.
+func (h *ServiceDiscoveryDNSHandler) WithPrivateServiceNamesOnly() *ServiceDiscoveryDNSHandler {
+	h.privateOnly = true
+	return h
 }
 
 // ServiceAddressLookup returns the private service address (ADR-576) the
@@ -183,7 +195,12 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	callerResolved := false
 	lookupCtx, cancelLookup := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
 	defer cancelLookup()
+	contained := h.privateOnly
 	for _, question := range req.Question {
+		if contained && serviceDiscoveryName(question.Name) == "" {
+			h.writeRcode(w, req, dns.RcodeRefused)
+			return
+		}
 		if serviceDiscoveryName(question.Name) != "" {
 			private = true
 			continue
@@ -247,7 +264,7 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 		switch question.Qtype {
 		case dns.TypeA:
 			answer := h.bridgeIP
-			if service := serviceDiscoveryName(question.Name); service != "" && h.serviceAddr != nil {
+			if service := serviceDiscoveryName(question.Name); service != "" && h.serviceAddr != nil && !contained {
 				if addr, ok := h.serviceAddr(responseCtx, remote, service); ok && addr.Is4() {
 					answer = addr
 				}

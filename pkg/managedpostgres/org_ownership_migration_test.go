@@ -18,7 +18,7 @@ func TestOrgPostgresOwnershipMigration(t *testing.T) {
 	for _, mixed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "binding and restore roots", true: "mixed roots refused"}[mixed], func(t *testing.T) {
 			ctx, pool := t.Context(), pgtest.OpenMigrated(t)
-			raw, err := migrations.FS.ReadFile("20261017190000005_org_managed_postgres_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261018003100005_org_managed_postgres_ownership.sql")
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -18,7 +18,7 @@ func TestPostgresOrgAppQuotaOwnershipMigration(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)
 	f := setupOffboarding(t, store)
-	source, err := migrations.FS.ReadFile("20261017190000002_org_app_quota_ownership.sql")
+	source, err := migrations.FS.ReadFile("20261018003100002_org_app_quota_ownership.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

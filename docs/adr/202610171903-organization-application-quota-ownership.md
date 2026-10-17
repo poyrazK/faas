@@ -49,7 +49,7 @@ Quota errors carry the authoritative plan, limit and observed count so the API
 does not describe a collaborator's personal cap. Downgrades do not erase existing
 apps; further admissions must fit the new cap.
 
-Migration `20261017190000002` fills only missing personal app attribution and
+Migration `20261018003100002` fills only missing personal app attribution and
 adds an organization quota index. Existing shared attribution is retained. New
 app insertion fills missing personal attribution and rejects a mismatched personal
 organization. The backfill is forward-only, including on rollback.

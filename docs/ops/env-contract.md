@@ -203,6 +203,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
+| `FAAS_E2E_READY_TIMEOUT_SCALE` | shared | `dev-only` |  |  | `` | test-harness only; whole-number multiplier (1-20) for pkg/e2etest's daemon readiness waits, for small native acceptance hosts that restage bases at startup; must never be set on a production host |
 | `FAAS_E2E_S3_ACCESS_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider access key for the isolated object-storage acceptance fixture; must never be set on a production host |
 | `FAAS_E2E_S3_SECRET_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider secret key for the isolated object-storage acceptance fixture; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
@@ -527,6 +528,18 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RECOVERY_HMAC_KEY_FILE` | apid | `default` |  |  | `` |  |
 | `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
+| `FAAS_REHEARSAL_ACTION_SIMULATION` | apid | `default` |  | 0 | `` | opt-in simulated outbound actions for contained rehearsals; keep disabled until native containment qualification |
+| `FAAS_REHEARSAL_COLD_START` | apid | `default` |  | 0 | `` | opt-in contained cold-start rehearsal; disabled pending native lifecycle qualification |
+| `FAAS_REHEARSAL_COMMAND_EXECUTION` | apid | `default` |  | 0 | `` | opt-in contained command microVM execution; disabled pending native command isolation qualification |
+| `FAAS_REHEARSAL_NETWORK_CONTAINMENT` | apid | `default` |  | 0 | `` | opt-in contained rehearsal enrollment; disabled pending native network qualification |
+| `FAAS_REHEARSAL_OBJECT_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal object fixture API and private proxy; disabled pending native containment qualification |
+| `FAAS_REHEARSAL_POSTGRES_ADMIN_URL` | apid | `secrets-env` |  |  | `` | optional dedicated rehearsal fixture-cluster admin DSN in /etc/faas/sealed.env; never point at platform metadata or production databases |
+| `FAAS_REHEARSAL_POSTGRES_FIXTURES` | apid, gatewayd-internal | `default` |  | 0 | `` | opt-in isolated rehearsal PostgreSQL fixture API and private proxy; disabled pending native containment qualification |
+| `FAAS_REHEARSAL_POSTGRES_PROXY_TARGET` | gatewayd-internal | `default` |  |  | `` | explicit loopback endpoint of the dedicated rehearsal fixture cluster; required only when PostgreSQL fixtures are enabled |
+| `FAAS_REHEARSAL_RUNNING_JOB_SUSPEND` | apid | `default` |  | 0 | `` | opt-in same-VM suspend/resume at a cooperative managed-job checkpoint; disabled pending native qualification |
+| `FAAS_REHEARSAL_SUSPEND_RESUME` | apid | `default` |  | 0 | `` | opt-in in-place rehearsal suspend/resume; disabled pending native lifecycle qualification |
+| `FAAS_REHEARSAL_WORKERS` | apid | `default` |  | 0 | `` | opt-in managed async rehearsal participants; disabled pending native execution qualification |
+| `FAAS_REHEARSAL_WORKER_FAULTS` | apid | `default` |  | 0 | `` | opt-in cooperative worker-termination rehearsals; disabled pending native lifecycle qualification |
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
 | `FAAS_RELEASE_PHASE_ENABLED` | imaged | `default` |  |  | `` | exact opt-in for pre-boot release commands; deployments declaring a release command fail with `release_phase_unavailable` while off; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
