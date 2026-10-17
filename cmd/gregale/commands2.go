@@ -4913,22 +4913,29 @@ func cmdTrafficStatus(args []string) int {
 	}
 	live := make([]api.DeploymentResponse, 0, len(deployments))
 	total := 0
+	byScope := map[string]int{}
 	for _, deployment := range deployments {
 		if deployment.Status != statusLive {
 			continue
 		}
 		live = append(live, deployment)
 		total += deployment.TrafficPercent
+		byScope[trafficScope(deployment)] += deployment.TrafficPercent
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(struct {
-			App          string                   `json:"app"`
-			Deployments  []api.DeploymentResponse `json:"deployments"`
-			TotalPercent int                      `json:"total_percent"`
-		}{App: slug, Deployments: live, TotalPercent: total}))
+			App                 string                   `json:"app"`
+			Deployments         []api.DeploymentResponse `json:"deployments"`
+			TotalPercent        int                      `json:"total_percent"`
+			TotalPercentByScope map[string]int           `json:"total_percent_by_scope"`
+		}{App: slug, Deployments: live, TotalPercent: total, TotalPercentByScope: byScope}))
 	}
 	if len(live) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
+		return 0
+	}
+	if len(byScope) > 1 {
+		printScopedTrafficStatus(live, byScope)
 		return 0
 	}
 	// ADR-198: lead with the revision, because that is the handle the
@@ -4945,6 +4952,40 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// trafficScope names a deployment's traffic scope; an unscoped row is the
+// default scope.
+func trafficScope(deployment api.DeploymentResponse) string {
+	if deployment.Scope == "" {
+		return api.DefaultEnvScope
+	}
+	return deployment.Scope
+}
+
+// printScopedTrafficStatus renders one weight table per scope. Each project
+// environment carries its own 100%; one combined total read "Total 300%" for
+// an app live in three environments (H10-114).
+func printScopedTrafficStatus(live []api.DeploymentResponse, byScope map[string]int) {
+	scopes := make([]string, 0, len(byScope))
+	for scope := range byScope {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	_, _ = fmt.Fprintln(osStdout, "SCOPE\tREVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC")
+	for _, scope := range scopes {
+		for _, deployment := range live {
+			if trafficScope(deployment) != scope {
+				continue
+			}
+			revision := renderRevision(deployment.Revision)
+			if revision == "" {
+				revision = "-"
+			}
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%d%%\n", scope, revision, deployment.ID, deployment.Status, deployment.TrafficPercent)
+		}
+		_, _ = fmt.Fprintf(osStdout, "Total %s\t\t\t\t%d%%\n", scope, byScope[scope])
+	}
 }
 
 // peelLeadingSlug lets the flag-addressed traffic leaves accept the app the
