@@ -12,6 +12,8 @@ gatewayd_route_metrics_enabled: true
 # ADR-143: streaming responses are a paid Hobby+ feature; production is on.
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
+# ADR-1520 rate-limit token leasing; requires gatewayd_ratelimit_mode central.
+gatewayd_ratelimit_lease: false
 
 # Set this URL once for the gateway fleet through Ansible Vault. The role
 # copies it to a root-only systemd credential on each gateway node. Set

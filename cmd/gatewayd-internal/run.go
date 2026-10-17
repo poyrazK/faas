@@ -2709,14 +2709,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Limiter on its noop backend — behaviour unchanged from
 	// pre-Phase-4. mode = "central" wires the production
 	// PGRateLimitBackend + the LISTEN-side invalidator (C4).
-	if deps.config != nil && deps.config.RateLimit.Mode == "central" {
-		backend, rps := buildCentralRateLimitBackend(deps.pool, log)
-		if backend != nil {
+	if deps.config != nil {
+		leaseCfg, err := deps.config.RateLimit.leaseConfig()
+		if err != nil {
+			return fmt.Errorf("gatewayd-internal: %w", err)
+		}
+		if deps.config.RateLimit.Mode == "central" {
+			backend, rps := buildCentralRateLimitBackend(deps.pool, log)
+			if backend == nil {
+				return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+			}
 			handler.WithCentralBackend(backend)
+			// ADR-1520: spend central tokens from local leases.
+			if deps.config.RateLimit.Lease {
+				handler.WithRateLimitLeasing(leaseCfg)
+			}
 			log.Info("gatewayd-internal: rate-limit central mode armed",
-				"rps_resolver", rpsKind(rps))
-		} else {
-			return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+				"rps_resolver", rpsKind(rps), "lease", deps.config.RateLimit.Lease)
 		}
 	}
 	// Exact pre-auth routes opt into a shared source budget independently of

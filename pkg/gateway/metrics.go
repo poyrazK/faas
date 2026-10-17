@@ -27,6 +27,12 @@
 //     requests decided locally after a central consume failed or while the
 //     consult breaker is open; scope is a
 //     closed app|account|rule|other set)
+//   - gateway_ratelimit_lease_requests_total{scope, result}  counter
+//     (ADR-1520 lease statements: granted|partial|empty|failed)
+//   - gateway_ratelimit_lease_tokens_total{scope, outcome}   counter
+//     (granted|spent|allowance|over_admitted|expired|returned)
+//   - gateway_ratelimit_sync_consults_total{scope}           counter
+//     (requests that waited for Postgres; only traffic at its limit should)
 //   - gateway_cold_boot_total{app}                   counter (renamed from
 //     gateway_cold_wake_total in #273 / ADR-042; zero external consumers so
 //     it is a straight rename, not a dual-emit migration)
@@ -242,6 +248,11 @@ type Metrics struct {
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
 	rateLimitDegraded *prometheus.CounterVec
+	// ADR-1520 token leasing: lease statements, token outcomes, and requests
+	// that waited for Postgres. Scope is the closed app|account|rule|other set.
+	rateLimitLeaseRequests *prometheus.CounterVec
+	rateLimitLeaseTokens   *prometheus.CounterVec
+	rateLimitSyncConsults  *prometheus.CounterVec
 	// leaderBootstrapAborts (ADR-098 C7): counter labelled by
 	// reason — closed set {queue_empty_no_instance, ttl_expired,
 	// app_deleted}. Pre-instantiated in NewMetrics so the §12
@@ -1393,6 +1404,18 @@ func NewMetrics() *Metrics {
 			Name: "gateway_ratelimit_degraded_total",
 			Help: "Requests the rate limiter decided with process-local counters because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
 		}, []string{"scope"}),
+		rateLimitLeaseRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_lease_requests_total",
+			Help: "Central rate-limit lease statements (ADR-1520) by closed scope (app|account|rule|other) and result (granted|partial|empty|failed).",
+		}, []string{"scope", "result"}),
+		rateLimitLeaseTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_lease_tokens_total",
+			Help: "Central rate-limit tokens by closed scope and outcome (ADR-1520): granted by a lease, spent from one, admitted by the local allowance, over_admitted when a grant could not cover the allowance, expired unspent, or returned to the shared bucket.",
+		}, []string{"scope", "outcome"}),
+		rateLimitSyncConsults: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_sync_consults_total",
+			Help: "Requests that waited for a central rate-limit lease (ADR-1520), by closed scope. Only counters at or near their limit should wait.",
+		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this
 		// daemon scrapes /metrics via the control listener).
@@ -1867,6 +1890,15 @@ func NewMetrics() *Metrics {
 	for _, scope := range []string{"app", "account", "rule", "preauth", "other"} {
 		m.rateLimitDegraded.WithLabelValues(scope)
 	}
+	for _, scope := range []string{"app", "account", "rule", "other"} {
+		for _, result := range []string{LeaseResultGranted, LeaseResultPartial, LeaseResultEmpty, LeaseResultFailed} {
+			m.rateLimitLeaseRequests.WithLabelValues(scope, result)
+		}
+		for _, outcome := range []string{LeaseTokensGranted, LeaseTokensSpent, LeaseTokensAllowance, LeaseTokensOverAdmitted, LeaseTokensExpired, LeaseTokensReturned} {
+			m.rateLimitLeaseTokens.WithLabelValues(scope, outcome)
+		}
+		m.rateLimitSyncConsults.WithLabelValues(scope)
+	}
 	for _, outcome := range []string{"match", "miss", "blocked", "failed", "missing"} {
 		m.edgeRuleMatch.WithLabelValues("jwt", outcome)
 	}
@@ -2038,7 +2070,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -2687,6 +2719,50 @@ func (m *Metrics) ObserveRateLimitDegraded(scope string) {
 		scope = "other"
 	}
 	m.rateLimitDegraded.WithLabelValues(scope).Inc()
+}
+
+// leaseScope closes the scope label of the leasing metrics.
+func leaseScope(scope string) string {
+	switch scope {
+	case "app", "account", "rule":
+		return scope
+	}
+	return "other"
+}
+
+// ObserveLeaseRequest records one central lease statement (ADR-1520).
+func (m *Metrics) ObserveLeaseRequest(scope, result string) {
+	if m == nil || m.rateLimitLeaseRequests == nil {
+		return
+	}
+	switch result {
+	case LeaseResultGranted, LeaseResultPartial, LeaseResultEmpty, LeaseResultFailed:
+	default:
+		return
+	}
+	m.rateLimitLeaseRequests.WithLabelValues(leaseScope(scope), result).Inc()
+}
+
+// ObserveLeaseTokens records n central tokens with one outcome (ADR-1520).
+func (m *Metrics) ObserveLeaseTokens(scope, outcome string, n int) {
+	if m == nil || m.rateLimitLeaseTokens == nil || n <= 0 {
+		return
+	}
+	switch outcome {
+	case LeaseTokensGranted, LeaseTokensSpent, LeaseTokensAllowance, LeaseTokensOverAdmitted, LeaseTokensExpired, LeaseTokensReturned:
+	default:
+		return
+	}
+	m.rateLimitLeaseTokens.WithLabelValues(leaseScope(scope), outcome).Add(float64(n))
+}
+
+// ObserveRateLimitSyncConsult records a request that waited for a central
+// lease (ADR-1520).
+func (m *Metrics) ObserveRateLimitSyncConsult(scope string) {
+	if m == nil || m.rateLimitSyncConsults == nil {
+		return
+	}
+	m.rateLimitSyncConsults.WithLabelValues(leaseScope(scope)).Inc()
 }
 
 // ObserveEdgeAnswered records a response completed by the gateway without an
