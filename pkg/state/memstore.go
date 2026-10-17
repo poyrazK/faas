@@ -32,6 +32,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalobj"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -145,6 +150,10 @@ type MemStore struct {
 	migrationCutovers                          map[string]MigrationCutoverRecord
 	projectMigrations                          map[string]ProjectMigrationRecord
 	publicBuildURLs                            map[string]map[string]string
+	scenarioManagedWork                        map[string]scenarioManagedJob
+	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
+	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
+	scenarioSuspendResumes                     map[string]rehearsalresume.Receipt
 	internalCI                                 *ci.MemoryStore
 	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
 	hostingCredentials                         map[string]api.HostingAutomationCredential
@@ -390,6 +399,9 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	scenarioTestMembers       map[string]ScenarioTestMember
+	scenarioPostgres          map[string]rehearsalpg.Resource
+	scenarioObjects           map[string]rehearsalobj.Resource
+	scenarioActionPolicies    map[string]scenarioActionPolicy
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -4623,6 +4635,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
+			m.deleteScenarioWorkerFaultsForAppLocked(id)
 			delete(m.apps, id)
 			delete(m.applicationStandardEnrollments, id)
 			m.eraseStandardAppExceptionsLocked(id)
@@ -6980,6 +6993,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
 	m.deleteEventExecutionLedgerAppLocked(id)
+	m.deleteScenarioWorkerFaultsForAppLocked(id)
 	delete(m.apps, id)
 	delete(m.applicationStandardEnrollments, id)
 	m.eraseStandardAppExceptionsLocked(id)
@@ -13557,6 +13571,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 			m.recordEventDeliverySlotLocked(inv.ID, slot)
 		}
 	}
+	if err := m.admitScenarioManagedWorkLocked(&inv); err != nil {
+		return Invocation{}, err
+	}
 	m.setInvocationLocked(inv.ID, inv)
 	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
 	return inv, nil
@@ -13715,6 +13732,12 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if _, owned := m.invocationEnvironmentQueueAdmissions[id]; owned {
 		return Invocation{}, ErrConflict
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
@@ -22401,6 +22424,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			m.deleteWorkflowDispatchCursorsLocked(aid)
+			m.deleteScenarioWorkerFaultsForAppLocked(aid)
 			delete(m.apps, aid)
 			delete(m.applicationStandardEnrollments, aid)
 			m.eraseStandardAppExceptionsLocked(aid)
@@ -26563,6 +26587,12 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {

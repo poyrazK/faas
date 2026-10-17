@@ -4343,14 +4343,16 @@ type EventSubscriptionWorkBinding struct {
 }
 
 type ExclusiveWorkEffect struct {
-	ID          pgtype.UUID
-	OperationID pgtype.UUID
-	Generation  int64
-	Name        string
-	Payload     []byte
-	CreatedAt   pgtype.Timestamptz
-	WebhookID   pgtype.UUID
-	EventType   pgtype.Text
+	ID             pgtype.UUID
+	OperationID    pgtype.UUID
+	Generation     int64
+	Name           string
+	Payload        []byte
+	CreatedAt      pgtype.Timestamptz
+	WebhookID      pgtype.UUID
+	EventType      pgtype.Text
+	RehearsalRunID string
+	ReceiverSha256 string
 }
 
 type ExclusiveWorkKey struct {
@@ -10779,6 +10781,130 @@ type SavedRouteRequirement struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ScenarioColdPreparation struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	RunID                 string
+	DeploymentID          pgtype.UUID
+	InstanceID            pgtype.UUID
+	RecorderSessionID     pgtype.UUID
+	State                 string
+	BootInstanceID        pgtype.UUID
+	BootRecorderSessionID pgtype.UUID
+	WakeID                pgtype.Text
+	Method                pgtype.Text
+	StartupMs             int64
+	CreatedAt             pgtype.Timestamptz
+	ReadyAt               pgtype.Timestamptz
+}
+
+type ScenarioCommandNetwork struct {
+	TaskID     pgtype.UUID
+	NodeID     pgtype.UUID
+	HostIp     netip.Addr
+	LeaseToken pgtype.UUID
+	Active     bool
+}
+
+type ScenarioManagedWork struct {
+	InvocationID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	RunID        string
+	Document     []byte
+	Payload      []byte
+}
+
+type ScenarioObjectFixture struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	RunID     string
+	AppID     pgtype.UUID
+	Status    string
+	ExpiresAt pgtype.Timestamptz
+	Document  []byte
+}
+
+type ScenarioPostgresFixture struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	RunID           string
+	AppID           pgtype.UUID
+	OwnerID         pgtype.UUID
+	DatabaseName    string
+	RoleName        string
+	Status          string
+	Spec            []byte
+	InitialSnapshot []byte
+	Evidence        []byte
+	ExpiresAt       pgtype.Timestamptz
+	BackendSha256   string
+}
+
+type ScenarioRecorderRequest struct {
+	ID        pgtype.UUID
+	SessionID pgtype.UUID
+	AttemptID pgtype.UUID
+	Status    string
+}
+
+type ScenarioRecorderSession struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	InstanceID    pgtype.UUID
+	DeploymentID  pgtype.UUID
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	CommandResult pgtype.Text
+}
+
+type ScenarioSimulationAttempt struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	Evidence  []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type ScenarioSuspendResume struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	RunID               string
+	DeploymentID        pgtype.UUID
+	InstanceID          pgtype.UUID
+	RecorderSessionID   pgtype.UUID
+	State               string
+	Method              pgtype.Text
+	PauseMs             int64
+	ResumeMs            int64
+	CreatedAt           pgtype.Timestamptz
+	PausedAt            pgtype.Timestamptz
+	InvocationID        pgtype.UUID
+	InvocationAttempt   pgtype.Int4
+	CheckpointAttemptID pgtype.UUID
+}
+
+type ScenarioTestActionPolicy struct {
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	RunID              string
+	WebhookMode        string
+	CreatedAt          pgtype.Timestamptz
+	WorkloadName       string
+	SealedAt           pgtype.Timestamptz
+	SealedSnapshot     []byte
+	NetworkMode        string
+	SimulationPlan     []byte
+	SimulationFailed   bool
+	RecorderClosing    bool
+	ManagedWorkPlan    []byte
+	ManagedWorkClosing bool
+	ManagedWorkFailed  bool
+	ColdStartSpec      []byte
+	SuspendResumeSpec  []byte
+}
+
 type ScenarioTestChaosMatch struct {
 	AccountID   pgtype.UUID
 	RunID       string
@@ -10797,6 +10923,20 @@ type ScenarioTestMember struct {
 	ChaosRules      []byte
 	ChaosExpiresAt  pgtype.Timestamptz
 	ChaosGeneration pgtype.UUID
+}
+
+type ScenarioWorkerFault struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	RunID               string
+	InstanceID          pgtype.UUID
+	DeploymentID        pgtype.UUID
+	InvocationID        pgtype.UUID
+	CheckpointAttemptID pgtype.UUID
+	RecorderSessionID   pgtype.UUID
+	State               string
+	CreatedAt           pgtype.Timestamptz
 }
 
 type ScheduleOccurrence struct {
@@ -11441,18 +11581,20 @@ type WorkflowInitialRecoveryReview struct {
 }
 
 type WorkflowOperationEffect struct {
-	ID          pgtype.UUID
-	AccountID   pgtype.UUID
-	AppID       pgtype.UUID
-	RunID       pgtype.UUID
-	StepName    string
-	OperationID pgtype.UUID
-	Generation  int64
-	Name        string
-	Payload     []byte
-	WebhookID   pgtype.UUID
-	EventType   string
-	CreatedAt   pgtype.Timestamptz
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	RunID          pgtype.UUID
+	StepName       string
+	OperationID    pgtype.UUID
+	Generation     int64
+	Name           string
+	Payload        []byte
+	WebhookID      pgtype.UUID
+	EventType      string
+	CreatedAt      pgtype.Timestamptz
+	RehearsalRunID string
+	ReceiverSha256 string
 }
 
 type WorkflowRecoveryActionReceipt struct {

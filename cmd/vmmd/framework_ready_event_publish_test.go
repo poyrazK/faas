@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
 func TestParseFrameworkReadyEventPublish(t *testing.T) {
@@ -22,9 +24,12 @@ func TestParseFrameworkReadyEventPublish(t *testing.T) {
 }
 
 func TestFrameworkReadyDispatchesEventPublish(t *testing.T) {
+	called := false
 	receiver := &FrameworkReadyReceiver{
 		ctx: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		mgr: fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "deployment-1", "app", "account"),
 		eventPublisher: func(_ context.Context, instance string, body []byte) error {
+			called = true
 			if instance != "instance-1" || string(body) != `{"id":"evt-1"}` {
 				t.Fatalf("publisher args = %q %q", instance, body)
 			}
@@ -44,5 +49,8 @@ func TestFrameworkReadyDispatchesEventPublish(t *testing.T) {
 	_ = client.Close()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("ordinary event did not reach publisher")
 	}
 }

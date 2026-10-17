@@ -524,6 +524,15 @@ func (d *Dispatcher) finishDelivery() {
 // returns — the run loop does not abort on individual delivery
 // failures.
 func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDelivery) {
+	blocked, err := d.store.ScenarioWebhookDeliveryBlocked(ctx, row.AppID, row.WebhookID)
+	if err != nil {
+		d.log.WarnContext(ctx, "webhook: rehearsal policy check failed", "delivery_id", row.ID)
+		return // Unknown authority never permits transmission; the lease can retry.
+	}
+	if blocked {
+		d.markDead(ctx, row, state.ScenarioWebhookSuppressed)
+		return
+	}
 	// Load the subscription row so we know the target_url + secret +
 	// retry_policy. The store guarantees the webhook row exists
 	// (FK CASCADE on the delivery ledger would have prevented the

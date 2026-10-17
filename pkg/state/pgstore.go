@@ -15834,6 +15834,11 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if instanceID == "" {
+		if err := sqlc.New().ResetScenarioManagedInvocationBinding(ctx, tx, id); err != nil {
+			return Invocation{}, err
+		}
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}
@@ -31982,6 +31987,11 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, fmt.Errorf("state: invocations claim cap begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if instanceID == "" {
+		if err := sqlc.New().ResetScenarioManagedInvocationBinding(ctx, tx, id); err != nil {
+			return Invocation{}, err
+		}
+	}
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}

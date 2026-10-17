@@ -54,6 +54,10 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
+		rehearsalRun, err := authorizeRehearsalService(ctx, store, caller, target)
+		if err != nil {
+			return gateway.ServiceCaller{}, err
+		}
 		var callerTest, targetTest state.ScenarioTestMember
 		var callerTestErr, targetTestErr = state.ErrNotFound, state.ErrNotFound
 		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
@@ -198,12 +202,13 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
 		return gateway.ServiceCaller{
-			AppID:         caller.ID,
-			PreviewOfSlug: caller.PreviewOfSlug,
-			AccountID:     caller.AccountID,
-			RequireHTTPS:  caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
-			CallScope:     callScope,
-			Reliability:   reliability,
+			RehearsalRunID: rehearsalRun,
+			AppID:          caller.ID,
+			PreviewOfSlug:  caller.PreviewOfSlug,
+			AccountID:      caller.AccountID,
+			RequireHTTPS:   caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
+			CallScope:      callScope,
+			Reliability:    reliability,
 		}, nil
 	}
 }

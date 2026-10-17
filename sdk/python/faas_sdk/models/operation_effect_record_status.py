@@ -1,8 +1,11 @@
 from typing import Literal
 
-OperationEffectRecordStatus = Literal["dead", "failed", "in_flight", "pending", "recorded", "succeeded", "unavailable"]
+OperationEffectRecordStatus = Literal[
+    "captured", "dead", "failed", "in_flight", "pending", "recorded", "succeeded", "unavailable"
+]
 
 OPERATION_EFFECT_RECORD_STATUS_VALUES: set[OperationEffectRecordStatus] = {
+    "captured",
     "dead",
     "failed",
     "in_flight",

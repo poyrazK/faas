@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -50,7 +51,7 @@ func TestMigrationDependenciesMissingAndMalformedValuesAreSanitized(t *testing.T
 	checks := api.MigrationDependencyChecks{PostgresEnvKey: "PROBE_DATABASE", HTTPEnvKey: "PROBE_API"}
 	for _, values := range []map[string]string{{}, {"PROBE_DATABASE": "PRIVATE_SECRET_invalid_url", "PROBE_API": "https://user:PRIVATE_SECRET@localhost/"}} {
 		var out bytes.Buffer
-		result, err := executeMigrationDependencies(t.Context(), apptaskproto.Request{Command: api.MigrationDependenciesCommand(checks)}, api.AppManifest{}, values, nil, &out)
+		result, err := executeAppTaskCommand(t.Context(), apptaskproto.Request{Command: api.MigrationDependenciesCommand(checks)}, api.AppManifest{}, values, nil, &out, io.Discard)
 		if err != nil || result.Status != apptaskproto.StatusFailed {
 			t.Fatalf("invalid dependencies passed: %+v %v", result, err)
 		}
@@ -69,7 +70,7 @@ func TestMigrationDependenciesWithRealPostgres(t *testing.T) {
 		t.Skip("local PostgreSQL fixture not configured")
 	}
 	var out bytes.Buffer
-	result, err := executeMigrationDependencies(t.Context(), apptaskproto.Request{Command: api.MigrationDependenciesCommand(api.MigrationDependencyChecks{PostgresEnvKey: "PROBE_DATABASE"})}, api.AppManifest{}, map[string]string{"PROBE_DATABASE": value}, nil, &out)
+	result, err := executeAppTaskCommand(t.Context(), apptaskproto.Request{Command: api.MigrationDependenciesCommand(api.MigrationDependencyChecks{PostgresEnvKey: "PROBE_DATABASE"})}, api.AppManifest{}, map[string]string{"PROBE_DATABASE": value}, nil, &out, io.Discard)
 	if err != nil || result.Status != apptaskproto.StatusSucceeded {
 		t.Fatalf("database check: %+v %s %v", result, out.String(), err)
 	}
