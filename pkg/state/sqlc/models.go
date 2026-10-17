@@ -4063,6 +4063,28 @@ type GooseDbVersion struct {
 	Tstamp    pgtype.Timestamp
 }
 
+type HostingAutomationCredential struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	SiteID     pgtype.UUID
+	TokenHash  []byte
+	Label      string
+	Operations []string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+type HostingCiRun struct {
+	SiteID           pgtype.UUID
+	ID               pgtype.UUID
+	ReleaseID        pgtype.UUID
+	PreviewID        pgtype.UUID
+	PreviewCreated   bool
+	Fingerprint      string
+	CreatedAt        pgtype.Timestamptz
+	PreviewExpiresAt pgtype.Timestamptz
+}
+
 type HostingDomain struct {
 	ID                  pgtype.UUID
 	AccountID           pgtype.UUID

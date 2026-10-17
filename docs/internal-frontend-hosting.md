@@ -425,3 +425,5 @@ commands. Its relay requires a separate default-off bootstrap opt-in.
 Private immutable URLs for staged releases are documented in the [preview guide](internal-frontend-hosting-previews.md). They require separate default-off opt-ins.
 
 The [release source and history guide](internal-frontend-hosting-history.md) explains optional caller-provided source labels and bounded accepted-promotion history, behind a separate default-off opt-in.
+
+The [CI automation guide](internal-frontend-hosting-automation.md) covers site-scoped credentials, retained run identities and a default-off GitHub Action that stages prebuilt files into private previews.

@@ -69,6 +69,14 @@ func failure(w http.ResponseWriter, err error) {
 		var quota *state.HostingQuotaError
 		if errors.As(err, &quota) {
 			p.Limit, p.Observed = &quota.Limit, &quota.Observed
+			if quota.Resource == "automation_credentials" {
+				p.Code = "hosting_automation_credential_quota_exceeded"
+				p.Detail = "revoke unused site automation credentials before issuing another"
+			}
+			if quota.Resource == "ci_runs" {
+				p.Code = "hosting_ci_run_quota_exceeded"
+				p.Detail = "this internal site has reached its retained CI intent limit; retry an existing run or review the pilot lifecycle with an operator"
+			}
 			if quota.Resource == "previews" {
 				p.Code = "hosting_preview_quota_exceeded"
 				p.Detail = "revoke unused previews and wait for safe cleanup before creating another"

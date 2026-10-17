@@ -42,7 +42,7 @@ run "disabled_defaults" {
     error_message = "Automatic expiration must never apply to published artifacts."
   }
   assert {
-    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_ENABLED == "0"
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_ENABLED == "0" && output.apid_environment.FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED == "0"
     error_message = "Bootstrap output must leave API admission disabled."
   }
   assert {

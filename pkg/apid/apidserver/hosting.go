@@ -189,3 +189,11 @@ func (h hostingHost) HostingHistoryStore() state.HostingHistoryStore {
 	store, _ := h.s.store.(state.HostingHistoryStore)
 	return store
 }
+
+func (h hostingHost) HostingAutomationEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingAutomation, false)
+}
+func (h hostingHost) HostingAutomationStore() state.HostingAutomationStore {
+	store, _ := h.s.store.(state.HostingAutomationStore)
+	return store
+}

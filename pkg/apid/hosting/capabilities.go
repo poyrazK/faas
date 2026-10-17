@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state.Account) {
+func (s Service) Capabilities(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.guard(w, acct) {
 		return
 	}
@@ -30,6 +30,11 @@ func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 		StorageTimeoutSeconds:  int(api.HostingStorageTimeout / time.Second),
 		FinalizeTimeoutSeconds: int(api.HostingFinalizeTimeout / time.Second),
 	}
+	s.extendCapabilities(r, &out)
+	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+func (s Service) extendCapabilities(r *http.Request, out *api.HostingCapabilities) {
 	if h, ok := s.Host.(AnalyticsHost); ok && h.HostingAnalyticsEnabled() && h.HostingTrafficReader() != nil {
 		out.AnalyticsEnabled = true
 	}
@@ -54,5 +59,14 @@ func (s Service) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 		out.ProvenanceBranchMaxBytes = api.HostingProvenanceBranchMaxBytes
 		out.ProvenanceDescriptionMaxBytes = api.HostingProvenanceDescriptionMaxBytes
 	}
-	httpkit.WriteJSON(w, http.StatusOK, out)
+	if h, ok := s.Host.(AutomationHost); ok && h.HostingAutomationEnabled() && h.HostingAutomationStore() != nil {
+		out.AutomationEnabled = true
+		out.AutomationCredentialsPerSite = api.HostingAutomationCredentialsPerSite
+		out.AutomationTTLMaxSeconds = int64(api.HostingAutomationTTLMax / time.Second)
+		out.CIRunsPerSite = api.HostingCIRunsPerSite
+	}
+	if principal, ok := httpkit.PrincipalFrom(r); ok && principal.Key != nil && principal.Key.HostingSiteID != "" {
+		out.AutomationSiteID = principal.Key.HostingSiteID
+		out.AutomationOperations = append([]string(nil), principal.Key.HostingOperations...)
+	}
 }

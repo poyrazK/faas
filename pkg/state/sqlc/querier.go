@@ -1378,6 +1378,16 @@ type Querier interface {
 	HoldProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg HoldProjectEnvironmentCloneConfigurationParams) (ProjectEnvironmentCloneConfigurationGuard, error)
 	HostingAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	HostingAccountUsage(ctx context.Context, db DBTX, arg HostingAccountUsageParams) (HostingAccountUsageRow, error)
+	HostingCIRunCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCIRunCreateParams) (HostingCiRun, error)
+	HostingCIRunGet(ctx context.Context, db DBTX, arg HostingCIRunGetParams) (HostingCiRun, error)
+	HostingCIRunPreviewCreated(ctx context.Context, db DBTX, arg HostingCIRunPreviewCreatedParams) error
+	HostingCredentialAuthenticate(ctx context.Context, db DBTX, tokenHash []byte) (HostingAutomationCredential, error)
+	HostingCredentialCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingCredentialCreate(ctx context.Context, db DBTX, arg HostingCredentialCreateParams) (HostingAutomationCredential, error)
+	HostingCredentialList(ctx context.Context, db DBTX, arg HostingCredentialListParams) ([]HostingAutomationCredential, error)
+	HostingCredentialPruneExpired(ctx context.Context, db DBTX, siteID pgtype.UUID) error
+	HostingCredentialRevoke(ctx context.Context, db DBTX, arg HostingCredentialRevokeParams) (int64, error)
 	HostingDomainAck(ctx context.Context, db DBTX, arg HostingDomainAckParams) (int64, error)
 	HostingDomainClaim(ctx context.Context, db DBTX, arg HostingDomainClaimParams) ([]HostingDomain, error)
 	HostingDomainCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)

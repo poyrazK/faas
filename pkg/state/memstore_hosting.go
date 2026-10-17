@@ -105,6 +105,9 @@ func (m *MemStore) CreateHostingReleaseWithProvenance(_ context.Context, account
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createHostingReleaseLocked(account, site, manifest, provenance)
+}
+func (m *MemStore) createHostingReleaseLocked(account, site string, manifest api.HostingManifest, provenance *api.HostingReleaseProvenance) (api.HostingRelease, error) {
 	s, ok := m.hostingSites[site]
 	if !ok || s.AccountID != account {
 		return api.HostingRelease{}, ErrNotFound
@@ -339,6 +342,16 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 	for id, r := range m.hostingReleases {
 		if r.SiteID == site {
 			delete(m.hostingReleases, id)
+		}
+	}
+	for id, c := range m.hostingCredentials {
+		if c.SiteID == site {
+			delete(m.hostingCredentials, id)
+		}
+	}
+	for key, run := range m.hostingCIRuns {
+		if run.SiteID == site {
+			delete(m.hostingCIRuns, key)
 		}
 	}
 	delete(m.hostingHistory, site)

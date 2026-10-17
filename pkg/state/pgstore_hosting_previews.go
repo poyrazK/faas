@@ -25,6 +25,13 @@ func (s *PgStore) CreateHostingPreview(ctx context.Context, p api.HostingPreview
 		return api.HostingPreview{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	out, err := s.createHostingPreviewTx(ctx, tx, p)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+func (s *PgStore) createHostingPreviewTx(ctx context.Context, tx pgx.Tx, p api.HostingPreview) (api.HostingPreview, error) {
 	q := sqlc.New()
 	a, _ := parsePgUUID(p.AccountID)
 	si, _ := parsePgUUID(p.SiteID)
@@ -55,7 +62,7 @@ func (s *PgStore) CreateHostingPreview(ctx context.Context, p api.HostingPreview
 	if err != nil {
 		return api.HostingPreview{}, hostingStoreError(err)
 	}
-	return hostingPreviewRow(row), tx.Commit(ctx)
+	return hostingPreviewRow(row), nil
 }
 func (s *PgStore) ListHostingPreviews(ctx context.Context, account, site string) ([]api.HostingPreview, error) {
 	if _, err := s.GetHostingSite(ctx, account, site); err != nil {

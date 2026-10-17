@@ -11342,3 +11342,17 @@ const (
 )
 
 const HostingReleaseRequestMaxBytes = HostingManifestMaxBytes + HostingProvenanceMaxBytes
+
+// Internal site-scoped automation; credentials and run identity ledgers are bounded.
+const (
+	HostingAutomationCredentialsPerSite = 16
+	HostingAutomationLabelMaxBytes      = 64
+	HostingAutomationTTLDefault         = 24 * time.Hour
+	HostingAutomationTTLMin             = 5 * time.Minute
+	HostingAutomationTTLMax             = 30 * 24 * time.Hour
+	HostingCIRunsPerSite                = 1000
+	HostingCIWaitDefault                = 2 * time.Minute
+	HostingCIWaitMax                    = 10 * time.Minute
+)
+
+const HostingCIWorkflowTimeout = 20 * time.Minute

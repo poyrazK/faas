@@ -17,6 +17,9 @@ func (m *MemStore) CreateHostingPreview(_ context.Context, p api.HostingPreview)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createHostingPreviewLocked(p)
+}
+func (m *MemStore) createHostingPreviewLocked(p api.HostingPreview) (api.HostingPreview, error) {
 	s := m.hostingSites[p.SiteID]
 	r := m.hostingReleases[p.ReleaseID]
 	if s.AccountID != p.AccountID {

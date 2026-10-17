@@ -151,6 +151,14 @@ func (s *PgStore) CreateHostingReleaseWithProvenance(ctx context.Context, accoun
 		return api.HostingRelease{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	out, err := s.createHostingReleaseTx(ctx, tx, account, site, manifest, provenance)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+func (s *PgStore) createHostingReleaseTx(ctx context.Context, tx pgx.Tx, account, site string, manifest api.HostingManifest, provenance *api.HostingReleaseProvenance) (api.HostingRelease, error) {
+	var err error
 	a, _ := parsePgUUID(account)
 	i, idErr := parsePgUUID(site)
 	if idErr != nil {
@@ -205,7 +213,7 @@ func (s *PgStore) CreateHostingReleaseWithProvenance(ctx context.Context, accoun
 	if err != nil {
 		return api.HostingRelease{}, err
 	}
-	return out, tx.Commit(ctx)
+	return out, nil
 }
 
 func (s *PgStore) GetHostingRelease(ctx context.Context, account, site, id string) (api.HostingRelease, error) {

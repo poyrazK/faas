@@ -19,6 +19,7 @@ type hostingTestStore interface {
 	state.Store
 	state.HostingStore
 	state.HostingDomainStore
+	state.HostingAutomationStore
 	state.HostingHistoryStore
 	state.HostingPreviewStore
 }
@@ -46,6 +47,8 @@ func TestHostingStores(t *testing.T) {
 			t.Run("pending_upload_usage", func(t *testing.T) { pendingUploadUsage(t, store) })
 			t.Run("account_storage_usage", func(t *testing.T) { accountStorageUsage(t, store) })
 			t.Run("staged_release_visibility", func(t *testing.T) { stagedReleaseVisibility(t, store) })
+			t.Run("automation_credentials", func(t *testing.T) { hostingCredentialLifecycle(t, store) })
+			t.Run("ci_run_identity", func(t *testing.T) { hostingCIRunLifecycle(t, store) })
 			t.Run("release_history", func(t *testing.T) { hostingHistoryLifecycle(t, store) })
 			t.Run("history_retention", func(t *testing.T) { hostingHistoryRetention(t, store) })
 			t.Run("private_previews", func(t *testing.T) { previewLifecycle(t, store) })
