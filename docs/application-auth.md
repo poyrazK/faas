@@ -42,14 +42,14 @@ Verify the tokens wherever they are used:
   then write row-level security policies (see below).
 - **Edge JWT rules:** `gregale edge-rules create --app APP --kind jwt
   --match-host HOST --jwt-auth shop-auth` requires a valid token on a route.
-- **Your own backend:** the Go and Python SDKs (see below).
+- **Your own backend:** the Go, Python and Node SDKs (see below).
 
 Sign-out and bans end refresh immediately. A token already issued stays valid
 for edge-only checks until it expires, at most 600 seconds later.
 
 ### In your backend
 
-The Go and Python SDKs check a token's ES256 signature against the Auth app's
+The Go, Python and Node SDKs check a token's ES256 signature against the Auth app's
 published keys, its issuer (`https://<auth-host>/auth/v1`), its audience
 (`authenticated`) and its expiry, allowing 60 seconds of clock skew. They cache
 the keys for five minutes and refetch at most every 30 seconds when a token
@@ -94,6 +94,26 @@ async def current_user(authorization: str | None = Header(None)):
 ```
 
 `verify` and `authorize` are the synchronous forms for Flask or Django.
+
+Node, Deno, Bun and edge runtimes (`@gregale/auth/server`, WebCrypto only):
+
+```ts
+import { createVerifier, bearerToken, resource, AuthError } from '@gregale/auth/server'
+
+const auth = createVerifier({ url: 'https://shop-auth.gregale.app' })
+
+export async function handler(request: Request) {
+  try {
+    const token = bearerToken(request.headers.get('authorization'))
+    const claims = await auth.verify(token) // claims.sub is the user ID
+    if (!(await auth.authorize(token, 'read', resource(orgId, 'doc', docId)))) return new Response(null, { status: 403 })
+    // ...
+  } catch (err) {
+    if (err instanceof AuthError) return new Response(null, { status: err.status }) // 401, or 503 when the keys cannot be fetched
+    throw err
+  }
+}
+```
 
 ## Your data
 
