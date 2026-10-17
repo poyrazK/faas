@@ -3421,6 +3421,14 @@ type Querier interface {
 	ObjectMultipartTransfersPending(ctx context.Context, db DBTX, uploadID pgtype.UUID) (bool, error)
 	ObjectMultipartURLPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartURLPartBeginParams) error
 	ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error
+	ObjectNodeSettlementClaim(ctx context.Context, db DBTX, arg ObjectNodeSettlementClaimParams) ([]ObjectNodeSettlementOutbox, error)
+	ObjectNodeSettlementDiscard(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	ObjectNodeSettlementEnroll(ctx context.Context, db DBTX, arg ObjectNodeSettlementEnrollParams) (int64, error)
+	ObjectNodeSettlementFinish(ctx context.Context, db DBTX, arg ObjectNodeSettlementFinishParams) (int64, error)
+	ObjectNodeSettlementLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNodeSettlementOutbox, error)
+	ObjectNodeSettlementReady(ctx context.Context, db DBTX, arg ObjectNodeSettlementReadyParams) (int64, error)
+	ObjectNodeSettlementRetry(ctx context.Context, db DBTX, arg ObjectNodeSettlementRetryParams) (int64, error)
+	ObjectNodeSettlementStats(ctx context.Context, db DBTX) (ObjectNodeSettlementStatsRow, error)
 	ObjectNotificationInvocationExisting(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNotificationInvocationExistingRow, error)
 	ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error
 	ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
