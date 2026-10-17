@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
+
 - [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
 
 - [Bounded Node acknowledgment intent recovery passes](20261017171806-bounded-node-intent-recovery.md)

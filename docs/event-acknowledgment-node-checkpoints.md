@@ -6,6 +6,9 @@ notification attempt, replay its pending notifications after a crash, and use ea
 stable incident/sequence pair for downstream deduplication. Persistence and delivery
 remain application-owned. The existing non-checkpointed watch keeps its behavior.
 
+Go provides a [checkpointed watch](event-acknowledgment-go-checkpoints.md) with
+typed metadata and context cancellation; its checkpoint kind is distinct.
+
 ## Start or resume
 
 ```js

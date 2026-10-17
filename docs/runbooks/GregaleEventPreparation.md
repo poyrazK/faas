@@ -45,6 +45,11 @@ admission model with `database/sql`, joined context cancellation and scalar
 progress. Preserve committed unconfirmed settlements and check unknown-commit
 sentinels before cancellation or ordinary failures.
 
+For Go recovery alert continuity across restarts, use the
+[checkpointed watch](../event-acknowledgment-go-checkpoints.md) from an available
+monitoring host. Preserve pending notifications and unresolved incident identity;
+persist atomically before delivery and require fresh sustained proof after resume.
+
 | Operation | Node | Python |
 | --- | --- | --- |
 | Read receipt/claim metadata | [`inspectEventConsumerProcessing`](../event-consumer-processing-inspection.md) | [`ainspect_event_consumer_processing`](../event-consumer-processing-inspection.md#python-inspection) |

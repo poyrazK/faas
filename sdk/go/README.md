@@ -1426,6 +1426,11 @@ errors. It preserves committed settlements even when their callbacks return
 uncertainty. See the [Go recovery pass contract](../../docs/event-acknowledgment-go-recovery-pass.md)
 and [buildable host example](examples/event-acknowledgment-recovery/README.md).
 
+`WatchEventAcknowledgmentIntentHealthWithCheckpoint` retains stable incidents and
+pending lifecycle alerts in application-persisted metadata. It provides exact
+acknowledgments, fresh confirmation after resume and final state alongside context
+cancellation. See the [Go checkpoint contract](../../docs/event-acknowledgment-go-checkpoints.md).
+
 For application event publication, `SaveEventOutbox` stages a producer-key request
 in the business transaction; `RecoverNextEventOutbox` publishes retained due work
 with leased recovery. Install the application-owned `EventOutboxSchema` explicitly.

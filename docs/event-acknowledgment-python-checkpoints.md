@@ -7,6 +7,9 @@ after a crash, and deduplicate downstream delivery by owner/incident/sequence.
 Storage, fencing and notification delivery remain application-owned. The ordinary
 watch retains its existing in-memory behavior.
 
+Go provides a [checkpointed watch](event-acknowledgment-go-checkpoints.md) with
+typed metadata and context cancellation; its checkpoint kind is distinct.
+
 ## Start or resume
 
 ```python

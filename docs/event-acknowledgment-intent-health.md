@@ -206,8 +206,8 @@ sequentially. Slow callbacks delay polling and can invalidate continuity. The
 caller owns cancellation and application lifetime; cancellation returns the
 context error or abort reason without resolving alerts. Alert state is
 in memory and resets on restart. There is no notification transport, durable
-incident identity, checkpoint, or alert outbox. Applications needing those
-properties must provide them separately.
+incident identity, checkpoint, or alert outbox in these ordinary watches. For
+application-persisted state, use the opt-in checkpointed watches below.
 
 ## Node watch
 
@@ -408,6 +408,15 @@ and incident identity remain application-owned. See the
 [Python watch example](../examples/event-acknowledgment-python/README.md#watch-sustained-recovery-conditions).
 Local build/generation/static evidence does not replace hosted database timing,
 cancellation, connection-replacement and notification qualification before release.
+
+## Checkpointed Go watch
+
+For stable unresolved incidents and replayable lifecycle notifications, use the
+opt-in [Go checkpointed watch](event-acknowledgment-go-checkpoints.md). It returns
+detached final state alongside context cancellation, with pure validation/exact
+acknowledgment helpers. Applications atomically persist before notifying and fence
+one writer. Resume requires fresh sustained evidence; missing observations never
+resolve incidents. The ordinary Go watch keeps its in-memory behavior.
 
 ## Checkpointed Python watch
 
