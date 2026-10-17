@@ -262,6 +262,64 @@ func resourceHook(f *backgroundFunction, path, kind string) int {
 	return rec.Code
 }
 
+func TestFunctionResourcesRecoveryWaitsForEveryProbe(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run("probe-fails="+strconv.FormatBool(fail), func(t *testing.T) {
+			witness, drain := filepath.Join(t.TempDir(), "events"), filepath.Join(t.TempDir(), "drain")
+			gate := filepath.Join(t.TempDir(), "probes")
+			if err := os.WriteFile(drain, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			source := strings.Replace(functionResourceFixture, "if(text==='SELECT 1')record('probe',this.id);", `if(text==='SELECT 1'){
+ record('probing',this.id);
+ if(process.env.PROBE_FAIL==='true'&&this.id===3)throw new Error('private-probe-failure');
+ while(!existsSync(process.env.PROBE_GATE))await new Promise(resolve=>setTimeout(resolve,5));
+ record('probe',this.id);
+}`, 1) + backgroundFunctionSource
+			host := &executionWireHost{}
+			f := startBackgroundFunction(t, api.PlanFree, 1, false, source, 0, executionWiring(host), resourceFixtureEnv(t, witness, drain), func(cfg *ServeConfig) {
+				cfg.Spec.Env = append(cfg.Spec.Env, "PROBE_GATE="+gate, "PROBE_FAIL="+strconv.FormatBool(fail))
+			})
+			for n := range 4 {
+				f.get(t, "/tail?mode=file", "held-"+strconv.Itoa(n))
+			}
+			if err := os.WriteFile(f.release, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			awaitBackground(t, func() bool { return host.count() == 0 })
+			if resourceHook(f, functionlifetime.BeforeResourcePath, "before_checkpoint") != 204 {
+				t.Fatal("checkpoint failed")
+			}
+			reply := make(chan int, 1)
+			go func() { reply <- resourceHook(f, functionlifetime.AfterResourcePath, "after_restore") }()
+			awaitBackground(t, func() bool {
+				data, _ := os.ReadFile(witness)
+				return strings.Count(string(data), ":probing:") == 8
+			})
+			select {
+			case <-reply:
+				t.Fatal("recovery returned while a neighbouring pool probe was unfinished")
+			default:
+			}
+			if err := os.WriteFile(gate, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case status := <-reply:
+				want := 204
+				if fail {
+					want = 503
+				}
+				if status != want {
+					t.Fatalf("probe result=%d want=%d", status, want)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("recovery did not finish after probes settled")
+			}
+		})
+	}
+}
+
 const functionResourceFixture = `import {EventEmitter} from 'node:events';
 import {appendFileSync,existsSync} from 'node:fs';
 import {createPostgresPool} from './database-runtime.js';

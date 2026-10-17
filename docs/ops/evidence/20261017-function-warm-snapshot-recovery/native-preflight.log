@@ -1,0 +1,2 @@
+requires root on the isolated native KVM acceptance host
+make: *** [Makefile:470: test-function-background-native] Error 1

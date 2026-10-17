@@ -94,42 +94,70 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 		t.Fatal("SQL work did not occupy three interpreters")
 	}
 	awaitBackground(t, func() bool { _, blocked := sql.Connections(t.Context(), t); return blocked == 3 })
-	get("/state", 200) // populate the fourth interpreter and both its pools
+	pids[get("/state", 200)] = true // populate the fourth interpreter and both its pools
+	if len(pids) != 4 {
+		t.Fatal("SQL fixture did not load four interpreters")
+	}
 	awaitBackground(t, func() bool { all, _ := sql.Connections(t.Context(), t); return all == 8 && host.count() == 3 })
 	if err := lock.Rollback(t.Context()); err != nil {
 		t.Fatal("release independent SQL lock")
 	}
 	awaitBackground(t, func() bool { return host.count() == 0 && len(sql.Rows(t.Context(), t)) == 3 })
-	control.Arm()
-	callback := make(chan int, 1)
-	go func() {
-		f := &backgroundFunction{cfg: cfg}
-		callback <- resourceHook(f, functionlifetime.BeforeResourcePath, "before_checkpoint")
-	}()
-	awaitBackground(t, func() bool { all, _ := sql.Connections(t.Context(), t); return control.Arrivals() == 4 && all == 0 })
-	select {
-	case <-callback:
-		t.Fatal("checkpoint acknowledged before control released")
-	default:
-	}
-	if host.count() != 1 {
-		t.Fatal("SQL checkpoint lost host execution ownership")
-	}
-	control.Release()
-	select {
-	case status := <-callback:
-		if status != 204 {
-			t.Fatal("SQL checkpoint failed")
+	// Model repeated continuing-VM captures: the same four interpreters must
+	// drain and rebuild twice. Native snapshot bytes are a separate gate.
+	for range 2 {
+		control.Arm()
+		control.ArmRecovery()
+		callback := make(chan int, 1)
+		go func() {
+			f := &backgroundFunction{cfg: cfg}
+			callback <- resourceHook(f, functionlifetime.BeforeResourcePath, "before_checkpoint")
+		}()
+		awaitBackground(t, func() bool { all, _ := sql.Connections(t.Context(), t); return control.Arrivals() == 4 && all == 0 })
+		select {
+		case <-callback:
+			t.Fatal("checkpoint acknowledged before control released")
+		default:
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("SQL checkpoint did not finish")
-	}
-	if status := resourceHook(&backgroundFunction{cfg: cfg}, functionlifetime.AfterResourcePath, "after_restore"); status != 204 {
-		t.Fatal("SQL restore failed")
-	}
-	awaitBackground(t, func() bool { all, _ := sql.Connections(t.Context(), t); return all == 8 })
-	if len(sql.Rows(t.Context(), t)) != 3 {
-		t.Fatal("SQL restore lost or replayed a mutation")
+		if host.count() != 1 {
+			t.Fatal("SQL checkpoint lost host execution ownership")
+		}
+		control.ReleaseCheckpoint()
+		select {
+		case status := <-callback:
+			if status != 204 {
+				t.Fatal("SQL checkpoint failed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("SQL checkpoint did not finish")
+		}
+		go func() {
+			callback <- resourceHook(&backgroundFunction{cfg: cfg}, functionlifetime.AfterResourcePath, "after_restore")
+		}()
+		awaitBackground(t, func() bool {
+			all, _ := sql.Connections(t.Context(), t)
+			return control.RecoveryArrivals() == 4 && all == 8
+		})
+		select {
+		case <-callback:
+			t.Fatal("recovery acknowledged before every worker completed")
+		default:
+		}
+		control.Release()
+		select {
+		case status := <-callback:
+			if status != 204 {
+				t.Fatal("SQL recovery failed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("SQL recovery did not finish")
+		}
+		if len(sql.Rows(t.Context(), t)) != 3 {
+			t.Fatal("SQL recovery lost or replayed a mutation")
+		}
+		if !pids[get("/state", 200)] {
+			t.Fatal("continuing recovery replaced a loaded interpreter")
+		}
 	}
 	// A real worker exit rolls back its blocked transaction; it is never replayed.
 	crashLock := sql.Lock(t.Context(), t)

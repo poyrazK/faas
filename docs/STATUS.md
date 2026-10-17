@@ -7,6 +7,19 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Node function warm-snapshot recovery — 2026-10-17
+
+[ADR-1349](adr/1349-function-warm-snapshot-resource-recovery.md) adds qualified
+warm capture with PostgreSQL drainage, paused publication and all-worker recovery
+before the original VM admits traffic. Cancelled/failed capture also recovers;
+unconfirmed recovery seals admission and retires the original physical VM.
+Measured checkpoint authority is explicit, and schedd checks idleness again
+before terminal park or snapshot-reuse destruction. Migration remains refused.
+Portable host race and real TLS/SCRAM SQL tests pass on Node 22/24; see the
+[evidence](ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
+This is local implementation evidence. Native KVM/vsock and recovery
+qualification remain pending, and ordinary production builds keep activation off.
+
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
 - **Image runs.** [ADR-1161](adr/1161-image-runs.md) `gregale run --image` (#4663),

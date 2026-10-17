@@ -1,0 +1,6 @@
+adr-number-uniqueness: OK — 1331 ADRs, 1127 distinct numbers, 164 pre-existing duplicates held at the baseline
+text-encoding-check: clean
+shell-quoting-check: clean
+sealed-env-scope-check: OK (only faas-apid.service loads sealed.env)
+runbook SQL gate: no mutating SQL outside docs/break-glass/
+Existing Go security rules: all 32 retained

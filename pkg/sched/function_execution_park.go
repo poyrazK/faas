@@ -10,7 +10,8 @@ import (
 
 // Freeze is the existing owner-mediated idle admission barrier. Establish it
 // before dropping scheduler concurrency or taking a reuse/destroy shortcut.
-// The qualified vmmd resumes it only under its terminal capture flight.
+// The qualified vmmd resumes it only under a capture flight. Warm capture
+// recovers and releases admission, so its caller must freeze again before park.
 func (e *Engine) freezeFunctionForPark(ctx context.Context, ins state.Instance) (func(), error) {
 	frozen, ok := e.vmm.(FrozenVMM)
 	if !ok {

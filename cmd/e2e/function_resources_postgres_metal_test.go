@@ -5,13 +5,16 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/netip"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
@@ -27,6 +30,16 @@ import (
 // killing the VM after capture cannot masquerade as pool drainage.
 func TestFunctionResourcesPostgresMetal(t *testing.T) {
 	requireFunctionBackgroundNative(t)
+	for _, runtime := range []string{"node22", "node24"} {
+		t.Run(runtime, func(t *testing.T) { runFunctionResourcesPostgresMetal(t, runtime) })
+	}
+}
+
+func runFunctionResourcesPostgresMetal(t *testing.T, runtime string) {
+	runner := os.Getenv("FAAS_E2E_FUNCTION_RUNNER_" + strings.ToUpper(runtime))
+	if info, err := os.Stat(runner); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		t.Fatal("requires the current qualified runner for " + runtime)
+	}
 	ip, err := netip.ParseAddr(os.Getenv("GREGALE_POSTGRES_NATIVE_SQL_IP"))
 	if err != nil || !ip.Is4() || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
 		t.Fatal("requires the prepared isolated SQL acceptance interface")
@@ -47,11 +60,11 @@ func TestFunctionResourcesPostgresMetal(t *testing.T) {
 	control := functionsql.NewControl(t, ip.String())
 	defer control.Release()
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
-	h := e2etest.Start(t, catalog, e2etest.All, append(secretSealingEnv(t), "FAAS_FUNCTION_RUNNER_NODE22="+os.Getenv("FAAS_E2E_FUNCTION_RUNNER_NODE22"))...)
+	h := e2etest.Start(t, catalog, e2etest.All, append(secretSealingEnv(t), "FAAS_FUNCTION_RUNNER_"+strings.ToUpper(runtime)+"="+runner)...)
 	key := h.SeedAccount(t.Context(), api.PlanPro)
 	slug := "pool-" + randHexSuffix()
 	public := false
-	if status := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "function", Runtime: "node22", RequireAuthn: &public, FunctionConcurrency: 1}); status != http.StatusCreated {
+	if status := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "function", Runtime: runtime, RequireAuthn: &public, FunctionConcurrency: 1}); status != http.StatusCreated {
 		t.Fatal("create native SQL function")
 	}
 	appID := mustGetAppID(t, h, key, slug)
@@ -93,7 +106,7 @@ func TestFunctionResourcesPostgresMetal(t *testing.T) {
 	}
 	files := functionsql.Files(t)
 	files["sql-ca.pem"] = string(ca)
-	body, status := postBinaryFunctionDeployment(t, h, key, slug, buildTarGz(t, files), "node22", "handler.handler")
+	body, status := postBinaryFunctionDeployment(t, h, key, slug, buildTarGz(t, files), runtime, "handler.handler")
 	if status != http.StatusAccepted {
 		t.Fatal("deploy native SQL function")
 	}
@@ -164,6 +177,46 @@ func TestFunctionResourcesPostgresMetal(t *testing.T) {
 	}
 	backgroundNativeWait(t, ctx, func() bool { return len(sql.Rows(ctx, t)) == 3 && nativeSQLIdle(ctx, vmm, ins.ID) })
 	backgroundNativeWait(t, ctx, func() bool { all, _ := sql.Connections(ctx, t); return all == 8 })
+	// Capture a warm artifact while retaining the original physical VM. The
+	// independent peer holds both ends of the lifecycle; SQL sessions must
+	// vanish before capture and return before the final recovery ACK.
+	control.Arm()
+	control.ArmRecovery()
+	warmed := make(chan error, 1)
+	go func() { warmed <- captureNativeSQLWarm(ctx, store, vmm, ins) }()
+	backgroundNativeWait(t, ctx, func() bool {
+		all, _ := sql.Connections(ctx, t)
+		return control.Arrivals() == 4 && all == 0 && proxy.ConnectionCount() == 0
+	})
+	select {
+	case err := <-warmed:
+		t.Fatal("warm capture returned before drainage witness", err)
+	default:
+	}
+	control.ReleaseCheckpoint()
+	backgroundNativeWait(t, ctx, func() bool {
+		all, _ := sql.Connections(ctx, t)
+		return control.RecoveryArrivals() == 4 && all == 8
+	})
+	select {
+	case err := <-warmed:
+		t.Fatal("warm capture returned before recovery ACK", err)
+	default:
+	}
+	control.Release()
+	select {
+	case err := <-warmed:
+		if err != nil {
+			t.Fatal("native SQL warm capture/recovery failed", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("native SQL warm capture did not finish")
+	}
+	continued := get("state", 200, "")
+	requireNativeSQLGeneration(t, baseline[continued.PID], continued, 1)
+	if len(sql.Rows(ctx, t)) != 3 {
+		t.Fatal("continuing warm recovery lost or replayed SQL")
+	}
 	if err := store.MarkSnapshotStale(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +243,7 @@ func TestFunctionResourcesPostgresMetal(t *testing.T) {
 	}
 	_ = waitAfterRestoreSnapshot(t, store, depID, snapshot)
 	restored := get("state", 200, "restore")
-	requireNativeSQLGeneration(t, baseline[restored.PID], restored, 1)
+	requireNativeSQLGeneration(t, baseline[restored.PID], restored, 2)
 	backgroundNativeWait(t, ctx, func() bool { all, _ := sql.Connections(ctx, t); return all == 8 })
 	if len(sql.Rows(ctx, t)) != 3 {
 		t.Fatal("restore lost or replayed SQL")
@@ -209,7 +262,7 @@ func TestFunctionResourcesPostgresMetal(t *testing.T) {
 		t.Fatal(err)
 	}
 	thawed := get("state", 200, "")
-	requireNativeSQLGeneration(t, baseline[thawed.PID], thawed, 2)
+	requireNativeSQLGeneration(t, baseline[thawed.PID], thawed, 3)
 	backgroundNativeWait(t, ctx, func() bool { all, _ := sql.Connections(ctx, t); return all == 8 })
 	// Both death paths run real SQL held behind an independent lock. A
 	// successful replacement must never resubmit the interrupted mutation.
@@ -237,6 +290,46 @@ func TestFunctionResourcesPostgresMetal(t *testing.T) {
 			t.Fatal("native recovery replayed an interrupted SQL mutation")
 		}
 	}
+}
+
+// Use fresh owner-issued capture authority for measured runtimes. The legacy
+// fixture path still lets the qualified host impose mandatory pool drainage.
+func captureNativeSQLWarm(ctx context.Context, store *state.PgStore, vmm *sched.VMMClient, ins state.Instance) error {
+	key := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
+	stateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})
+	admission, err := store.GetInstanceApplicationStandardAdmission(ctx, ins.ID)
+	if err != nil {
+		return err
+	}
+	if !admission.Managed {
+		captured, err := vmm.WarmSnapshot(ctx, ins.ID, key, stateKey)
+		return checkNativeSQLWarmCapture(captured, err)
+	}
+	snapshot, err := store.LatestSnapshot(ctx, ins.DeploymentID)
+	if err != nil {
+		return err
+	}
+	token, _ := state.SnapshotCaptureToken(key)
+	grant, err := store.IssueApplicationStandardSnapshotCapture(ctx, string(state.StateRunning), state.ApplicationStandardSnapshotCaptureRequest{
+		Token: token, InstanceID: ins.ID, MemoryKey: key, VMStateKey: stateKey,
+		PrivateDriveKey: state.SnapshotDriveKey(state.Snapshot{StorageKey: key}), FCVersion: snapshot.FCVersion,
+		Mode: "warm", BeforeCheckpoint: true, SourceStartedAtUnixNano: ins.StartedAt.UnixNano(),
+	})
+	if err != nil {
+		return err
+	}
+	captured, _, err := vmm.CaptureAdmittedRuntime(ctx, grant)
+	return checkNativeSQLWarmCapture(captured, err)
+}
+
+func checkNativeSQLWarmCapture(captured sched.SnapshotBytes, err error) error {
+	if err != nil {
+		return err
+	}
+	if captured.MemBytes <= 0 || captured.VMStateBytes <= 0 {
+		return errors.New("native SQL warm capture omitted snapshot artifacts")
+	}
+	return nil
 }
 
 type nativeSQLReply struct {

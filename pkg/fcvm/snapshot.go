@@ -267,11 +267,12 @@ type SnapshotSpec struct {
 	// ResumeBeforePublish is set only by the warm-snapshot path. Once
 	// Firecracker has atomically created the local snapshot files, resume
 	// the guest before slower shared-storage uploads so ordinary traffic is
-	// paused for snapshot creation rather than registry latency. Migration
-	// and terminal park captures leave this false and remain paused.
+	// paused for snapshot creation rather than registry latency. Qualified
+	// Node resource recovery, migration and terminal park leave this false.
 	ResumeBeforePublish bool
-	// BeforeCheckpoint requests the guest-local callback for a new terminal
-	// init capture. Warm and migration captures must leave this false.
+	// BeforeCheckpoint requests the guest-local callback before capture.
+	// Qualified Node warm captures recover resources under the same flight;
+	// ordinary warm and all migration captures must leave this false.
 	BeforeCheckpoint bool
 }
 

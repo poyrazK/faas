@@ -5497,7 +5497,7 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
 func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
+	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotTerminal)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
 	}
@@ -5551,26 +5551,47 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 //  4. Return the SnapshotInfo the engine writes into the snapshots
 //     row (tier='warm').
 //
-// Failure path: any error from SnapshotKeepAlive OR ResumeVM is
+// Qualified Node capture instead keeps the guest paused through publication,
+// then recovers all workers' resources under this flight. Failed or cancelled
+// captures also recover; unconfirmed recovery seals admission and retires the
+// physical VM (ADR-1349).
+//
+// Ordinary failure path: any error from SnapshotKeepAlive OR ResumeVM is
 // surfaced as-is. The engine's captureWarmSnapshotLocked decides
 // whether to Destroy the VM and skip the init-tier capture (the
 // locked decision in PR-A: yes, destroy on warm failure). The
 // Manager itself does NOT touch m.live on the error path — the
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
-func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, true)
+func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotWarm)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
 	}
-	defer m.finishInstanceFlight(instance, flight)
+	retire := false
+	defer func() {
+		if retire {
+			m.failFunctionResources(inst)
+		}
+		m.finishInstanceFlight(instance, flight)
+		// CaptureAdmitted owns an outer authority flight. It joins physical
+		// teardown only after ending that flight; retiring here would wait on
+		// our own caller. Failed execution admission stays sealed meanwhile.
+		if retire && spec.admittedGrant == nil {
+			retErr = errors.Join(retErr, m.retireFunctionExecutionOwner(context.WithoutCancel(ctx), inst))
+		}
+	}()
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, ErrInstanceFrozen)
 	}
-	info, err := m.warmSnapshotInstance(ctx, inst, spec)
+	if m.functionResourcesEnabled(inst) {
+		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
+	} else {
+		info, err = m.warmSnapshotInstance(ctx, inst, spec)
+	}
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
@@ -5659,7 +5680,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
-	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, true)
+	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotMigration)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
 	}

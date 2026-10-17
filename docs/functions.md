@@ -315,8 +315,10 @@ are preserved: before-checkpoint runs, including its response body cleanup,
 before pools drain; after-restore runs after fresh pools pass their read probes.
 The registry allows 16 pool owners per interpreter, independently of connection
 and plan limits. A timed-out close retains registration until actual drainage.
-Qualified warm/migration captures are refused until continuing the original VM
-after drainage has a recovery protocol. Automatic registration is off in normal
+Qualified warm captures hold admission through paused publication and a fresh
+all-worker recovery pass before the original VM continues serving. Failed or
+cancelled capture also recovers; an unconfirmed recovery retires that VM.
+Migration capture remains refused. Automatic registration is off in normal
 production adapters; native VM/SQL qualification remains pending.
 Automatic ownership requires the updated SDK runtime or regenerated bundled
 helper. Direct `pg.Pool` instances and older helper versions are not registered

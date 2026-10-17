@@ -148,12 +148,14 @@ const databases=[make(),make()];
 if(process.env.FUNCTION_SQL_CONTROL_URL){
  const bridge=globalThis[Symbol.for('gregale.function.postgres.lifecycle.v1')];
  if(!bridge)throw new Error('function resource bridge missing');
- bridge.register({async beforeCheckpoint({signal}){
-   const response=await fetch(process.env.FUNCTION_SQL_CONTROL_URL+'/checkpoint?pid='+process.pid,{
-     method:'POST',signal,headers:{authorization:'Bearer '+process.env.FUNCTION_SQL_CONTROL_TOKEN}
+ const barrier=async(phase,signal)=>{
+   const response=await fetch(process.env.FUNCTION_SQL_CONTROL_URL+'/'+phase+'?pid='+process.pid,{
+     method:'POST',signal,headers:{authorization:'Bearer '+process.env.FUNCTION_SQL_CONTROL_TOKEN,connection:'close'}
    });
-   if(response.status!==204)throw new Error('checkpoint control failed');
- },async afterRestore(){}});
+   await response.arrayBuffer();
+   if(response.status!==204)throw new Error('lifecycle control failed');
+ };
+ bridge.register({beforeCheckpoint:({signal})=>barrier('checkpoint',signal),afterRestore:({signal})=>barrier('recovery',signal)});
 }
 export async function handler(event,ctx){
  const parts=event.path.split('/');

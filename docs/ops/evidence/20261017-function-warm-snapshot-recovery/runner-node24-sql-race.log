@@ -1,0 +1,9 @@
+ok  	github.com/onebox-faas/faas/guest/runners/go124	1.074s
+ok  	github.com/onebox-faas/faas/guest/runners/internal	17.827s
+ok  	github.com/onebox-faas/faas/guest/runners/internal/runnerparity	2.106s
+ok  	github.com/onebox-faas/faas/guest/runners/internal/workerpool	5.218s
+ok  	github.com/onebox-faas/faas/guest/runners/node22	1.119s
+ok  	github.com/onebox-faas/faas/guest/runners/node24	1.118s
+ok  	github.com/onebox-faas/faas/guest/runners/python312	1.080s
+ok  	github.com/onebox-faas/faas/guest/runners/python313	1.081s
+ok  	github.com/onebox-faas/faas/pkg/rootfs	7.831s

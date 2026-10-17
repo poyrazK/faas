@@ -11,7 +11,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -26,23 +25,46 @@ type nativeSnapshotFlight struct {
 	parent  runtimeadmission.Receipt
 }
 
+type snapshotCaptureMode uint8
+
+const (
+	snapshotTerminal snapshotCaptureMode = iota
+	snapshotWarm
+	snapshotMigration
+)
+
 // Pin the live identity for teardown and bind capture authority before the VMM
 // can pause or publish it. Both admission checks use the cancellable flight.
-func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec, keepAlive ...bool) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
+func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec, mode snapshotCaptureMode) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
 	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {
+		if mode == snapshotWarm && errors.Is(err, ErrInstanceBusy) {
+			err = errors.Join(errWarmSnapshotAdmissionBusy, err)
+		}
 		return nil, nil, SnapshotSpec{}, nil, err
 	}
 	m.mu.Lock()
-	resources := m.functionActivity != nil && functionlifetime.NativeNode(inst.Runtime)
-	// This acceptance build supports automatic pool drainage for terminal capture.
-	busy := functionExecutionBusy(inst) || resources && (!spec.BeforeCheckpoint || slices.Contains(keepAlive, true))
-	if !busy {
+	resources := m.functionResourcesEnabled(inst)
+	// The legacy warm RPC has no callback flag. The qualified host requires
+	// drainage itself; measured captures must explicitly retain it in the grant.
+	if resources && mode == snapshotWarm && spec.admittedGrant == nil {
+		spec.BeforeCheckpoint = true
+	}
+	_, recoverable := m.vmm.(functionResourceRecoverer)
+	busy := functionExecutionBusy(inst) || resources && (!spec.BeforeCheckpoint || mode == snapshotMigration)
+	unsupported := resources && mode == snapshotWarm && !recoverable
+	if !busy && !unsupported {
 		flight.functionHookAdmission = spec.BeforeCheckpoint
 	}
 	m.mu.Unlock()
-	if busy {
+	if busy || unsupported {
 		m.finishInstanceFlight(instance, flight)
+		if unsupported && !busy {
+			return nil, nil, SnapshotSpec{}, nil, runtimeadmission.ErrUnavailable
+		}
+		if mode == snapshotWarm {
+			return nil, nil, SnapshotSpec{}, nil, errors.Join(errWarmSnapshotAdmissionBusy, ErrInstanceBusy)
+		}
 		return nil, nil, SnapshotSpec{}, nil, ErrInstanceBusy
 	}
 	// A qualified idle park first freezes the VM to close admission before

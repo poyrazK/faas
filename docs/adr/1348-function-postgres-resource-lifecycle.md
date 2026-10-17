@@ -62,8 +62,8 @@ caller omitted the optional flag. Admission remains governed by the existing
 host boot/capture flight and runner cleanup fence.
 
 The acceptance build supports terminal capture with the before-checkpoint flag.
-Idle warm and migration captures are refused too: continuing the original VM
-after draining its pools needs a separate post-capture recovery protocol. Existing
+ADR-1349 adds continuing-VM recovery for qualified warm captures; migration
+capture remains refused. Existing
 artifacts lacking the automatic hook manifest must be rebuilt; a qualified host
 does not infer successful drainage for an old artifact. Snapshot reuse still
 establishes idle admission before teardown through ADR-1347's freeze barrier.

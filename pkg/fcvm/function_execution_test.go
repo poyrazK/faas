@@ -37,19 +37,19 @@ func executionRequest(kind string, sequence uint64) functionlifetime.Request {
 func TestFunctionResourceCaptureAndThawGate(t *testing.T) {
 	m, _, _ := functionExecutionManager(t)
 	if functionlifetime.NativeNode("node22") {
-		for _, keepAlive := range []bool{false, true} {
+		for _, mode := range []snapshotCaptureMode{snapshotTerminal, snapshotMigration} {
 			for _, before := range []bool{false, true} {
-				if before && !keepAlive {
+				if before && mode == snapshotTerminal {
 					continue
 				}
-				_, _, _, _, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: before}, keepAlive)
+				_, _, _, _, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: before}, mode)
 				if !errors.Is(err, ErrInstanceBusy) {
-					t.Fatalf("capture before=%v keepAlive=%v: %v", before, keepAlive, err)
+					t.Fatalf("capture before=%v mode=%v: %v", before, mode, err)
 				}
 			}
 		}
 	}
-	_, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true})
+	_, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true}, snapshotTerminal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestFunctionExecutionBlocksEveryPausePath(t *testing.T) {
 	}
 	// Capture can resume a qualified pre-frozen function only while its
 	// original flight keeps ordinary execution registration closed.
-	ctx, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true})
+	ctx, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true}, snapshotTerminal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestFunctionExecutionBlocksEveryPausePath(t *testing.T) {
 
 func TestFunctionExecutionCheckpointHookAdmissionSealsAtomically(t *testing.T) {
 	m, lease, _ := functionExecutionManager(t)
-	_, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true})
+	_, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true}, snapshotTerminal)
 	if err != nil {
 		t.Fatal(err)
 	}

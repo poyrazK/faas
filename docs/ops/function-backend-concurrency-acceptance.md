@@ -176,7 +176,13 @@ drainage must therefore precede capture and VM destruction. After release, a rea
 snapshot restore must rebuild all eight sessions and retain exactly the committed
 rows. In-place thaw after proxy disconnection must replace the pools. Real worker
 and runner exits must fence ownership and recover without replaying interrupted
-SQL. No skipped phase qualifies. Node 24 native coverage remains outstanding.
+SQL. No skipped phase qualifies. The SQL target requires both Node 22 and 24
+runner builds and runs the phase independently for each runtime. It also holds
+warm checkpoint and recovery acknowledgement separately: zero SQL/proxy sessions
+must precede capture, eight fresh sessions must precede the held recovery ACK,
+and the continuing source retains its interpreter IDs with newer pool
+generations. Terminal restore and in-place thaw follow this warm cycle. These
+are required assertions, not recorded native results.
 
 Before production activation, additionally qualify lost acknowledgements and
 duplicate/late events over real vsock, runner/worker death, watchdog deadlines,

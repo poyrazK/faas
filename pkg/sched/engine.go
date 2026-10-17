@@ -7756,9 +7756,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// failure must land BEFORE the PARKED transition).
 	var warmInfo SnapshotBytes
 	var warmErr error
-	if !frozenFunction {
-		warmInfo, warmErr = e.captureWarmSnapshotLocked(ctx, ins, app)
-	}
+	warmInfo, warmErr = e.captureWarmSnapshotLocked(ctx, ins, app)
 	if warmErr != nil {
 		// Init blob on disk is orphaned — the next wake cold-boots
 		// (ADR-005) and PR C's GC sweep evicts the orphaned init row.
@@ -7786,6 +7784,14 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			return nil
 		}
 		ins = fresh
+		if frozenFunction {
+			// Warm recovery reopens ordinary execution. Establish idle
+			// admission again before the reuse/destroy or terminal capture
+			// shortcut; a racing Begin must keep its VM and capacity.
+			if _, err := e.freezeFunctionForPark(ctx, ins); err != nil {
+				return err
+			}
+		}
 	}
 
 	e.ledger.BeginSnapshot(ins.ID) // drops concurrency, keeps RAM (§6.2-1 excludes snapshotting)
@@ -7975,9 +7981,10 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 // netns / chroot cleanly. The init capture NEVER runs in this branch
 // (the caller returns early). The next wake cold-boots (ADR-005).
 func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instance, app state.App) (SnapshotBytes, error) {
-	// The source VM resumes after warm capture. A callback may close sockets
-	// or flush state for checkpoint and leave that VM unable to serve traffic.
-	if app.Manifest.BeforeCheckpoint != nil || (app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled) {
+	qualifiedFunction := app.Type == "function" && functionlifetime.NativeNode(app.Runtime)
+	// Only the qualified Node path recovers checkpointed resources before
+	// reopening admission. Profiling still requires terminal capture.
+	if app.Manifest.BeforeCheckpoint != nil && !qualifiedFunction || (app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled) {
 		return SnapshotBytes{}, nil
 	}
 	// Gate 1 + 2: the cheap configuration checks. snapshotAndPark loaded
@@ -8050,7 +8057,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	warmVMStateStorageKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: warmMemKey})
 
 	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))
-	b, err := e.captureSnapshotWithStandards(warmCtx, ins, "", warmMemKey, warmVMStateStorageKey, false, "warm")
+	b, err := e.captureSnapshotWithStandards(warmCtx, ins, "", warmMemKey, warmVMStateStorageKey, qualifiedFunction, "warm")
 	warmCancel()
 	if err != nil {
 		if functionExecutionBusyProblem(err) {
@@ -8065,6 +8072,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
 		if destroyErr != nil {
 			e.log.Warn("sched: warm capture: destroy after snapshot failure", "instance", ins.ID, "err", destroyErr)
+			return SnapshotBytes{}, fmt.Errorf("sched: warm capture: source retirement unconfirmed: %w", errors.Join(err, destroyErr))
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "warm_capture_error", "warm_snapshot_failed")
