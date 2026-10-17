@@ -401,6 +401,13 @@ type authPublicSettings struct {
 		ACSURL      string `json:"acs_url"`
 		SelfService bool   `json:"self_service"`
 	} `json:"sso"`
+	OAuth struct {
+		Enabled             bool   `json:"enabled"`
+		DynamicRegistration bool   `json:"dynamic_registration"`
+		Issuer              string `json:"issuer"`
+		MetadataURL         string `json:"metadata_url"`
+		DefaultAudience     string `json:"default_audience"`
+	} `json:"oauth"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

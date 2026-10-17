@@ -56,3 +56,14 @@ Email goes through GoTrue's send-email hook to a loopback-only listener in the
 front, which delivers through Resend or Postmark over HTTPS (`AUTH_EMAIL_*`);
 tenant egress blocks SMTP. Hosted pages are served under `/ui`. The front drops
 GoTrue's info-level logs and redacts email addresses from the rest.
+
+With `AUTH_OAUTH_SERVER=1` (`gregale auth config NAME --oauth-server on`) GoTrue
+is also an OAuth 2.1 authorization server for third-party apps and MCP
+clients: issuer `<host>/auth/v1`, metadata at
+`/.well-known/oauth-authorization-server/auth/v1`, consent at `/ui/consent`.
+`AUTH_OAUTH_REGISTRATION=1` lets clients register themselves; owners manage
+clients with `gregale auth oauth-clients`. A client's access token carries
+`client_id`, `scope` and, as its audience, the RFC 8707 resource it asked for
+(or `oauth-client`), so verifiers of `aud=authenticated` refuse it. On this
+host it reaches only `/auth/v1/oauth/userinfo`, `POST /auth/v1/logout?scope=local`
+and `POST /authz/v1/authorize`.

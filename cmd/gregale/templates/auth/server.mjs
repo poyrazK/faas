@@ -15,10 +15,11 @@ import { createAuditPruner } from './retention.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
+import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
 
 const prefix = '/auth/v1'
 const authzPrefix = '/authz/v1/'
-const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso'])
+const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/consent'])
 const assets = { '/ui/app.js': 'text/javascript; charset=utf-8', '/ui/style.css': 'text/css; charset=utf-8' }
 // The hosted pages load only their own script and style and call only this
 // origin, plus a configured logo's origin and CAPTCHA provider; tokens
@@ -111,8 +112,10 @@ function readBody(req, res, bodyBytes, done) {
   req.on('end', () => { if (received <= bodyBytes) done(Buffer.concat(chunks)) })
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null } = {}) {
   return http.createServer((req, res) => {
+    // A third-party OAuth client's token is good here only for userinfo.
+    if (isClientToken(bearerClaims(req.headers.authorization)) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
@@ -131,17 +134,12 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
       probe.on('error', () => problem(res, 503, 'auth_unavailable'))
       return
     }
-    const path = upstreamPath(req.url)
+    const path = upstreamPath(req.url) ?? wellKnownPath(req.url)
     if (path === null || goTrueAdminPath(path)) return problem(res, 404, 'not_found')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared > bodyBytes) return problem(res, 413, 'request_too_large')
-    const open = headers => {
-      const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
-        res.writeHead(response.statusCode, forwardHeaders(response.headers))
-        response.pipe(res)
-      })
-      upstream.on('error', () => problem(res, 502, 'auth_unavailable'))
-      return upstream
+    if (oauth && req.method === 'POST' && path.split('?')[0] === '/oauth/clients/register') {
+      return oauth.registrationOpen().then(open => open ? proxy(req, res, path, upstreamPort, bodyBytes, oauth) : problem(res, 403, 'oauth_client_limit'), () => problem(res, 503, 'auth_unavailable'))
     }
     // A request that may text a number is read whole, checked against the
     // country allowlist and forwarded as read.
@@ -150,21 +148,60 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
         if (!bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
         const headers = forwardHeaders(req.headers)
         delete headers['content-length']
-        open({ ...headers, 'content-length': String(body.length) }).end(body)
+        upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth).end(body)
       })
     }
-    const upstream = open(forwardHeaders(req.headers))
-    let received = 0
-    req.on('data', chunk => {
-      received += chunk.length
-      // Chunked bodies have no declared length; stop them at the same bound.
-      if (received > bodyBytes) {
-        upstream.destroy()
-        problem(res, 413, 'request_too_large')
-        req.destroy()
-      }
-    })
-    req.pipe(upstream)
+    proxy(req, res, path, upstreamPort, bodyBytes, oauth)
+  })
+}
+
+// upstreamRequest opens the request to GoTrue and relays its answer, with
+// the OAuth server's consent redirect and an authorization's resource.
+function upstreamRequest(req, res, path, upstreamPort, headers, oauth) {
+  const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
+    const responseHeaders = forwardHeaders(response.headers)
+    if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
+    const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
+    if (details) return withResource(response, res, responseHeaders, oauth, details[1])
+    res.writeHead(response.statusCode, responseHeaders)
+    response.pipe(res)
+  })
+  upstream.on('error', () => problem(res, 502, 'auth_unavailable'))
+  return upstream
+}
+
+function proxy(req, res, path, upstreamPort, bodyBytes, oauth) {
+  const upstream = upstreamRequest(req, res, path, upstreamPort, forwardHeaders(req.headers), oauth)
+  let received = 0
+  req.on('data', chunk => {
+    received += chunk.length
+    // Chunked bodies have no declared length; stop them at the same bound.
+    if (received > bodyBytes) {
+      upstream.destroy()
+      problem(res, 413, 'request_too_large')
+      req.destroy()
+    }
+  })
+  req.pipe(upstream)
+}
+
+// withResource adds the resource a client asked for to GoTrue's small view
+// of an authorization, which the consent page shows.
+function withResource(response, res, headers, oauth, id) {
+  const chunks = []
+  let size = 0
+  response.on('data', chunk => { size += chunk.length; if (size <= limits.authzBodyBytes) chunks.push(chunk) })
+  response.on('end', async () => {
+    try {
+      if (size > limits.authzBodyBytes) throw new Error('too large')
+      const view = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const payload = JSON.stringify(view.redirect_url ? view : { ...view, resource: await oauth.resource(id) })
+      delete headers['content-length']
+      res.writeHead(200, { ...headers, 'content-length': Buffer.byteLength(payload) })
+      res.end(payload)
+    } catch {
+      problem(res, 502, 'auth_unavailable')
+    }
   })
 }
 
@@ -174,15 +211,16 @@ export function start(env = process.env) {
   const config = runtimeConfig(env)
   const secret = newHookSecret()
   const mailer = createMailer(config.email)
-  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app })
-  hooks.listen(hookAddress.port, hookAddress.host)
-  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
-  filterLogs(child.stdout, process.stdout)
-  filterLogs(child.stderr, process.stderr)
   // Short idle lifetime: a parked or restored instance must not reuse a
   // connection that the database closed while it slept.
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
+  const accessToken = config.oauth ? payload => accessTokenClaims(pool, payload) : null
+  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken })
+  hooks.listen(hookAddress.port, hookAddress.host)
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: config.oauth }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
+  filterLogs(child.stdout, process.stdout)
+  filterLogs(child.stderr, process.stderr)
   const invitations = { mailer, external: config.external, app: config.app }
   const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha }
   const workflows = workflowsConfig(env)
@@ -195,7 +233,12 @@ export function start(env = process.env) {
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
   const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim })
+  const oauth = config.oauth ? {
+    location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),
+    registrationOpen: () => registrationOpen(pool),
+    resource: id => authorizationResource(pool, id),
+  } : null
+  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim, oauth })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

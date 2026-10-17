@@ -37,3 +37,7 @@ HTTP `status` and a stable `code`.
 `signOut({ scope: 'global' })` ends every session of the user. Authorization
 checks and row-level security honour sign-out on the next request; edge-only
 JWT rules honour it when the access token expires.
+
+When the Auth app's OAuth server is on, `connectedApps.list()` shows the
+third-party apps the user allowed and `connectedApps.revoke(clientId)` ends
+their access; they must ask the user again.

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,5 +62,53 @@ func TestCmdMCPInitRejectsUnknownLanguage(t *testing.T) {
 	}
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
 		t.Fatalf("destination was created for invalid language: %v", err)
+	}
+}
+
+func TestCmdMCPInitUsesAGregaleAuthApp(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	registration := false
+	old := authAdminHTTPClient
+	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		writeJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "0A1B2C3D"}, "oauth": map[string]any{"enabled": r.URL.Host == "shop-auth.gregale.app", "dynamic_registration": registration, "issuer": "https://shop-auth.gregale.app/auth/v1"}})
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { authAdminHTTPClient = old })
+	dest := filepath.Join(t.TempDir(), "mcp")
+	_, stderr, restore := swapIO(t)
+	defer restore()
+	if code := cmdMCPInit([]string{"--path", dest, "--auth-app", "shop-auth", "--resource", "https://shop-mcp.gregale.app/mcp"}); code != 0 {
+		t.Fatalf("cmdMCPInit() = %d: %s", code, stderr())
+	}
+	raw, err := os.ReadFile(filepath.Join(dest, "gregale-mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Auth struct {
+			Mode, Issuer, Resource string
+			JWKSURL                string   `json:"jwks_url"`
+			Scopes                 []string `json:"scopes"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.Mode != "external-oauth" || cfg.Auth.Issuer != "https://shop-auth.gregale.app/auth/v1" || cfg.Auth.JWKSURL != "https://shop-auth.gregale.app/auth/v1/.well-known/jwks.json" || strings.Join(cfg.Auth.Scopes, ",") != "openid" {
+		t.Fatalf("auth = %+v", cfg.Auth)
+	}
+	if !strings.Contains(stderr(), "does not let clients register themselves") {
+		t.Fatalf("no registration warning: %q", stderr())
+	}
+	for name, args := range map[string][]string{
+		"issuer as well":     {"--issuer", "https://idp.example.com"},
+		"open access":        {"--auth", "open"},
+		"a scope Auth lacks": {"--scopes", "mcp:tools"},
+	} {
+		if code := cmdMCPInit(append([]string{"--path", filepath.Join(t.TempDir(), "x"), "--auth-app", "shop-auth", "--resource", "https://shop-mcp.gregale.app/mcp"}, args...)); code == 0 {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

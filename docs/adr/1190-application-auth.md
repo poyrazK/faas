@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; Go and Python backend SDKs; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning; self-service organization SSO with DNS domain verification), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; Go and Python backend SDKs; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning; self-service organization SSO with DNS domain verification; the OAuth 2.1 authorization server), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -473,6 +473,42 @@ omits the mode. Launch reverses these: add the page to
 Postgres page, drop the `Unreleased` markers and the `unlisted` entry, and set
 the apid flag.
 
+### OAuth 2.1 authorization server
+
+GoTrue v2.197.0 is also an OAuth 2.1 authorization server: authorization code
+with PKCE, refresh tokens, OpenID Connect ID tokens, RFC 8414 metadata and
+RFC 7591 registration. `AUTH_OAUTH_SERVER` turns it on so third-party apps
+and MCP clients can act for an application's users with their consent;
+`AUTH_OAUTH_REGISTRATION` separately lets clients register themselves, as
+MCP clients do. Owners register clients with an admin key through
+`/admin/v1/oauth/clients` (`gregale auth oauth-clients`); one app holds at
+most `AuthOAuthMaxClients`, and the front refuses self-registration beyond
+that.
+
+GoTrue sends people to `SITE_URL` plus a configured path to approve a
+client. The front redirects that to the hosted consent page on the Auth
+host, which signs the person in with the usual pages, shows the client's
+self-chosen name, the permissions, the requested resource and the host
+they return to, and ends the session it made once they decide. The issuer
+`<host>/auth/v1` is discoverable at the RFC 8414 path-insertion URL.
+
+GoTrue gives a client's access token the same audience and powers as the
+user's own session, and lets it call every user endpoint, including changing
+the email address or password. The front therefore confines such tokens
+(those with a `client_id` claim): on the Auth host they reach only userinfo,
+their own sign-out and the permission check `/authz/v1/authorize`, which a
+resource server needs; everything else answers `oauth_client_token`.
+GoTrue's custom access token hook, on only with the server, sets their
+audience to the RFC 8707 resource the client was authorized for, or
+`oauth-client` when it named none. GoTrue drops the authorization at the
+code exchange, so the hook records each client session's resource in
+`gregale_auth.oauth_session_resources` and refreshed tokens keep it. A
+verifier set up for the app's own tokens (`authenticated`: the Data API,
+edge rules, realtime and the SDKs by default) never accepts a client's
+token; an API or MCP server accepts one for its own resource
+(`gregale mcp init --auth-app`, the SDKs' audience option). GoTrue issues
+only the OpenID scopes, so finer permissions come from `authorize()`.
+
 ### Scale to zero
 
 The gateway, Data API and realtime service verify tokens against cached JWKS,
@@ -533,6 +569,9 @@ in `pkg/api/limits.go`.
   tables, and the credential would reach every customer table.
 - **Permissions in token claims:** stale after role changes and unbounded in
   size.
+- **OAuth client tokens with the app's own audience:** GoTrue's default; any
+  consent, including to a self-registered client, would grant the user's
+  full Data API and Auth API powers.
 
 ## Acceptance
 

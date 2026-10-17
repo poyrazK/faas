@@ -3,7 +3,7 @@
 // application only in the URL fragment, only to the site URL or an allowed
 // redirect URL, and are never written to storage by these pages.
 
-export const routes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password', 'invitation', 'phone', 'sso']
+export const routes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password', 'invitation', 'phone', 'sso', 'consent']
 
 // allowedRedirect returns target when it is the site URL or starts with an
 // allowed redirect URL (the same list GoTrue enforces), else the site URL.
@@ -19,6 +19,29 @@ export function allowedRedirect(target, siteURL, redirectURLs) {
     } catch { return false }
   })
   return allowed ? url.toString() : siteURL
+}
+
+// What each OpenID scope lets a client see, in the consent page's words.
+const scopeLabels = { openid: 'Know who you are', email: 'See your email address', profile: 'See your name and profile picture', phone: 'See your phone number' }
+
+// consentView is what the consent page says about an authorization: who is
+// signed in, what the client may see, which resource it asked for and where
+// the person returns. The client's name is its own claim; where it sends
+// people back is not.
+export function consentView(details) {
+  const scopes = String(details.scope ?? '').split(/\s+/).filter(Boolean)
+  let destination = details.redirect_uri ?? ''
+  try {
+    const url = new URL(destination)
+    destination = ['http:', 'https:'].includes(url.protocol) ? url.host : url.protocol.replace(/:$/, ' app')
+  } catch { destination = 'an unknown address' }
+  return {
+    name: String(details.client?.name || 'An application').slice(0, 100),
+    account: details.user?.email ?? null,
+    abilities: scopes.map(scope => scopeLabels[scope] ?? `Use the ${scope} permission`),
+    resource: typeof details.resource === 'string' ? details.resource : null,
+    destination,
+  }
 }
 
 // fragmentParams reads OAuth-style results GoTrue puts in the fragment.
@@ -101,6 +124,7 @@ export function errorMessage(body, status) {
     mfa_verification_failed: 'That code is wrong. Try again.',
     mfa_challenge_expired: 'That code has expired. Request a new one.',
     mfa_recovery_codes_locked: 'Too many wrong recovery codes. Wait 15 minutes and try again.',
+    oauth_authorization_not_found: 'This request has expired. Go back to the app and try again.',
     otp_expired: 'That code is wrong or has expired. Request a new one.',
     over_sms_send_rate_limit: 'Too many codes sent. Wait a minute and try again.',
     sms_send_failed: 'We could not text this number. Check it and try again.',
@@ -307,7 +331,8 @@ async function main() {
   captcha = config.captcha ?? null
   const settings = await request('GET', '/auth/v1/settings').catch(() => ({}))
   const query = new URLSearchParams(location.search)
-  const target = allowedRedirect(query.get('redirect_to'), config.site_url, config.redirect_urls)
+  // Signing in for the consent page returns to it with the session.
+  const target = allowedRedirect(query.get('redirect_to'), config.site_url, [...config.redirect_urls, `${location.origin}/ui/consent`])
   const keep = path => `${path}?redirect_to=${encodeURIComponent(target)}`
   const done = session => { location.replace(handoffURL(target, session)) }
 
@@ -430,9 +455,58 @@ async function main() {
       } catch (err) { say(err.message) }
     }, 'Sign in and accept', field('Email', 'email', 'email', 'username'), field('Password', 'password', 'password', 'current-password')))
     root.append(links([`/ui/sign-up?redirect_to=${encodeURIComponent(location.origin + '/ui/invitation')}`, 'No account yet? Create one, then reopen this page']))
+  } else if (route === 'consent') {
+    await consent(root, config, query)
   } else {
     render(root, 'Page not found')
   }
+}
+
+// consent approves or denies an OAuth client's request. GoTrue's server
+// sends people here; they sign in on these pages first, and the session
+// made for the decision ends after it.
+async function consent(root, config, query) {
+  const id = query.get('authorization_id') ?? ''
+  const here = `${location.origin}/ui/consent?authorization_id=${encodeURIComponent(id)}`
+  const session = fragmentParams(location.hash)
+  history.replaceState(null, '', location.pathname + location.search)
+  render(root, 'Allow access?')
+  const say = status(root)
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return say('This request is incomplete. Go back to the app and try again.')
+  if (!session.access_token) return location.replace(`/ui/sign-in?redirect_to=${encodeURIComponent(here)}`)
+  const end = () => request('POST', '/auth/v1/logout?scope=local', { token: session.access_token }).catch(() => {})
+  let details
+  try { details = await request('GET', `/auth/v1/oauth/authorizations/${encodeURIComponent(id)}`, { token: session.access_token }) } catch (err) { await end(); return say(err.message) }
+  // A client already approved for these permissions goes straight back.
+  if (details.redirect_url) { await end(); return location.replace(details.redirect_url) }
+  const view = consentView(details)
+  render(root, `${view.name} wants to use your ${config.app} account`)
+  const decide = async action => {
+    for (const button of root.querySelectorAll('button')) button.disabled = true
+    try {
+      const { redirect_url: next } = await request('POST', `/auth/v1/oauth/authorizations/${encodeURIComponent(id)}/consent`, { token: session.access_token, body: { action } })
+      await end()
+      location.replace(next)
+    } catch (err) {
+      say(err.message)
+      for (const button of root.querySelectorAll('button')) button.disabled = false
+    }
+  }
+  root.append(
+    ...(view.account ? [el('p', {}, `Signed in as ${view.account}.`)] : []),
+    el('p', {}, `${view.name} will be able to:`),
+    el('ul', {}, ...view.abilities.map(line => el('li', {}, line))),
+    ...(view.resource ? [el('p', {}, `It asks for access to ${view.resource}.`)] : []),
+    el('p', {}, `Afterwards you return to ${view.destination}. Only allow apps you trust.`),
+    el('div', { class: 'providers' },
+      el('button', { type: 'button', on: { click: () => decide('approve') } }, 'Allow'),
+      el('button', { type: 'button', class: 'secondary', on: { click: () => decide('deny') } }, 'Deny')),
+    el('nav', {}, el('a', { href: '#', on: { click: async event => {
+      // Another account starts after this session ends.
+      event.preventDefault()
+      await end()
+      location.replace(`/ui/sign-in?redirect_to=${encodeURIComponent(here)}`)
+    } } }, 'Use another account')))
 }
 
 if (typeof document !== 'undefined') {

@@ -39,7 +39,7 @@ function claimsFromToken(token, user) {
   let payload
   try { payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) } catch { throw new HTTPError(401, 'not_authenticated') }
   if (payload.sub !== user.id || typeof payload.session_id !== 'string') throw new HTTPError(401, 'not_authenticated')
-  return { sub: user.id, session_id: payload.session_id }
+  return { sub: user.id, session_id: payload.session_id, ...(payload.client_id ? { client_id: String(payload.client_id) } : {}) }
 }
 
 // authenticate asks GoTrue, on loopback, to verify the bearer token.
@@ -98,6 +98,8 @@ function requireString(body, name, max) {
 export async function route(pool, claims, method, path, body, services = {}) {
   const invitations = services.invitations ?? {}
   const parts = path.split('/').filter(Boolean)
+  // A third-party OAuth client may only check its user's permissions.
+  if (claims.client_id && !(path === '/authorize' && method === 'POST')) throw new HTTPError(403, 'oauth_client_token')
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
   if (parts.length === 1 && parts[0] === 'orgs') {

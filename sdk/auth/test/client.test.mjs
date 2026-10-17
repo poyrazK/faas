@@ -282,3 +282,19 @@ test('organization SSO verifies domains and manages providers', async () => {
   assert.equal((await auth.orgSSO.providers.scimToken('o1', 'p1')).token, 'gscim_x')
   assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
 })
+
+test('lists and revokes the apps a user connected through the OAuth server', async () => {
+  const grant = { client: { id: 'c1', name: 'Claude' }, scopes: ['openid'], granted_at: '2026-10-17T00:00:00Z' }
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /auth/v1/user/oauth/grants': () => [200, [grant]],
+    'DELETE /auth/v1/user/oauth/grants': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.connectedApps.list(), [grant])
+  await auth.connectedApps.revoke('c1')
+  const revoke = api.calls.at(-1)
+  assert.equal(revoke.url.searchParams.get('client_id'), 'c1')
+  assert.equal(revoke.headers.Authorization, 'Bearer access-1')
+})

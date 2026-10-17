@@ -540,3 +540,26 @@ func TestSQLSelfServiceOrganizationSSONeedsVerifiedDomainsAndPermission(t *testi
 		t.Fatalf("runtime credential called the organization SSO functions: %s", code)
 	}
 }
+
+func TestSQLOAuthSessionResourcesEndWithTheirSessions(t *testing.T) {
+	f := newCredentialFixture(t)
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	client := uuid.New()
+	// The custom access token hook records a client session's resource.
+	for _, u := range []authUser{alice, bob} {
+		executeSQL(t, owner, `INSERT INTO gregale_auth.oauth_session_resources (session_id, client_id, resource) VALUES ($1, $2, 'https://mcp.example.test/mcp')`, u.session, client)
+	}
+	executeSQL(t, owner, `INSERT INTO gregale_auth.oauth_session_resources (session_id, client_id, resource) VALUES ($1, $2, NULL)`, uuid.New(), client)
+	if code, _ := sqlCode(t, owner, `INSERT INTO gregale_auth.oauth_session_resources (session_id, client_id, resource) VALUES ($1, $2, '')`, uuid.New(), client); code != "23514" {
+		t.Fatalf("an empty resource = %s, want a check violation", code)
+	}
+	remembered := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.oauth_session_resources WHERE session_id = $1)`, u.session)
+	}
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE id = $1`, alice.session)
+	executeSQL(t, owner, `DELETE FROM auth.users WHERE id = $1`, bob.id)
+	if remembered(alice) || remembered(bob) {
+		t.Fatal("an ended session kept its resource")
+	}
+}

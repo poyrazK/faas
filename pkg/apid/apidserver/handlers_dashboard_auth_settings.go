@@ -131,7 +131,7 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	if err := hostedPageChange(form, &change); err != nil {
 		return change, err
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration} {
 		if !form.Has(name) {
 			continue
 		}

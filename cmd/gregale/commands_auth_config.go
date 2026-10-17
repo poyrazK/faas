@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -59,6 +59,8 @@ func cmdAuthConfig(args []string) int {
 	events := fs.String("events", "", "on or off: publish user lifecycle events (auth.user.*) to Gregale's event bus")
 	sso := fs.String("sso", "", "on or off: organization single sign-on (SAML); manage identity providers with `gregale auth sso`")
 	orgSSO := fs.String("org-sso", "", "on or off: let organizations verify their email domains and connect their own identity provider (needs --sso on)")
+	oauthServer := fs.String("oauth-server", "", "on or off: the OAuth 2.1 authorization server, for third-party apps and MCP clients; manage clients with `gregale auth oauth-clients`")
+	oauthRegistration := fs.String("oauth-registration", "", "on or off: let OAuth clients register themselves (RFC 7591), as MCP clients do")
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -85,25 +87,19 @@ func cmdAuthConfig(args []string) int {
 	if err := sms.apply(given, &change); err != nil {
 		return printErr("Invalid Auth settings", err)
 	}
-	for name, target := range map[string]**bool{"sso": &change.SSO, "org-sso": &change.OrgSSO} {
+	for name, target := range map[string]struct {
+		value *string
+		field **bool
+	}{"sso": {sso, &change.SSO}, "org-sso": {orgSSO, &change.OrgSSO}, "oauth-server": {oauthServer, &change.OAuthServer}, "oauth-registration": {oauthRegistration, &change.OAuthRegistration},
+		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes}} {
 		if !given[name] {
 			continue
 		}
-		on, err := parseOnOff(name, map[string]string{"sso": *sso, "org-sso": *orgSSO}[name])
+		on, err := parseOnOff(name, *target.value)
 		if err != nil {
 			return printErr("Invalid Auth settings", err)
 		}
-		*target = &on
-	}
-	for name, target := range map[string]**bool{"mfa-phone": &change.MFAPhone, "recovery-codes": &change.RecoveryCodes} {
-		if !given[name] {
-			continue
-		}
-		on, err := parseOnOff(name, map[string]string{"mfa-phone": *mfaPhone, "recovery-codes": *recoveryCodes}[name])
-		if err != nil {
-			return printErr("Invalid Auth settings", err)
-		}
-		*target = &on
+		*target.field = &on
 	}
 	if given["passkey-rp-id"] {
 		rpID := *passkeyRPID
@@ -457,6 +453,10 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 			sso += "; organizations may connect their own"
 		}
 	}
+	oauth := "off"
+	if settings.OAuth.Enabled {
+		oauth = "on; issuer " + settings.OAuth.Issuer + ", clients register themselves: " + onOff(settings.OAuth.DynamicRegistration)
+	}
 	phone := "off"
 	if settings.Phone.Enabled {
 		phone = "on, through " + settings.Phone.Provider + "; texts any country"
@@ -472,7 +472,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])

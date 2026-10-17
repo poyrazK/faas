@@ -46,6 +46,9 @@
 <label>Organization single sign-on (SAML)<select name="sso"><option value="off">Off</option><option value="on">On (register identity providers with gregale auth sso add)</option></select></label>
 <label>Self-service SSO for organizations<select name="org_sso"><option value="off">Off</option><option value="on">Organizations may verify domains and connect their own identity provider</option></select></label>
 <p id="sso-status" class="muted"></p>
+<label>OAuth 2.1 server, for third-party apps and MCP clients<select name="oauth_server"><option value="off">Off</option><option value="on">On (register clients with gregale auth oauth-clients add)</option></select></label>
+<label>Clients register themselves (RFC 7591), as MCP clients do<select name="oauth_registration"><option value="off">Off</option><option value="on">On</option></select></label>
+<p id="oauth-status" class="muted"></p>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -495,6 +498,7 @@
       activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
       sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
       sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
+      oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
@@ -502,6 +506,7 @@
     const custom = settings.password.required.includes('custom')
     $('settings-status').textContent = custom ? 'Passwords also need characters from a custom set; saving password classes replaces it.' : ''
     $('sso-status').textContent = settings.sso?.enabled ? 'Identity providers trust entity ID ' + settings.sso.entity_id + ' with ACS URL ' + settings.sso.acs_url + '.' : ''
+    $('oauth-status').textContent = settings.oauth?.enabled ? 'Issuer ' + settings.oauth.issuer + '; clients discover it at ' + settings.oauth.metadata_url + '.' : ''
     form.hidden = false
     $('provider-form').hidden = false
     const known = [...$('provider-form').elements.namedItem('provider').options].map(option => option.value)
