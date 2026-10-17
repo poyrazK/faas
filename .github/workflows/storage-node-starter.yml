@@ -10,7 +10,9 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold runs compile both regular and race dependency graphs before the
+    # gateway and fixture contracts finish.
+    timeout-minutes: 20
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
