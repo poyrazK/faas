@@ -34,6 +34,11 @@ type aiLogExportLine struct {
 	EndUser              string   `json:"end_user,omitempty"`
 	Moderation           string   `json:"moderation,omitempty"`
 	ModerationCategories []string `json:"moderation_categories,omitempty"`
+	// ADR-1400: the response check's result, what it found and the
+	// categories its moderation flagged.
+	ResponseCheck                string   `json:"response_check,omitempty"`
+	ResponseFindings             []string `json:"response_findings,omitempty"`
+	ResponseModerationCategories []string `json:"response_moderation_categories,omitempty"`
 }
 
 // aiLogExportFor builds an exported call's line, or nil when the
@@ -56,6 +61,10 @@ func aiLogExportFor(integration Integration, record AIUsageRecord, settlement ai
 	}
 	if settlement.route.routeID != "" {
 		line.RouteTarget, line.Canary = settlement.route.position, settlement.route.canary
+	}
+	if check := settlement.response; check != nil && check.result != "" {
+		line.ResponseCheck, line.ResponseFindings = check.result, check.findings()
+		line.ResponseModerationCategories = check.moderation.categories
 	}
 	if timeToFirstByte > 0 {
 		ttfb := timeToFirstByte.Milliseconds()

@@ -23,6 +23,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.outbound_ai_moderation import OutboundAIModeration
+    from ..models.outbound_ai_response_policy import OutboundAIResponsePolicy
 
 
 T = TypeVar("T", bound="OutboundAIContentPolicy")
@@ -49,6 +50,12 @@ class OutboundAIContentPolicy:
     flag lets the call through and names the categories in X-Gregale-AI-Moderation; block refuses it with 400
     outbound_ai_content_flagged. on_error decides what a failed check does; block answers 503
     outbound_ai_moderation_unavailable."""
+    response: OutboundAIResponsePolicy | Unset = UNSET
+    """Checks of the text a model sends back, before the caller sees it (ADR-1400). The detectors redact or block
+    as on requests; blocked_terms block refuses a response that contains one of the policy's blocked terms;
+    moderation runs the policy's moderation check on the response, without prompt_injection, and flags or blocks it.
+    A refused whole response answers 422 outbound_ai_response_blocked or outbound_ai_response_flagged; a refused
+    stream ends with an error event. Tool call arguments and reasoning text are not checked."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +73,10 @@ class OutboundAIContentPolicy:
         if not isinstance(self.moderation, Unset):
             moderation = self.moderation.to_dict()
 
+        response: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.response, Unset):
+            response = self.response.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -79,12 +90,15 @@ class OutboundAIContentPolicy:
         )
         if moderation is not UNSET:
             field_dict["moderation"] = moderation
+        if response is not UNSET:
+            field_dict["response"] = response
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.outbound_ai_moderation import OutboundAIModeration
+        from ..models.outbound_ai_response_policy import OutboundAIResponsePolicy
 
         d = dict(src_dict)
         email = check_outbound_ai_content_policy_email(d.pop("email"))
@@ -104,6 +118,13 @@ class OutboundAIContentPolicy:
         else:
             moderation = OutboundAIModeration.from_dict(_moderation)
 
+        _response = d.pop("response", UNSET)
+        response: OutboundAIResponsePolicy | Unset
+        if isinstance(_response, Unset):
+            response = UNSET
+        else:
+            response = OutboundAIResponsePolicy.from_dict(_response)
+
         outbound_ai_content_policy = cls(
             email=email,
             payment_card=payment_card,
@@ -111,6 +132,7 @@ class OutboundAIContentPolicy:
             secret=secret,
             blocked_terms=blocked_terms,
             moderation=moderation,
+            response=response,
         )
 
         outbound_ai_content_policy.additional_properties = d

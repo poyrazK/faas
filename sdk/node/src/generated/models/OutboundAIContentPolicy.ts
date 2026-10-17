@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OutboundAIModeration } from './OutboundAIModeration.js';
+import type { OutboundAIResponsePolicy } from './OutboundAIResponsePolicy.js';
 /**
  * An integration's content guardrails (ADR-997). Each detector is off, redacts its findings before the request reaches the provider, or blocks the request. A request containing a blocked term, compared without case, is blocked. The gateway checks the string values of JSON bodies and the text fields of forms.
  */
@@ -16,5 +17,6 @@ export type OutboundAIContentPolicy = {
   secret: '' | 'off' | 'redact' | 'block';
   blocked_terms: Array<string>;
   moderation?: OutboundAIModeration;
+  response?: OutboundAIResponsePolicy;
 };
 

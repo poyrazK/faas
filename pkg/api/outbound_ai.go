@@ -129,18 +129,66 @@ const (
 // provider, or blocks the request. A request that contains a blocked term,
 // compared without case, is blocked. The gateway checks the string values
 // of buffered JSON bodies and the text fields of multipart forms.
-// Moderation adds a model-based check (ADR-1340).
+// Moderation adds a model-based check (ADR-1340), and Response checks the
+// model's output (ADR-1400).
 type OutboundAIContentPolicy struct {
-	Email        string               `json:"email"`
-	PaymentCard  string               `json:"payment_card"`
-	IBAN         string               `json:"iban"`
-	Secret       string               `json:"secret"`
-	BlockedTerms []string             `json:"blocked_terms"`
-	Moderation   OutboundAIModeration `json:"moderation"`
+	Email        string                   `json:"email"`
+	PaymentCard  string                   `json:"payment_card"`
+	IBAN         string                   `json:"iban"`
+	Secret       string                   `json:"secret"`
+	BlockedTerms []string                 `json:"blocked_terms"`
+	Moderation   OutboundAIModeration     `json:"moderation"`
+	Response     OutboundAIResponsePolicy `json:"response"`
+}
+
+// OutboundAIResponsePolicy checks the text a model sends back before the
+// caller sees it (ADR-1400). The detectors redact or block as on requests;
+// BlockedTerms blocks a response holding one of the policy's terms; and
+// Moderation flags or blocks it with the policy's moderation check.
+type OutboundAIResponsePolicy struct {
+	Email        string `json:"email"`
+	PaymentCard  string `json:"payment_card"`
+	IBAN         string `json:"iban"`
+	Secret       string `json:"secret"`
+	BlockedTerms string `json:"blocked_terms"`
+	Moderation   string `json:"moderation"`
+}
+
+// Normalized replaces empty actions with off.
+func (p OutboundAIResponsePolicy) Normalized() OutboundAIResponsePolicy {
+	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret, &p.BlockedTerms, &p.Moderation} {
+		if *action == "" {
+			*action = OutboundAIContentOff
+		}
+	}
+	return p
+}
+
+// Active reports whether responses are checked.
+func (p OutboundAIResponsePolicy) Active() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret, p.BlockedTerms, p.Moderation} {
+		if action != OutboundAIContentOff {
+			return true
+		}
+	}
+	return false
+}
+
+func (p OutboundAIResponsePolicy) valid() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
+		if action != OutboundAIContentOff && action != OutboundAIContentRedact && action != OutboundAIContentBlock {
+			return false
+		}
+	}
+	return (p.BlockedTerms == OutboundAIContentOff || p.BlockedTerms == OutboundAIContentBlock) &&
+		(p.Moderation == OutboundAIModerationOff || p.Moderation == OutboundAIModerationFlag || p.Moderation == OutboundAIModerationBlock)
 }
 
 // Normalized replaces empty actions with off and a nil term list with an
-// empty one.
+// empty one. The moderation check keeps its settings while responses use
+// them (ADR-1400).
 func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
 	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret} {
 		if *action == "" {
@@ -150,7 +198,8 @@ func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
 	if p.BlockedTerms == nil {
 		p.BlockedTerms = []string{}
 	}
-	p.Moderation = p.Moderation.Normalized()
+	p.Response = p.Response.Normalized()
+	p.Moderation = p.Moderation.normalized(p.Response.Moderation != OutboundAIModerationOff)
 	return p
 }
 
@@ -176,7 +225,8 @@ func (p OutboundAIContentPolicy) Valid() bool {
 			return false
 		}
 	}
-	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax || !p.Moderation.Valid() {
+	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax || !p.Response.valid() ||
+		!p.Moderation.validFor(p.Response.Moderation != OutboundAIModerationOff) {
 		return false
 	}
 	seen := make(map[string]struct{}, len(p.BlockedTerms))

@@ -1027,6 +1027,13 @@ const (
 	// first, and the deadline of the check's call.
 	OutboundAIModerationTextMaxBytes       = 32 << 10
 	OutboundAIModerationCallTimeoutSeconds = 10
+	// Response guardrails (ADR-1400): the largest whole response read
+	// before release, the text of a stream channel held back so a finding
+	// split across events is caught, and how far back each stream scan
+	// reads.
+	OutboundAIResponseCheckMaxBytes     int64 = 4 << 20
+	OutboundAIResponseHoldBackBytes           = 512
+	OutboundAIResponseScanLookbackBytes       = 8 << 10
 	// Batches (ADR-1360): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and

@@ -62,7 +62,9 @@ const integrationPolicySQL = `
 	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms,
 	       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
 	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
-	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered
+	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
+	       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
+	       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -132,7 +134,9 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent, &contentPolicy.Email,
 			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms,
 			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
-			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered)
+			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered,
+			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
+			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound

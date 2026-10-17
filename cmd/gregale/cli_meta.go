@@ -789,6 +789,7 @@ var cliCommands = []cliCommand{
 			"gregale ai logs <integration-id> --limit 20",
 			"gregale ai logs show <integration-id> <request-id>",
 			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
+			"gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag",
 			"gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini",
 			"gregale ai evaluate <route-id> --position 2 --judge <openai-id> --judge-model gpt-5 --canary-percent 10",
 			"gregale ai tokens create --app my-api --name laptop --expires-in-hours 24",
@@ -806,7 +807,7 @@ var cliCommands = []cliCommand{
 				{Name: "log-export", Short: "send each app call's metadata to the app's log drains", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "allow-unmetered", Short: "let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
-			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
 				{Name: "payment-card", Short: "payment card numbers", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
 				{Name: "iban", Short: "IBANs", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
@@ -819,6 +820,12 @@ var cliCommands = []cliCommand{
 				{Name: "moderation-model", Short: "the check's model (required for classifier)", Value: "MODEL"},
 				{Name: "moderation-categories", Short: "comma-separated categories to check", Value: "LIST"},
 				{Name: "moderation-on-error", Short: "when the check fails", Value: "allow|block", ClosedSet: []string{"allow", "block"}},
+				{Name: "response-email", Short: "e-mail addresses in responses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "response-payment-card", Short: "payment card numbers in responses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "response-iban", Short: "IBANs in responses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "response-secrets", Short: "API keys, tokens and private keys in responses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "response-terms", Short: "block responses containing a blocked term", Value: "off|block", ClosedSet: []string{"off", "block"}},
+				{Name: "response-moderation", Short: "check responses with the moderation check", Value: "ACTION", ClosedSet: []string{"off", "flag", "block"}},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},

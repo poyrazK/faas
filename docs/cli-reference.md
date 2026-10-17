@@ -2144,6 +2144,7 @@ printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label secon
 gregale ai logs <integration-id> --limit 20
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
+gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag
 gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini
 gregale ai evaluate <route-id> --position 2 --judge <openai-id> --judge-model gpt-5 --canary-percent 10
 gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
@@ -2170,9 +2171,9 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 
 ### ai content-policy
 
-Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)
+Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)
 
-`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] [--moderation <ACTION>] [--moderation-kind <KIND>] [--moderation-integration <ID>] [--moderation-model <MODEL>] [--moderation-categories <LIST>] [--moderation-on-error <allow|block>] <integration-id>`
+`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] [--moderation <ACTION>] [--moderation-kind <KIND>] [--moderation-integration <ID>] [--moderation-model <MODEL>] [--moderation-categories <LIST>] [--moderation-on-error <allow|block>] [--response-email <ACTION>] [--response-payment-card <ACTION>] [--response-iban <ACTION>] [--response-secrets <ACTION>] [--response-terms <off|block>] [--response-moderation <ACTION>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2188,6 +2189,12 @@ Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets
 | `--moderation-model <MODEL>` | the check&#39;s model (required for classifier) |  |
 | `--moderation-categories <LIST>` | comma-separated categories to check |  |
 | `--moderation-on-error <allow|block>` | when the check fails | one of `allow` · `block` |
+| `--response-email <ACTION>` | e-mail addresses in responses | one of `off` · `redact` · `block` |
+| `--response-payment-card <ACTION>` | payment card numbers in responses | one of `off` · `redact` · `block` |
+| `--response-iban <ACTION>` | IBANs in responses | one of `off` · `redact` · `block` |
+| `--response-secrets <ACTION>` | API keys, tokens and private keys in responses | one of `off` · `redact` · `block` |
+| `--response-terms <off|block>` | block responses containing a blocked term | one of `off` · `block` |
+| `--response-moderation <ACTION>` | check responses with the moderation check | one of `off` · `flag` · `block` |
 
 ### ai app-limit
 

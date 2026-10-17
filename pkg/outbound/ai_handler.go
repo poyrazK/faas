@@ -146,6 +146,9 @@ type aiSettlement struct {
 	// call's moderation result (ADR-1340).
 	route      routeAttempt
 	moderation aiModerationOutcome
+	// response is the response check's result, filled as the response is
+	// sent (ADR-1400); nil when the response is not checked.
+	response *aiResponseCheck
 }
 
 // speechUsage settles a successful speech call at its input characters when
@@ -249,6 +252,9 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
 	if cost > 0 {
 		span.SetAttributes(attribute.Int64("gregale.ai.cost_millicents", cost))
+	}
+	if settlement.response != nil && settlement.response.result != "" {
+		span.SetAttributes(attribute.String("gregale.ai.response_check", settlement.response.result))
 	}
 	recorder, ok := h.Backend.(AIUsageBackend)
 	if !ok {

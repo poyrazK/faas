@@ -1,5 +1,5 @@
 // commands_ai_content.go — `gregale ai content-policy` (ADR-997): an AI
-// integration's content guardrails.
+// integration's content guardrails, with response checks (ADR-1400).
 
 package main
 
@@ -16,7 +16,9 @@ import (
 const aiContentPolicyUsage = "usage: gregale ai content-policy <integration-id> [--email off|redact|block] " +
 	"[--payment-card off|redact|block] [--iban off|redact|block] [--secrets off|redact|block] [--block-term TERM]... [--clear-terms] " +
 	"[--moderation off|flag|block] [--moderation-kind openai_moderation|classifier] [--moderation-integration ID] " +
-	"[--moderation-model MODEL] [--moderation-categories a,b] [--moderation-on-error allow|block]"
+	"[--moderation-model MODEL] [--moderation-categories a,b] [--moderation-on-error allow|block] " +
+	"[--response-email off|redact|block] [--response-payment-card off|redact|block] [--response-iban off|redact|block] " +
+	"[--response-secrets off|redact|block] [--response-terms off|block] [--response-moderation off|flag|block]"
 
 // cmdAIContentPolicy shows or updates an integration's content guardrails.
 // Flags left out keep their values.
@@ -30,6 +32,7 @@ func cmdAIContentPolicy(args []string) int {
 	fs.Var(&terms, "block-term", "block requests that contain this term, ignoring case (repeatable)")
 	clearTerms := fs.Bool("clear-terms", false, "remove every blocked term before adding --block-term values")
 	moderation := moderationFlags(fs)
+	response := responseFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		return printErr("Invalid ai content-policy arguments", errors.New(aiContentPolicyUsage))
 	}
@@ -58,10 +61,14 @@ func cmdAIContentPolicy(args []string) int {
 	if moderation.apply(&policy.Moderation) {
 		changed = true
 	}
+	if response.apply(&policy.Response) {
+		changed = true
+	}
 	if changed {
 		if !policy.Valid() {
 			return printErr("Invalid content policy", errors.New("actions are off, redact or block; at most 32 distinct terms of 1 to 128 bytes; "+
-				"an active moderation check needs a kind, an integration, categories and, for a classifier, a model"))
+				"an active moderation check needs a kind, an integration, categories and, for a classifier, a model; "+
+				"--response-terms is off or block and --response-moderation needs a check with a category besides prompt_injection"))
 		}
 		if err := client.SetOutboundAIContentPolicy(context.Background(), fs.Arg(0), policy); err != nil {
 			return printErr("Could not update the content policy", err)
@@ -70,10 +77,49 @@ func cmdAIContentPolicy(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(policy))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Content policy for %s\n  email: %s\n  payment cards: %s\n  IBANs: %s\n  secrets: %s\n  blocked terms: %s\n  moderation: %s\n",
+	_, _ = fmt.Fprintf(osStdout, "Content policy for %s\n  email: %s\n  payment cards: %s\n  IBANs: %s\n  secrets: %s\n  blocked terms: %s\n  moderation: %s\n  responses: %s\n",
 		fs.Arg(0), policy.Email, policy.PaymentCard, policy.IBAN, policy.Secret, formatBlockedTerms(policy.BlockedTerms),
-		formatModeration(policy.Moderation.Normalized()))
+		formatModeration(policy.Normalized().Moderation), formatResponsePolicy(policy.Normalized().Response))
 	return 0
+}
+
+// responseFlagValues are the content-policy flags of the response checks
+// (ADR-1400); empty values keep the stored setting.
+type responseFlagValues struct {
+	email, card, iban, secrets, terms, moderation *string
+}
+
+func responseFlags(fs *flag.FlagSet) responseFlagValues {
+	return responseFlagValues{
+		email:      fs.String("response-email", "", "e-mail addresses in responses: off, redact or block"),
+		card:       fs.String("response-payment-card", "", "payment card numbers in responses: off, redact or block"),
+		iban:       fs.String("response-iban", "", "IBANs in responses: off, redact or block"),
+		secrets:    fs.String("response-secrets", "", "API keys, tokens and private keys in responses: off, redact or block"),
+		terms:      fs.String("response-terms", "", "block responses containing a blocked term: off or block"),
+		moderation: fs.String("response-moderation", "", "check responses with the moderation check: off, flag or block"),
+	}
+}
+
+func (v responseFlagValues) apply(response *api.OutboundAIResponsePolicy) bool {
+	changed := false
+	for _, setting := range []struct {
+		value *string
+		dst   *string
+	}{{v.email, &response.Email}, {v.card, &response.PaymentCard}, {v.iban, &response.IBAN}, {v.secrets, &response.Secret},
+		{v.terms, &response.BlockedTerms}, {v.moderation, &response.Moderation}} {
+		if *setting.value != "" {
+			*setting.dst, changed = *setting.value, true
+		}
+	}
+	return changed
+}
+
+func formatResponsePolicy(response api.OutboundAIResponsePolicy) string {
+	if !response.Active() {
+		return "off"
+	}
+	return fmt.Sprintf("email %s, payment cards %s, IBANs %s, secrets %s, blocked terms %s, moderation %s", response.Email,
+		response.PaymentCard, response.IBAN, response.Secret, response.BlockedTerms, response.Moderation)
 }
 
 // moderationFlagValues are the content-policy flags of a moderation check
@@ -113,7 +159,7 @@ func (v moderationFlagValues) apply(moderation *api.OutboundAIModeration) bool {
 }
 
 func formatModeration(moderation api.OutboundAIModeration) string {
-	if moderation.Action == api.OutboundAIModerationOff {
+	if moderation.Action == api.OutboundAIModerationOff && moderation.IntegrationID == "" {
 		return "off"
 	}
 	via := moderation.IntegrationID

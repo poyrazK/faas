@@ -484,6 +484,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
+	if integration.AIProvider != "" {
+		// ADR-1400: the transport negotiates compression and decompresses, so
+		// usage and response checks read plain bytes.
+		upstreamReq.Header.Del("Accept-Encoding")
+	}
 	// NewRequest cannot infer the length of a server-side ReadCloser (or
 	// MaxBytesReader). Preserve known lengths and the explicit empty-body
 	// sentinel so providers do not unexpectedly receive chunked uploads.
@@ -658,11 +663,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.finishBatchCreation(ctx, w, resp, batch, metricIntegrationID)
 		return
 	}
+	var responseCheck *aiResponseCheck
+	if responseCheckApplies(integration, r, aiPlan, resp, isReplay, isInternal) {
+		responseCheck = &aiResponseCheck{}
+	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
 			endUser: aiEndUser, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
+			response: responseCheck,
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
@@ -671,6 +681,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			settlement.codeGB = aiPlan.facts.tools.codeGB
 		}
 		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
+	}
+	if responseCheck != nil && !h.applyResponseCheck(ctx, w, integration, aiPlan, resp, responseCheck, metricIntegrationID) {
+		return
 	}
 	if workflowIdentity != nil {
 		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)

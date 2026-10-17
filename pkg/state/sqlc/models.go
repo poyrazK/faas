@@ -6991,6 +6991,12 @@ type OutboundIntegration struct {
 	AiModerationCategories         []string
 	AiModerationOnError            string
 	AiAllowUnmetered               bool
+	AiResponseEmail                string
+	AiResponsePaymentCard          string
+	AiResponseIban                 string
+	AiResponseSecret               string
+	AiResponseBlockedTerms         string
+	AiResponseModeration           string
 }
 
 type OutboundIntegrationApp struct {

@@ -53,19 +53,37 @@ type OutboundAIModeration struct {
 // Normalized fills the action and failure policy and, when the check is
 // off, clears everything else.
 func (m OutboundAIModeration) Normalized() OutboundAIModeration {
+	return m.normalized(false)
+}
+
+// normalized keeps an off check's settings when responses use it
+// (ADR-1400).
+func (m OutboundAIModeration) normalized(keep bool) OutboundAIModeration {
 	if m.Action == "" {
 		m.Action = OutboundAIModerationOff
 	}
 	if m.OnError == "" {
 		m.OnError = OutboundAIModerationOnErrorAllow
 	}
-	if m.Action == OutboundAIModerationOff {
+	if m.Action == OutboundAIModerationOff && !keep {
 		return OutboundAIModeration{Action: OutboundAIModerationOff, Categories: []string{}, OnError: m.OnError}
 	}
 	if m.Categories == nil {
 		m.Categories = []string{}
 	}
 	return m
+}
+
+// OutboundAIModerationResponseCategories is a check's categories that
+// apply to responses: all but prompt_injection (ADR-1400).
+func OutboundAIModerationResponseCategories(categories []string) []string {
+	out := make([]string, 0, len(categories))
+	for _, category := range categories {
+		if category != OutboundAIModerationPromptInjection {
+			out = append(out, category)
+		}
+	}
+	return out
 }
 
 // Active reports whether requests are checked.
@@ -77,15 +95,27 @@ func (m OutboundAIModeration) Active() bool {
 // own AI integration, of a provider the kind can call, is checked when the
 // policy is stored.
 func (m OutboundAIModeration) Valid() bool {
-	m = m.Normalized()
+	return m.validFor(false)
+}
+
+// validFor also checks an off check's settings when responses use it: they
+// need a category besides prompt_injection, which responses skip
+// (ADR-1400).
+func (m OutboundAIModeration) validFor(responses bool) bool {
+	m = m.normalized(responses)
 	if m.OnError != OutboundAIModerationOnErrorAllow && m.OnError != OutboundAIModerationOnErrorBlock {
 		return false
 	}
 	switch m.Action {
 	case OutboundAIModerationOff:
-		return true
+		if !responses {
+			return true
+		}
 	case OutboundAIModerationFlag, OutboundAIModerationBlock:
 	default:
+		return false
+	}
+	if responses && len(OutboundAIModerationResponseCategories(m.Categories)) == 0 {
 		return false
 	}
 	if m.IntegrationID == "" || len(m.Categories) == 0 || len(m.Categories) > len(OutboundAIModerationCategories) ||

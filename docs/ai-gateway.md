@@ -21,6 +21,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Content guardrails.** Redact or block e-mail addresses, payment card
   numbers, IBANs and API keys or tokens before a request leaves Gregale, and
   block requests containing your own terms.
+- **Response guardrails.** Apply the same detectors, your terms and the
+  moderation check to the model's answer before your app sees it, streamed
+  answers included.
 - **Moderation.** Check requests for prompt injection, harassment, hate,
   self-harm, sexual content, violence or illicit instructions with OpenAI's
   moderation endpoint or any chat model you choose, then flag or block them.
@@ -92,6 +95,7 @@ gregale ai policy <id> --daily-tokens 2000000 --daily-cost 25 --request-log on
 gregale ai policy <id> --user-daily-tokens 200000      # per end user (X-Gregale-AI-User)
 gregale ai guardrails <id> --app my-api --rpm 60 --max-output-tokens 2048
 gregale ai content-policy <id> --email redact --secrets block
+gregale ai content-policy <id> --response-email redact --response-secrets block --response-terms block
 gregale ai content-policy <id> --moderation block --moderation-kind classifier \
   --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
 gregale ai policy <id> --log-export on                  # to the app's log drains

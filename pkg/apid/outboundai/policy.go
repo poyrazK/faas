@@ -182,7 +182,9 @@ const contentPolicyInvalidDetail = "email, payment_card, iban and secret must be
 	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider; moderation.action must be off, flag or block, " +
 	"and an active check needs kind openai_moderation (an OpenAI integration, without prompt_injection) or classifier (with a model), " +
 	"integration_id naming one of this account's enabled AI integrations, distinct categories from prompt_injection, harassment, hate, " +
-	"self_harm, sexual, violence and illicit, and on_error allow or block"
+	"self_harm, sexual, violence and illicit, and on_error allow or block; response.email, payment_card, iban and secret must be off, " +
+	"redact or block, response.blocked_terms off or block, and response.moderation off, flag or block, which needs a complete " +
+	"moderation check with a category besides prompt_injection"
 
 // PutContentPolicy replaces a customer AI integration's content guardrails
 // (ADR-997).

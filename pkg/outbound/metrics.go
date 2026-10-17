@@ -45,6 +45,8 @@ type Metrics struct {
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
 	aiLogExports           *prometheus.CounterVec
+	aiResponseChecks       *prometheus.CounterVec
+	aiResponseFindings     *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -173,6 +175,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_route_canary_rollbacks_total",
 			Help: "Model canaries outboundd rolled back, by reason (error_rate or latency) (ADR-1340).",
 		}, []string{"reason"}),
+		aiResponseChecks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_response_checks_total",
+			Help: "AI response checks by integration and result (passed, redacted, flagged, error, unchecked, or blocked) (ADR-1400).",
+		}, []string{"integration_id", "result"}),
+		aiResponseFindings: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_response_findings_total",
+			Help: "AI response check findings by integration, detector (email, payment_card, iban, secret, or blocked_term) and action (redacted or blocked) (ADR-1400).",
+		}, []string{"integration_id", "kind", "action"}),
 		aiModeration: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_moderation_total",
 			Help: "AI moderation checks by integration and result (passed, flagged, blocked, or error) (ADR-1340).",
@@ -214,6 +224,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiCanaryRollbacks,
 		m.aiModeration,
 		m.aiLogExports,
+		m.aiResponseChecks,
+		m.aiResponseFindings,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -420,6 +432,22 @@ func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {
 		return
 	}
 	m.aiCanaryRollbacks.WithLabelValues(reason).Inc()
+}
+
+// ObserveAIResponseCheck counts one response check's result (ADR-1400).
+func (m *Metrics) ObserveAIResponseCheck(integrationID, result string) {
+	if m == nil || m.aiResponseChecks == nil {
+		return
+	}
+	m.aiResponseChecks.WithLabelValues(integrationID, result).Inc()
+}
+
+// ObserveAIResponseFindings counts a response check's findings of one kind.
+func (m *Metrics) ObserveAIResponseFindings(integrationID, kind, action string, count int) {
+	if m == nil || m.aiResponseFindings == nil || count <= 0 {
+		return
+	}
+	m.aiResponseFindings.WithLabelValues(integrationID, kind, action).Add(float64(count))
 }
 
 func (m *Metrics) ObserveAIModeration(integrationID, result string) {

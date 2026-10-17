@@ -1056,8 +1056,79 @@ long base64 payloads, and the text fields of forms:
   refused. That covers bodies over 4 MiB, including large audio uploads, and
   JSON that does not parse.
 
-Responses are not checked. `outbound_ai_content_findings_total` counts
-findings by detector and action.
+Responses are checked only by the policy's `response` section; see [AI
+response guardrails](#ai-response-guardrails).
+`outbound_ai_content_findings_total` counts request findings by detector and
+action.
+
+## AI response guardrails
+
+`gregale ai content-policy <id> --response-email redact --response-secrets
+block --response-terms block --response-moderation flag` (or `response` in
+`PUT .../ai-content-policy`) checks what the model sends back before the
+caller sees it (ADR-1400):
+
+- **Detectors:** `email`, `payment_card`, `iban` and `secret` redact or block
+  as on requests.
+- **Terms:** `blocked_terms: block` refuses a response that contains one of
+  the policy's blocked terms.
+- **Moderation:** `flag` or `block` runs the policy's moderation check on the
+  response, with every category but `prompt_injection`, and a prompt about
+  text an AI produced. The check's settings stay stored while requests are
+  not moderated (`--moderation off`).
+
+**What is checked:** the generated text of successful generation and
+transcription calls:
+
+- OpenAI chat and text completions, Responses API messages and refusals, and
+  transcriptions;
+- Anthropic text blocks;
+- Gemini and Vertex text parts;
+- Bedrock Converse text and Bedrock invoke model output.
+
+Tool call arguments, thinking and reasoning text, citations, embeddings,
+images, speech, video and batch results are not checked. Neither are
+replays or the gateway's own checks.
+
+**Whole responses** (JSON or text) are read in full first, up to 4 MiB:
+
+- Redactions rewrite the text and send `X-Gregale-AI-Response-Redactions:
+  email=1`. The JSON is re-encoded, so key order and spacing can change.
+- A block answers `422 outbound_ai_response_blocked`, or `422
+  outbound_ai_response_flagged` after moderation. A flag sends
+  `X-Gregale-AI-Response-Moderation: flagged=<categories>`.
+- A failed moderation check under `--moderation-on-error block` answers `503
+  outbound_ai_moderation_unavailable`. A response the gateway cannot read or
+  that is over 4 MiB answers `502 outbound_ai_response_unchecked`.
+- Gemini's `streamGenerateContent` without `alt=sse` is a JSON array, so it
+  is checked whole and arrives at the end.
+
+**Streams** (server-sent events and Bedrock event streams) keep streaming:
+
+- The gateway keeps each choice's, output part's or content block's text and
+  releases an event once 512 more bytes of that text have arrived, or the
+  stream ends. Each scan reads 8 KiB back, so a finding split across events
+  is caught.
+- Redactions rewrite the held events. A block ends the stream with `event:
+  error` and `{"type":"error","error":{"code":"outbound_ai_response_blocked",...}}`,
+  which OpenAI's and Anthropic's SDKs raise, or a Bedrock exception frame.
+  OpenAI-format routes send an OpenAI error event.
+- With `--response-moderation flag`, the check runs when the stream ends.
+  With `block`, the stream is held until the check passes, so it arrives at
+  the end.
+
+**Billing:** a blocked response's tokens are still billed by the provider and
+settle as usual. A stream the gateway ended settles like an aborted stream.
+
+AI calls no longer forward the caller's `Accept-Encoding`: the gateway
+negotiates compression with the provider and reads plain bytes, so usage is
+read from every response.
+
+`outbound_ai_response_checks_total` counts checks by result (`passed`,
+`redacted`, `flagged`, `error`, `unchecked` or `blocked`), and
+`outbound_ai_response_findings_total` counts findings by detector and action.
+The log-export line carries `response_check`, `response_findings` and
+`response_moderation_categories`.
 
 ## AI replay
 
@@ -1208,7 +1279,7 @@ to the content policy (ADR-1340).
   outbound_ai_moderation_unavailable`; the default `allow` lets it through.
 - **What is checked:** the text of user, tool and input content, never system,
   developer or assistant turns, and at most 32 KiB of it, latest first.
-  Responses are not checked.
+  Responses are checked only with `--response-moderation`.
 - **When:** after admission, so a call the caps refuse never pays for a check,
   and before the provider call.
 - **Cost:** the check runs through the check integration in process, so its

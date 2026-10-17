@@ -1584,6 +1584,7 @@ export type { OutboundAIReplayTarget } from './models/OutboundAIReplayTarget.js'
 export type { OutboundAIRequestContent } from './models/OutboundAIRequestContent.js';
 export type { OutboundAIRequestLogEntry } from './models/OutboundAIRequestLogEntry.js';
 export type { OutboundAIRequestLogList } from './models/OutboundAIRequestLogList.js';
+export type { OutboundAIResponsePolicy } from './models/OutboundAIResponsePolicy.js';
 export type { OutboundAIRoute } from './models/OutboundAIRoute.js';
 export type { OutboundAIRouteCanary } from './models/OutboundAIRouteCanary.js';
 export type { OutboundAIRouteCanaryStatus } from './models/OutboundAIRouteCanaryStatus.js';
