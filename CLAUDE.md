@@ -102,10 +102,10 @@ docs/adr/
 - **Builder slots**: 1 guaranteed (inside the 6 GB control-plane slice), 2nd opportunistic
   only when tenant residency < 60%. Builds never outrank tenant wakes.
 
-## Hard limits (source: financial model §1; encoded in pkg/api/limits.go)
+## Hard limits (source: financial model §1 as amended by the Oct 2026 COGS report, ADR-1430; encoded in pkg/api/limits.go)
 
-Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/128/5 · Hobby 5/2/256/50 ·
-Pro 25/5/512/250 · Scale 100/20/1024/1500. Overage €0.01/GB-h. Source tarball ≤100 MB
+Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/256/20 · Hobby 5/2/512/200 ·
+Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.01/GB-h (USD, ADR-1430). Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
 15 min (ADR-791). Idle timeouts: 30/60/300/600 s (functions default to 30 s, ADR-974). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.

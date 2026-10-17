@@ -3943,9 +3943,20 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		return App{}, mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var found int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
-		return App{}, mapErr(err)
+	if p.ExpectedServiceBindingFingerprint != "" {
+		var before App
+		if err := scanAppInto(&before, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id)); err != nil {
+			return App{}, mapErr(err)
+		}
+		p, err = prepareServiceBindingPlanUpdate(before, p)
+		if err != nil {
+			return App{}, err
+		}
+	} else {
+		var found int
+		if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
+			return App{}, mapErr(err)
+		}
 	}
 	app, err := updateApp(ctx, tx, id, p)
 	if err != nil {
@@ -14868,7 +14879,7 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
 	// account_spend_snapshot has no production writer (only
 	// UpsertAccountSpendSnapshot, which nothing calls), so summing it
-	// returned 0 for every account: the enabled "Spend exceeds €20"
+	// returned 0 for every account: the enabled "Spend exceeds $20"
 	// preset and the meterd_account_spend_eur gauge could never move.
 	// Read the month-to-date usage spend beyond the plan's included
 	// allowance from usage_minutes — the same figure the billing page
@@ -15890,6 +15901,7 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			select id, quota_reserved
 			  from invocations
 			 where state = 'dispatching'
+ and not exists(select 1 from event_delivery_acknowledgments a where a.invocation_id=invocations.id and a.attempt=invocations.attempts and a.replay_generation=invocations.replay_generation and a.phase='awaiting')
            and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)
 			   and lease_expires_at is not null
 			   and lease_expires_at <= $1

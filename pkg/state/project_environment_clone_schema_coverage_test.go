@@ -18,6 +18,11 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,
+		"workflow_automation_live_baseline_retirements": CloneSchemaOperational,
+		"workflow_automation_live_suites":               CloneSchemaOperational,
+		"workflow_automation_live_verifications":        CloneSchemaOperational,
+
 		"workflow_initial_recovery_reviews":       CloneSchemaOperational,
 		"profile_deployment_policies":             CloneSchemaConfiguration,
 		"profile_investigations":                  CloneSchemaOperational,
@@ -172,6 +177,15 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
+
+		"project_release_sets": CloneSchemaConfiguration,
+
+		// Evidence and expiring execution plans belong to the source environment.
+		"binding_verification_runs":         CloneSchemaOperational,
+		"binding_verification_run_steps":    CloneSchemaOperational,
+		"project_binding_verification_runs": CloneSchemaOperational,
+		"project_release_stages":            CloneSchemaOperational,
+		"queue_binding_canaries":            CloneSchemaOperational,
 	}
 	for _, policy := range policies {
 		if kind, ok := wanted[policy.TableName]; ok {

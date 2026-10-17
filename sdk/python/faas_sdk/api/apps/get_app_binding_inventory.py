@@ -16,6 +16,7 @@ def _get_kwargs(
     slug: str,
     *,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
@@ -25,6 +26,8 @@ def _get_kwargs(
     if not isinstance(deployment_id, Unset):
         json_deployment_id = str(deployment_id)
     params["deployment_id"] = json_deployment_id
+
+    params["service_targets"] = service_targets
 
     params["scope"] = scope
 
@@ -106,6 +109,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppBindingInventory | Problem]:
     """Inspect all runtime resource bindings attached to an app.
@@ -129,6 +133,7 @@ def sync_detailed(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -142,6 +147,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         deployment_id=deployment_id,
+        service_targets=service_targets,
         scope=scope,
     )
 
@@ -157,6 +163,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppBindingInventory | Problem | None:
     """Inspect all runtime resource bindings attached to an app.
@@ -180,6 +187,7 @@ def sync(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -194,6 +202,7 @@ def sync(
         slug=slug,
         client=client,
         deployment_id=deployment_id,
+        service_targets=service_targets,
         scope=scope,
     ).parsed
 
@@ -203,6 +212,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> Response[AppBindingInventory | Problem]:
     """Inspect all runtime resource bindings attached to an app.
@@ -226,6 +236,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -239,6 +250,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         deployment_id=deployment_id,
+        service_targets=service_targets,
         scope=scope,
     )
 
@@ -252,6 +264,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     deployment_id: UUID | Unset = UNSET,
+    service_targets: str | Unset = UNSET,
     scope: str | Unset = UNSET,
 ) -> AppBindingInventory | Problem | None:
     """Inspect all runtime resource bindings attached to an app.
@@ -275,6 +288,7 @@ async def asyncio(
     Args:
         slug (str):
         deployment_id (UUID | Unset):
+        service_targets (str | Unset):
         scope (str | Unset):
 
     Raises:
@@ -290,6 +304,7 @@ async def asyncio(
             slug=slug,
             client=client,
             deployment_id=deployment_id,
+            service_targets=service_targets,
             scope=scope,
         )
     ).parsed

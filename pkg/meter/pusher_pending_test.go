@@ -194,7 +194,7 @@ func TestPushHourOverageProviderExcludesIncludedCalendarMonthUsage(t *testing.T)
 	// The prior hour consumes the entire Hobby allowance. The current
 	// hour is therefore the first one Polar should receive, and only its
 	// two billable GB-hours should be sent.
-	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", start.Add(-time.Minute), 50*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", start.Add(-time.Minute), api.IncludedMBSeconds(api.PlanHobby), 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-a", start.Add(5*time.Minute), 2*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {

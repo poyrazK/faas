@@ -70,6 +70,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 413:
         response_413 = Problem.from_dict(response.json())
 
@@ -130,6 +135,8 @@ def sync_detailed(
     Returned receipts describe the currently observed acceptance even on mismatch.
     Only expected_accepted_at is accepted as a query parameter; use the status read for consumer
     evidence.
+    An optional expected_app_id in the body returns 409 before comparison if
+    the resolved application UUID differs.
 
     Args:
         slug (str):
@@ -186,6 +193,8 @@ def sync(
     Returned receipts describe the currently observed acceptance even on mismatch.
     Only expected_accepted_at is accepted as a query parameter; use the status read for consumer
     evidence.
+    An optional expected_app_id in the body returns 409 before comparison if
+    the resolved application UUID differs.
 
     Args:
         slug (str):
@@ -237,6 +246,8 @@ async def asyncio_detailed(
     Returned receipts describe the currently observed acceptance even on mismatch.
     Only expected_accepted_at is accepted as a query parameter; use the status read for consumer
     evidence.
+    An optional expected_app_id in the body returns 409 before comparison if
+    the resolved application UUID differs.
 
     Args:
         slug (str):
@@ -291,6 +302,8 @@ async def asyncio(
     Returned receipts describe the currently observed acceptance even on mismatch.
     Only expected_accepted_at is accepted as a query parameter; use the status read for consumer
     evidence.
+    An optional expected_app_id in the body returns 409 before comparison if
+    the resolved application UUID differs.
 
     Args:
         slug (str):

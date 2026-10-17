@@ -134,7 +134,41 @@ for (const body of [{ job_id: "order-123" }, JSON.stringify({ job_id: "order-123
   assert.deepEqual(JSON.parse(result.body), { accepted: true, job_id: "order-123" });
   assert.equal(logs[0][1].job_id, "order-123");
 }
+
 await assert.rejects(() => handler({ body: "not-json" }, { invocation_id: "inv-1", log: { info() {} } }), /not valid JSON/);
+`)
+}
+
+func TestQueueWorkerStarterSafeCompletionCanary(t *testing.T) {
+	runNodeStarter(t, "queue-worker", `
+import assert from "node:assert/strict";
+import { pathToFileURL } from "node:url";
+const { handler } = await import(pathToFileURL(process.argv[1]).href);
+const payload = { gregale_queue_canary: "v1", canary_id: "11111111-2222-4333-8444-555555555555", binding: "default" };
+const logs = [];
+const context = { invocation_id: "owned-invocation", log: { info: (...args) => logs.push(args) } };
+for (const capability of [undefined, "not-json", "null", '"default"', '["other"]', '["default", null]']) {
+  if (capability === undefined) delete process.env.GREGALE_QUEUE_CANARY_BINDINGS;
+  else process.env.GREGALE_QUEUE_CANARY_BINDINGS = capability;
+  await assert.rejects(() => handler({ body: payload }, context), /Queue verification/);
+}
+assert.equal(logs.length, 0);
+process.env.GREGALE_QUEUE_CANARY_BINDINGS = '["default"]';
+for (const body of [payload, JSON.stringify(payload)]) {
+  const result = await handler({ body }, context);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), { canary: "completed", canary_id: payload.canary_id, binding: "default" });
+}
+assert.equal(logs.length, 2);
+assert.ok(logs.every(([message]) => message === "queue verification completed"));
+for (const invalid of [{ ...payload, gregale_queue_canary: "v2" }, { ...payload, canary_id: "invalid" },
+                       { ...payload, binding: "other" }, { ...payload, job_id: "must-not-run" }]) {
+  await assert.rejects(() => handler({ body: invalid }, context), /Queue verification/);
+}
+assert.equal(logs.length, 2);
+const job = await handler({ body: { job_id: "ordinary" } }, context);
+assert.equal(job.statusCode, 202);
+assert.equal(logs.at(-1)[0], "queue message received");
 `)
 }
 

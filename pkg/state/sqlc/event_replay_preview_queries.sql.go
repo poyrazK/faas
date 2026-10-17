@@ -90,7 +90,7 @@ func (q *Queries) EventReplayPreviewEarliestRetained(ctx context.Context, db DBT
 }
 
 const eventReplayPreviewTarget = `-- name: EventReplayPreviewTarget :one
-SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, a.slug AS app_slug,
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, a.slug AS app_slug,
        EXISTS (SELECT 1 FROM event_subscription_work_bindings b WHERE b.subscription_id=s.id) AS work_bound
 FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid
@@ -104,19 +104,20 @@ type EventReplayPreviewTargetParams struct {
 }
 
 type EventReplayPreviewTargetRow struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Source             string
-	Type               string
-	Filter             []byte
-	Enabled            bool
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	RoutingRetryPolicy []byte
-	SchemaVersions     []string
-	AppSlug            string
-	WorkBound          bool
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	AppID                      pgtype.UUID
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	Enabled                    bool
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
+	AppSlug                    string
+	WorkBound                  bool
 }
 
 func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg EventReplayPreviewTargetParams) (EventReplayPreviewTargetRow, error) {
@@ -134,6 +135,7 @@ func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg Eve
 		&i.UpdatedAt,
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
+		&i.AcknowledgmentLeaseSeconds,
 		&i.AppSlug,
 		&i.WorkBound,
 	)

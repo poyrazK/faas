@@ -56,6 +56,27 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1289 | [Reusable automation test cases](1289-reusable-automation-test-cases.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1290 | [Guided automation test case editor](1290-guided-automation-test-editor.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1291 | [Single-case live automation verification](1291-single-case-live-automation-verification.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1292 | [Guided live automation assertions](1292-guided-live-automation-assertions.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1293 | [Automatic live verification results](1293-automatic-live-verification-results.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1294 | [CLI live automation verification](1294-cli-live-automation-verification.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1295 | [Resumable CLI live automation verification suites](1295-cli-live-automation-verification-suites.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1296 | [Shared live automation suite history](1296-shared-live-automation-suite-history.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1297 | [Durable dashboard live automation suites](1297-dashboard-live-automation-suite-execution.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1298 | [Read-only live automation suite comparisons](1298-live-automation-suite-comparisons.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1299 | [Read-only CI gates for live automation suites](1299-live-automation-ci-gate.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1300 | [Required coverage for the read-only live automation gate](1300-live-automation-required-coverage-policy.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1301 | [Candidate evidence age in live automation gates](1301-live-automation-evidence-age-policy.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1302 | [Named automation live baselines and attributed promotion](1302-named-automation-live-baselines.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1303 | [Manage named automation baselines in the dashboard](1303-dashboard-automation-baselines.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1304 | [Discover automation baselines and observe retained evidence health](1304-automation-baseline-discovery-health.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1305 | [Audited retirement of named automation baselines](1305-automation-baseline-retirement.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1387 | [Guided webhook automation setup](1387-guided-webhook-automation-setup.md) | accepted | Event starter fields, confirmed scoped ingress binding and safe receipt/run inspection |
+| 1287 | [Guided scheduled-report configuration](1287-guided-scheduled-report-configuration.md) | accepted | Report fields, distinct edited/published schedule previews and observed setup checks |
+| 1286 | [Dashboard workflow diagnosis and recovery](1286-dashboard-workflow-diagnosis-and-recovery.md) | accepted | Scoped diagnostics and attempt inspection, recovery previews, confirmed idempotent continuation and cancellation |
+| 1285 | [Guided automation dashboard](1285-guided-automation-dashboard.md) | accepted | App-owner starter, validation, simulation, checked publishing, and run inspection flow |
 | 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
 | 1385 | [Refresh authorization for retained WebSocket channels](1385-retained-channel-authorization-refresh.md) | accepted for implementation; deployed qualification pending | Share SSE's bounded channel grants with WebSocket history and buffered delivery; remove denied subscriptions and reconnect after callback outages |
 | 1332 | [Bind retained realtime to the verified login session](1332-session-bound-retained-realtime.md) | accepted for implementation; deployed qualification pending | Verified session/expiry handoff, periodic WebSocket JWT checks and session-aware Auth channel callbacks |
@@ -546,6 +567,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
+| 1430 | [USD pricing and plan entitlements from the October 2026 COGS report](1430-plan-entitlements-from-october-2026-cogs-report.md) | accepted | Billing in USD only at $0/$10/$30/$99 with $0.01/GB-h overage; RAM per app 256/512/1024/2048 MB and 20/200/1,000/3,000 included GB-h; 1/10/50/200 GiB included object storage with a Free hard stop (write/read split deferred); managed PostgreSQL 1/1/3/10 databases, pooled 0.5/1/5/20 GiB and 5/25/75/200 CU-h ceilings, Free gains one development database |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
 | 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
 | 1343 | [App edge on compute nodes behind Cloudflare Tunnel](1343-app-edge-on-compute-nodes.md) | proposed | Every compute node runs a `cloudflared` connector and a gatewayd-public that routes to its own gatewayd-internal socket; `*.<apps domain>` moves to the tunnel, platform hosts and custom domains stay on the control plane; credential-bound app paths are forwarded to the control plane; CPU/RAM hold-back, per-node monitoring and connector withdrawal before drain; off by default, on per manifest |
@@ -866,6 +888,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-906: Frozen instances](906-frozen-instances.md)
 - [ADR-1151: Pause tiers — quiet pause between requests, frozen after idle](1151-pause-tiers.md)
+- [ADR-1346: Runtime binding audiences and explicit queue release requirements](1346-binding-runtime-audiences-and-queue-release-requirements.md)
+- [ADR-1347: Unified binding-policy verification](1347-unified-binding-policy-verification.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -1108,6 +1132,60 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1348: Checked project binding release graphs](1348-checked-project-binding-release-graphs.md)
+
+- [ADR-1352: Push queue binding handler completion canaries](1352-push-queue-binding-completion-canaries.md)
+
+- [ADR-1353: Bounded parallel binding verification](1353-bounded-parallel-binding-verification.md)
+
+- [ADR-1354: Ledger-backed canary dispatch authority](1354-ledger-backed-canary-dispatch-authority.md)
+
+- [ADR-1355: Durable single-app binding verification runs](1355-durable-single-app-binding-verification-runs.md)
+
+- [ADR-1356: Durable project binding verification runs](1356-durable-project-binding-verification-runs.md)
+
+- [ADR-1357: Server-generated binding verification reviews](1357-server-generated-binding-verification-reviews.md)
+
+- [ADR-1358: Reusable binding verification runners](1358-reusable-binding-verification-runners.md)
+
+- [ADR-1359: Binding verification run diagnostics](1359-binding-verification-run-diagnostics.md)
+
+- [ADR-1360: Shared verification admission budgets](1360-shared-verification-admission-budgets.md)
+
+- [ADR-1361: Automatic verification recovery diagnostics](1361-automatic-verification-recovery-diagnostics.md)
+
+- [ADR-1365: Verification qualification waiting](1365-verification-qualification-waiting.md)
+
+- [ADR-1366: Verification write reconciliation](1366-verification-write-reconciliation.md)
+
+- [ADR-1367: Binding CLI progress and recovery summaries](1367-binding-cli-progress.md)
+
+- [ADR-1368: Verification creation reconciliation](1368-verification-creation-reconciliation.md)
+
+- [ADR-1369: PostgreSQL pool runtime bindings](1369-postgres-pool-runtime-bindings.md)
+
+- [ADR-1370: Canonical PostgreSQL starter bindings](1370-canonical-postgres-starter-bindings.md)
+
+- [ADR-1371: Async Python PostgreSQL bindings](1371-async-python-postgres-bindings.md)
+
+- [ADR-1372: Python PostgreSQL starter recovery](1372-python-postgres-starter-recovery.md)
+
+- [ADR-1373: Async Python object-storage bindings](1373-async-python-object-storage-bindings.md)
+
+- [ADR-1374: Python object-storage starter recovery](1374-python-object-storage-starter-recovery.md)
+
+- [ADR-1375: Node object-storage starter recovery](1375-node-object-storage-starter-recovery.md)
+
+- [ADR-1376: Native object-storage starter acceptance](1376-native-object-storage-starter-acceptance.md)
+
+- [ADR-1377: Python storage explicit TLS trust](1377-python-storage-explicit-tls-trust.md)
+
+- [ADR-1378: Native storage starter runtime matrix](1378-native-storage-starter-runtime-matrix.md)
+
+- [ADR-1379: PostgreSQL native acceptance repair](1379-postgres-native-acceptance-repair.md)
+- [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
+- [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
 
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)

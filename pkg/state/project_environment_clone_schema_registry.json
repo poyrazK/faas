@@ -451,6 +451,7 @@
       "max_age_seconds",
       "mode",
       "object_storage_requirements",
+      "queue_requirements",
       "reason",
       "require_application_ack",
       "revision",
@@ -1760,6 +1761,32 @@
       "mb_seconds",
       "provider",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_run_steps",
+    "columns": [
+      "resource_id",
+      "resource_kind",
+      "run_id",
+      "step_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_runs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "graph_run_id",
+      "id",
+      "scope",
+      "snapshot",
+      "status"
     ],
     "kind": "operational"
   },
@@ -3827,6 +3854,78 @@
     "kind": "operational"
   },
   {
+    "table": "event_acknowledgment_metric_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "kind",
+      "occurrences",
+      "retain_until",
+      "saturated",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_outcomes",
+    "columns": [
+      "attempt",
+      "first_at",
+      "invocation_id",
+      "kind",
+      "last_at",
+      "occurrences",
+      "replay_generation",
+      "retain_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_recording_coverage",
+    "columns": [
+      "continuous_since",
+      "inventory_revision",
+      "singleton",
+      "updated_at",
+      "verified_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_writers",
+    "columns": [
+      "capability_version",
+      "continuous_since",
+      "expires_at",
+      "inventory",
+      "inventory_revision",
+      "role",
+      "seen_at",
+      "session_id",
+      "slot",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_delivery_acknowledgments",
+    "columns": [
+      "attempt",
+      "completion_digest",
+      "deadline_at",
+      "invocation_id",
+      "lease_seconds",
+      "max_attempts",
+      "phase",
+      "rejection_status",
+      "replay_generation",
+      "retry_delay_ms",
+      "token_digest"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_delivery_capacity",
     "columns": [
       "account_id",
@@ -4297,11 +4396,33 @@
       "max_pending_deliveries",
       "paused",
       "paused_at",
+      "rate_burst",
+      "rate_credit_ms",
+      "rate_enabled",
+      "rate_interval_ms",
       "rate_per_second",
+      "rate_refilled_at",
+      "rate_revision",
+      "rate_sequence",
       "subscription_id",
       "updated_at",
       "window_count",
       "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_rate_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "sequence",
+      "subscription_id"
     ],
     "kind": "operational"
   },
@@ -4322,6 +4443,7 @@
     "table": "event_subscriptions",
     "columns": [
       "account_id",
+      "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
       "enabled",
@@ -8617,6 +8739,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_binding_verification_runs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "project_id",
+      "snapshot",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
@@ -9936,13 +10072,31 @@
       "account_id",
       "active",
       "created_at",
+      "deactivation",
       "environment_slug",
       "expires_at",
       "id",
       "project_id",
+      "rollback_previous_release_id",
+      "rollback_source_release_id",
       "ttl_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "project_release_stages",
+    "columns": [
+      "account_id",
+      "cancelled",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "manifest",
+      "project_id",
+      "targets"
+    ],
+    "kind": "operational"
   },
   {
     "table": "projects",
@@ -9968,6 +10122,25 @@
       "customer_ip"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "queue_binding_canaries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "cancelled",
+      "completed_attempt",
+      "completed_deployment_id",
+      "completed_generation",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "published_at",
+      "snapshot",
+      "trigger_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "queue_bindings",
@@ -11292,6 +11465,8 @@
       "name",
       "published",
       "published_version",
+      "test_report",
+      "test_suite",
       "updated_at",
       "version"
     ],
@@ -11337,6 +11512,66 @@
       "window_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "workflow_automation_live_baseline_promotions",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "promoted_at",
+      "promotion_id",
+      "receipt",
+      "revision",
+      "suite_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_baseline_retirements",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "receipt",
+      "retirement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_suites",
+    "columns": [
+      "app_id",
+      "automation_version",
+      "cases",
+      "created_at",
+      "deployment_id",
+      "id",
+      "managed",
+      "name",
+      "published_version",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_verifications",
+    "columns": [
+      "app_id",
+      "automation_version",
+      "case_name",
+      "created_at",
+      "deployment_id",
+      "idempotency_key",
+      "inputs_hash",
+      "live_test",
+      "name",
+      "published_version",
+      "report",
+      "request_fingerprint",
+      "run_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_automation_publish_policies",

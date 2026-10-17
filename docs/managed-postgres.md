@@ -16,12 +16,17 @@ deletion reconciliation remain safe while provisioning is disabled.
 Plan entitlements are enforced before provider work and again at the atomic
 database reservation boundary:
 
-| Plan | Databases | Storage | Restore window | Classes |
-| --- | ---: | ---: | ---: | --- |
-| Free | 0 | — | — | — |
-| Hobby | 1 | 10 GiB | 7 days | development |
-| Pro | 3 | 50 GiB | 7 days | development, burstable |
-| Scale | 10 | 100 GiB | 7 days | development, burstable, production |
+| Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
+| Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
+| Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
+
+Storage is pooled across the account's databases: one database may use the
+whole pool. Storage and compute are limits, not billed overage, until managed
+PostgreSQL is invoiced
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -154,7 +159,8 @@ restore callback; both must succeed before it accepts traffic.
 
 The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
 joins provider v8 evidence with a versioned report from actual execution of all
-thirteen guest phases. `managed-postgres-qualify --verify --rollout` checks the
+nineteen guest phases, including both shipped Node and Python starters.
+`managed-postgres-qualify --verify --rollout` checks the
 approved qualification-bundle manifest, PostgreSQL major, native host class,
 cleanup and expiry without making provider or SQL calls. Before a staging
 canary, opt in with `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION=true`
@@ -522,10 +528,10 @@ resource created inside the current, still-open window owes no completed window 
 so its missing first observation does not block; once that window closes it needs
 coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
-reconciled. The plan's per-database storage entitlement is multiplied by the
-plan's database-count allowance, converted to the canonical byte-second meter,
-and intersected with the operator ceiling; compute, history,
-egress, and spend remain operator-configured COGS ceilings. This keeps the
+reconciled. The plan's pooled storage, held for a whole billing month, becomes
+the canonical byte-second ceiling, and its monthly compute units the
+compute-unit-second ceiling; both are intersected with the operator ceilings,
+while history, egress, and spend remain operator-configured COGS ceilings. This keeps the
 admission path provider-neutral and prevents a plan or provider adapter from
 raising the operator's safety budget.
 
@@ -1170,3 +1176,24 @@ marker, reconnection with existing writer/reader credentials, stable request
 replay and restoration of the original class whenever resizing is advertised.
 Requalify Neon before reopening provisioning; prior approvals cannot prove this
 new capability. Local tests do not replace live Neon qualification.
+
+### PostgreSQL starter credential adoption
+
+New `rest-api-postgres` and `secret-reload-node` scaffolds use the canonical pool
+binding and secret coordinator. They validate fresh credentials before applied
+ACKs, drain pools after leased transactions release their driver connections,
+and block new work on failed adoption or revocation. The REST starter preserves
+TLS verification, migration isolation and its bounded restore hook; restores read
+the latest atomic snapshot rather than stale startup environment values. Existing
+apps need redeployment to adopt these changes. See the
+[pool runtime and starter guide](postgres-pool-runtime.md#built-in-postgresql-starters).
+
+Python applications can start with
+`gregale init --template rest-api-postgres-python --path notes-api`. This
+self-contained FastAPI/psycopg starter uses the canonical async runtime, verified
+TLS, schema-backed readiness, managed release-only migration credentials and a
+two-second restore hook with a 1.5-second application budget. It fences captured
+SQL work, rereads current credentials even at the same revision, validates a new
+pool and drains old resources before reopening readiness. A failed hook stays
+unready for the existing cold-boot fallback. See the
+[Python deployment and recovery guide](../cmd/gregale/templates/rest-api-postgres-python/README.md).

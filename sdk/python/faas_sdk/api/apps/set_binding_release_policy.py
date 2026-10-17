@@ -115,6 +115,8 @@ def sync_detailed(
     cutovers, legacy recovery and project release graph switches fail closed
     until they support binding fences. Policies with storage requirements must use
     release-policy-with-object-storage for updates, including explicit clearing.
+    Policies with queue requirements must use release-policy-with-queues and
+    explicitly retain or clear every queue and storage requirement.
     To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
@@ -165,6 +167,8 @@ def sync(
     cutovers, legacy recovery and project release graph switches fail closed
     until they support binding fences. Policies with storage requirements must use
     release-policy-with-object-storage for updates, including explicit clearing.
+    Policies with queue requirements must use release-policy-with-queues and
+    explicitly retain or clear every queue and storage requirement.
     To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
@@ -210,6 +214,8 @@ async def asyncio_detailed(
     cutovers, legacy recovery and project release graph switches fail closed
     until they support binding fences. Policies with storage requirements must use
     release-policy-with-object-storage for updates, including explicit clearing.
+    Policies with queue requirements must use release-policy-with-queues and
+    explicitly retain or clear every queue and storage requirement.
     To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.
@@ -258,6 +264,8 @@ async def asyncio(
     cutovers, legacy recovery and project release graph switches fail closed
     until they support binding fences. Policies with storage requirements must use
     release-policy-with-object-storage for updates, including explicit clearing.
+    Policies with queue requirements must use release-policy-with-queues and
+    explicitly retain or clear every queue and storage requirement.
     To recover without evidence, explicitly
     set off with the current revision and a reason, then retry. Every update
     has durable policy history. Existing traffic is not changed by this call.

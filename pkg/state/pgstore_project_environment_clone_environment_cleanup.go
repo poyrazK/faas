@@ -41,6 +41,9 @@ func (s *PgStore) CleanupProjectEnvironmentCloneEnvironmentForLease(ctx context.
 		if err = q.LockCloneEnvironmentCleanupScopeBorrowers(ctx, tx); err != nil {
 			return mapErr(err)
 		}
+		if err = q.LockCloneBindingEnvironmentCleanupBorrowers(ctx, tx); err != nil {
+			return mapErr(err)
+		}
 
 		// Native materialization replay locked the original environment FOR UPDATE.
 		// Its foreign-key borrowers cannot race this check and disappear by cascade.

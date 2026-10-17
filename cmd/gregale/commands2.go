@@ -207,7 +207,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -226,6 +226,7 @@ func cmdApp(args []string) int {
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
+	revisionPinTTL := fs.Duration("revision-pin-ttl", 0, "revision pin lifetime (0 disables; whole seconds, maximum 168h)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
 	// Pro/Scale only — the API rejects Hobby/Free with 403
@@ -420,6 +421,10 @@ func cmdApp(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	revisionPinSeconds, ttlErr := cliRevisionPinTTLSeconds(*revisionPinTTL)
+	if ttlErr != nil {
+		return printErr("Invalid --revision-pin-ttl", ttlErr)
+	}
 
 	// Build the partial-update payload from explicit flags only.
 	explicit := map[string]bool{}
@@ -429,6 +434,9 @@ func cmdApp(args []string) int {
 		return printErr("Invalid concurrency policy", err)
 	}
 	var req api.UpdateAppRequest
+	if explicit["revision-pin-ttl"] {
+		req.RevisionPinTTLSeconds = &revisionPinSeconds
+	}
 	if explicit["ram"] {
 		if *ram <= 0 {
 			return printErr("Invalid --ram", fmt.Errorf("must be greater than zero; got %d", *ram))
@@ -728,7 +736,7 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.MinInstances == nil &&
+	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
@@ -2397,6 +2405,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// pointer through.
 	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = server default 100)")
 	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
+	var queueCanaryBindings stringListFlag
+	fs.Var(&queueCanaryBindings, "queue-canary-binding", "declare safe handler-completion support for a manifest push HTTP binding (repeatable; this deployment only)")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
@@ -2574,6 +2584,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// implementation while making `gregale deploy --dry-run` safe by
 	// construction.
 	*diff = preview
+	if len(queueCanaryBindings) > 0 && (projectRequested || *image != "" || *repo != "" || *githubSnippet || *simplePlan || *createOnly || *noTriggers || developerSync != nil) {
+		return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single source deployment with manifest reconciliation; unsupported with project, image, repo, github, plan, create-only, no-triggers, or developer sync"))
+	}
 	if *mcpTaskMigrationOverride && (*diff || *simplePlan || *githubSnippet) {
 		return printErr("Invalid flags", errors.New("--mcp-task-migration-override requires a single-app deployment and cannot be used with preview, --plan, or --github"))
 	}
@@ -3210,6 +3223,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid deploy manifest", fnErr)
 		}
 		if isFunctionSet {
+			if len(queueCanaryBindings) > 0 {
+				return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single workload"))
+			}
 			return deployFunctionSet(ctx, functionSetDeploy{
 				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
@@ -3659,6 +3675,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		resolvedSimplePlan = &plan
 	}
 
+	queueCanaryNames, queueCanaryErr := deploymentQueueCanaryBindings(*tarball, sourceRoot, queueCanaryBindings)
+	if queueCanaryErr != nil {
+		return printErr("Invalid --queue-canary-binding", queueCanaryErr)
+	}
+	if len(queueCanaryNames) > 0 {
+		overrides := make(map[string]string, len(execution.overrideEnv)+1)
+		for key, value := range execution.overrideEnv {
+			overrides[key] = value
+		}
+		encoded, _ := json.Marshal(queueCanaryNames)
+		overrides[api.QueueCanaryCapabilityEnv] = string(encoded)
+		execution.overrideEnv = overrides
+	}
+
 	// Render one coherent, non-secret summary after the source view and local
 	// inference are authoritative, but before any app creation, binding change,
 	// trigger staging, or source upload. Project deploys and read-only previews
@@ -3670,15 +3700,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		)
 		buildPlan := buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, "", *image != "", *dockerfile)
 		renderDeployPreflight(osStdout, deployPreflightSummary{
-			Slug:            slug,
-			Source:          source,
-			LocalChanges:    localChanges,
-			Environment:     *environment,
-			BuildPlan:       buildPlan,
-			SimpleAppPlan:   resolvedSimplePlan,
-			ResourceProfile: *profile,
-			ExecutionMode:   *executionMode,
-			Healthcheck:     healthcheck,
+			Slug:                slug,
+			Source:              source,
+			LocalChanges:        localChanges,
+			Environment:         *environment,
+			BuildPlan:           buildPlan,
+			SimpleAppPlan:       resolvedSimplePlan,
+			ResourceProfile:     *profile,
+			ExecutionMode:       *executionMode,
+			Healthcheck:         healthcheck,
+			QueueCanaryBindings: queueCanaryNames,
 			Release: deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
 			),
@@ -3729,7 +3760,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		appProtocolIntent = *appProtocolPtr
 	}
 	deployIntent := deployIdempotencyIntent{
-		Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
+		OverrideEnv: execution.overrideEnv,
+		Slug:        slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
 		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
@@ -3778,6 +3810,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
 		opts.Workflows = previewWorkflows
+		opts.QueueCanaryBindings = queueCanaryNames
 		opts.PRNumber = *prNumber
 		opts.NoTriggers = *noTriggers
 		opts.Safe = *safeDeploy
@@ -5992,7 +6025,7 @@ func renderInvoices(w io.Writer, page api.InvoiceListResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  %-33s %-19s %-8s %-7s %-6s %-10s %-3s %s\n",
 			inv.ID, trunc(inv.Number, 19), inv.Provider, inv.PeriodEnd.Format("2006-01"),
-			inv.Status, "€"+total, inv.Currency, pdf)
+			inv.Status, api.BillingCurrencySymbol+total, inv.Currency, pdf)
 	}
 	if page.NextBefore != "" {
 		_, _ = fmt.Fprintf(w, "\n  next page: gregale invoices --before %s\n", page.NextBefore)
@@ -7881,6 +7914,16 @@ func printDeployColdWakeSentence() {
 	_, _ = fmt.Fprintln(osStdout,
 		"  Your app scales to zero when idle. The first request after idle takes\n"+
 			"  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.")
+}
+
+// printDeployNoHTTPSentence replaces the cold-wake line for a worker or job,
+// which never answers requests and does not scale to zero between them.
+func printDeployNoHTTPSentence(executionMode, appSlug string) {
+	if executionMode == api.ExecutionModeJob {
+		_, _ = fmt.Fprintf(osStdout, "  Your job runs to completion when triggered; it does not serve HTTP.\n  Follow it with: gregale logs %s\n", appSlug)
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "  Your worker runs continuously; it does not serve HTTP.\n  Follow it with: gregale logs %s\n", appSlug)
 }
 
 // renderDeployFailure maps the deployment's Error string to one of the

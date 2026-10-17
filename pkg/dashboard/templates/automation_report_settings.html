@@ -1,0 +1,43 @@
+{{define "automation-report-settings"}}
+{{if .Data.Report}}
+<fieldset><legend>Choose how to edit this definition</legend>
+<label class="check"><input type="radio" name="editor_mode" value="report" {{if eq .Data.EditorMode "report"}}checked{{end}}>Use report settings below</label>
+<label class="check"><input type="radio" name="editor_mode" value="json" {{if ne .Data.EditorMode "report"}}checked{{end}}>Use the JSON editor</label>
+</fieldset>
+<p class="muted">Report settings replace only the name, schedule options and handler paths in the JSON definition. Other advanced settings are preserved. Select the JSON editor to apply changes to these same fields directly.</p>
+{{with .Data.Report}}<div class="grid" id="report-settings">
+<div><label for="report-schedule">Schedule (cron)</label><input id="report-schedule" type="text" name="report_schedule" value="{{.Schedule}}"><p class="muted">Five fields: minute, hour, day of month, month, day of week. Example: <code>0 9 * * 1-5</code> means weekdays at 09:00.</p></div>
+<div><label for="report-timezone">Timezone</label><input id="report-timezone" type="text" name="report_timezone" value="{{.Timezone}}"><p class="muted">Use UTC or an IANA name such as Europe/Istanbul. Preview shows the local UTC offset.</p></div>
+<div><label for="report-collect">Collect handler path</label><input id="report-collect" type="text" name="report_collect" value="{{.CollectPath}}"></div>
+<div><label for="report-deliver">Deliver handler path</label><input id="report-deliver" type="text" name="report_deliver" value="{{.DeliverPath}}"></div>
+<div><label for="report-overlap">When a previous run is active</label><select id="report-overlap" name="report_overlap"><option value="skip" {{if eq .Overlap "skip"}}selected{{end}}>Skip the new occurrence</option><option value="allow" {{if eq .Overlap "allow"}}selected{{end}}>Allow overlapping runs</option></select></div>
+<div><label for="report-catch-up">Missed starts</label><select id="report-catch-up" name="report_catch_up"><option value="skip" {{if eq .CatchUp "skip"}}selected{{end}}>Skip missed occurrences</option><option value="latest" {{if eq .CatchUp "latest"}}selected{{end}}>Recover only the latest within a window</option></select></div>
+<div><label for="report-window">Recovery window</label><input id="report-window" type="text" name="report_window" value="{{.CatchUpWindow}}"><p class="muted">For latest recovery only: leave empty for 1h, or enter 1m through 24h. Leave empty when skipping missed starts.</p></div>
+</div>{{end}}
+{{else if .Data.Webhook}}{{template "automation-webhook-settings" .}}{{else}}<input type="hidden" name="editor_mode" value="json">{{end}}
+{{end}}
+
+{{define "automation-schedule-panel"}}
+{{if or .Data.ScheduleConfigured .Data.PublishedSchedule}}
+<section id="schedule-preview"><h2>Preview schedule</h2><p>Preview the edited definition without saving, enabling starts or running handlers. Upcoming times are nominal occurrences; execution still depends on admission and availability.</p>
+<button type="submit" formaction="{{.Data.BaseURL}}/preview-schedule">Preview edited schedule</button>
+{{with .Data.DraftSchedule}}<h3>Edited definition preview</h3><p>This preview uses the submitted definition. It does not read a scheduler cursor or change the published schedule.</p>{{template "automation-schedule-times" .}}{{end}}
+{{with .Data.PublishedSchedulePreview}}<h3>Published schedule preview</h3><p>This preview uses the effective published definition and its observed scheduler cursor. Refresh the page for a new observation.</p>{{template "automation-schedule-times" .}}
+<p>{{if eq .CatchUp.Outcome "disabled"}}The schedule is paused.{{else if eq .CatchUp.Outcome "first_evaluation_arms"}}The first evaluation will initialize the schedule; earlier occurrences are not recovered.{{else if eq .CatchUp.Outcome "no_new_evaluation"}}No new schedule minute has elapsed since the last evaluation.{{else if eq .CatchUp.Outcome "skip_missed"}}Earlier missed occurrences would be skipped.{{else if eq .CatchUp.Outcome "outside_catch_up_window"}}Missed occurrences are outside the recovery window.{{else if eq .CatchUp.Outcome "coalesce_latest"}}Only the latest eligible missed occurrence would be considered.{{else if eq .CatchUp.Outcome "run_current_fire"}}The current scheduled occurrence would be considered.{{else}}No occurrence is currently due.{{end}} This observation reserves no run or capacity.</p>{{end}}
+{{if .Data.PublishedScheduleError}}<p role="status">{{.Data.PublishedScheduleError}}</p>{{end}}
+</section>
+{{end}}
+{{end}}
+
+{{define "automation-schedule-times"}}
+<p><code>{{.Schedule}}</code> in <strong>{{.Timezone}}</strong>. Automatic starts in this definition: {{if .Enabled}}enabled{{else}}paused{{end}}.</p>
+<p>{{if eq .Overlap "allow"}}Overlapping runs are allowed.{{else}}A new occurrence is skipped while a previous run is active.{{end}} {{if eq .CatchUp.Policy "latest"}}Missed starts recover only the latest occurrence within {{.CatchUp.Window}}; older occurrences are not replayed.{{else}}Missed occurrences are skipped.{{end}}</p>
+<div class="table-scroll"><table><caption>Upcoming nominal fire times</caption><tr><th>Local time ({{.Timezone}})</th><th>UTC time</th><th>Daylight-saving adjustment</th></tr>{{range .Upcoming}}<tr><td><code>{{.LocalTime}}</code></td><td><code>{{.ScheduledFor.Format "2006-01-02T15:04:05Z07:00"}}</code></td><td>{{if .DSTAdjustment}}Shifted forward to a valid local time{{else}}None{{end}}</td></tr>{{else}}<tr><td colspan="3">No upcoming occurrences were found.</td></tr>{{end}}</table></div>
+<details><summary>Daylight-saving rules</summary><p>{{if eq .DSTBehavior.Mode "fixed_wall_time"}}When clocks jump forward, a skipped local fire time moves to the first valid minute. When clocks move back, a repeated local fire time runs once, at its first occurrence.{{else if eq .DSTBehavior.Mode "interval"}}Intervals follow cron as local clocks change. Occurrences can repeat during the hour when clocks move back.{{else}}Daylight-saving details are unavailable.{{end}}</p></details>
+{{end}}
+
+{{define "automation-setup-checks"}}
+<section id="setup-checks"><h2>Setup checklist</h2><p>These checks describe the latest observation. They do not test handler behavior or guarantee a successful run.</p>
+<div class="table-scroll"><table><tr><th>Requirement</th><th>State</th><th>Next step</th></tr>{{range .Data.SetupChecks}}<tr><td>{{.Name}}</td><td>{{.Status}}</td><td>{{.Detail}}</td></tr>{{end}}</table></div>
+{{with .Data.Report}}<p>Deploy <code>{{.CollectPath}}</code> to collect the report, then <code>{{.DeliverPath}}</code> to deliver it. Test both routes and their credentials before enabling starts.</p>{{end}}</section>
+{{end}}

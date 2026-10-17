@@ -6,10 +6,21 @@ import type { BindingApplicationAdoption } from './BindingApplicationAdoption.js
 import type { BindingRefresh } from './BindingRefresh.js';
 import type { BindingVerification } from './BindingVerification.js';
 import type { OutboundBindingProbePolicy } from './OutboundBindingProbePolicy.js';
+import type { QueueBindingCanary } from './QueueBindingCanary.js';
 /**
  * Public binding configuration with separately reported runtime observations and verification status.
  */
 export type AppBindingInventoryItem = {
+  /**
+   * Exact candidate service recipient required by this inventory selection.
+   */
+  service_target_deployment_id?: string;
+  queue_canary?: QueueBindingCanary;
+  queue_canary_supported?: boolean;
+  /**
+   * Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an environment named app. Consumer-readiness policies require this field; older inventories omit it.
+   */
+  queue_environment?: string;
   type: 'service' | 'postgres' | 'object_storage' | 'queue' | 'outbound';
   name: string;
   /**

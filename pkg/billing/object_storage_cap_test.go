@@ -38,7 +38,9 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 	shadowEgress.Mode = MeterDeliveryShadow
 	lateEgress := liveEgress
 	lateEgress.EffectiveFrom = period.AddDate(0, 0, 10)
-	// The record prices 9 GiB-months at 1000 millicents: 9000 millicents.
+	// Usage is Hobby's included storage (ADR-1430) plus 9 GiB-months, which
+	// the record prices at 1000 millicents each: 9000 millicents.
+	hobbyIncluded := api.MustLimitsFor(api.PlanHobby).ObjectStorage.Allowance().StoredByteHours
 	for _, tc := range []struct {
 		name     string
 		capped   bool
@@ -59,7 +61,7 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot := objectStorageBillingSnapshot("acct", "backend", period)
-			snapshot.Reports[0].StoredByteHours = 9 * gib * api.ObjectStorageBillingHoursPerMonth
+			snapshot.Reports[0].StoredByteHours = hobbyIncluded + 9*gib*api.ObjectStorageBillingHoursPerMonth
 			store := &objectStorageBillingStore{
 				snapshots: map[string]state.ObjectUsageSnapshot{"acct": snapshot},
 				usage:     map[string][]state.Usage{"acct": tc.usage},
@@ -69,7 +71,7 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 			}
 			recorder := &objectStorageLineItemRecorder{}
 			accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "acct", Plan: api.PlanHobby}}}
-			pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+			pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 			records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, period.AddDate(0, 1, 5), egressPolicySink{recorder, tc.egress})
 			if err != nil || len(records) != 1 || records[0].TotalMillicents != 9000 {
 				t.Fatalf("records = %+v, err = %v; want one record keeping the full 9000 millicents", records, err)
@@ -87,11 +89,11 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 func TestFinalizeObjectStoragePeriodsFailsClosedWithoutCapReads(t *testing.T) {
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	snapshot := objectStorageBillingSnapshot("acct", "backend", period)
-	snapshot.Reports[0].StoredByteHours = int64(1<<30) * api.ObjectStorageBillingHoursPerMonth
+	snapshot.Reports[0].StoredByteHours = api.MustLimitsFor(api.PlanHobby).ObjectStorage.Allowance().StoredByteHours + int64(1<<30)*api.ObjectStorageBillingHoursPerMonth
 	inner := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"acct": snapshot}}
 	recorder := &objectStorageLineItemRecorder{}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "acct", Plan: api.PlanHobby}}}
-	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
 	if _, err := FinalizeObjectStoragePeriods(context.Background(), accounts, capFreeBillingStore{inner}, pricing, period, period.AddDate(0, 1, 5), recorder); err == nil {
 		t.Fatal("month close without cap reads returned nil error")
 	}
