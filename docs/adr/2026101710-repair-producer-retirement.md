@@ -1,4 +1,4 @@
-# ADR-20261017: Daemon-bound producers for repair retirement
+# ADR-2026101710: Daemon-bound producers for repair retirement
 
 - Status: accepted for internal qualification; native execution evidence pending
 - Date: 2026-10-17

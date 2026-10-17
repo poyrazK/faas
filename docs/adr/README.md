@@ -130,7 +130,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 2026101703 | [Authoritative repair apply resolution](2026101703-repair-apply-resolution.md) | accepted for internal qualification | Resolve uncertain outcomes through receipts or durable source closure |
 | 2026101702 | [Linked replacement repair plans](2026101702-repair-replacement.md) | accepted for internal qualification | Narrow original candidates with parent fencing and fresh approval |
 | 2026101701 | [Reviewed retention of repair payloads](2026101701-repair-retention.md) | accepted for internal qualification | Digest-reviewed compaction retains identities, receipts and closure |
-| 20261017 | [Daemon-bound repair producers](20261017-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
+| 2026101710 | [Daemon-bound repair producers](2026101710-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
 | 20261016 | [Selective data repair](20261016-selective-data-repair.md) | accepted for internal qualification | Explicit PostgreSQL field-update capture, isolated rehearsal and atomic approved repair; limits in `pkg/api/limits.go` |
 | 1289 | [Reusable automation test cases](1289-reusable-automation-test-cases.md) | accepted | Automation authoring, verification and trust lifecycle |
 | 1290 | [Guided automation test case editor](1290-guided-automation-test-editor.md) | accepted | Automation authoring, verification and trust lifecycle |

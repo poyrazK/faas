@@ -332,7 +332,7 @@ qualified before enabling a customer preview.
 
 Legacy native generations refuse retirement after daemon death when recovered
 helper ownership is not attested. The
-[repair producer retirement ADR](20261017-repair-producer-retirement.md) adds
+[repair producer retirement ADR](2026101710-repair-producer-retirement.md) adds
 explicit daemon-bound enrollment for new Linux repair cold boots. It preserves
 the refusal for unenrolled generations and unconfirmed helper cleanup.
 Qualifying native execution and daemon/node failure recovery remains required

@@ -2,7 +2,7 @@
 
 package fcvm
 
-// adr: 20261017
+// adr: 2026101710
 // Physical producer retirement must fence repair cleanup after daemon crashes.
 
 import (
