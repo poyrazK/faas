@@ -113,8 +113,9 @@ review. The current managed cloud container has no native acceptance path.
 
 Use an account compute-only strict `net_usage` / `suspend_workloads` policy with
 zero drain and no alert thresholds. Record the monthly compute contract first;
-activation requires quiet covered workloads, complete retained sampling and no
-independent job definitions or queued/claimed job tasks. Keep subscription,
+activation requires quiet physical workloads, no claimed tasks or unsettled
+attempts, complete retained sampling, and job-capable native owners. Job
+definitions and queued tasks may exist. Keep subscription,
 storage, egress, builds and tax outside the claimed guarantee.
 
 In the actual two-host and full-daemon acceptance runs, contend different apps,
@@ -130,10 +131,11 @@ must not authorize another app until exact old-fence physical retirement settles
 both books. Verify `manual` holds persist and `next_period` holds release in the
 new month; an edit releasing one policy cannot release another policy or a
 payment/security hold. Job creation (ordinary, scheduled, image-run and
-GitOps-created) must fail while the account strict policy is enabled.
+GitOps-created) must succeed under an enabled account policy; dispatch still
+requires funded execution authority.
 
 The portable financial suite includes account contention, joint policy checks,
-retained allowance, replay, unsupported producers and PostgreSQL month recovery.
+retained allowance, replay, job claim fencing and PostgreSQL month recovery.
 These checks and the compiled native account contention fixture do not close the
 physical two-host, full-daemon, workload-matrix or leak acceptance gates above.
 
@@ -143,3 +145,37 @@ no account-funded dispatch. Upgrade it and verify its account capability matches
 the live incarnation. Restart an older binary with a new incarnation: its legacy
 financial registration must fail the persisted proof constraint before opening
 admission. Restore the current binary and verify recovery preserves both books.
+
+## Independent job release checks (ADR-1362)
+
+Exercise batch, recurring and image-run tasks, including flexible scheduling,
+held-start jobs, interactive attach windows, cancellation and retry. Use the
+same recorded account allowance and paid cap for app and job contention. Add a
+job gross cap and verify all matching books commit or reject together. A job-only
+hold must not stop unrelated apps or jobs; an account hold must cover both.
+
+A budget refusal before boot leaves the task queued with its retry count intact.
+Physical absence must be joined before clearing the claim. Work already started
+may be terminated at its funding deadline and follows the run's existing timeout
+and retry policy. Retrying it never reclaims an earlier physical reservation.
+Verify cancellation before acquire, after a lost response and after a node restart;
+replay the old claim after its task projection advances and after policy deletion.
+The old token and instance must never mint another execution window.
+
+Restart with a job lease whose physical resources were removed but settlement
+failed; retain its allocator quarantine and money until exact settlement succeeds.
+Repeat with a failed native kill and control-plane isolation. Reconcile job
+residency after a delayed terminal write: strict billable seconds must end at the
+funded ceiling, while ordinary unbudgeted attempts retain their normal billing.
+Verify account allowance is consumed only once across app/job price allocations.
+
+Mixed-version acceptance must also check `job_compute_incarnation`. An account-
+capable owner from ADR-1361 lacks this new proof. Queue writes may succeed, but
+legacy claims selecting that owner must fail before boot. A downgraded owner on
+an already attested node must fail registration before admission opens. Include
+legacy definition, retry and bulk-copy writers in the database boundary check.
+
+Record native job image, guest-init and daemon source SHAs, two-host observations,
+performance and leak results with the existing release evidence. The local
+container can run PostgreSQL conformance and compile these fixtures; it cannot
+close any native execution gate.

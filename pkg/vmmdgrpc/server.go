@@ -2305,7 +2305,7 @@ func toProblem(err error) *api.Problem {
 		return api.NewProblem(503, "financial_compute_unavailable", "Compute admission unavailable", "The VM compute authority or stable execution attempt could not be verified.")
 	}
 	if errors.Is(err, financial.ErrComputeBudget) {
-		return api.NewProblem(402, "financial_budget_held", "Compute budget held", "The app cannot reserve its next compute execution window.")
+		return api.NewProblem(402, "financial_budget_held", "Compute budget held", "The workload cannot reserve its next compute execution window.")
 	}
 
 	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {

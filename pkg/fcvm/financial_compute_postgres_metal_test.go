@@ -373,7 +373,11 @@ func (f *financialNativeFixture) activate() {
 
 func (f *financialNativeFixture) lease(owner *financialNativeOwner) financial.ComputeLease {
 	f.t.Helper()
-	l, found, err := f.store.FinancialComputeInstanceLease(f.ctx, f.app.AccountID, owner.config.AppID, owner.config.Instance)
+	key := owner.config.AppID
+	if owner.config.JobID != "" {
+		key = "job:" + owner.config.JobID
+	}
+	l, found, err := f.store.FinancialComputeInstanceLease(f.ctx, f.app.AccountID, key, owner.config.Instance)
 	if err != nil || !found {
 		f.t.Fatalf("native financial lease missing: %v %v", found, err)
 	}

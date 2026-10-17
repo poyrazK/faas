@@ -60,6 +60,10 @@ func (m *Manager) beginFinancialCompute(ctx context.Context, req WakeRequest, fl
 		attempt = uuid.NewSHA1(uuid.NameSpaceOID, []byte("financial-unfenced:"+req.Instance)).String()
 	}
 	r := financial.ComputeRequest{AttemptID: attempt, Fenced: fenced, LeaseID: uuid.NewString(), Fence: uuid.NewString(), RequestID: uuid.NewString(), AccountID: req.AccountID, AppID: req.AppID, InstanceID: req.Instance, NodeID: m.computeNode, Incarnation: m.computeIncarnation, BillableMB: api.BillableRAMMBWithSidecars(req.MemSizeMiB, mbs)}
+	return m.beginComputeRequest(ctx, r, flight)
+}
+
+func (m *Manager) beginComputeRequest(ctx context.Context, r financial.ComputeRequest, flight *instanceFlight) (*localComputeLease, error) {
 	var bindErr error
 	r, bindErr = financial.BindComputeRequest(r)
 	if bindErr != nil {
@@ -70,11 +74,11 @@ func (m *Manager) beginFinancialCompute(ctx context.Context, req WakeRequest, fl
 	if m.computeLeases == nil {
 		m.computeLeases = map[string]*localComputeLease{}
 	}
-	if m.computeLeases[req.Instance] != nil {
+	if m.computeLeases[r.InstanceID] != nil {
 		m.mu.Unlock()
 		return nil, financial.ErrComputeUnavailable
 	}
-	m.computeLeases[req.Instance] = local
+	m.computeLeases[r.InstanceID] = local
 	m.mu.Unlock()
 	started := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, api.FinancialComputeAuthorityTimeout)
@@ -83,8 +87,8 @@ func (m *Manager) beginFinancialCompute(ctx context.Context, req WakeRequest, fl
 	if err != nil {
 		if errors.Is(err, financial.ErrComputeBudget) || errors.Is(err, financial.ErrComputeFence) {
 			m.mu.Lock()
-			if m.computeLeases[req.Instance] == local {
-				delete(m.computeLeases, req.Instance)
+			if m.computeLeases[r.InstanceID] == local {
+				delete(m.computeLeases, r.InstanceID)
 			}
 			m.mu.Unlock()
 			return nil, fmt.Errorf("compute reservation: %w", err)
@@ -106,7 +110,7 @@ func (m *Manager) beginFinancialCompute(ctx context.Context, req WakeRequest, fl
 }
 
 func computeRequest(l financial.ComputeLease) financial.ComputeRequest {
-	return financial.ComputeRequest{LeaseID: l.ID, Fence: l.Fence, RequestID: uuid.NewString(), Revision: l.Revision, AccountID: l.AccountID, AppID: l.AppID, InstanceID: l.InstanceID, NodeID: l.NodeID, Incarnation: l.Incarnation, BillableMB: l.BillableMB}
+	return financial.ComputeRequest{LeaseID: l.ID, Fence: l.Fence, RequestID: uuid.NewString(), Revision: l.Revision, AccountID: l.AccountID, AppID: l.AppID, JobID: l.JobID, JobRunID: l.JobRunID, JobTaskIndex: l.JobTaskIndex, InstanceID: l.InstanceID, NodeID: l.NodeID, Incarnation: l.Incarnation, BillableMB: l.BillableMB}
 }
 
 func (m *Manager) watchFinancialCompute(ctx context.Context, local *localComputeLease) {
@@ -484,11 +488,8 @@ func (m *Manager) cancelUnstartedFinancialCompute(ctx context.Context, instance 
 		}
 		local.mu.Unlock()
 	}
-	if fields.AppID == "" || uuid.Validate(fields.WakeID) != nil {
-		return false
-	}
 	l, err := m.computeAuthority.CancelFinancialCompute(ctx, financial.ComputeRequest{NodeID: m.computeNode, Incarnation: m.computeIncarnation, AppID: fields.AppID, InstanceID: instance, AttemptID: fields.WakeID, Fenced: true})
-	if err != nil || l.SettledAt == nil || l.InstanceID != instance || l.AppID != fields.AppID || l.NodeID != m.computeNode || l.AttemptID != fields.WakeID {
+	if err != nil || l.SettledAt == nil || l.InstanceID != instance || l.NodeID != m.computeNode || l.JobID == "" && (l.AppID != fields.AppID || fields.WakeID != "" && l.AttemptID != fields.WakeID) {
 		return false
 	}
 	if local != nil {

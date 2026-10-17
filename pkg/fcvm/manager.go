@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -3902,9 +3903,23 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishInstanceFlight(req.Instance, flight)
+	var computeLease *localComputeLease
+	defer func() {
+		m.finishInstanceFlight(req.Instance, flight)
+		m.finishFinancialComputeBoot(bootCtx, req.Instance, computeLease, err != nil)
+	}()
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
+	}
+	if !qualificationOnly && m.computeAuthority != nil {
+		r := financial.ComputeRequest{AccountID: req.AccountID, JobRunID: req.RunID, JobTaskIndex: req.TaskIndex,
+			InstanceID: req.Instance, NodeID: m.computeNode, Incarnation: m.computeIncarnation,
+			AttemptID: financial.ComputeJobAttemptID(req.RunID, req.TaskIndex, req.LeaseToken),
+			Fenced:    req.LeaseToken != "", BillableMB: api.BillableRAMMBWithSidecars(req.MemSizeMiB, nil)}
+		computeLease, err = m.beginComputeRequest(bootCtx, r, flight)
+		if err != nil {
+			return nil, err
+		}
 	}
 	lease, err := m.alloc.Acquire(req.Instance)
 	if err != nil {

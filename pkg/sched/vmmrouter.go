@@ -716,6 +716,9 @@ type heldJobVMMClient interface {
 // optional on the per-node client interface so older test doubles and nodes
 // can continue serving the ordinary VM lifecycle surface.
 func (r *VMMRouter) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	if err := r.checkFinancialComputeOwnerForScope(ctx, spec.NodeID, spec.AccountID, "job:"+spec.JobID); err != nil {
+		return JobVmmResult{}, err
+	}
 	cli, err := r.resolveFor(ctx, spec.NodeID)
 	if err != nil {
 		return JobVmmResult{}, err

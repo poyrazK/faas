@@ -31,6 +31,7 @@ import (
 const financialNativePrefix = "financial-native-event:"
 
 type financialNativeConfig struct {
+	JobID, JobRunID, JobLeaseToken string
 	// Configuration travels over stdin, never process arguments or test logs.
 	DBURL, Database                          string
 	RuntimeParams                            map[string]string
@@ -388,7 +389,14 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 			// Cancel the RPC immediately after its result. The native deadline
 			// must continue on the daemon lifetime, not this request context.
 			wakeCtx, done := context.WithCancel(wire.WithContext(ctx, wire.CorrelationFields{AppID: cfg.AppID, InstanceID: cfg.Instance, WakeID: cfg.Attempt}))
-			_, err = m.Wake(wakeCtx, req)
+			if cfg.JobRunID != "" {
+				_, err = m.BootJob(wakeCtx, JobBootRequest{Instance: cfg.Instance, AccountID: cfg.AccountID, NodeID: cfg.NodeID,
+					RunID: cfg.JobRunID, TaskIndex: 0, LeaseToken: cfg.JobLeaseToken, Plan: api.PlanHobby,
+					KernelKey: os.Getenv("FAAS_TEST_KERNEL"), BaseKey: os.Getenv("FAAS_TEST_BASE_ROOTFS"), ImageRef: os.Getenv("FAAS_TEST_LAYER_ROOTFS"),
+					Command: []string{"/bin/sh", "-c", "sleep 3600"}, VcpuCount: 1, MemSizeMiB: 128, TaskTimeoutSec: 300})
+			} else {
+				_, err = m.Wake(wakeCtx, req)
+			}
 			done()
 		case "destroy":
 			err = m.Destroy(ctx, cfg.Instance)

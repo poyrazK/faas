@@ -255,6 +255,15 @@ func (s *Sampler) rollJobs(ctx context.Context, minute time.Time, exactResidency
 		if !exactResidency {
 			accountID = s.lookupJobAccountID(ctx, ins.JobID)
 		}
+		if compute, ok := s.store.(state.FinancialComputeStore); ok {
+			seconds, err = compute.FinancialComputeBillingSeconds(ctx, accountID, "job:"+ins.JobID, ins.ID, minute, seconds)
+			if err != nil {
+				return out, err
+			}
+		}
+		if seconds == 0 {
+			continue
+		}
 		row := JobRolledRow{
 			InstanceID:  ins.ID,
 			JobID:       ins.JobID,

@@ -16,10 +16,14 @@ func (r *VMMRouter) WithFinancialComputeAuthority(store state.FinancialComputeSt
 }
 
 func (r *VMMRouter) checkFinancialComputeOwner(ctx context.Context, node string, app AppSpec) error {
-	if r.computeAuthority == nil || app.AppID == "" {
+	return r.checkFinancialComputeOwnerForScope(ctx, node, app.AccountID, app.AppID)
+}
+
+func (r *VMMRouter) checkFinancialComputeOwnerForScope(ctx context.Context, node, account, key string) error {
+	if r.computeAuthority == nil || key == "" {
 		return nil
 	}
-	policies, err := r.computeAuthority.FinancialComputePolicies(ctx, app.AccountID, app.AppID)
+	policies, err := r.computeAuthority.FinancialComputePolicies(ctx, account, key)
 	if err != nil {
 		return err
 	}
