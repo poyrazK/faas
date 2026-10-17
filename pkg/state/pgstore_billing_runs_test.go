@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1301 — runs discover customers from the month's billable usage,
+// adr: 1503 — runs discover customers from the month's billable usage,
 // lease their items to one worker, and schedules start one run per month.
 func TestPgBillingRunLifecycle(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)

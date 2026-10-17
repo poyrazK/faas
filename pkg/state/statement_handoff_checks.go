@@ -11,7 +11,7 @@ import (
 
 // StatementHandoffChecker reports whether ADR-238's overlap rules would
 // reject a handoff of a statement, so an export or billing run can stop
-// before it creates an invoice (ADR-1301). Invoice-ID reuse is not checked:
+// before it creates an invoice (ADR-1503). Invoice-ID reuse is not checked:
 // the export chooses its own invoice ID.
 type StatementHandoffChecker interface {
 	StatementHandoffBlocked(ctx context.Context, accountID, sourceKind, statementID string) (bool, error)

@@ -6,6 +6,13 @@ separate files here. This directory holds ADRs made *after* the spec.
 
 Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
+The default-off internal static-hosting lifecycle, quotas, and Cloudflare/R2
+delivery boundary are recorded in
+[ADR-20261015](20261015-internal-static-hosting.md).
+
+Durable internal static routing, conditional publication, and acknowledgement-based
+retirement are specified by [ADR-202610151515](202610151515-durable-static-hosting.md).
+
 ## Picking a number
 
 ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one
@@ -128,12 +135,12 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1120 | [AI gateway throughput: pipelined admission and settlement, keyed settlement retries](1120-ai-gateway-throughput-pipelined-admission-keyed-settlement.md) | accepted | Admission and settlement pipeline their statements, admission reports the breaker and cooldown, unchanged breaker outcomes take no lock, and settlements keyed by the lease are retried; a call drops from 30 to 11 Postgres round trips |
 | 989 | [App access to managed outbound integrations through a guest relay](989-app-outbound-relay.md) | accepted | guest-init loopback `GREGALE_OUTBOUND_URL` relays bytes over vsock to vmmd, which adds a relay assertion and splices to an mTLS `outboundd` listener; only outboundd parses HTTP; Anthropic credentials use `x-api-key` |
 | 988 | [AI gateway on managed outbound integrations](988-ai-gateway-outbound-integrations.md) | accepted (phase 1) | `ai_provider` integrations stream event-stream responses, extract OpenAI-compatible and Anthropic token usage, keep UTC-day usage per caller and model, and enforce a daily token limit at admission |
-| 1300 | [Export usage statements to the customer's own Stripe](1300-stripe-statement-invoice-exports.md) | accepted | Sealed per-account Stripe key; finalized statements become resumable draft invoices with one item per price and a rounding item; export records the handoff |
-| 1301 | [Month-end billing runs](1301-month-end-billing-runs.md) | accepted | One request or a monthly schedule drafts, completeness-checks, finalizes and optionally exports every customer's statement for an ended month; leased, resumable worker; tenant-attributed usage bills on the tenant statement |
-| 1302 | [Stripe payment status for exported statements, and billing notifications](1302-statement-invoice-payment-status.md) | accepted | Worker polls each non-final exported invoice; unpaid and overdue lists; email when a run needs attention, after scheduled runs, and a daily overdue digest |
-| 1303 | [Usage is durable before a monetized response completes](1303-usage-durable-before-response-completes.md) | accepted | The gateway fsyncs a consumer or tenant request's usage before the bytes that complete its response; fails closed when the outbox cannot take it |
-| 1304 | [Consumer billing self-service](1304-consumer-billing-self-service.md) | accepted | Consumer keys with the new billing scope read their own month-to-date spend, daily usage and finalized statements with invoice status; billing grants no app access |
-| 1305 | [Paddle and Lago statement exports](1305-paddle-and-lago-statement-exports.md) | accepted | Statement exports, billing runs and payment sync target Paddle (draft manual transactions) and Lago (issued one-off invoices) through one provider interface; routes name the provider |
+| 1300 | [Export usage statements to the customer's own Stripe](1502-stripe-statement-invoice-exports.md) | accepted | Sealed per-account Stripe key; finalized statements become resumable draft invoices with one item per price and a rounding item; export records the handoff |
+| 1301 | [Month-end billing runs](1503-month-end-billing-runs.md) | accepted | One request or a monthly schedule drafts, completeness-checks, finalizes and optionally exports every customer's statement for an ended month; leased, resumable worker; tenant-attributed usage bills on the tenant statement |
+| 1302 | [Stripe payment status for exported statements, and billing notifications](1504-statement-invoice-payment-status.md) | accepted | Worker polls each non-final exported invoice; unpaid and overdue lists; email when a run needs attention, after scheduled runs, and a daily overdue digest |
+| 1303 | [Usage is durable before a monetized response completes](1505-usage-durable-before-response-completes.md) | accepted | The gateway fsyncs a consumer or tenant request's usage before the bytes that complete its response; fails closed when the outbox cannot take it |
+| 1304 | [Consumer billing self-service](1506-consumer-billing-self-service.md) | accepted | Consumer keys with the new billing scope read their own month-to-date spend, daily usage and finalized statements with invoice status; billing grants no app access |
+| 1305 | [Paddle and Lago statement exports](1507-paddle-and-lago-statement-exports.md) | accepted | Statement exports, billing runs and payment sync target Paddle (draft manual transactions) and Lago (issued one-off invoices) through one provider interface; routes name the provider |
 | 1306 | [Consumer prepaid credit and spend caps](1306-consumer-prepaid-credit-and-spend-caps.md) | accepted | Credit grants per consumer are drawn down when statements finalize and exported as a credit line; monthly spend caps after credit are checked each minute and enforced by the gateway with a 402 |
 | 1307 | [Platform tenant route weights and plans](1307-platform-tenant-route-weights-and-plans.md) | accepted | Tenant rate cards weight consumer routes and are month-priced with raw-unit coverage; tenant plans bundle card terms and a request budget that assignment applies from the next minute |
 | 1308 | [Consumer compute and response-size pricing](1308-consumer-compute-and-response-size-pricing.md) | accepted | Usage minutes sum billable requests' compute time and response bytes; app cards with unit compute_second or response_megabyte price them rounded per consumer minute |
@@ -1217,6 +1224,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+
+[ADR-202610171028: Site hosting GitHub OIDC](202610171028-site-hosting-github-oidc.md) specifies explicit immutable trust and short-lived preview credentials.
+
+[ADR-202610171059: Read-only hosting diagnostics](202610171059-read-only-hosting-diagnostics.md) defines bounded evidence and advisory recovery without provider probes or mutations.
 - [ADR-1133: Undelivered service calls re-route outside the retry budget](1133-undelivered-service-calls-reroute.md)
 - [ADR-1131: Customer service map from unsampled service-proxy edges](1131-customer-service-map.md)
 
@@ -1224,6 +1235,22 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+
+- [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
+- [ADR-1523: Durable operator cold-boot recovery](1523-durable-operator-cold-boot-recovery.md)
+- [ADR-1524: Durable operator recovery submissions](1524-durable-operator-recovery-submissions.md)
+
+- [ADR-1525: Recoverable operator park execution](1525-recoverable-operator-park-execution.md) — generation-bound capture/stop, durable cleanup receipts and atomic verified completion; native qualification pending.
+
+- [ADR-1526: Atomic operator node maintenance](1526-atomic-operator-node-maintenance.md) — claim-fenced lifecycle transitions, immutable outcomes and transactional audit handoff.
+
+- [ADR-1527: Generation-fenced node lifecycle completion](1527-generation-fenced-node-completion.md) — captured maintenance cycles, atomic work checks, immutable receipts and completion audit handoff.
+
+- [ADR-1528: Node admission generation fencing](1528-node-admission-generation-fencing.md) — transactional lifecycle/generation checks, fresh placement retries and migration destination validation.
+
+- [ADR-1529: Durable inbound migration reservations](1529-durable-inbound-migration-reservations.md) — persistent destination capacity, one adoption dispatch, original-generation cleanup and atomic ownership conversion.
+
+- [ADR-1530: Durable migration source retirement](1530-durable-migration-source-retirement.md) — original physical source receipts, atomic retirement accounting and maintenance fencing after ownership moves.
 
 - [ADR 1461: App-scoped issue teams and explicit CODEOWNERS import](1461-issue-teams-and-codeowners.md)
 
@@ -1301,4 +1328,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1498: Native Slack channel routing rules](1498-native-slack-channel-routing.md)
 
+- [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
+- [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
+- [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)

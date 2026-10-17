@@ -22,7 +22,7 @@ class BillingConnectionResponse:
     """A stored payment-provider key, identified without revealing it."""
 
     provider: BillingProvider
-    """A billing provider statements export to (ADR-1305)."""
+    """A billing provider statements export to (ADR-1507)."""
     key_last4: str
     livemode: bool
     """False for Stripe test and Paddle sandbox keys; Lago has no test mode."""

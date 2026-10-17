@@ -201,7 +201,7 @@ func (s *PgStore) DiscoverBillingRunItems(ctx context.Context, runID, owner, ten
 	}
 	if run.Includes(BillingRunSourceAppConsumers) {
 		// Usage attributed to a platform tenant is billed on the tenant's
-		// statement when the run includes platform tenants (ADR-1301).
+		// statement when the run includes platform tenants (ADR-1503).
 		if _, err := tx.Exec(ctx, `with attributed as (
 				select distinct app_id, consumer_key from platform_tenant_usage_minutes
 				 where account_id = $2::uuid and source_kind = 'consumer' and billable_units > 0

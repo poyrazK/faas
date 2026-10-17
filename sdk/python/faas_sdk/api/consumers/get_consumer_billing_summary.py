@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[ConsumerBillingSummaryResponse | Problem]:
-    """Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+    """Read your own month-to-date usage and spend with your consumer key (ADR-1506).
 
      For an app's customers, not operators. Authenticate with a consumer
     key that carries the billing scope. The amount is priced like the
@@ -103,7 +103,7 @@ def sync(
     *,
     client: AuthenticatedClient,
 ) -> ConsumerBillingSummaryResponse | Problem | None:
-    """Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+    """Read your own month-to-date usage and spend with your consumer key (ADR-1506).
 
      For an app's customers, not operators. Authenticate with a consumer
     key that carries the billing scope. The amount is priced like the
@@ -131,7 +131,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[ConsumerBillingSummaryResponse | Problem]:
-    """Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+    """Read your own month-to-date usage and spend with your consumer key (ADR-1506).
 
      For an app's customers, not operators. Authenticate with a consumer
     key that carries the billing scope. The amount is priced like the
@@ -162,7 +162,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
 ) -> ConsumerBillingSummaryResponse | Problem | None:
-    """Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+    """Read your own month-to-date usage and spend with your consumer key (ADR-1506).
 
      For an app's customers, not operators. Authenticate with a consumer
     key that carries the billing scope. The amount is priced like the

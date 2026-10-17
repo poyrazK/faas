@@ -14,7 +14,7 @@ import (
 const accountInvoicesUsage = "usage: gregale account invoices [--status unpaid|overdue|draft|open|paid|void|uncollectible|deleted]"
 
 // cmdAccountInvoices lists the invoices Gregale exported from usage
-// statements, with their payment status (ADR-1302).
+// statements, with their payment status (ADR-1504).
 func cmdAccountInvoices(args []string) int {
 	fs := newFlagSet("account invoices", flag.ContinueOnError)
 	status := fs.String("status", "", "unpaid, overdue, or one payment status (default: all)")

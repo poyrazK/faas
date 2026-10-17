@@ -28,7 +28,7 @@ type nativeSnapshotFlight struct {
 // Pin the live identity for teardown and bind capture authority before the VMM
 // can pause or publish it. Both admission checks use the cancellable flight.
 func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
-	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	ctx, inst, flight, err := m.beginOperatorSnapshotFlight(ctx, instance, spec.operatorGeneration)
 	if err != nil {
 		return nil, nil, SnapshotSpec{}, nil, err
 	}
