@@ -161,6 +161,8 @@ func TestPgRuntimePublicationDoesNotWaitOnBlockedConfigTuple(t *testing.T) {
 			if err := hold.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
 				t.Fatal(err)
 			}
+			// Publication shares this parent fence; secret reports and mutations
+			// take their separate exclusive fence before their promotion writes.
 			query, key, prefix := `SELECT id FROM apps WHERE id=$1 FOR SHARE`, f.app.ID, "UPDATE app_envs%"
 			if kind == "sidecar" {
 				query, key, prefix = `SELECT id FROM deployments WHERE id=$1 FOR SHARE`, dep.ID, "UPDATE deployment_sidecar_layers%"

@@ -23730,7 +23730,7 @@ func (s *PgStore) mutateCustomerAppSecret(ctx context.Context, appID, scope, key
 	if !ok {
 		return pgconn.CommandTag{}, ErrInvalidArgument
 	}
-	if _, err := sqlc.New().LockRuntimeSecretApp(ctx, tx, sqlc.LockRuntimeSecretAppParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(appID)}); err != nil {
+	if _, err := sqlc.New().LockRuntimeSecretAppExclusive(ctx, tx, sqlc.LockRuntimeSecretAppExclusiveParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(appID)}); err != nil {
 		return pgconn.CommandTag{}, mapErr(err)
 	}
 

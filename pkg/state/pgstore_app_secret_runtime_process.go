@@ -16,7 +16,7 @@ func lockAppSecretRuntimeProcess(ctx context.Context, tx pgx.Tx, p AppSecretRunt
 	q := sqlc.New()
 	// Match reload/ACK order: the app must precede its promotion revision and
 	// observations, including FK checks when a process is first registered.
-	if _, err := q.LockRuntimeSecretApp(ctx, tx, sqlc.LockRuntimeSecretAppParams{AccountID: mustPgUUID(p.AccountID), AppID: mustPgUUID(p.AppID)}); err != nil {
+	if _, err := q.LockRuntimeSecretAppExclusive(ctx, tx, sqlc.LockRuntimeSecretAppExclusiveParams{AccountID: mustPgUUID(p.AccountID), AppID: mustPgUUID(p.AppID)}); err != nil {
 		return sqlc.LockAppSecretRuntimeProcessRow{}, runtimeSecretFenceError(err)
 	}
 	if err := lockSecretRuntimeApp(ctx, tx, p.AccountID, p.AppID); err != nil {

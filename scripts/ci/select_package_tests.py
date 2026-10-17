@@ -161,6 +161,15 @@ def select(package, changed_paths, cap, base=None, head="HEAD", root="."):
     return ordered[:cap], total, reasons, len(ordered)
 
 
+def test_patterns(selected, batch_size=None):
+    """Partition the same selected tests without changing priority or coverage."""
+    if batch_size is not None and batch_size <= 0:
+        raise ValueError("batch size must be positive")
+    size = batch_size or max(1, len(selected))
+    return ["^(" + "|".join(selected[i:i + size]) + ")$"
+            for i in range(0, len(selected), size)]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--package", required=True, help="package directory, e.g. pkg/apid/apidserver")
@@ -168,15 +177,18 @@ def main():
     ap.add_argument("--base", help="diff base; limits identifiers to declarations a changed hunk touches")
     ap.add_argument("--head", default="HEAD", help="diff head (default HEAD)")
     ap.add_argument("--root", default=".", help="tree to read package files from (default the checkout)")
+    ap.add_argument("--batch-size", type=int, help="emit one bounded test pattern per batch")
     args = ap.parse_args()
+    if args.batch_size is not None and args.batch_size <= 0:
+        ap.error("--batch-size must be positive")
     selected, total, reasons, candidates = select(args.package, sys.stdin.read().splitlines(), args.cap,
                                                   base=args.base, head=args.head, root=args.root)
     detail = ", ".join(f"{k}: {v}" for k, v in reasons.items())
     capped = f"; capped from {candidates}" if candidates > len(selected) else ""
     print(f"{args.package}: selected {len(selected)} of {total} tests ({detail}{capped}); "
           "the full suite runs in the mega tier", file=sys.stderr)
-    if selected:
-        print("^(" + "|".join(selected) + ")$")
+    for pattern in test_patterns(selected, args.batch_size):
+        print(pattern)
 
 
 if __name__ == "__main__":

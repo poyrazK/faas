@@ -55552,6 +55552,13 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 
 
 --
+-- Name: instances aa_project_migration_instance_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER aa_project_migration_instance_fence BEFORE INSERT OR UPDATE OF state, deployment_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
+
+
+--
 -- Name: accounts account_managed_postgres_databases_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -59301,13 +59308,6 @@ CREATE TRIGGER project_migration_configuration_fence BEFORE INSERT ON public.pro
 --
 
 CREATE TRIGGER project_migration_deployment_fence BEFORE INSERT OR UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
-
-
---
--- Name: instances project_migration_instance_fence; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER project_migration_instance_fence BEFORE INSERT OR UPDATE OF state, deployment_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_project_migration_retirement();
 
 
 --

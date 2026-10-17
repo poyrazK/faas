@@ -7449,6 +7449,12 @@ FOR SHARE OF a,d FOR KEY SHARE OF i;
 
 -- name: LockRuntimeSecretApp :one
 SELECT id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(app_id)::uuid AND status<>'deleted'
+FOR SHARE;
+
+-- Secret mutations and reports can update apps in their release-snapshot trigger.
+-- Acquire the exclusive parent before promotion revisions or observation rows.
+-- name: LockRuntimeSecretAppExclusive :one
+SELECT id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(app_id)::uuid AND status<>'deleted'
 FOR UPDATE;
 
 -- name: LockRuntimeSecretConfigurationPins :many

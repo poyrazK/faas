@@ -50313,7 +50313,7 @@ func (q *Queries) LockRuntimeReleaseQualification(ctx context.Context, db DBTX, 
 
 const lockRuntimeSecretApp = `-- name: LockRuntimeSecretApp :one
 SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
-FOR UPDATE
+FOR SHARE
 `
 
 type LockRuntimeSecretAppParams struct {
@@ -50323,6 +50323,25 @@ type LockRuntimeSecretAppParams struct {
 
 func (q *Queries) LockRuntimeSecretApp(ctx context.Context, db DBTX, arg LockRuntimeSecretAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockRuntimeSecretApp, arg.AccountID, arg.AppID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeSecretAppExclusive = `-- name: LockRuntimeSecretAppExclusive :one
+SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
+FOR UPDATE
+`
+
+type LockRuntimeSecretAppExclusiveParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// Secret mutations and reports can update apps in their release-snapshot trigger.
+// Acquire the exclusive parent before promotion revisions or observation rows.
+func (q *Queries) LockRuntimeSecretAppExclusive(ctx context.Context, db DBTX, arg LockRuntimeSecretAppExclusiveParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeSecretAppExclusive, arg.AccountID, arg.AppID)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
