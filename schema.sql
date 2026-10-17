@@ -19719,9 +19719,11 @@ CREATE TABLE public.deployment_image_preparations (
     claim_token uuid NOT NULL,
     phase text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    phase_started_at timestamp with time zone,
     CONSTRAINT deployment_image_preparations_input_bytes_check CHECK ((input_bytes >= 0)),
     CONSTRAINT deployment_image_preparations_input_path_check CHECK ((input_path <> ''::text)),
-    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text])))
+    CONSTRAINT deployment_image_preparations_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'layer_published'::text, 'scan_complete'::text, 'handed_off'::text]))),
+    CONSTRAINT deployment_image_preparations_phase_started_at_check CHECK (((phase_started_at IS NULL) OR (isfinite(phase_started_at) AND (phase_started_at > '1970-01-01 00:00:00+00'::timestamp with time zone))))
 );
 
 
@@ -61663,3 +61665,28 @@ CREATE TABLE public.event_subscription_capacity_commands (
  PRIMARY KEY(subscription_id,command_id)
 );
 CREATE INDEX event_subscription_capacity_commands_expiry ON public.event_subscription_capacity_commands(retain_until,subscription_id,command_id);
+
+--
+-- Name: image_preparation_phase_timing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.image_preparation_phase_timing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.phase_started_at := clock_timestamp();
+    ELSIF NEW.phase IS DISTINCT FROM OLD.phase THEN
+        NEW.phase_started_at := clock_timestamp();
+    ELSE
+        NEW.phase_started_at := OLD.phase_started_at;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+--
+-- Name: deployment_image_preparations image_preparation_phase_timing; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER image_preparation_phase_timing BEFORE INSERT OR UPDATE ON public.deployment_image_preparations FOR EACH ROW EXECUTE FUNCTION public.image_preparation_phase_timing();

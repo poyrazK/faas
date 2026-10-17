@@ -2107,14 +2107,15 @@ type DeploymentDependencyGate struct {
 }
 
 type DeploymentImagePreparation struct {
-	DeploymentID pgtype.UUID
-	NodeName     string
-	InputPath    string
-	InputKey     string
-	InputBytes   int64
-	ClaimToken   pgtype.UUID
-	Phase        string
-	UpdatedAt    pgtype.Timestamptz
+	DeploymentID   pgtype.UUID
+	NodeName       string
+	InputPath      string
+	InputKey       string
+	InputBytes     int64
+	ClaimToken     pgtype.UUID
+	Phase          string
+	UpdatedAt      pgtype.Timestamptz
+	PhaseStartedAt pgtype.Timestamptz
 }
 
 type DeploymentLog struct {

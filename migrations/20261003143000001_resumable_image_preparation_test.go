@@ -40,10 +40,26 @@ func TestResumableImagePreparationMigration(t *testing.T) {
 	if !ok {
 		t.Fatal("missing rollback")
 	}
+	// This later additive migration depends on the checkpoint table. Restore
+	// it whenever this test recreates that table before using the current store.
+	timingRaw, err := migrations.FS.ReadFile("20261017112758515_image_preparation_phase_timing.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	timingUp, timingDown, ok := strings.Cut(string(timingRaw), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing timing rollback")
+	}
+	if _, err := pool.Exec(ctx, timingDown); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, timingUp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.BeginImagePreparation(ctx, dep.ID, "node-a"); err != nil {
@@ -55,6 +71,9 @@ func TestResumableImagePreparationMigration(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE deployment_image_preparations SET input_path='' WHERE deployment_id=$1", dep.ID); err == nil {
 		t.Fatal("empty input accepted")
 	}
+	if _, err := pool.Exec(ctx, timingDown); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
@@ -63,6 +82,9 @@ func TestResumableImagePreparationMigration(t *testing.T) {
 		t.Fatalf("rollback modified deployment: %+v %v", got, err)
 	}
 	if _, err := pool.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, timingUp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.BeginImagePreparation(ctx, dep.ID, "node-a"); err != nil {

@@ -1100,6 +1100,51 @@ func (q *Queries) OperatorCapacityProfiles(ctx context.Context, db DBTX, resourc
 	return items, nil
 }
 
+const operatorImagePreparationProgressSnapshot = `-- name: OperatorImagePreparationProgressSnapshot :many
+SELECT p.phase, count(*)::bigint AS pending,
+ count(*) FILTER (WHERE p.phase_started_at IS NULL)::bigint AS unknown_age,
+ count(*) FILTER (WHERE NOT isfinite(p.phase_started_at) OR p.phase_started_at <= 'epoch'::timestamptz)::bigint AS invalid_age,
+ min(p.phase_started_at)::timestamptz AS oldest_phase_started_at
+FROM deployment_image_preparations p JOIN deployments d ON d.id=p.deployment_id
+WHERE p.phase <> 'handed_off' AND d.status IN ('pending','building','imaging','snapshotting')
+ AND ($1::text='' OR p.node_name='' OR p.node_name=$1::text)
+GROUP BY p.phase
+`
+
+type OperatorImagePreparationProgressSnapshotRow struct {
+	Phase                string
+	Pending              int64
+	UnknownAge           int64
+	InvalidAge           int64
+	OldestPhaseStartedAt pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorImagePreparationProgressSnapshot(ctx context.Context, db DBTX, nodeID string) ([]OperatorImagePreparationProgressSnapshotRow, error) {
+	rows, err := db.Query(ctx, operatorImagePreparationProgressSnapshot, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorImagePreparationProgressSnapshotRow{}
+	for rows.Next() {
+		var i OperatorImagePreparationProgressSnapshotRow
+		if err := rows.Scan(
+			&i.Phase,
+			&i.Pending,
+			&i.UnknownAge,
+			&i.InvalidAge,
+			&i.OldestPhaseStartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorIncidentEvidence = `-- name: OperatorIncidentEvidence :many
 WITH history AS (
     (SELECT e.id::text AS id, 'event'::text AS source, e.kind::text AS kind,

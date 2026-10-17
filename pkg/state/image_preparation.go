@@ -24,6 +24,9 @@ type ImagePreparation struct {
 	InputBytes                                              int64
 	Phase                                                   ImagePreparationPhase
 	UpdatedAt                                               time.Time
+	// PhaseStartedAt is zero for pre-migration checkpoints until their next
+	// committed phase transition. Claims and retries never renew it.
+	PhaseStartedAt time.Time
 }
 
 // DeploymentImagePreparationStore keeps internal artifact paths out of the

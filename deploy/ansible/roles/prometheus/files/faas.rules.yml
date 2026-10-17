@@ -3898,6 +3898,92 @@ groups:
             separate handler outcomes and do not trigger this warning.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
 
+      # Checkpoint age survives token claims and restart. Includes active work
+      # and resume backlog; prolonged phase is a triage signal, not a deadlock.
+      - record: imaged_image_preparation_phase_observation_healthy
+        expr: |
+          ((imaged_image_preparation_pending{job="imaged",phase=~"preparing|layer_published|scan_complete"} >= 0) * 0 + 1)
+          and on (job, instance, phase) (imaged_image_preparation_pending{job="imaged"} < +Inf)
+          and on (job, instance, phase) (imaged_image_preparation_pending{job="imaged"} == floor(imaged_image_preparation_pending{job="imaged"}))
+          and on (job, instance, phase) (imaged_image_preparation_phase_age_unknown{job="imaged"} >= 0)
+          and on (job, instance, phase) (imaged_image_preparation_phase_age_unknown{job="imaged"} == floor(imaged_image_preparation_phase_age_unknown{job="imaged"}))
+          and on (job, instance, phase) (imaged_image_preparation_phase_age_unknown{job="imaged"} <= imaged_image_preparation_pending{job="imaged"})
+          and on (job, instance, phase) (imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance, phase)
+            (((imaged_image_preparation_pending{job="imaged"} > imaged_image_preparation_phase_age_unknown{job="imaged"})
+              and on (job, instance, phase) (imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"} > 0))
+             or ((imaged_image_preparation_pending{job="imaged"} == imaged_image_preparation_phase_age_unknown{job="imaged"})
+                 and on (job, instance, phase) (imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"} == 0)))
+          and on (job, instance) (up{job="imaged"} == 1)
+          and on (job, instance) (imaged_image_preparation_collection_success{job="imaged"} == 1)
+          and on (job, instance) (imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged"} > 0)
+          and on (job, instance) (time() - imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (time() - imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged"} <= 120)
+          and on (job, instance) ((imaged_image_preparation_observation_enabled{job="imaged"} == 0) or (imaged_image_preparation_observation_enabled{job="imaged"} == 1))
+      - record: imaged_image_preparation_observation_healthy
+        expr: |
+          (count by (job, instance) (imaged_image_preparation_phase_observation_healthy == 1) == 3) / 3
+      - record: imaged_image_preparation_oldest_known_phase_age_seconds
+        expr: |
+          (((time() - imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"})
+             and on (job, instance, phase) (imaged_image_preparation_pending{job="imaged"} > imaged_image_preparation_phase_age_unknown{job="imaged"}))
+           or ((imaged_image_preparation_pending{job="imaged"} == 0) * 0))
+          and on (job, instance) (imaged_image_preparation_observation_healthy == 1)
+      - alert: FaasImagePreparationTelemetryUnavailable
+        expr: |
+          (up{job="imaged"} == 1)
+          unless on (job, instance)
+            ((imaged_image_preparation_observation_healthy == 1)
+             or (imaged_image_preparation_observation_enabled{job="imaged"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: image_preparation_telemetry
+          public_status: internal
+        annotations:
+          summary: Durable image-preparation diagnostics are unavailable
+          description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+            minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+            unknown ages are reported separately; intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+      - alert: FaasImagePreparationPhaseProlonged
+        expr: |
+          ((imaged_image_preparation_oldest_known_phase_age_seconds{phase=~"preparing|layer_published"} > 1800)
+           or (imaged_image_preparation_oldest_known_phase_age_seconds{phase="scan_complete"} > 600))
+          and on (job, instance) (imaged_image_preparation_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: image_preparation
+          public_status: internal
+        annotations:
+          summary: Image preparation has remained in one phase for an extended period
+          description: The oldest known {{ $labels.phase }} checkpoint exceeded its phase-age threshold for five
+            minutes. Thresholds are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active
+            execution and waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled
+            daemon, a failed image or deployment readiness.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+      - alert: FaasImagePreparationPhaseAgeUnknown
+        expr: |
+          (imaged_image_preparation_phase_age_unknown{job="imaged"} > 0)
+          and on (job, instance) (imaged_image_preparation_observation_healthy == 1)
+          and on (job, instance) (imaged_image_preparation_observation_enabled{job="imaged"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: imaged
+          family: image_preparation_telemetry
+          public_status: internal
+        annotations:
+          summary: Pending image preparations have unknown historical phase ages
+          description: At least one {{ $labels.phase }} checkpoint has lacked a historical phase-start timestamp for
+            15m in fresh snapshots. Pre-migration checkpoints remain unknown until a real phase transition; repeated
+            claims cannot establish their age. Known rows still contribute to prolonged-phase warnings. Inspect durable
+            work and recovery outcomes without inventing timestamps or forcing a transition.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+
       # Recovery is observed separately from queue wait. Fleet gauges are
       # coherent per apid; never sum replicas. Timing uses effective config
       # from every discovered builder. Age warnings measure overdue work;

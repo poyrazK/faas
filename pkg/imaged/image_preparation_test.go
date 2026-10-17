@@ -115,6 +115,10 @@ func TestImagePreparationResumesAfterCrash(t *testing.T) {
 					if got := testutil.ToFloat64(restarted.handoffMetrics.commits.WithLabelValues("handed_off")); got != 1 {
 						t.Fatalf("replay fabricated handoff commits=%v", got)
 					}
+					progress, err := store.(state.ImagePreparationProgressObservationStore).ImagePreparationProgressSnapshot(t.Context(), "node-a")
+					if err != nil || progress != (state.ImagePreparationProgressSnapshot{}) {
+						t.Fatalf("recovered checkpoint remains pending: %+v %v", progress, err)
+					}
 				})
 			}
 		})

@@ -388,6 +388,18 @@ func TestBuildImageHandoffBusyArtifactDefersWithoutFalseCompletion(t *testing.T)
 	if err != nil || current.Status.IsTerminal() {
 		t.Fatalf("busy lease changed terminal state: %s %v", current.Status, err)
 	}
+	reader := store.(state.ImagePreparationProgressObservationStore)
+	before, err := reader.ImagePreparationProgressSnapshot(t.Context(), "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		loop.recoverBuildHandoffs(t.Context())
+	}
+	after, err := reader.ImagePreparationProgressSnapshot(t.Context(), "node-a")
+	if err != nil || after != before || after.Preparing.Pending != 1 || after.Preparing.OldestPhaseStartedAt.IsZero() {
+		t.Fatalf("busy retries renewed phase progress: before=%+v after=%+v err=%v", before, after, err)
+	}
 	if err := syscall.Flock(int(lease.Fd()), syscall.LOCK_UN); err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +459,24 @@ func TestBuildImageHandoffLoopObservesWhilePreparationIsBlocked(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
+	for {
+		got := preparationGauges(t, ops.Registry())
+		if count, present := got["imaged_image_preparation_pending/preparing"]; present {
+			if count != 1 || got["imaged_image_preparation_oldest_phase_started_timestamp_seconds/preparing"] <= 0 {
+				t.Fatal(got)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("blocked work froze preparation observer")
+		case <-time.After(time.Millisecond):
+		}
+	}
 	cancel()
+	if got := preparationGauges(t, ops.Registry()); got["imaged_image_preparation_observation_enabled"] != 0 || got["imaged_image_preparation_pending/preparing"] != 1 {
+		t.Fatal("shutdown fabricated preparation drain", got)
+	}
 	if got := handoffGauges(t, ops.Registry()); got["imaged_build_handoff_recovery_enabled"] != 0 || got["imaged_build_handoff_recovery_inflight"] != 1 {
 		t.Fatal("cancellation fabricated drain", got)
 	}

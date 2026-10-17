@@ -184,8 +184,9 @@ type Handler struct {
 	// OCI pull sites inside aboveBaseLayers + the legacy
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
-	ops            *wire.OpsMetrics
-	handoffMetrics *buildImageHandoffMetrics
+	ops                *wire.OpsMetrics
+	handoffMetrics     *buildImageHandoffMetrics
+	preparationMetrics *imagePreparationProgressMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -659,10 +660,15 @@ func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 	if h.handoffMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
 		h.ops.Registry().Unregister(h.handoffMetrics)
 	}
+	if h.preparationMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.preparationMetrics)
+	}
 	h.ops = ops
 	h.handoffMetrics = nil
+	h.preparationMetrics = nil
 	if ops != nil && ops.Registry() != nil {
 		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
+		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
 	}
 	return h
 }

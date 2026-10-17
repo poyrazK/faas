@@ -2861,6 +2861,7 @@ type Querier interface {
 	// Bound each indexed source per verified target before merging. Account rows
 	// are deliberately excluded: an account match is not incident correlation.
 	OperatorContextTimeline(ctx context.Context, db DBTX, arg OperatorContextTimelineParams) ([]OperatorContextTimelineRow, error)
+	OperatorImagePreparationProgressSnapshot(ctx context.Context, db DBTX, nodeID string) ([]OperatorImagePreparationProgressSnapshotRow, error)
 	// Each branch uses an exact-resource index and is independently bounded before
 	// the merge. Payload references use the partial operator-resource index.
 	OperatorIncidentEvidence(ctx context.Context, db DBTX, arg OperatorIncidentEvidenceParams) ([]OperatorIncidentEvidenceRow, error)

@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "803d82eacf3b7654cde3470e1f2ec0794dd8fdefab7d206bd8eff594fe3be628",
+      "revision": "c2329e52cc631578774a841109264293433ff8a21d59e31d831ea34bcd1af193",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "d989e92a8425dd7a08d5fb4f9862885c4c246d5903388b5f3bd7f232a3d02868",
+        "revision": "1dda04e59b4be9e5bb9b7cc57e1f72204a197c33cd035cc996e978b9ed60b1b7",
         "files": [
           "faas.rules.yml"
         ],
@@ -285,6 +285,19 @@
             }
           },
           {
+            "id": "6b6eba9cefcb5133bfbab946072b4cc85e1980566f55260d0317b314eb1f0884",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "imaged_image_preparation_observation_healthy",
+            "definition": {
+              "expression_hash": "89ab5045d1e13edc3aaff38780e37db906a6f60c5f139be82d907b0dc27948f7",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "30ca805b3d0b7b76f191c9a8ae876b8da8266c4b786d78c51335f8db3691db7f"
+            }
+          },
+          {
             "id": "6dd38eea0e941a4754acb0194eeaa70a782785d4a82a3eeabb973cf86a6d51cd",
             "file_name": "faas.rules.yml",
             "group_name": "faas_anomaly_baseline",
@@ -360,6 +373,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "bdbfb48457a77db6f8dcfff3cad1355b5ae87c6e1a649139511b1ec70984e0ad"
+            }
+          },
+          {
+            "id": "916d2126f58e76922adda80fa7684dd0dc5304ce00e632d75bb69a5c79f2abb8",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "imaged_image_preparation_phase_observation_healthy",
+            "definition": {
+              "expression_hash": "f3b14ef6db757d165390fd198d73cfb108a20de8d464b75e1740bf9c3e7c1db8",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "3369aa64206b7c4cee7bc975683d16520761af5a20e1738c5d11b17592ad30bf"
             }
           },
           {
@@ -636,6 +662,19 @@
             }
           },
           {
+            "id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "imaged_image_preparation_oldest_known_phase_age_seconds",
+            "definition": {
+              "expression_hash": "83c098e5da565ac06ecad0c08b32b2ebf16bd1296722606e98bca0411eb62266",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "f0ea7e14c39cf40ebebbc1987aba27a66ae982f510c87202254e22431406a89c"
+            }
+          },
+          {
             "id": "fcb8f8d9a72e85168c9298b9f857075916b06b965e08ecedfff90befc7f435ee",
             "file_name": "faas.rules.yml",
             "group_name": "faas_alert_preset_signals",
@@ -650,8 +689,8 @@
           }
         ]
       },
-      "alert_set_revision": "9e2fe4c82ff358ed9d201f5df303c3415628f08f0e950740f84f94af9aa405d4",
-      "alert_count": 297,
+      "alert_set_revision": "35d0e3867741472a7ec6df7e5a355f719d9630e41ba8c14e651684b58d8cfa84",
+      "alert_count": 300,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -966,6 +1005,29 @@
           "alerts": []
         },
         {
+          "rule_id": "6b6eba9cefcb5133bfbab946072b4cc85e1980566f55260d0317b314eb1f0884",
+          "alerts": [
+            {
+              "id": "777d9904e4ed2b3933d8539cfb2e0709967c89ec6afb0c2ea32116e2a1669aa4",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationTelemetryUnavailable"
+            },
+            {
+              "id": "7cb34fc1c4cb3700f56076d9ac4121658c31be54dda2fa81800911d1aba2389d",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseProlonged"
+            },
+            {
+              "id": "eb4f08abc5e5b32f1014bf1b377c4d8ffe911588519f88fb146bd025f1917ac3",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseAgeUnknown"
+            }
+          ]
+        },
+        {
           "rule_id": "6dd38eea0e941a4754acb0194eeaa70a782785d4a82a3eeabb973cf86a6d51cd",
           "alerts": [
             {
@@ -1046,6 +1108,29 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_billing",
               "rule_name": "FaasBuilderWorkerStalled"
+            }
+          ]
+        },
+        {
+          "rule_id": "916d2126f58e76922adda80fa7684dd0dc5304ce00e632d75bb69a5c79f2abb8",
+          "alerts": [
+            {
+              "id": "777d9904e4ed2b3933d8539cfb2e0709967c89ec6afb0c2ea32116e2a1669aa4",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationTelemetryUnavailable"
+            },
+            {
+              "id": "7cb34fc1c4cb3700f56076d9ac4121658c31be54dda2fa81800911d1aba2389d",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseProlonged"
+            },
+            {
+              "id": "eb4f08abc5e5b32f1014bf1b377c4d8ffe911588519f88fb146bd025f1917ac3",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseAgeUnknown"
             }
           ]
         },
@@ -1331,6 +1416,17 @@
           "alerts": []
         },
         {
+          "rule_id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
+          "alerts": [
+            {
+              "id": "7cb34fc1c4cb3700f56076d9ac4121658c31be54dda2fa81800911d1aba2389d",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseProlonged"
+            }
+          ]
+        },
+        {
           "rule_id": "fcb8f8d9a72e85168c9298b9f857075916b06b965e08ecedfff90befc7f435ee",
           "alerts": [
             {
@@ -1448,10 +1544,10 @@
       ]
     },
     {
-      "revision": "17923667e5b6e74b5cac0ee788fd0c5837355c3c3d2d968a0a5fd674a266ed31",
+      "revision": "6a9577e3a5482cc29c07becf2b05c224a1d633c6d3ceb68df98bcfdd64bb878b",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "cbfd9ca290aa263f2194e3b9e996e0afdc738ad18af63b87e5f81cedb3b963be",
+        "revision": "fd23462327144dc01c20ff8ba3073984eba4a55b4bff5749a319e324447825f9",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -1733,6 +1829,19 @@
             }
           },
           {
+            "id": "6b6eba9cefcb5133bfbab946072b4cc85e1980566f55260d0317b314eb1f0884",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "imaged_image_preparation_observation_healthy",
+            "definition": {
+              "expression_hash": "89ab5045d1e13edc3aaff38780e37db906a6f60c5f139be82d907b0dc27948f7",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "30ca805b3d0b7b76f191c9a8ae876b8da8266c4b786d78c51335f8db3691db7f"
+            }
+          },
+          {
             "id": "6dd38eea0e941a4754acb0194eeaa70a782785d4a82a3eeabb973cf86a6d51cd",
             "file_name": "faas.rules.yml",
             "group_name": "faas_anomaly_baseline",
@@ -1808,6 +1917,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "bdbfb48457a77db6f8dcfff3cad1355b5ae87c6e1a649139511b1ec70984e0ad"
+            }
+          },
+          {
+            "id": "916d2126f58e76922adda80fa7684dd0dc5304ce00e632d75bb69a5c79f2abb8",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "imaged_image_preparation_phase_observation_healthy",
+            "definition": {
+              "expression_hash": "f3b14ef6db757d165390fd198d73cfb108a20de8d464b75e1740bf9c3e7c1db8",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "3369aa64206b7c4cee7bc975683d16520761af5a20e1738c5d11b17592ad30bf"
             }
           },
           {
@@ -2084,6 +2206,19 @@
             }
           },
           {
+            "id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_billing",
+            "rule_name": "imaged_image_preparation_oldest_known_phase_age_seconds",
+            "definition": {
+              "expression_hash": "83c098e5da565ac06ecad0c08b32b2ebf16bd1296722606e98bca0411eb62266",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "f0ea7e14c39cf40ebebbc1987aba27a66ae982f510c87202254e22431406a89c"
+            }
+          },
+          {
             "id": "fcb8f8d9a72e85168c9298b9f857075916b06b965e08ecedfff90befc7f435ee",
             "file_name": "faas.rules.yml",
             "group_name": "faas_alert_preset_signals",
@@ -2098,8 +2233,8 @@
           }
         ]
       },
-      "alert_set_revision": "921e283f26d486b5a37c182f33258dd272ff34cc8f2098015df6e1458e370dda",
-      "alert_count": 309,
+      "alert_set_revision": "46adefd9df942f8a0b3cdef07a3f8919eb08eddbaf200ce277ea1047e0f2cfec",
+      "alert_count": 312,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -2414,6 +2549,29 @@
           "alerts": []
         },
         {
+          "rule_id": "6b6eba9cefcb5133bfbab946072b4cc85e1980566f55260d0317b314eb1f0884",
+          "alerts": [
+            {
+              "id": "777d9904e4ed2b3933d8539cfb2e0709967c89ec6afb0c2ea32116e2a1669aa4",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationTelemetryUnavailable"
+            },
+            {
+              "id": "7cb34fc1c4cb3700f56076d9ac4121658c31be54dda2fa81800911d1aba2389d",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseProlonged"
+            },
+            {
+              "id": "eb4f08abc5e5b32f1014bf1b377c4d8ffe911588519f88fb146bd025f1917ac3",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseAgeUnknown"
+            }
+          ]
+        },
+        {
           "rule_id": "6dd38eea0e941a4754acb0194eeaa70a782785d4a82a3eeabb973cf86a6d51cd",
           "alerts": [
             {
@@ -2494,6 +2652,29 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_billing",
               "rule_name": "FaasBuilderWorkerStalled"
+            }
+          ]
+        },
+        {
+          "rule_id": "916d2126f58e76922adda80fa7684dd0dc5304ce00e632d75bb69a5c79f2abb8",
+          "alerts": [
+            {
+              "id": "777d9904e4ed2b3933d8539cfb2e0709967c89ec6afb0c2ea32116e2a1669aa4",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationTelemetryUnavailable"
+            },
+            {
+              "id": "7cb34fc1c4cb3700f56076d9ac4121658c31be54dda2fa81800911d1aba2389d",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseProlonged"
+            },
+            {
+              "id": "eb4f08abc5e5b32f1014bf1b377c4d8ffe911588519f88fb146bd025f1917ac3",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseAgeUnknown"
             }
           ]
         },
@@ -2777,6 +2958,17 @@
         {
           "rule_id": "fa380956392fc55c0e1d79400b5d10a3afbb669de709a33b0520d64183e7676a",
           "alerts": []
+        },
+        {
+          "rule_id": "fb242f137e166d7fb14f957909cf8110e8ef0adb6ea1d37b632c000ddec09a23",
+          "alerts": [
+            {
+              "id": "7cb34fc1c4cb3700f56076d9ac4121658c31be54dda2fa81800911d1aba2389d",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_billing",
+              "rule_name": "FaasImagePreparationPhaseProlonged"
+            }
+          ]
         },
         {
           "rule_id": "fcb8f8d9a72e85168c9298b9f857075916b06b965e08ecedfff90befc7f435ee",

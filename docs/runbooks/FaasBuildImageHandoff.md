@@ -1,5 +1,8 @@
 # Successful build to image preparation handoff
 
+For work that already has a checkpoint, use the independent
+[durable phase diagnostics](FaasImagePreparation.md).
+
 Applies to `FaasBuildImageHandoffWaiting`,
 `FaasImageHandoffRecoveryQueriesFailing` and
 `FaasBuildImageHandoffTelemetryUnavailable`. All three warnings are internal.

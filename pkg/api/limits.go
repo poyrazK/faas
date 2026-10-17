@@ -8909,6 +8909,11 @@ const (
 	ObsBuildImageHandoffCollectionBudget   = 3 * time.Second
 	ObsBuildImageHandoffFreshnessMaxAge    = 2 * time.Minute
 
+	// Durable image phase timing is observed independently of image execution.
+	ObsImagePreparationCollectionInterval = 30 * time.Second
+	ObsImagePreparationCollectionBudget   = 3 * time.Second
+	ObsImagePreparationFreshnessMaxAge    = 2 * time.Minute
+
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100

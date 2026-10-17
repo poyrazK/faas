@@ -475,3 +475,13 @@ DELETE FROM operator_alert_collection_outcomes WHERE attempted_at IN (
  SELECT attempted_at FROM operator_alert_collection_outcomes WHERE attempted_at<sqlc.arg(before)::timestamptz
  ORDER BY attempted_at LIMIT sqlc.arg(batch_size)::integer
 );
+
+-- name: OperatorImagePreparationProgressSnapshot :many
+SELECT p.phase, count(*)::bigint AS pending,
+ count(*) FILTER (WHERE p.phase_started_at IS NULL)::bigint AS unknown_age,
+ count(*) FILTER (WHERE NOT isfinite(p.phase_started_at) OR p.phase_started_at <= 'epoch'::timestamptz)::bigint AS invalid_age,
+ min(p.phase_started_at)::timestamptz AS oldest_phase_started_at
+FROM deployment_image_preparations p JOIN deployments d ON d.id=p.deployment_id
+WHERE p.phase <> 'handed_off' AND d.status IN ('pending','building','imaging','snapshotting')
+ AND (sqlc.arg(node_id)::text='' OR p.node_name='' OR p.node_name=sqlc.arg(node_id)::text)
+GROUP BY p.phase;
