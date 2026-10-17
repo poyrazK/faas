@@ -585,6 +585,9 @@ type CreateAppRequest struct {
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is how many requests one Node or Python function
+	// worker serves at once (ADR-1342); zero keeps one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. Binding
 	// and per-invocation overrides take precedence over this policy.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -988,6 +991,10 @@ type UpdateAppRequest struct {
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency sets how many requests one Node or Python function
+	// worker serves at once (ADR-1342). It takes effect on the next deploy;
+	// an explicit 0 restores one request per worker.
+	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -1912,6 +1919,9 @@ type AppResponse struct {
 	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
 	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	RequestTimeoutS     int                    `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is the requests one function worker serves at
+	// once (ADR-1342); omitted means one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`

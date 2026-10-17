@@ -337,6 +337,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_FRONTEND_HOSTING_RETENTION_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig, Default: "0", Note: "optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases"},
 	{Name: "FAAS_FROZEN_TIER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for the ADR-1151 frozen tier; production default is off"},
 	{Name: "FAAS_FROZEN_TIER_APPS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off"},
+	{Name: "FAAS_FUNCTION_CONCURRENCY", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342)"},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_NODE22", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},

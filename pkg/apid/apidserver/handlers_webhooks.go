@@ -301,7 +301,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return
@@ -557,7 +557,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			api.WriteProblem(w, prob)
 			return
 		}
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 			return
@@ -663,7 +663,7 @@ func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return

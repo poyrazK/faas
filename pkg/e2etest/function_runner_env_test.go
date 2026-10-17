@@ -65,6 +65,25 @@ func TestFunctionRunnerEnvSatisfiesImagedContract(t *testing.T) {
 	}
 }
 
+// TestImagedEnvStagesBasesUnderVMMDRoot — imaged stages parent-ref runtime
+// bases in a tree vmmd fills, and vmmd writes only under the staging root the
+// imaged unit names, so the harness must give imaged that same root.
+func TestImagedEnvStagesBasesUnderVMMDRoot(t *testing.T) {
+	want := imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT")
+	if want == "" {
+		t.Fatal("the imaged unit spec sets an empty FAAS_BASE_STAGING_ROOT")
+	}
+	for _, kv := range imagedEnv(t, "postgres:///faas", "/dev/null", t.TempDir(), t.TempDir()) {
+		if value, ok := strings.CutPrefix(kv, "FAAS_BASE_STAGING_ROOT="); ok {
+			if value != want {
+				t.Fatalf("harness imaged FAAS_BASE_STAGING_ROOT = %q; want the unit's %q", value, want)
+			}
+			return
+		}
+	}
+	t.Fatal("harness does not set FAAS_BASE_STAGING_ROOT for imaged")
+}
+
 // TestFunctionRunnerEnvStagesExecutablePlaceholders — the contract validates
 // path-exists, so every value must name a file that is really on disk.
 //

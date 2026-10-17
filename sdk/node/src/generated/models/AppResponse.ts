@@ -59,6 +59,10 @@ export type AppResponse = {
    * Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default.
    */
   request_timeout_s?: number;
+  /**
+   * Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   */
+  function_concurrency?: number;
   min_instances: number;
   /**
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.

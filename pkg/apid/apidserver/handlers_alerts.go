@@ -464,7 +464,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
 	if req.WebhookSecret != nil {
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 			return
@@ -662,7 +662,7 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	plaintext := []byte(req.WebhookSecret)
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return
