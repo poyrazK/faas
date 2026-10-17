@@ -100,7 +100,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	// empty schema; the harness waits for migrations it does not run.
 	mustCustomerWorkflow(t, db.MigrateUp(t.Context(), pool))
 	f.h = e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd,
-		"FAAS_WORKFLOWS_ENABLED=1", "FAAS_APID_CONFIG="+configPath,
+		"FAAS_WORKFLOWS_ENABLED=1", "FAAS_E2E_APID_CONFIG="+configPath,
 		"FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
 		"FAAS_WORKFLOW_S3_ACCESS=fixture-access", "FAAS_WORKFLOW_S3_SECRET=fixture-secret",
 		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")

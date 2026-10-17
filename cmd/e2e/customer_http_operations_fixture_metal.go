@@ -101,7 +101,7 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	// empty schema; the harness waits for migrations it does not run.
 	mustCustomerHTTP(t, db.MigrateUp(t.Context(), pool))
 	f.h = e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd,
-		"FAAS_APID_CONFIG="+configPath, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
+		"FAAS_E2E_APID_CONFIG="+configPath, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
 		"FAAS_WORKFLOW_S3_ACCESS=fixture-access", "FAAS_WORKFLOW_S3_SECRET=fixture-secret",
 		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
 	t.Cleanup(func() { f.cleanup(t) })
