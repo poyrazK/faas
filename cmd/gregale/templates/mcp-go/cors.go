@@ -36,7 +36,8 @@ func handleCORSPreflight(config mcpConfig, w http.ResponseWriter, r *http.Reques
 				if strings.HasPrefix(header, "mcp-param-") && len(header) > len("mcp-param-") {
 					allowed = true
 					for _, ch := range strings.TrimPrefix(header, "mcp-param-") {
-						if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || strings.ContainsRune("!#$%&'*+.^_`|~-", ch)) {
+						validTokenCharacter := ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || strings.ContainsRune("!#$%&'*+.^_`|~-", ch)
+						if !validTokenCharacter {
 							allowed = false
 							break
 						}

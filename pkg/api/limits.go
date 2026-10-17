@@ -10540,6 +10540,72 @@ const (
 // RouteHealth watched status comparisons are advisory (ADR-495).
 const RouteHealthMaxWatchedStatuses = 5
 
+// Management MCP exports a small projection of native request diagnostics.
+// These transport budgets do not widen native debugger plan or retention limits.
+const (
+	MCPRequestIdentifierMaxBytes                  = 128
+	MCPRequestFieldMaxBytes                       = 256
+	MCPRequestTimelineMax                         = 32
+	MCPRequestCorrelationMax                      = 16
+	MCPRequestDependenciesMax                     = 16
+	MCPRequestExplanationFindingsMax              = 8
+	MCPRequestExplanationRecommendationsMax       = 5
+	MCPRequestExplanationRefsMax                  = 1
+	MCPRequestPathSegmentsMax                     = 16
+	MCPRequestGuestDurationMaxMS                  = 86_400_000
+	MCPRequestDependencyComparisonMax             = 10
+	MCPRequestListDefault                         = 20
+	MCPRequestListMax                             = 50
+	MCPRequestCursorMaxBytes                      = 8192
+	MCPRequestSinceMaxBytes                       = 64
+	MCPRequestMinLatencyMaxMS                     = 86_400_000
+	MCPPerformanceDependenciesMax                 = 20
+	MCPDependencyImpactEdgesMax                   = 20
+	MCPDependencyImpactExemplarsMax               = 3
+	MCPAnalyticsRoutesDefault                     = 20
+	MCPAnalyticsRoutesMax                         = 50
+	MCPAnalyticsTimeMaxBytes                      = 64
+	MCPAnalyticsPointsDefault                     = 48
+	MCPAnalyticsPointsMax                         = 168
+	MCPErrorPageDefault                           = 20
+	MCPErrorPageMax                               = 50
+	MCPErrorCursorMaxBytes                        = 8192
+	MCPErrorTimeMaxBytes                          = 64
+	MCPWakeHistoryDefault                         = 20
+	MCPWakeHistoryMax                             = 50
+	MCPWakeHistoryNativeCandidatesMax             = 100
+	MCPWakeHistoryTimeMaxBytes                    = 64
+	WakeHistoryPageDefault                        = 20
+	WakeHistoryPageMax                            = 100
+	WakeHistoryCursorMaxBytes                     = 2048
+	MCPWakeHistoryCursorMaxBytes                  = 8192
+	MCPProfileFunctionsDefault                    = 10
+	MCPProfileFunctionsMax                        = 50
+	MCPProfileTimeMaxBytes                        = 64
+	MCPWakeTimelineDefault                        = 50
+	MCPWakeTimelineMax                            = 100
+	MCPWakeTimelineTimeMaxBytes                   = 64
+	MCPWakeTimelineIntegerMax               int64 = 1<<53 - 1
+	WakeTimelinePageDefault                       = 200
+	WakeTimelinePageMax                           = 1000
+	WakeTimelineCursorMaxBytes                    = 2048
+	WakeTimelineTimeMaxBytes                      = 64
+	WakeTimelineIDMaxBytes                        = 128
+	MCPWakeTimelineCursorMaxBytes                 = 8192
+	MCPCriticalPathsDefault                       = 5
+	MCPCriticalPathsMax                           = 10
+	MCPCriticalPathSegmentsMax                    = 16
+	MCPCriticalPathExemplarsMax                   = 3
+	MCPCompareRoutesDefault                       = 20
+	MCPCompareRoutesMax                           = 50
+	MCPCompareUntilMaxBytes                       = 64
+	MCPRegressionsDefault                         = 20
+	MCPRegressionsMax                             = 50
+	MCPResidencyHistoryDefault                    = 10
+	MCPResidencyHistoryMax                        = 20
+	MCPResidencyCausesMax                         = 16
+)
+
 // Bounded diagnostic rows per deployment/window, independent of publisher weights.
 const RouteHealthInvestigationExamplesLimit = 3
 
@@ -11987,6 +12053,181 @@ const (
 	MCPConnectionHealthPageSize           = 50
 	MCPConnectionHealthMaxOffset          = 10000
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
+)
+
+// Internal CI metadata bounds. No production compute dispatcher is wired.
+const (
+	CIDefinitionMaxBytes           = 64 << 10
+	CIRequestMaxBytes              = 2 * CIDefinitionMaxBytes
+	CIRepositoryMaxBytes           = 200
+	CIImageMaxBytes                = 512
+	CIMaxJobs                      = 16
+	CIMaxMatrixVariantsPerJob      = 8
+	CIMaxStepsPerJob               = 32
+	CIMaxCommandBytes              = 4096
+	CIMaxEnvironmentVariables      = 32
+	CIEnvironmentNameMaxBytes      = 64
+	CIEnvironmentValueMaxBytes     = 1024
+	CIEnvironmentMaxBytes          = 8 << 10
+	CIWorkingDirectoryMaxBytes     = 256
+	CIMaxArtifactsPerJob           = 16
+	CIMaxArtifactInputsPerJob      = 8
+	CIArtifactInputsMaxBytesPerJob = 64 << 20
+	CIArtifactPathMaxBytes         = 256
+	CIDefaultTimeoutSeconds        = 600
+	CIMaxTimeoutSeconds            = 3600
+	CIMaxRevisionsPerAccount       = 64
+	CIMaxRunsPerAccount            = 256
+	CIIdempotencyKeyMaxBytes       = 128
+	CIEventListMax                 = 2
+)
+
+// CI execution qualification bounds. No production dispatcher is installed.
+const (
+	CIMaxQualificationExecutionsPerAccount = 32
+	CIExecutionLeaseSeconds                = 30
+	CIExecutionSnapshotMaxBytes            = 4 << 20
+	CILogPageMaxBytes                      = 16 << 10
+	CILogMaxBytesPerAttempt                = 64 << 10
+	CIArtifactMaxBytes                     = 32 << 20
+	CIArtifactsMaxBytesPerJob              = 64 << 20
+)
+
+// Internal GitHub CI admission and delivery bounds; all gates default off.
+const (
+	CIGitHubMaxBindingsPerAccount = 16
+	CIGitHubMaxTriggersPerAccount = 256
+	CIGitHubMaxBranches           = 16
+	CIGitHubBranchMaxBytes        = 255
+	CIGitHubSnapshotMaxBytes      = 64 << 10
+	CIGitHubWebhookMaxBytes       = 10 << 20
+	CIGitHubMaxAttempts           = 8
+	CIGitHubLeaseSeconds          = 60
+	CIGitHubRPCSeconds            = 15
+	CIGitHubPollSeconds           = 2
+	CIGitHubWorkerBatch           = 16
+	CIGitHubMaxBackoffSeconds     = 300
+	CIGitHubCheckPageSize         = 100
+	CIGitHubCheckMaxPages         = 10
+)
+
+// Internal execution Check summaries contain states and counts only (ADR-1657).
+const CIExecutionCheckSummaryMaxBytes = 8 << 10
+
+// Operator recovery is bounded for each retained execution or skipped source
+// (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
+const CICheckRetryMaxGenerations = 3
+
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1580).
+const CIAutomationRetryMaxGenerations = 3
+
+// Automatic runs serialize per account, binding and branch (ADR-1581).
+const CIAutomationActivePerBranch = 1
+
+// PR automation always verifies its current head and serializes each PR.
+const CIAutomationActivePerPullRequest = 1
+const CIGitHubPullRequestMaxBytes = 256 << 10
+const CIGitHubPullRequestJSONMaxDepth = 32
+
+// Internal CI automation path filters (ADR-1585). At provider boundaries a
+// capped or incomplete comparison always means run the full pipeline.
+const (
+	CIAutomationMaxPathFilters       = 16
+	CIAutomationPathPatternMaxBytes  = 256
+	CIAutomationChangedPathMaxBytes  = 1024
+	CIAutomationCompareMaxFiles      = 300
+	CIAutomationCompareMaxCommits    = 100
+	CIAutomationCompareMaxBytes      = 2 << 20
+	CIAutomationPathDecisionMaxBytes = 2048
+)
+
+// Opt-in JUnit diagnostics use existing artifact and execution retention.
+const (
+	CIJUnitMaxReportsPerJob = 2
+	CIJUnitMaxBytes         = 1 << 20
+	CIJUnitMaxCases         = 5000
+	CIJUnitMaxDepth         = 16
+	CIJUnitMaxTokens        = 100000
+	CIJUnitMaxAttributes    = 64
+	CIJUnitMaxFailures      = 20
+	CIJUnitNameMaxBytes     = 256
+	CIJUnitMessageMaxBytes  = 512
+	CIJUnitDetailMaxBytes   = 1024
+	CIJUnitSnapshotMaxBytes = 32 << 10
+)
+
+// CI observability is bounded independently of execution admission. Slots are
+// diagnostic only; exhausting them never stops a worker from reconciling.
+const (
+	CIHealthTimeoutSeconds        = 5
+	CIWorkerHealthSlots           = 8
+	CIWorkerHeartbeatSeconds      = 10
+	CIWorkerHeartbeatStaleSeconds = 45
+	CIWorkerSlotExpirySeconds     = 90
+	CIWorkerProgressStaleSeconds  = 120
+)
+
+// Compact CI archives retain permanent identity independently of detailed history.
+const (
+	CIMaxExecutionArchivesPerAccount = 128
+	CIExecutionArchiveMaxBytes       = 16 << 10
+)
+
+// Saved internal CI profiles are bounded independently of compute admission.
+const (
+	CIMaxExecutionProfilesPerAccount = 64
+	CIProfileSnapshotMaxBytes        = 64 << 10
+)
+
+// Dormant CI-to-Jobs adapter bounds. Existing Jobs account, capacity, image and
+// timeout admission still applies; this initial profile never widens it.
+const (
+	CIMaxJobsExecutionsPerAccount = 32
+	CIActiveExecutionsPerAccount  = 4
+	CIActiveExecutionsGlobal      = 16
+	CIDispatchWorkers             = 4
+	CIDispatchLeasesPerAccount    = 2
+	CIDispatchPollSeconds         = 2
+	CIDispatchMaxBackoffSeconds   = 60
+	CIDispatchMaxFailures         = 16
+	CIJobsRAMMB                   = 512
+	CIJobsVCPU                    = 1
+	CIJobsManifestMaxBytes        = 16 << 10
+	CIJobsSourceArchiveMaxBytes   = 32 << 20
+	CIJobsResultManifestMaxBytes  = 32 << 10
+	CIJobsResultJSONMaxDepth      = 32
+	CIJobsOutputSnapshotMaxBytes  = 256 << 10
+	CIJobsExpandedSourceMaxBytes  = 128 << 20
+	CIJobsSourceMaxEntries        = 8192
+	CIJobsSourcePathMaxBytes      = 512
+	CIJobsFinalizeSeconds         = 20
+	CIJobsTransferSeconds         = 15
+	CIJobsControlPollMillis       = 1000
+	// Live diagnostics share the existing retained log prefix and page bounds.
+	CIJobsProgressPollMillis       = 1000
+	CIJobsProgressSeconds          = 2
+	CIJobsProgressMaxUpdates       = 4096
+	CIJobsProgressRequestMaxBytes  = 32 << 10
+	CIJobsProgressSnapshotMaxBytes = 128 << 10
+	CILogFollowPollMillis          = 1000
+	CILogFollowMaxRetries          = 3
+	CIJobsStepStopGraceMillis      = 500
+	CIJobsTransferMaxAttempts      = 3
+	CIStorageMaxBytesPerAccount    = 2 << 30
+	CIStorageMaxBytesGlobal        = 8 << 30
+	CIStorageMaxObjectsPerAccount  = 1024
+	CIStorageMaxObjectsGlobal      = 8192
+	CIStorageMaxJournalPerAccount  = 16384
+	CIStorageMaxJournalGlobal      = 131072
+	CIStorageMaxIOPerAccount       = 2
+	CIStorageMaxIOGlobal           = 8
+	CIStorageOperationSeconds      = 30
+	CIStorageRetentionDays         = 7
+	CIStorageOrphanHours           = 2
+	CIStorageCleanupBatch          = 16
+	CIStorageCleanupSeconds        = 60
+	CIStorageKeyMaxBytes           = 1024
+	CIStorageWriterChunkBytes      = 256 << 10
 )
 
 // Internal static hosting (ADR-20261015). These caps bound control-plane memory,

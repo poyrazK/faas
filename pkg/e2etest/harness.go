@@ -188,7 +188,7 @@ func snapshotProcs() []*exec.Cmd {
 func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
 	t.Helper()
 
-	tmp := t.TempDir()
+	tmp := harnessTempDir(t)
 	// Daemon binaries are built once per process and shared across tests;
 	// see EnsureSharedBinaries for why this is not under t.TempDir().
 	bin := buildBinaries(t)
@@ -338,7 +338,7 @@ failure_report_dir = %q
 	if which&Gatewayd != 0 {
 		// Guest DNS is pinned to the tenant bridge, including in builder VMs.
 		// Metal source-build tests need the gateway's real bridge resolver.
-		guestDNS := which&Builderd != 0 && which&VMMD != 0 && os.Getenv("FAAS_TEST_KERNEL") != ""
+		guestDNS := nativeGuestDNS(which)
 		startGatewayd(t, h, bin, dbURL, extraEnv, guestDNS)
 	}
 	if which&GatewaydPublic != 0 {
@@ -715,7 +715,7 @@ const e2eMigrationTarget = 416
 // only needs apid, no schedd/vmmd).
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
-	tmp := t.TempDir()
+	tmp := harnessTempDir(t)
 	// Shared, built-once daemon binaries — see EnsureSharedBinaries.
 	bin := buildBinaries(t)
 	appsRoot := filepath.Join(tmp, "apps")
