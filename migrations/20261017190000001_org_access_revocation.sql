@@ -1,5 +1,7 @@
 -- Organization employee offboarding and transaction fencing (ADR-202610171902).
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+-- migration-lint: allow not-null org_memberships.access_revision: BIGSERIAL supplies a sequence DEFAULT for existing rows and legacy INSERTs; no old writer must supply this value.
 -- Replay completed expansion without replacing functions refined by later migrations.
 -- A partially present expansion still fails atomically and requires repair.
 -- +goose StatementBegin
@@ -103,6 +105,7 @@ $org_ownership_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP TRIGGER IF EXISTS org_deploy_token_membership ON deploy_tokens;
 DROP TRIGGER IF EXISTS org_api_key_membership ON api_keys;
 DROP FUNCTION IF EXISTS check_org_credential_membership();

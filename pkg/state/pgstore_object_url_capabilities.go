@@ -154,5 +154,8 @@ func issueObjectURLWriteSQL(ctx context.Context, tx pgx.Tx, credential ObjectS3C
 	if err != nil {
 		return c, mapErr(err)
 	}
+	if err = enrollObjectNodeSettlementTx(ctx, tx, c.ID, c.AccountID, c.AppID, c.BucketID, "put", c.QueueNodeSettlement); err != nil {
+		return c, err
+	}
 	return objectTrackedUploadFromSQL(row)
 }

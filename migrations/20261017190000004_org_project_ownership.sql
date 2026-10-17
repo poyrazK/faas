@@ -1,4 +1,7 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+-- migration-lint: allow not-null projects.org_id: bind_project_resource_owner derives the organization from the existing personal/project root for legacy INSERTs; backfill is validated before tightening.
+-- migration-lint: allow index-build projects: The unique company slug index must reject ownership collisions inside the atomic cutover; metadata writers are paused and production sizing/timing qualification is required (ADR-202610171905).
 -- Replay completed expansion without replacing functions refined by later migrations.
 -- A partially present expansion still fails atomically and requires repair.
 -- +goose StatementBegin
@@ -290,6 +293,7 @@ $org_ownership_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE account_deploy_rate_limits DROP CONSTRAINT account_deploy_rate_limits_account_id_fkey;
 ALTER TABLE account_deploy_rate_limits ADD CONSTRAINT account_deploy_rate_limits_account_id_fkey FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE;

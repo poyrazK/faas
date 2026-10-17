@@ -1,4 +1,8 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+-- migration-lint: allow not-null managed_postgres_databases.org_id: bind_managed_postgres_resource_owner derives existing organization/restore/personal roots for legacy INSERTs after validated backfill.
+-- migration-lint: allow not-null managed_postgres_bindings.database_account_id: The binding ownership trigger derives this namespace from database_id for legacy INSERTs; it is never guessed from the caller.
+-- migration-lint: allow index-build managed_postgres_databases: Company name uniqueness must reject collisions before ownership commits; metadata writers are paused and production sizing/timing qualification is required (ADR-202610171906).
 -- Replay completed expansion without replacing functions refined by later migrations.
 -- A partially present expansion still fails atomically and requires repair.
 -- +goose StatementBegin
@@ -379,6 +383,7 @@ $org_ownership_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DROP TRIGGER org_managed_postgres_databases_guard ON orgs;
 DROP FUNCTION guard_org_managed_postgres_databases();

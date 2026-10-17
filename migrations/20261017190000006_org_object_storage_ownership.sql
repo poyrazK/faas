@@ -1,5 +1,8 @@
 -- Organization object ownership and human credential revocation (ADR-202610171907).
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+-- migration-lint: allow not-null object_buckets.org_id: bind_object_bucket_organization derives organization ownership from the existing app_id for legacy INSERTs after validated backfill.
+-- migration-lint: allow index-build object_buckets: Atomic bucket ownership cutover with metadata writers paused; production table-size and pause-duration qualification is required before rollout (ADR-202610171907).
 -- Replay completed expansion without replacing functions refined by later migrations.
 -- A partially present expansion still fails atomically and requires repair.
 -- +goose StatementBegin
@@ -427,6 +430,7 @@ $org_ownership_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE event_fanout_outbox DROP CONSTRAINT event_fanout_outbox_account_id_fkey;
 ALTER TABLE event_fanout_outbox ADD CONSTRAINT event_fanout_outbox_account_id_fkey FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE;

@@ -684,6 +684,9 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		writeS3Error(w, http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size for a single PUT.", r.URL.Path, req.requestID)
 		return
 	}
+	if req.credential.URL == nil && !h.checkWritePressure(w, r, req, "put", r.ContentLength) {
+		return
+	}
 	file, cleanup, ok := h.stageUpload(w, r, req)
 	if !ok {
 		return

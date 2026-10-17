@@ -41,6 +41,10 @@ func (m *MemStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadC
 }
 
 func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy, capture bool) (ObjectUploadCompletion, bool, error) {
+	job, err := m.nodeSettlementEnrollmentLocked(c.ID, "put", m.objectBuckets[c.BucketID], c.QueueNodeSettlement)
+	if err != nil {
+		return c, false, err
+	}
 	if _, held := m.objectWriteFences[c.BucketID]; held {
 		return c, false, ErrObjectBucketWriteFenced
 	}
@@ -88,6 +92,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	c.RecoveryVersionsObserved = false
 	c.RecoveryLeaseUntil = time.Time{}
 	c.RuntimeSinglePutLimit = 0
+	c.QueueNodeSettlement = false
 	c.CreatedAt = m.clock().UTC()
 	c.WritePhase = ObjectUploadPrepared
 	c.RecoveryRetryAt = c.CreatedAt.Add(api.ObjectUploadPreparationTimeout)
@@ -98,6 +103,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 		m.objectMutations = map[string]ObjectBucketMutation{}
 	}
 	m.objectMutations[c.ID] = ObjectBucketMutation{ID: c.ID, UploadID: c.ID, Bucket: m.objectBuckets[c.BucketID], Kind: ObjectBucketMutationRequest, CreatedAt: c.CreatedAt}
+	m.enrollObjectNodeSettlementLocked(job)
 	m.objectUploadCompletions[c.ID] = cloneObjectUploadCompletion(c)
 	return cloneObjectUploadCompletion(c), true, nil
 }
@@ -151,9 +157,14 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	old.ETag = c.ETag
 	old.Status = c.Status
 	old.ErrorCode = c.ErrorCode
+	dispatched := old.WritePhase == ObjectUploadDispatched
 	old.WritePhase = ObjectUploadSettled
 	old.RecoveryToken = ""
 	old.RecoveryLeaseUntil = time.Time{}
+	commitSettlement, err := m.prepareUploadNodeSettlementLocked(old, dispatched)
+	if err != nil {
+		return cloneObjectUploadCompletion(old), err
+	}
 	if old.Status == "completed" {
 		if err := m.publishObjectEventLocked(old.AccountID, "write:"+old.ID, api.ObjectEventCreated, trackedUploadEvent(old), m.clock()); err != nil {
 			return cloneObjectUploadCompletion(old), err
@@ -165,6 +176,7 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	w.Settled = true
 	m.objectWriteAdmissions[old.ID] = w
 	m.objectUploadCompletions[old.ID] = old
+	commitSettlement()
 	if receipt, exists := m.objectMutations[old.ID]; exists && receipt.UploadID == old.ID {
 		delete(m.objectMutations, old.ID)
 	}
@@ -192,7 +204,7 @@ func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery,
 	if preparedOnly && (c.Status != "failed" || old.WritePhase != ObjectUploadPrepared && old.Status != "failed") {
 		return cloneObjectUploadCompletion(old), ErrConflict
 	}
-	if recovery && (!validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
+	if recovery && (!validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken || !validTrackedUploadRecoveryOutcome(c)) {
 		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	return m.finishTrackedObjectUploadLocked(old, c)

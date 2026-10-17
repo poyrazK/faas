@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Replay completed expansion without replacing functions refined by later migrations.
 -- A partially present expansion still fails atomically and requires repair.
 -- +goose StatementBegin
@@ -1298,6 +1299,7 @@ $org_ownership_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- Contraction cannot reconnect resources to erased identities. Refuse instead
 -- of silently losing company resources or fabricating replacement humans.
 -- +goose StatementBegin

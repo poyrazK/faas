@@ -1,4 +1,8 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
+-- migration-lint: allow not-null queue_bindings.org_id: bind_queue_organization derives organization ownership from the existing app_id for legacy INSERTs after validated backfill.
+-- migration-lint: allow index-build queue_bindings: Atomic binding ownership cutover with admission/dispatch and metadata writers paused; production sizing/timing qualification is required (ADR-202610171908).
+-- migration-lint: allow index-build invocations: Reservation subjects and their index are installed in one atomic counter cutover with every quota writer quiesced; production sizing/timing qualification is required (ADR-202610171908).
 -- Replay completed expansion without replacing functions refined by later migrations.
 -- A partially present expansion still fails atomically and requires repair.
 -- +goose StatementBegin
@@ -306,6 +310,7 @@ $org_ownership_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- Reservations cannot change counter ownership during a rollback.
 DO $$ BEGIN

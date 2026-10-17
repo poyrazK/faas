@@ -92,6 +92,9 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	if err != nil {
 		return c, false, mapErr(err)
 	}
+	if err = enrollObjectNodeSettlementTx(ctx, tx, c.ID, c.AccountID, c.AppID, c.BucketID, "put", c.QueueNodeSettlement); err != nil {
+		return c, false, err
+	}
 	out, e := commitTrackedUploadSQL(ctx, tx, r)
 	return out, true, e
 }
@@ -165,7 +168,7 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 			return old, err
 		}
 	}
-	return out, nil
+	return out, settleUploadNodeTx(ctx, tx, out, old.WritePhase == ObjectUploadDispatched)
 }
 func (s *PgStore) FinishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return s.finishTrackedObjectUpload(ctx, c, false, false)
@@ -189,7 +192,7 @@ func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadC
 	if preparedOnly && (c.Status != "failed" || old.WritePhase != ObjectUploadPrepared && old.Status != "failed") {
 		return old, ErrConflict
 	}
-	if recovery && (!validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
+	if recovery && (!validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken || !validTrackedUploadRecoveryOutcome(c)) {
 		return old, ErrConflict
 	}
 	out, err := finishTrackedUploadSQL(ctx, tx, old, c)
@@ -341,6 +344,9 @@ func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCo
 	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: c.Origin, SourceKey: c.SourceKey, SourceEtag: c.SourceETag, SourceBucketID: mustPgUUID(c.SourceBucketID), SourceCopyGrantID: mustPgUUID(c.SourceCopyGrantID), ProtectionSnapshot: protection, EncryptionSnapshot: encryption, EncryptionDefaultRevision: c.EncryptionDefaultRevision, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
 	if err != nil {
 		return c, mapErr(err)
+	}
+	if err = enrollObjectNodeSettlementTx(ctx, tx, c.ID, c.AccountID, c.AppID, c.BucketID, "put", c.QueueNodeSettlement); err != nil {
+		return c, err
 	}
 	return commitTrackedUploadSQL(ctx, tx, r)
 }

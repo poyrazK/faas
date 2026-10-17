@@ -39,6 +39,9 @@ func (m *MemStore) ReserveAdmittedObjectMultipartUpload(ctx context.Context, upl
 }
 
 func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, limit int, policy *api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+	if !validNodeSettlementEnrollment(upload.ID, upload.QueueNodeSettlement) {
+		return ObjectMultipartUpload{}, ErrConflict
+	}
 	if m.objectCapacityFencedLocked(upload.BucketID) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
@@ -69,6 +72,10 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	if _, held := m.objectWriteFences[upload.BucketID]; held {
 		return ObjectMultipartUpload{}, ErrObjectBucketWriteFenced
 	}
+	job, err := m.nodeSettlementEnrollmentLocked(upload.ID, "multipart", bucket, upload.QueueNodeSettlement)
+	if err != nil {
+		return ObjectMultipartUpload{}, err
+	}
 	var captureErr error
 	upload.Encryption, upload.EncryptionDefaultRevision, captureErr = m.captureObjectBucketDefaultLocked(upload.BucketID, upload.Encryption)
 	if captureErr != nil {
@@ -91,6 +98,7 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	}
 	now := m.clock().UTC()
 	upload.State, upload.CreatedAt, upload.UpdatedAt, upload.RetryAt = ObjectMultipartInitiating, now, now, now
+	upload.QueueNodeSettlement = false
 	upload.Parts = []api.ObjectMultipartCompletedPart{}
 	upload.Metadata = cloneObjectMultipartMetadata(upload.Metadata)
 	if m.objectMultipartUploads == nil {
@@ -100,6 +108,7 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 		m.objectMutations = map[string]ObjectBucketMutation{}
 	}
 	m.objectMutations[upload.ID] = ObjectBucketMutation{ID: upload.ID, MultipartUploadID: upload.ID, Bucket: bucket, Kind: ObjectBucketMutationRequest, CreatedAt: now}
+	m.enrollObjectNodeSettlementLocked(job)
 	m.objectMultipartUploads[upload.ID] = cloneObjectMultipartUpload(upload)
 	if m.objectMultipartInitiations == nil {
 		m.objectMultipartInitiations = map[string]ObjectMultipartInitiation{}
@@ -271,6 +280,9 @@ func (m *MemStore) FinishObjectMultipartUpload(ctx context.Context, id, token, n
 
 	upload, ok := m.objectMultipartUploads[id]
 	valid := ObjectMultipartIsCompleting(upload.State) && next == ObjectMultipartCompleted
+	if _, enrolled := m.objectNodeSettlements[id]; enrolled {
+		return ErrConflict // Enrolled writes require the verified result owner.
+	}
 	if !ok || token == "" || upload.LeaseToken != token || !valid || m.multipartPartWriterPendingLocked(id, 0) || next == ObjectMultipartCompleted && (upload.CompletionDispatched || !upload.Checksum.Empty() || !upload.Encryption.Empty() || !upload.Protection.Empty()) {
 		return ErrConflict
 	}

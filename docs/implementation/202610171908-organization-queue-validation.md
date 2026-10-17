@@ -83,3 +83,12 @@ the three organization client tests pass, as do the three Python organization
 client tests, ADR uniqueness, core test citations, Go formatting, embedded
 OpenAPI parity and whitespace checks. Production rollout and native runtime
 acceptance remain pending.
+
+Organization state and HTTP regressions also pass with race detection on
+`a23dea529`, including current membership, shared quotas, retained worker
+receipts and creator erasure. OpenAPI route/schema compliance and typed SDK
+coverage pass on that source, as do repository policy and runtime documentation
+contracts. Main's subsequent storage and release-compatibility changes are
+integrated from `5f10b1f27`. The ownership migrations now bound lock waits to five
+seconds and document their atomic-maintenance exceptions; production sizing
+and pause-duration qualification remain deployment prerequisites.

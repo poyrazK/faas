@@ -121,7 +121,12 @@ func (m *MemStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, t
 	u.State, u.LeaseToken, u.LeaseUntil = ObjectMultipartAborted, "", time.Time{}
 	u.AttemptCount, u.LastErrorCode = 0, ""
 	u.UpdatedAt, u.RetryAt = m.clock().UTC(), m.clock().UTC()
+	commitSettlement, err := m.prepareMultipartNodeSettlementLocked(u)
+	if err != nil {
+		return err
+	}
 	m.objectMultipartUploads[id] = u
+	commitSettlement()
 	m.retireMultipartMutationLocked(id)
 	for part, transfer := range m.objectMultipartTransfers[id] {
 		m.settleMultipartPartLocked(id, part)

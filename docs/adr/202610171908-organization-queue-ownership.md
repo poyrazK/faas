@@ -66,3 +66,15 @@ reservation snapshots. Rollback requires draining organization reservations and
 must precede creator erasure. Native deployment acceptance remains a release
 gate; local HTTP and state fixtures do not establish production rollout or KVM
 acceptance.
+
+This cutover is a planned-maintenance exception to the online N±1 schema rollout
+in [ADR-202610171900](202610171900-release-compatibility-gates.md). Quiesce the
+control-plane API and metadata writers as well as async admission and dispatch;
+resume them only after every affected reader/writer has been upgraded. Keep
+identity erasure disabled until that point. Every ownership migration bounds
+lock waits to five seconds. Scoped migration-lint exceptions retain atomic
+ownership/name-collision validation and reservation-counter installation;
+legacy INSERTs derive their new ownership fields through defaults or triggers.
+Production table/index sizes and the required maintenance duration must be
+measured and qualified before deployment. These exceptions do not establish
+online migration or native runtime acceptance.
