@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Native M9 migration recovery gate — 2026-10-18
+
+The [first live migration drill](ops/native-m9-acceptance.md) now has a dedicated
+two-peer harness: real scheduler/vmmd migration, a discarded successful source
+acknowledgement, vmmd process death/restart, receipt replay, return migration and
+replacement-generation protection. An in-memory HTTP fixture detects cold
+fallback and duplicate operations. The drill observes retained source capacity,
+then requires zero residents/capacity/source leases and successful leak checks on
+both peers. Native host/artifact identities, phase proofs and independent
+restoration enter a strict private report; required skips cannot qualify.
+
+Portable gate/fixture/fault-guard tests and tagged native compilation are verified.
+Both CI tiers run these harness checks. Native execution remains pending: this
+workspace has no KVM device or designated peer credentials. Host power loss,
+partitions, automatic recovery-policy and drain qualification remain separate.
+The earlier heartbeat smoke is available separately. Nothing deployed.
+
 ## Durable migration source retirement — 2026-10-17
 
 [ADR-1530](adr/1530-durable-migration-source-retirement.md) binds production
