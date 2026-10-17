@@ -68,6 +68,69 @@ func TestMetalFinancialComputePostgresContention(t *testing.T) {
 	}
 }
 
+// The shared allowance must authorize only one real physical attempt even
+// when separate native owners request different apps on the same account.
+func TestMetalFinancialComputePostgresAccountContention(t *testing.T) {
+	f := newFinancialNativeFixture(t)
+	app, err := f.store.CreateApp(f.ctx, state.App{AccountID: f.app.AccountID, Slug: "native-account-second", RAMMB: 128, MaxConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.configs[1].AppID = app.ID
+	owners := []*financialNativeOwner{f.start(0, ""), f.start(1, "")}
+	account, err := f.store.AccountByID(f.ctx, f.app.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for at := account.CreatedAt.Truncate(time.Minute); at.Before(time.Now().UTC().Truncate(time.Minute)); at = at.Add(time.Minute) {
+		if err := f.store.RecordFinancialSamplingWindow(f.ctx, at, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	month := financial.ComputeMonth(time.Now())
+	grant := int64(api.BillableRAMMB(128)) * int64((api.FinancialComputeLeaseDuration+api.FinancialComputeTeardownReserve)/time.Second)
+	_, err = f.store.PutFinancialPriceSnapshot(f.ctx, state.FinancialPriceSnapshot{AccountID: f.app.AccountID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "native-account", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: grant}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := financial.BudgetSpec{Name: "native account compute", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	f.policy, err = f.store.CreateFinancialBudget(f.ctx, f.app.AccountID, uuid.NewString(), "native-acceptance", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results [2]financialNativeEvent
+	var wg sync.WaitGroup
+	for i, owner := range owners {
+		wg.Go(func() { results[i] = owner.call(t, financialNativeCommand{Operation: "wake"}) })
+	}
+	wg.Wait()
+	winner := -1
+	for i, result := range results {
+		if result.Error == "" {
+			if winner != -1 || result.Live != 1 || result.Leased != 1 {
+				t.Fatalf("shared allowance overspent: %+v", results)
+			}
+			winner = i
+		} else if result.Error != "budget" || result.Live != 0 || result.Leased != 0 || result.Journal {
+			t.Fatalf("unfunded physical effects: %+v", result)
+		}
+	}
+	if winner < 0 {
+		t.Fatalf("no funded native owner: %+v", results)
+	}
+	lease := f.lease(owners[winner])
+	balance, err := f.store.FinancialComputeBalance(f.ctx, f.policy, time.Now())
+	if err != nil || !lease.AccountFunded || balance.AllowanceReserved != grant || balance.ReservedMillicents != 0 || !balance.Held || balance.UnconfirmedLeases != 1 {
+		t.Fatalf("account/native funding mismatch: %+v %+v %v", lease, balance, err)
+	}
+	owners[winner].must(t, "destroy")
+	settled := f.lease(owners[winner])
+	balance, err = f.store.FinancialComputeBalance(f.ctx, f.policy, time.Now())
+	if err != nil || settled.SettledAt == nil || settled.QuantityReserved != 0 || balance.AllowanceReserved != 0 || balance.UnconfirmedLeases != 0 || !balance.Held {
+		t.Fatalf("physical retirement lost account funding: %+v %+v %v", settled, balance, err)
+	}
+}
+
 func TestMetalFinancialComputePostgresDeadline(t *testing.T) {
 	f := newFinancialNativeFixture(t)
 	owner := f.start(0, "")
@@ -310,7 +373,7 @@ func (f *financialNativeFixture) activate() {
 
 func (f *financialNativeFixture) lease(owner *financialNativeOwner) financial.ComputeLease {
 	f.t.Helper()
-	l, found, err := f.store.FinancialComputeInstanceLease(f.ctx, f.app.AccountID, f.app.ID, owner.config.Instance)
+	l, found, err := f.store.FinancialComputeInstanceLease(f.ctx, f.app.AccountID, owner.config.AppID, owner.config.Instance)
 	if err != nil || !found {
 		f.t.Fatalf("native financial lease missing: %v %v", found, err)
 	}

@@ -1,4 +1,4 @@
-# Strict app compute native acceptance
+# Strict compute native acceptance
 
 This candidate is local and unpublished. Use dedicated native x86_64 Linux KVM.
 
@@ -25,6 +25,9 @@ The additional financial tests cover:
 
 - Real PostgreSQL reservations raced by two independent native owner processes,
   with enough money for one VM; the loser must create no native journal or slot.
+- Account-wide allowance contention between different apps on independent native
+  owner processes. The loser must consume no shared allowance, journal or slot;
+  physical settlement releases the winner’s reserved MB-seconds.
 - Local funded expiry after the owner's real PostgreSQL pool is closed and its
   wake context is cancelled. No scheduler, meter or gateway runs in the fixture.
   Physical absence must precede the funded deadline while money and allocator
@@ -105,3 +108,31 @@ recovery and current financial owners on every active node.
 Run the full native VM lifecycle suite and leakcheck afterwards. Record host
 identity, commit hashes, commands, results and resource inventory in the release
 review. The current managed cloud container has no native acceptance path.
+
+## Account compute release checks
+
+Use an account compute-only strict `net_usage` / `suspend_workloads` policy with
+zero drain and no alert thresholds. Record the monthly compute contract first;
+activation requires quiet covered workloads, complete retained sampling and no
+independent job definitions or queued/claimed job tasks. Keep subscription,
+storage, egress, builds and tax outside the claimed guarantee.
+
+In the actual two-host and full-daemon acceptance runs, contend different apps,
+workers, deployments and command tasks for one shared allowance and paid cap.
+Combine an app gross cap with the account net cap; failure of either must retain
+only its own hold and consume no candidate funding in either book. Create a new
+app after the account hold and verify traffic, wake, floor and command admission
+remain blocked. Verify policy edits, disable/re-enable, replacement and plan
+upgrades/downgrades cannot reset committed money or reissue included quantity.
+
+Retain a previous-month physical attempt through a node crash. A new UTC month
+must not authorize another app until exact old-fence physical retirement settles
+both books. Verify `manual` holds persist and `next_period` holds release in the
+new month; an edit releasing one policy cannot release another policy or a
+payment/security hold. Job creation (ordinary, scheduled, image-run and
+GitOps-created) must fail while the account strict policy is enabled.
+
+The portable financial suite includes account contention, joint policy checks,
+retained allowance, replay, unsupported producers and PostgreSQL month recovery.
+These checks and the compiled native account contention fixture do not close the
+physical two-host, full-daemon, workload-matrix or leak acceptance gates above.
