@@ -4,7 +4,7 @@ The gateway journals request usage under `/var/lib/faas/consumer-usage` and repl
 
 ## Symptom
 
-The pending-record or pending-byte gauge keeps rising, delivery failures increase, or gatewayd-internal fails `/readyz` as its outbox reaches 90% capacity. Consumer- and tenant-attributed responses wait for their usage event before they complete (ADR-1303). When the outbox cannot take one, the gateway withholds the response and counts `gateway_usage_commit_aborts_total`: clients see truncated responses or closed connections, and those requests are not billed. Append failures for anonymous or audit-only traffic do not withhold responses.
+The pending-record or pending-byte gauge keeps rising, delivery failures increase, or gatewayd-internal fails `/readyz` as its outbox reaches 90% capacity. Consumer- and tenant-attributed responses wait for their usage event before they complete (ADR-1505). When the outbox cannot take one, the gateway withholds the response and counts `gateway_usage_commit_aborts_total`: clients see truncated responses or closed connections, and those requests are not billed. Append failures for anonymous or audit-only traffic do not withhold responses.
 
 ## Check
 

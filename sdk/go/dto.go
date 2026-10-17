@@ -673,3 +673,11 @@ type (
 	EventDeadlineRoutingExplanation   = api.EventDeadlineRoutingExplanation
 	EventDeadlineOrderingExplanation  = api.EventDeadlineOrderingExplanation
 )
+
+// Lifecycle alert policy and draft preview types.
+type (
+	IssueLifecycleAlertPolicy              = api.IssueLifecycleAlertPolicy
+	UpdateIssueLifecycleAlertPolicyRequest = api.UpdateIssueLifecycleAlertPolicyRequest
+	PreviewIssueLifecycleAlertRequest      = api.PreviewIssueLifecycleAlertRequest
+	IssueLifecycleAlertPreview             = api.IssueLifecycleAlertPreview
+)

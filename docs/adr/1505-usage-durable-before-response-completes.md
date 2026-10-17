@@ -1,4 +1,4 @@
-# ADR-1303: Usage is durable before a monetized response completes
+# ADR-1505: Usage is durable before a monetized response completes
 
 - **Status:** accepted
 - **Date:** 2026-10-14
@@ -7,7 +7,7 @@
   - **No body.** A `HEAD` request, a 204 or 304, or `Content-Length: 0`. The commit runs before any flush, and otherwise at the handler's exit, before net/http writes the buffered headers.
   - **Chunked or streamed body.** At the handler's exit, before net/http writes the terminating chunk.
   - **Upgraded connection.** Before the connection is hijacked to switch protocols.
-- **Why:** ADR-234 journals usage at the handler's exit funnel. By then, a response with a declared length may already be complete on the wire, because large writes bypass net/http's buffer. A gateway crash in that window lost a served request, which is why the usage ledger was not an unqualified invoice source. Billing runs (ADR-1301) now invoice from that ledger unattended.
+- **Why:** ADR-234 journals usage at the handler's exit funnel. By then, a response with a declared length may already be complete on the wire, because large writes bypass net/http's buffer. A gateway crash in that window lost a served request, which is why the usage ledger was not an unqualified invoice source. Billing runs (ADR-1503) now invoice from that ledger unattended.
 - **Consequences:**
   - **Zero loss for served responses.** A client can only see a complete response after its usage record is fsynced, and the outbox replays it until apid commits it. A crash before that point leaves the response incomplete; the request is then treated like any other platform failure and is not billed.
   - **Fail closed.** If the outbox cannot take the event (full, broken or I/O error), the gateway refuses the completing write or aborts the handler with `http.ErrAbortHandler`, so the client sees a truncated response or a closed connection rather than an unrecorded success. Such a request is not billed. `gateway_usage_commit_aborts_total` counts these. Readiness already turns false when the outbox is unhealthy or 90% full (ADR-234), so the node drains rather than failing requests for long.

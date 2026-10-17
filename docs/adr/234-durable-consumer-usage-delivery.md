@@ -27,4 +27,4 @@ The skipped request's debugger row is still marked `usage_outboxed=true`, so api
 
 ## Amendment (2026-10-14): usage is durable before the response completes
 
-[ADR-1303](1303-usage-durable-before-response-completes.md) closes the gap described under "Delivery and limits". For consumer- and tenant-attributed requests, the gateway now fsyncs the usage event before the bytes that complete the response, and fails closed when the outbox cannot take it. A served request can no longer go unrecorded. The paragraph above about not using the raw ledger as an unqualified invoice source applies only to anonymous, unattributed traffic.
+[ADR-1505](1505-usage-durable-before-response-completes.md) closes the gap described under "Delivery and limits". For consumer- and tenant-attributed requests, the gateway now fsyncs the usage event before the bytes that complete the response, and fails closed when the outbox cannot take it. A served request can no longer go unrecorded. The paragraph above about not using the raw ledger as an unqualified invoice source applies only to anonymous, unattributed traffic.

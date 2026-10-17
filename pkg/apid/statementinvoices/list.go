@@ -10,7 +10,7 @@ import (
 )
 
 // ListInvoices pages the account's exported invoices, newest first, with
-// their payment status (ADR-1302). status filters by a payment status, or
+// their payment status (ADR-1504). status filters by a payment status, or
 // unpaid or overdue.
 func (s *Service) ListInvoices(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	payments, ok := s.Host.Store().(state.StatementInvoicePaymentStore)

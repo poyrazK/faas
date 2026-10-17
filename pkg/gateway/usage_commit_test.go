@@ -91,7 +91,7 @@ func abortPanics(holder *usageCommitHolder, rec *statusRecorder) (aborted bool) 
 	return false
 }
 
-// adr: 1303 — the bytes completing a declared-length response reach the
+// adr: 1505 — the bytes completing a declared-length response reach the
 // client only after the usage event is durable, and observe never appends
 // it a second time.
 func TestUsageCommitPrecedesCompletingWrite(t *testing.T) {
@@ -120,7 +120,7 @@ func TestUsageCommitPrecedesCompletingWrite(t *testing.T) {
 	}
 }
 
-// adr: 1303 — without durable usage, a billable response never completes:
+// adr: 1505 — without durable usage, a billable response never completes:
 // the completing write is refused and the handler exit aborts.
 func TestUsageCommitWithholdsUnrecordedResponse(t *testing.T) {
 	f := newUsageCommitFixture(t, http.MethodGet, 1, true)
@@ -140,7 +140,7 @@ func TestUsageCommitWithholdsUnrecordedResponse(t *testing.T) {
 	}
 }
 
-// adr: 1303 — a response net/http completes after the handler returns (no
+// adr: 1505 — a response net/http completes after the handler returns (no
 // body, or chunked) commits at exit, and before any flush that would send it.
 func TestUsageCommitAtExitAndBeforeFlush(t *testing.T) {
 	f := newUsageCommitFixture(t, http.MethodGet, 4096, true)
@@ -164,7 +164,7 @@ func TestUsageCommitAtExitAndBeforeFlush(t *testing.T) {
 	}
 }
 
-// adr: 1303 — anonymous traffic is not armed, and an unbillable platform
+// adr: 1505 — anonymous traffic is not armed, and an unbillable platform
 // failure whose usage cannot be recorded is not aborted.
 func TestUsageCommitOnlyGuardsBillableResponses(t *testing.T) {
 	anonymous := newUsageCommitFixture(t, http.MethodGet, 4096, false)

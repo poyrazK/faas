@@ -1,6 +1,6 @@
 // Package sharedruntime decides whether a source build's runtime artifact can
 // run on the shared runner base instead of carrying its own toolchain
-// (docs/adr/20261017-shared-runtime-source-apps.md, H10-140).
+// (docs/adr/1500-shared-runtime-source-apps.md, H10-140).
 package sharedruntime
 
 import (
@@ -202,4 +202,25 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 		return nil, ReasonNPMLifecycleHooks
 	}
 	return []string{"/bin/sh", "-c", body}, ""
+}
+
+// RunnerPath is the PATH a shared-runtime app runs with on the runner base.
+const RunnerPath = runnerPath
+
+// ResolveStart resolves a start command without npm; see ClassifyNode.
+func ResolveStart(command string, packageJSON []byte) ([]string, string) {
+	return resolveStart(command, packageJSON)
+}
+
+// DroppableOutsideApp reports whether an export entry outside /app is
+// toolchain or cache content the runner base replaces. name is a clean
+// relative tar path such as "mise/installs/node/24.1.0/bin/node".
+func DroppableOutsideApp(name string) bool {
+	clean := "/" + path.Clean(name)
+	for _, root := range toolchainPaths {
+		if clean == root || strings.HasPrefix(clean, root+"/") {
+			return true
+		}
+	}
+	return clean == "/root/.cache" || strings.HasPrefix(clean, "/root/.cache/")
 }

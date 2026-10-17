@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// billingRunVerbs are the `gregale account billing-run` verbs (ADR-1301),
+// billingRunVerbs are the `gregale account billing-run` verbs (ADR-1503),
 // mapped to the flags each accepts.
 var billingRunVerbs = map[string][]string{
 	"start":           {"month", "sources", "no-finalize", "export", "no-hold-on-gaps", "wait"},
@@ -35,7 +35,7 @@ type billingRunFlags struct {
 }
 
 // cmdAccountBillingRun bills a month for every customer, or manages the
-// monthly schedule that does it (ADR-1301).
+// monthly schedule that does it (ADR-1503).
 func cmdAccountBillingRun(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(osStderr, billingRunUsage, "account")

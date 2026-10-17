@@ -10,7 +10,7 @@ import (
 )
 
 // consumerBillingHost adapts *server to consumerbilling.Host (ADR-982,
-// ADR-1304).
+// ADR-1506).
 type consumerBillingHost struct{ s *server }
 
 var _ consumerbilling.Host = consumerBillingHost{}

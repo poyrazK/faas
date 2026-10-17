@@ -8,11 +8,11 @@ import (
 )
 
 // CodeBillingProviderUnavailable reports that the account's payment
-// provider could not be reached; the request is safe to retry (ADR-1300).
+// provider could not be reached; the request is safe to retry (ADR-1502).
 const CodeBillingProviderUnavailable = "billing_provider_unavailable"
 
 // PutBillingConnectionRequest stores the account's own key for a billing
-// provider (ADR-1300, ADR-1305). Stripe takes a restricted key (rk_live_ or
+// provider (ADR-1502, ADR-1507). Stripe takes a restricted key (rk_live_ or
 // rk_test_) with write access to invoices and invoice items, Paddle an API
 // key with transaction write access, and Lago an API key plus, for the EU
 // region or a self-hosted Lago, APIURL.
@@ -75,7 +75,7 @@ type StatementInvoiceExportResponse struct {
 	AutomaticTax bool       `json:"automatic_tax,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	// Payment fields follow the provider invoice (ADR-1302).
+	// Payment fields follow the provider invoice (ADR-1504).
 	SourceKind           string     `json:"source_kind,omitempty"`
 	PaymentStatus        string     `json:"payment_status,omitempty"`
 	AmountPaidMinor      *int64     `json:"amount_paid_minor,omitempty"`
@@ -94,7 +94,7 @@ type StatementInvoiceListResponse struct {
 }
 
 // ListStatementInvoices pages the account's exported invoices; status is a
-// payment status, unpaid, overdue, or empty for all (ADR-1302).
+// payment status, unpaid, overdue, or empty for all (ADR-1504).
 func (c *Client) ListStatementInvoices(ctx context.Context, status, cursor string, limit int) (StatementInvoiceListResponse, error) {
 	var out StatementInvoiceListResponse
 	q := url.Values{}

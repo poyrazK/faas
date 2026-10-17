@@ -17,7 +17,7 @@ class CreateStatementInvoiceRequest:
     """Target of a statement invoice export."""
 
     provider: BillingProvider | Unset = UNSET
-    """A billing provider statements export to (ADR-1305)."""
+    """A billing provider statements export to (ADR-1507)."""
     customer: str | Unset = UNSET
     """The provider's customer: a Stripe cus_… ID, a Paddle ctm_… ID, or a Lago external customer ID. Omitted, the
     consumer's or tenant's external_ref is used when it is one."""

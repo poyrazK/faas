@@ -1,8 +1,8 @@
-# ADR-1301: Month-end billing runs
+# ADR-1503: Month-end billing runs
 
 - **Status:** accepted
 - **Date:** 2026-10-13
-- **Decision:** An account can bill one ended UTC calendar month for every customer in one request (`POST /v1/account/billing-runs`), or let a schedule (`PUT /v1/account/billing-run-schedule`) start that run for each month. A run drafts each customer's statement, optionally holds it on a completeness gap, finalizes it, and optionally exports it to the account's Stripe (ADR-1300). apid processes runs in a background worker; the run and its items record what happened to each customer.
+- **Decision:** An account can bill one ended UTC calendar month for every customer in one request (`POST /v1/account/billing-runs`), or let a schedule (`PUT /v1/account/billing-run-schedule`) start that run for each month. A run drafts each customer's statement, optionally holds it on a completeness gap, finalizes it, and optionally exports it to the account's Stripe (ADR-1502). apid processes runs in a background worker; the run and its items record what happened to each customer.
   - **Customers.** At start, the run lists every app consumer and platform tenant with billable usage in the month. Plans have no fixed fees, so a customer without billable usage has nothing to bill.
   - **Tenant or app statement.** Usage attributed to a platform tenant is billed on the tenant's cross-app statement. When a run includes platform tenants, an app consumer with any tenant-attributed usage in the month is skipped and the item says why. A run limited to `app_consumers` bills every consumer by app statement instead.
   - **Steps per customer.** Draft the month's statement (unchanged usage replays the latest revision). Skip it if ADR-238's handoff overlap rules would reject it. Check completeness for app consumers and, with `hold_on_gaps`, hold a consumer whose ledger misses requests telemetry saw. Finalize, unless the run only drafts. With `export: stripe`, export every finalized revision of the month that has no handoff, oldest first; a revision with a zero total is never exported, so free-tier customers get no empty invoices.
@@ -20,4 +20,4 @@
   - A CLI loop over the existing endpoints needs no new state, but cannot run on a schedule, stops when the client disconnects, and makes the operator reconcile partial progress by hand.
   - Holding every item when telemetry cannot verify it would block every month older than telemetry's 14-day retention. Only detected gaps hold; `unverifiable` and `partial` proceed and are recorded.
   - Choosing tenant or app billing per consumer from its current tenant link would infer historical ownership (rejected in ADR-238). The run decides from request-time attribution in the usage ledger.
-  - Finalizing and sending Stripe invoices remains out of scope (ADR-1300): exports stay drafts.
+  - Finalizing and sending Stripe invoices remains out of scope (ADR-1502): exports stay drafts.

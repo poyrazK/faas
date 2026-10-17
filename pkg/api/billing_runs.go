@@ -8,7 +8,7 @@ import (
 )
 
 // CreateBillingRunRequest bills one ended UTC month for every customer with
-// billable usage (ADR-1301). Omitted fields default to both sources,
+// billable usage (ADR-1503). Omitted fields default to both sources,
 // finalize, no export and holding consumers with completeness gaps.
 type CreateBillingRunRequest struct {
 	Month      string   `json:"month"`
@@ -72,7 +72,7 @@ type BillingRunItemResponse struct {
 	Attempts         int       `json:"attempts"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	// PaymentStatus is the Stripe invoice status of the item's statement
-	// (ADR-1302).
+	// (ADR-1504).
 	PaymentStatus string `json:"payment_status,omitempty"`
 }
 

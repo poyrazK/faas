@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1301 — start waits for the run, then lists every customer's outcome;
+// adr: 1503 — start waits for the run, then lists every customer's outcome;
 // --no-X flags send explicit false and the schedule verbs round-trip.
 func TestCmdAccountBillingRun(t *testing.T) {
 	var created api.CreateBillingRunRequest

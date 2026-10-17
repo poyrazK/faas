@@ -626,6 +626,40 @@ its explicit `events` list includes `issue.frequency_threshold_reached`; its def
 event list is unchanged. Native application Slack delivery can use those team destinations directly; see
 [application Slack alerts](#native-application-slack-alerts).
 
+### New-issue and regression alert policy
+
+Open **Issues → Configure new-issue and regression alerts** to filter native Slack
+alerts by exact environment and share a cooldown across both event types. Empty
+environments permits all; zero cooldown preserves existing behavior. A cooldown
+is per canonical issue across all teams/channels, and starts only when a lifecycle
+alert enters the queue. Missing routes, full queues and previews consume nothing.
+
+```sh
+gregale issues lifecycle-alerts get --app payments
+gregale issues lifecycle-alerts preview --app payments --issue ISSUE_UUID --event regressed --environments production --cooldown-seconds 1800
+gregale issues lifecycle-alerts save --app payments --expected-revision 0 --environments production --cooldown-seconds 1800
+```
+
+`GET|PUT /v1/apps/{slug}/issue-lifecycle-alert-policy` reads or replaces the policy.
+PUT requires `expected_revision`, `environments` (an array of up to 20 names) and
+`cooldown_seconds` (0–604800). Stale writes return 409; identical writes preserve
+the revision. Go, Node and Python clients expose read, update and preview.
+
+`POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview` accepts `issue_id`, a
+hypothetical `event` (`created` or `regressed`) and the draft's `environments` and
+`cooldown_seconds`. It resolves merged aliases and reports `eligible`,
+`environment_excluded` or `cooldown`, with `next_eligible_at` during cooldown.
+Preview checks the draft policy only: native event subscription, ignore/response
+state, eligible routing, queue capacity and sender checks still determine delivery.
+It never saves, changes lifecycle, consumes cooldown or sends messages.
+
+Settings apply to future queue admission; existing queued messages stay unchanged.
+Changing environments or duration retains the last admission, so disabling and
+re-enabling throttling does not reset it. Merge uses the newest member receipt;
+splitting an original member restores its own receipt. Expiry does not send an
+alert by itself. Frequency/customer-impact alerts, reminders, tracker notices and
+raw lifecycle webhooks keep their existing independent policies.
+
 ### Application error alerting compared with Sentry
 
 The current application-error alert surface has these boundaries (reviewed
@@ -633,11 +667,11 @@ The current application-error alert surface has these boundaries (reviewed
 
 | Workflow | Gregale today | Remaining gap |
 | --- | --- | --- |
-| New issue and release-aware regression | Durable `issue.created` and `issue.regressed` webhooks | Configurable trigger/filter/action rules |
+| New issue and release-aware regression | Durable lifecycle webhooks; native Slack environment allowlist and shared per-group cooldown with draft preview | Compound trigger/filter/action rules |
 | Customer impact | One policy per app, counting verified distinct customers per issue over a fixed rolling 24 hours | Per-rule windows and thresholds; verified customers differ from Sentry user counts |
 | Event frequency | Up to ten per-issue rules with rolling windows from one minute to one day | Rates relative to traffic, anomaly detection and compound conditions |
-| Environment routing | Exact or all-environment selectors on frequency rules; issue groups remain separate | Environment selectors on new-issue and regression subscriptions |
-| Noise control | Frequency-rule cooldowns and event-driven repeats; active ignore periods suppress impact/frequency alerts | Shared lifecycle alert throttling and richer suppression conditions |
+| Environment routing | Exact frequency-rule selectors and native lifecycle-alert environment allowlist; groups remain separate | Lifecycle filtering for generic webhook subscriptions |
+| Noise control | Frequency-rule cooldowns, shared native new-issue/regression cooldown, ignore and response suppression | Compound suppression conditions and traffic-relative thresholds |
 | Slack | OAuth workspace installation, verified team and per-rule channels, routing preview/history, revocation handling, native threads and retries | Rotating tokens and Enterprise Grid organization grants |
 | Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Resolve and assign directly in Slack |
 

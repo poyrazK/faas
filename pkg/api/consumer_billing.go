@@ -7,11 +7,11 @@ import (
 )
 
 // ConsumerScopeBilling lets a consumer key read its own usage, spend and
-// invoices (ADR-1304). It grants no access to the app itself.
+// invoices (ADR-1506). It grants no access to the app itself.
 const ConsumerScopeBilling = "billing"
 
 // CodeConsumerBillingRateLimited reports that a consumer key exceeded the
-// billing self-service rate limit (ADR-1304).
+// billing self-service rate limit (ADR-1506).
 const CodeConsumerBillingRateLimited = "consumer_billing_rate_limited"
 
 // ConsumerBillingPlan is the consumer's current plan and its monthly cap.
@@ -96,7 +96,7 @@ type ConsumerBillingStatementsResponse struct {
 
 // GetConsumerBillingSummary returns the consumer's month to date. The
 // Client must be built with the consumer's key (NewClient(base, "ck_…")),
-// not an operator credential (ADR-1304).
+// not an operator credential (ADR-1506).
 func (c *Client) GetConsumerBillingSummary(ctx context.Context, app string) (ConsumerBillingSummaryResponse, error) {
 	var out ConsumerBillingSummaryResponse
 	return out, c.do(ctx, "GET", "/v1/consumer-billing/"+url.PathEscape(app), nil, &out)

@@ -4,7 +4,7 @@
 - **Date:** 2026-10-14
 - **Decision:** App consumer rate cards can price billable requests' compute time or response size instead of their count.
   - **Units.** A card's `unit` is `request` (the default), `compute_second` or `response_megabyte` (1,000,000 bytes).
-  - **Measurement.** The gateway measures each billable consumer request when it commits the request's usage (ADR-1303):
+  - **Measurement.** The gateway measures each billable consumer request when it commits the request's usage (ADR-1505):
     - **Compute time.** The execution time the runtime reports in its evidence header. Without one, it is the time from forwarding the request to the guest until the commit, which excludes wake and cold start.
     - **Response size.** The size of the response body: its declared length when the completing bytes are written, or the bytes written when the handler exits for chunked responses.
     - **Where it goes.** Both values travel in the usage event and its gRPC message. The receiver adds them to the consumer's usage minute (`compute_ms`, `response_bytes`). Anonymous and unbillable requests carry neither.

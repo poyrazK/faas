@@ -82,6 +82,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
 	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
 	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
@@ -479,6 +481,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "GetIssueLifecycleAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "SetIssueLifecycleAlertPolicy",
+	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview":                "PreviewIssueLifecycleAlert",
 	"GET /v1/apps/{slug}/issue-frequency-alert-policy":                         "GetIssueFrequencyAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-frequency-alert-policy":                         "SetIssueFrequencyAlertPolicy",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                            "GetIssueImpactAlertPolicy",

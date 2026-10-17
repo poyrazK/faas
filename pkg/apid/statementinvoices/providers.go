@@ -37,7 +37,7 @@ type connection struct {
 	automaticTax bool
 }
 
-// provider is one billing system statements export to (ADR-1305).
+// provider is one billing system statements export to (ADR-1507).
 type provider interface {
 	title() string
 	// parseKey checks a key's format and returns its mode.
@@ -125,7 +125,7 @@ func nonNegativeItems(src statementInvoiceSource) ([]statementInvoiceItem, *api.
 	return items, nil
 }
 
-// --- Stripe (ADR-1300) ---
+// --- Stripe (ADR-1502) ---
 
 var stripeCustomerIDRE = regexp.MustCompile(`^cus_[A-Za-z0-9]{1,250}$`)
 
@@ -243,7 +243,7 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 		AmountRemainingMinor: max(invoice.AmountRemaining, 0), DueAt: invoice.DueDate, PaidAt: invoice.PaidAt}, invoice.HostedURL)
 }
 
-// --- Paddle (ADR-1305) ---
+// --- Paddle (ADR-1507) ---
 
 var paddleCustomerIDRE = regexp.MustCompile(`^ctm_[a-z0-9]{1,64}$`)
 
@@ -356,7 +356,7 @@ func (p paddleProvider) payment(ctx context.Context, conn connection, id string)
 		AmountRemainingMinor: remaining, DueAt: txn.DueAt, PaidAt: txn.PaidAt}, txn.CheckoutURL)
 }
 
-// --- Lago (ADR-1305) ---
+// --- Lago (ADR-1507) ---
 
 var lagoKeyRE = regexp.MustCompile(`^[A-Za-z0-9._-]{8,256}$`)
 

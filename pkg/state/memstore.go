@@ -970,11 +970,11 @@ type MemStore struct {
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// billingConnections and statementInvoiceExports back statement invoice
-	// exports (ADR-1300); keyed by account/provider and export ID.
+	// exports (ADR-1502); keyed by account/provider and export ID.
 	billingConnections      map[string]BillingConnection
 	statementInvoiceExports map[string]StatementInvoiceExport
 	// billingRuns, billingRunItems (run ID → item key) and
-	// billingRunSchedules (account ID) back billing runs (ADR-1301).
+	// billingRunSchedules (account ID) back billing runs (ADR-1503).
 	billingRuns            map[string]BillingRun
 	billingRunItems        map[string]map[string]BillingRunItem
 	billingRunSchedules    map[string]BillingRunSchedule

@@ -279,7 +279,7 @@ const (
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
 )
 
-// Billing runs (ADR-1301).
+// Billing runs (ADR-1503).
 const (
 	// BillingRunSettleDelay is how long after month end a run may start, so
 	// gateway usage outboxes have delivered the month's last minutes.
@@ -305,7 +305,7 @@ const (
 	BillingRunItemListMax     = 500
 )
 
-// Payment status of exported statement invoices (ADR-1302).
+// Payment status of exported statement invoices (ADR-1504).
 const (
 	// A completed export is first synced after StatementInvoiceFirstSyncDelay,
 	// then polled by status until paid, void or deleted.
@@ -329,7 +329,7 @@ const (
 	StatementInvoiceListMax     = 200
 )
 
-// Consumer billing self-service (ADR-1304).
+// Consumer billing self-service (ADR-1506).
 const (
 	// Requests per minute and burst allowed per consumer key prefix.
 	ConsumerBillingRequestsPerMinute = 60
@@ -364,7 +364,7 @@ const (
 	// unpaid invoice blocks its consumer.
 	ConsumerOverdueBlockMaxDays = 365
 	// apid recomputes overdue holds this often; payment status itself is
-	// synced on the ADR-1302 schedule.
+	// synced on the ADR-1504 schedule.
 	ConsumerOverdueCheckInterval = 5 * time.Minute
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
@@ -11579,6 +11579,11 @@ const (
 )
 
 // Application Slack delivery history and admission are bounded independently of telemetry.
+const (
+	IssueLifecycleAlertMaxEnvironments    = 20
+	IssueLifecycleAlertMaxCooldownSeconds = 604800
+)
+
 const (
 	IssueApplicationSlackMaxDeliveries    = 1000
 	IssueApplicationSlackHistoryRetention = 7 * 24 * time.Hour

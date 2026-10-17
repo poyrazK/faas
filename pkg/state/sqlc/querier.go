@@ -1985,6 +1985,10 @@ type Querier interface {
 	IssueInsertOwnershipRule(ctx context.Context, db DBTX, arg IssueInsertOwnershipRuleParams) error
 	IssueInsertToken(ctx context.Context, db DBTX, arg IssueInsertTokenParams) (IssueIngestToken, error)
 	IssueInvocationScope(ctx context.Context, db DBTX, arg IssueInvocationScopeParams) (IssueInvocationScopeRow, error)
+	IssueLifecycleLastAlert(ctx context.Context, db DBTX, arg IssueLifecycleLastAlertParams) (pgtype.Timestamptz, error)
+	IssueLifecyclePolicy(ctx context.Context, db DBTX, arg IssueLifecyclePolicyParams) (IssueLifecyclePolicyRow, error)
+	IssueLifecyclePutPolicy(ctx context.Context, db DBTX, arg IssueLifecyclePutPolicyParams) error
+	IssueLifecycleRecordAlert(ctx context.Context, db DBTX, arg IssueLifecycleRecordAlertParams) error
 	IssueLinkGroup(ctx context.Context, db DBTX, arg IssueLinkGroupParams) error
 	IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]IssueGroupRollup, error)
 	IssueListActivity(ctx context.Context, db DBTX, arg IssueListActivityParams) ([]IssueActivity, error)
@@ -4477,6 +4481,7 @@ type Querier interface {
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
+	StampDeploymentRuntimeBase(ctx context.Context, db DBTX, arg StampDeploymentRuntimeBaseParams) error
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error

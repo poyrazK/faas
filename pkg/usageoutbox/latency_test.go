@@ -10,7 +10,7 @@ import (
 )
 
 // TestEnqueueLatencyProfile measures how long a durable Enqueue takes on the
-// disk under FAAS_USAGE_OUTBOX_LATENCY_DIR. ADR-1303 puts this wait in front
+// disk under FAAS_USAGE_OUTBOX_LATENCY_DIR. ADR-1505 puts this wait in front
 // of the last bytes of every monetized response, so its percentiles are the
 // latency that change adds. Skipped unless the directory is set.
 func TestEnqueueLatencyProfile(t *testing.T) {

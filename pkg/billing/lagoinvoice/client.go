@@ -1,5 +1,5 @@
 // Package lagoinvoice creates one-off invoices in a customer's own Lago
-// (Cloud or self-hosted) from finalized usage statements (ADR-1305). Every
+// (Cloud or self-hosted) from finalized usage statements (ADR-1507). Every
 // call takes the customer's API key explicitly and never logs it.
 package lagoinvoice
 
@@ -261,7 +261,7 @@ func (c *Client) FindUntagged(ctx context.Context, baseURL, key, customer, curre
 	return ids, nil
 }
 
-// InvoiceState is an invoice's payment state (ADR-1302).
+// InvoiceState is an invoice's payment state (ADR-1504).
 type InvoiceState struct {
 	Status        string
 	PaymentStatus string

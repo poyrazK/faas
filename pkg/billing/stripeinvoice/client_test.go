@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// adr: 1300
+// adr: 1502
 func TestClientRequestsAndErrors(t *testing.T) {
 	var gotForm map[string]string
 	var gotHeaders http.Header
@@ -78,7 +78,7 @@ func TestClientRequestsAndErrors(t *testing.T) {
 	}
 }
 
-// adr: 1302
+// adr: 1504
 func TestGetInvoicePaymentState(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

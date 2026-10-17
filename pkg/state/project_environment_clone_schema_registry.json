@@ -3353,6 +3353,7 @@
       "rootfs_bytes",
       "rootfs_key",
       "rootfs_path",
+      "runtime_base",
       "runtime_upgrade_routing_token",
       "scan_result",
       "scan_status",
@@ -12961,6 +12962,25 @@
       "state",
       "ticket_url",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_issue_lifecycle_alert_policies",
+    "columns": [
+      "app_id",
+      "revision",
+      "environments",
+      "cooldown_seconds"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_lifecycle_alert_receipts",
+    "columns": [
+      "app_id",
+      "issue_id",
+      "last_alert_at"
     ],
     "kind": "operational"
   }

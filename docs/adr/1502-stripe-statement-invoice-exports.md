@@ -1,4 +1,4 @@
-# ADR-1300: Export usage statements to the customer's own Stripe
+# ADR-1502: Export usage statements to the customer's own Stripe
 
 - **Status:** accepted
 - **Date:** 2026-10-11

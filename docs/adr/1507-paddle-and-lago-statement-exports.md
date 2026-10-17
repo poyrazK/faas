@@ -1,8 +1,8 @@
-# ADR-1305: Paddle and Lago statement exports
+# ADR-1507: Paddle and Lago statement exports
 
 - **Status:** accepted
 - **Date:** 2026-10-14
-- **Decision:** Statement exports, billing runs and payment status (ADR-1300–1302) work with Paddle Billing and Lago as well as Stripe. Each provider implements one interface: check a key, create or resume an invoice for a statement, read its payment status, and link to it. The API and CLI name the provider instead of hard-coding Stripe.
+- **Decision:** Statement exports, billing runs and payment status (ADR-1502–1504) work with Paddle Billing and Lago as well as Stripe. Each provider implements one interface: check a key, create or resume an invoice for a statement, read its payment status, and link to it. The API and CLI name the provider instead of hard-coding Stripe.
   - **Connections.** `PUT/GET/DELETE /v1/account/billing-connections/{provider}` stores one sealed key per provider (`stripe`, `paddle`, `lago`). A Lago connection also stores the API URL: `https://api.getlago.com` by default, the EU region, or a self-hosted HTTPS URL.
   - **Exports.** `POST /…/usage-statements/{id}/invoice` takes `provider` (default `stripe`) and `customer`, and `GET /…/invoice` returns the export. They replace the unreleased `/stripe-invoice` paths. A statement still has at most one export, whichever provider took it, so it can never be invoiced twice across providers. Billing runs and schedules accept `export: stripe|paddle|lago`.
   - **Paddle.** An export creates a manually collected transaction: non-catalog items, `billing_details.payment_terms` of 30 days, and `custom_data` naming the export and statement.
@@ -25,5 +25,5 @@
   - **Migration.** The provider checks on connections, exports, billing runs and schedules allow `paddle` and `lago`. Connections gain a nullable `api_url`.
 - **Rejected alternatives:**
   - Sending usage events to Lago and letting Lago price them would bypass statements, ADR-949's revisions and the handoff rules, and bill twice when other providers are used.
-  - Marking Paddle transactions `billed` would make Gregale issue invoices on the operator's behalf, which ADR-1300 rules out.
+  - Marking Paddle transactions `billed` would make Gregale issue invoices on the operator's behalf, which ADR-1502 rules out.
   - Chargebee and other providers can follow the same interface when asked for.
