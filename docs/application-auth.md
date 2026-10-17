@@ -399,7 +399,8 @@ identity provider's URL to navigate to. With `--org`, they join that
 organization with `--role` (default `member`, never `owner`) the first time
 they sign in, and the provider's existing users join when you link it.
 `gregale auth sso list`, `update` (`--org none` unlinks; members stay) and
-`remove` manage providers. Identity providers live in your database, like
+`remove` manage providers, as does the **SSO** tab of the dashboard's Auth
+page, which uses the same admin key as the users screens. Identity providers live in your database, like
 your users.
 
 An SSO user is a separate account from a password or OAuth account with the

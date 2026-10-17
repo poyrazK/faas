@@ -412,8 +412,9 @@ on; `AUTH_SAML_PRIVATE_KEY` is the RSA key GoTrue signs with and publishes in
 its metadata. The CLI or dashboard creates the key the first time SSO is
 turned on and never replaces it, because a new key would make every
 identity provider distrust the app; turning SSO off keeps it sealed. The owner
-registers identity providers with an admin key through `/admin/v1/sso`, which
-calls GoTrue's admin API, so provider records stay in the customer's
+registers identity providers with an admin key through `/admin/v1/sso` (from
+the CLI or the dashboard's SSO tab, which calls it from the owner's browser),
+which calls GoTrue's admin API, so provider records stay in the customer's
 database like users. Each provider must name its email domains, and may be
 linked to one organization (`gregale_auth.sso_organizations`) with a role
 other than owner: a trigger on `auth.identities` adds a user who signs in
