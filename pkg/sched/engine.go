@@ -4466,6 +4466,18 @@ func shouldPersistObservedClass(appType state.AppType, executionMode string, obs
 // dedicated cleanup goroutine in cmd/schedd instead of lying about
 // the context here.
 func (e *Engine) timedDestroy(ctx context.Context, nodeID, instanceID string, timeout time.Duration) error {
+	fields, _ := wire.FromContext(ctx)
+	if fields.AppID == "" || fields.WakeID == "" {
+		if ins, err := e.store.InstanceByID(ctx, instanceID); err == nil {
+			if fields.AppID == "" {
+				fields.AppID = ins.AppID
+			}
+			if fields.WakeID == "" {
+				fields.WakeID = ins.WakeID
+			}
+			ctx = wire.WithContext(ctx, fields)
+		}
+	}
 	destroyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return e.vmm.Destroy(destroyCtx, e.nodeForRoute(nodeID), instanceID)

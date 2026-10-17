@@ -767,6 +767,10 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	computeAuthority                FinancialComputeAuthority
+	computeNode, computeIncarnation string
+	computeLeases                   map[string]*localComputeLease
+	computeBypassGuard              func(context.Context, string) error
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
@@ -4164,7 +4168,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	// Registered before all effect/cleanup defers, so stop joins the complete
 	// unwind and cannot acknowledge absence before resources are released.
-	defer m.finishInstanceFlight(req.Instance, flight)
+	var computeLease *localComputeLease
+	defer func() {
+		m.finishInstanceFlight(req.Instance, flight)
+		m.finishFinancialComputeBoot(ctx, req.Instance, computeLease, err != nil)
+	}()
 	if req.admission == nil && (len(req.ArtifactSources) != 0 || req.SnapshotRestore != nil) {
 		return nil, runtimeadmission.ErrInvalid
 	}
@@ -4221,6 +4229,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	if err := m.checkWakeAdmission(ctx, req); err != nil {
 		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
+	}
+	computeLease, err = m.beginFinancialCompute(ctx, req, flight)
+	if err != nil {
+		return nil, err
 	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
@@ -5652,6 +5664,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
 	}
 	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkFinancialComputeBypass(ctx, inst.AppID); err != nil {
+		return SnapshotInfo{}, err
+	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
 	}

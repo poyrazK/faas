@@ -20,6 +20,7 @@ import (
 // policy identical to the pinned deployment.
 func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
 	const op = "RestoreAppTask"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	restoreVMM, ok := s.vmm.(AppTaskRestoreVMMAPI)
 	if !ok {

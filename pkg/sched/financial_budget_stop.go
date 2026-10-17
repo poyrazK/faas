@@ -64,10 +64,16 @@ func (e *Engine) ReconcileFinancialBudgetStops(ctx context.Context, appID string
 	release := e.lockApp(appID)
 	defer release()
 	app, err := e.store.AppByID(ctx, appID)
-	if err != nil || app.PreviewOfSlug == "" || !e.ownsApp(app) {
+	if err != nil || !e.ownsApp(app) {
 		return err
 	}
 	now := e.financialBudgetNow()
+	if err := e.reconcileStrictAppCompute(ctx, app, now); err != nil {
+		return err
+	}
+	if app.PreviewOfSlug == "" {
+		return nil
+	}
 	stops, err := store.ActiveFinancialBudgetStops(ctx, app.AccountID, now)
 	if err != nil || len(stops) == 0 {
 		return err

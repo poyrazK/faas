@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ResolvedAppTaskRuntime is the command-free result of resolving a task's
@@ -40,6 +41,10 @@ func NewRoutedVmmdAppTaskBackend(router RoutedAppTaskVMM, resolve AppTaskRuntime
 }
 
 func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskRestoreRequest) (AppTaskSession, error) {
+	fields, _ := wire.FromContext(ctx)
+	fields.AppID = request.AppID
+	fields.WakeID = request.LeaseToken
+	ctx = wire.WithContext(ctx, fields)
 	if b == nil || b.router == nil || b.resolve == nil {
 		return nil, ErrAppTaskCoordinatorNotWired
 	}

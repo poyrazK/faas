@@ -38,6 +38,9 @@ func (r *VMMRouter) CreateAdmittedRuntime(ctx context.Context, nodeID string, re
 	if req.GetBinding().GetNodeId() != nodeID {
 		return nil, runtimeadmission.ErrStale
 	}
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, AppSpec{AppID: req.GetBinding().GetAppId(), AccountID: req.GetBinding().GetAccountId()}); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err

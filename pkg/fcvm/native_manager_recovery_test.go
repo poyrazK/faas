@@ -286,6 +286,26 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	return m, v, proc
 }
 
+// adr: 566 — a durable budget denial plus a fresh native absence audit can
+// acknowledge a never-launched attempt after restart. Unknown IDs still fail.
+func TestFinancialComputeDeniedNativeBootRetirement(t *testing.T) {
+	m, _, _ := nativeManagerFixture(t)
+	authority := &computeAuthorityFixture{rejected: true}
+	m.WithFinancialComputeAuthority(authority, "node", "new-incarnation")
+	if err := m.Destroy(t.Context(), "budget-denied-before-allocation"); err != nil {
+		t.Fatalf("denied attempt could not retire: %v", err)
+	}
+	if m.alloc.InUse() != 0 || m.HasInstanceOwnership("budget-denied-before-allocation") {
+		t.Fatal("denied attempt created physical ownership")
+	}
+	authority.mu.Lock()
+	authority.rejected = false
+	authority.mu.Unlock()
+	if err := m.Destroy(t.Context(), "unrecognized-native-id"); err == nil {
+		t.Fatal("unknown instance without a denial receipt was acknowledged")
+	}
+}
+
 func prepareRecoveredNative(t *testing.T, v *JailerVMM, slot int, instance string) Lease {
 	t.Helper()
 	l := leaseForSlot(instance, slot)

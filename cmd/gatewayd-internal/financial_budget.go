@@ -10,9 +10,6 @@ import (
 
 func newFinancialBudgetAdmission(store state.Store) func(context.Context, gateway.App) error {
 	return func(ctx context.Context, routed gateway.App) error {
-		if !routed.IsPreview {
-			return nil
-		}
 		app, err := store.AppByID(ctx, routed.ID)
 		if err != nil {
 			return err
