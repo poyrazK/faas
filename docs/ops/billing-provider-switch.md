@@ -176,6 +176,14 @@ Monitor these metrics and logs:
   last successful provider-vs-local comparison.
 - `meterd_billing_drift_reconcile_failures_total{provider,reason}` shows when
   those gauges may be stale.
+- `meterd_financial_ledger_reconcile_accounts{month,result}` and
+  `meterd_financial_ledger_drift_mb_seconds{month}` compare the financial
+  ledger with the pusher's compute receipts for the current and previous UTC
+  month (ADR-1502). `drift` accounts are logged as `meter: ledger drift` with
+  both quantities; `pending`, `capped` and `incomplete` are expected while
+  delivery catches up, a cap applies, or ledger evidence is missing.
+- `meterd_financial_budget_notifications_total{outcome}` counts budget
+  threshold emails (ADR-1500); `abandoned` means an email failed 10 times.
 - `polar_webhook.verify_failed` and `polar_webhook.unknown_customer` identify
   signature or customer-binding failures.
 - `meter` logs with `replay=true` show durable usage recovery after an outage.

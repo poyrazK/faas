@@ -1238,6 +1238,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
+	// ADR-1502: the ledger dual run compares the financial ledger with the
+	// pusher's receipts on the same cadence. Read-only.
+	ledgerProvider := ""
+	if billingMode.Enabled() {
+		ledgerProvider = provName // with billing off there are no receipts to compare
+	}
+	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-1500: budget threshold emails. Independent of the billing
 	// provider; it reads the financial ledger and owns its claim rows.

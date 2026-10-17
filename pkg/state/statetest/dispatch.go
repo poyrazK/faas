@@ -53,6 +53,7 @@ var memDispatched = map[string]bool{
 	"EnqueueInvocation":                                       true,
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
+	"FinancialEvidenceCoverage":                               true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
@@ -185,6 +186,15 @@ func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p
 		return o.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
 	}
 	return s.MemStore.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
+	if o, ok := s.over.(interface {
+		FinancialEvidenceCoverage(context.Context) (time.Time, error)
+	}); ok {
+		return o.FinancialEvidenceCoverage(p0)
+	}
+	return s.MemStore.FinancialEvidenceCoverage(p0)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
