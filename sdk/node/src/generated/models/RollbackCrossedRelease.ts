@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A release command that ran after a rollback target last served (ADR-1355). A rollback does not undo it.
+ * A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it.
  */
 export type RollbackCrossedRelease = {
   deployment_id: string;

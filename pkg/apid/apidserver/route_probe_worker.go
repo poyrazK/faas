@@ -88,7 +88,7 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 	return nil
 }
 
-// defaultRouteProbeTargets lists safe-policy canaries for the ADR-1353
+// defaultRouteProbeTargets lists safe-policy canaries for the ADR-1446
 // default probe. A failed read only skips default probes this minute.
 func (s *server) defaultRouteProbeTargets(ctx context.Context) []state.RouteProbeTarget {
 	store, ok := s.store.(state.DefaultRouteProbeStore)
@@ -161,7 +161,7 @@ func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RoutePr
 }
 
 // routeProbeRound picks one round's probes: ADR-847 selectors whose organic
-// evidence is sparse, plus the ADR-1353 default probe for a safe-policy
+// evidence is sparse, plus the ADR-1446 default probe for a safe-policy
 // canary, and the predecessor to probe beside the candidate.
 func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget) ([]routeProbePlan, string, error) {
 	plans, stableID := []routeProbePlan{}, target.StableID
@@ -186,7 +186,7 @@ func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget
 }
 
 // withDefaultProbePlans adds the default probe's routes: the app's
-// release_probe_paths or "/" (ADR-1351). Together they meet the circuit
+// release_probe_paths or "/" (ADR-1449). Together they meet the circuit
 // breaker's request floor in one round (ADR-1321), also when a gated selector
 // already probes one of them.
 func withDefaultProbePlans(plans []routeProbePlan, routes []api.RouteHealthRoute) []routeProbePlan {

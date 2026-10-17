@@ -52,7 +52,7 @@ func TestCircuitBreakerFaultDrill(t *testing.T) {
 		wantEvent      string
 		wantReason     string
 		// stepAge is how long ago the current stage started; zero means an
-		// hour, well past every stage dwell and the ADR-1353 low-traffic bound.
+		// hour, well past every stage dwell and the ADR-1446 low-traffic bound.
 		stepAge time.Duration
 	}{
 		{

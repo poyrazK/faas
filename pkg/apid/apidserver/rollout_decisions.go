@@ -15,7 +15,7 @@ import (
 
 // internalSafeDeployRequestKey marks a request that arrived on a loopback
 // Safe Deploy route. Handlers shared with customer routes use it to tell
-// meterd's transitions from a person's (ADR-1354).
+// meterd's transitions from a person's (ADR-1447).
 type internalSafeDeployRequestKey struct{}
 
 func isInternalSafeDeployRequest(r *http.Request) bool {
@@ -24,7 +24,7 @@ func isInternalSafeDeployRequest(r *http.Request) bool {
 }
 
 // internalRecordRolloutHold records why meterd is holding a canary step
-// (ADR-1354). It never changes traffic or writes the deployment row.
+// (ADR-1447). It never changes traffic or writes the deployment row.
 func (s *server) internalRecordRolloutHold(w http.ResponseWriter, r *http.Request) {
 	recorder, ok := s.store.(state.RolloutDecisionStore)
 	if !ok {
@@ -69,7 +69,7 @@ func (s *server) internalRecordRolloutHold(w http.ResponseWriter, r *http.Reques
 }
 
 // withRolloutHold fills RolloutHold on a single-deployment read while its
-// rollout is in flight (ADR-1354). A read failure omits the field; the hold is
+// rollout is in flight (ADR-1447). A read failure omits the field; the hold is
 // an explanation, not state a client must act on.
 func (s *server) withRolloutHold(ctx context.Context, resp api.DeploymentResponse) api.DeploymentResponse {
 	reader, ok := s.store.(state.RolloutDecisionStore)

@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ListConfigRevisionsResponse")
 class ListConfigRevisionsResponse:
     revisions: list[ConfigRevision]
     guard: ConfigGuard | Unset = UNSET
-    """A scope's config guard (ADR-1391)."""
+    """A scope's config guard (ADR-1451)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

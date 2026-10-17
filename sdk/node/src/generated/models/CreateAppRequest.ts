@@ -16,7 +16,7 @@ import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
- * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+ * App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
   profiling?: ProfilingConfig;
@@ -156,11 +156,11 @@ export type CreateAppRequest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Default rollout for production releases that name no rollout policy (ADR-1353, ADR-1352). Omit for safe.
+   * Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1351).
+   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449).
    */
   release_probe_paths?: Array<string>;
   /**

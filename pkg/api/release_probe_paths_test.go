@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestValidateReleaseProbePaths pins ADR-1351's rule: up to three distinct,
+// TestValidateReleaseProbePaths pins ADR-1449's rule: up to three distinct,
 // concrete absolute paths under ADR-847's probe constraints.
 func TestValidateReleaseProbePaths(t *testing.T) {
 	for _, ok := range [][]string{nil, {}, {"/"}, {"/healthz", "/api/orders", "/v1/ping"}} {

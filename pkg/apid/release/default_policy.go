@@ -1,4 +1,4 @@
-// Package release holds apid's release-safety domain logic (ADR-1353): the
+// Package release holds apid's release-safety domain logic (ADR-1446): the
 // safe-by-default rollout policy and the verified plain-rollback ledger.
 package release
 
@@ -40,7 +40,7 @@ const (
 )
 
 // ApplyDefault makes a health-gated rollout the default for a production
-// release (ADR-1353). It only fills fields the request left unset:
+// release (ADR-1446). It only fills fields the request left unset:
 // an explicit canary, traffic_percent, or rollback_on_5xx always wins, and
 // `canary: {preset: "none"}` opts one deploy out. It applies only to the
 // default scope of a request-mode, non-preview app whose release_policy is
@@ -82,7 +82,7 @@ func ApplyDefault(ctx context.Context, store any, log *slog.Logger, app state.Ap
 	return PolicySafe
 }
 
-// DefaultEnabledEnv is the operator kill switch for the default (ADR-1353). Unset or any value other than "false" keeps it on.
+// DefaultEnabledEnv is the operator kill switch for the default (ADR-1446). Unset or any value other than "false" keeps it on.
 const DefaultEnabledEnv = "FAAS_SAFE_RELEASE_DEFAULT_ENABLED"
 
 func defaultEnabled() bool {

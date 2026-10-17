@@ -10,11 +10,18 @@ from attrs import field as _attrs_field
 
 from ..models.issue_event_frame_order import IssueEventFrameOrder, check_issue_event_frame_order
 from ..models.issue_event_grouping_strategy import IssueEventGroupingStrategy, check_issue_event_grouping_strategy
+from ..models.issue_event_symbolication_strategy import (
+    IssueEventSymbolicationStrategy,
+    check_issue_event_symbolication_strategy,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.issue_breadcrumb import IssueBreadcrumb
     from ..models.issue_cause import IssueCause
+    from ..models.issue_event_tags import IssueEventTags
     from ..models.issue_frame import IssueFrame
+    from ..models.issue_symbolication_result import IssueSymbolicationResult
 
 
 T = TypeVar("T", bound="IssueEvent")
@@ -28,6 +35,17 @@ class IssueEvent:
     occurred_at: datetime.datetime
     exception_type: str
     message: str
+    breadcrumbs: list[IssueBreadcrumb] | Unset = UNSET
+    breadcrumbs_dropped: int | Unset = UNSET
+    tags: IssueEventTags | Unset = UNSET
+    """Sanitized operational dimensions; unknown keys are discarded. Allowed keys are component, operation,
+    feature_flag, feature_variant, dependency, region, job_type, workflow, state, error_class, release_channel,
+    runtime."""
+    symbolication_strategy: IssueEventSymbolicationStrategy | Unset = UNSET
+    """Opt-in server mapping against this credential's deployment artifacts; requires failure-site-v1 or cause-
+    chain-v1."""
+    symbolication: IssueSymbolicationResult | Unset = UNSET
+    """Symbolication outcome and mapped frames for one reported exception in its deployment."""
     causes: list[IssueCause] | Unset = UNSET
     causes_incomplete: bool | Unset = UNSET
     """Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause."""
@@ -62,6 +80,27 @@ class IssueEvent:
         exception_type = self.exception_type
 
         message = self.message
+
+        breadcrumbs: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.breadcrumbs, Unset):
+            breadcrumbs = []
+            for breadcrumbs_item_data in self.breadcrumbs:
+                breadcrumbs_item = breadcrumbs_item_data.to_dict()
+                breadcrumbs.append(breadcrumbs_item)
+
+        breadcrumbs_dropped = self.breadcrumbs_dropped
+
+        tags: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tags, Unset):
+            tags = self.tags.to_dict()
+
+        symbolication_strategy: str | Unset = UNSET
+        if not isinstance(self.symbolication_strategy, Unset):
+            symbolication_strategy = self.symbolication_strategy
+
+        symbolication: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.symbolication, Unset):
+            symbolication = self.symbolication.to_dict()
 
         causes: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.causes, Unset):
@@ -123,6 +162,16 @@ class IssueEvent:
                 "message": message,
             }
         )
+        if breadcrumbs is not UNSET:
+            field_dict["breadcrumbs"] = breadcrumbs
+        if breadcrumbs_dropped is not UNSET:
+            field_dict["breadcrumbs_dropped"] = breadcrumbs_dropped
+        if tags is not UNSET:
+            field_dict["tags"] = tags
+        if symbolication_strategy is not UNSET:
+            field_dict["symbolication_strategy"] = symbolication_strategy
+        if symbolication is not UNSET:
+            field_dict["symbolication"] = symbolication
         if causes is not UNSET:
             field_dict["causes"] = causes
         if causes_incomplete is not UNSET:
@@ -160,8 +209,11 @@ class IssueEvent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.issue_breadcrumb import IssueBreadcrumb
         from ..models.issue_cause import IssueCause
+        from ..models.issue_event_tags import IssueEventTags
         from ..models.issue_frame import IssueFrame
+        from ..models.issue_symbolication_result import IssueSymbolicationResult
 
         d = dict(src_dict)
         event_id = UUID(d.pop("event_id"))
@@ -171,6 +223,38 @@ class IssueEvent:
         exception_type = d.pop("exception_type")
 
         message = d.pop("message")
+
+        _breadcrumbs = d.pop("breadcrumbs", UNSET)
+        breadcrumbs: list[IssueBreadcrumb] | Unset = UNSET
+        if _breadcrumbs is not UNSET:
+            breadcrumbs = []
+            for breadcrumbs_item_data in _breadcrumbs:
+                breadcrumbs_item = IssueBreadcrumb.from_dict(breadcrumbs_item_data)
+
+                breadcrumbs.append(breadcrumbs_item)
+
+        breadcrumbs_dropped = d.pop("breadcrumbs_dropped", UNSET)
+
+        _tags = d.pop("tags", UNSET)
+        tags: IssueEventTags | Unset
+        if isinstance(_tags, Unset):
+            tags = UNSET
+        else:
+            tags = IssueEventTags.from_dict(_tags)
+
+        _symbolication_strategy = d.pop("symbolication_strategy", UNSET)
+        symbolication_strategy: IssueEventSymbolicationStrategy | Unset
+        if isinstance(_symbolication_strategy, Unset):
+            symbolication_strategy = UNSET
+        else:
+            symbolication_strategy = check_issue_event_symbolication_strategy(_symbolication_strategy)
+
+        _symbolication = d.pop("symbolication", UNSET)
+        symbolication: IssueSymbolicationResult | Unset
+        if isinstance(_symbolication, Unset):
+            symbolication = UNSET
+        else:
+            symbolication = IssueSymbolicationResult.from_dict(_symbolication)
 
         _causes = d.pop("causes", UNSET)
         causes: list[IssueCause] | Unset = UNSET
@@ -238,6 +322,11 @@ class IssueEvent:
             occurred_at=occurred_at,
             exception_type=exception_type,
             message=message,
+            breadcrumbs=breadcrumbs,
+            breadcrumbs_dropped=breadcrumbs_dropped,
+            tags=tags,
+            symbolication_strategy=symbolication_strategy,
+            symbolication=symbolication,
             causes=causes,
             causes_incomplete=causes_incomplete,
             stack_trace=stack_trace,

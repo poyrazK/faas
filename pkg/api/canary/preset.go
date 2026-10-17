@@ -154,7 +154,7 @@ var catalog = map[string]Preset{
 	// A stage advances once the circuit breaker has conclusive, clean
 	// evidence against the serving predecessor, after at least one
 	// minute, and otherwise when its 2-minute timer ends. The default
-	// for production releases (ADR-1353) and for `deploy --safe`.
+	// for production releases (ADR-1446) and for `deploy --safe`.
 	"adaptive": {
 		Name: "adaptive",
 		Stages: []Stage{

@@ -1,4 +1,4 @@
-// adr: 1391 — apid judges config guards and restores failed config changes.
+// adr: 1451 — apid judges config guards and restores failed config changes.
 package apidserver
 
 import (

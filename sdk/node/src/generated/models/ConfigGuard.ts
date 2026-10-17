@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * `false` opts this env or secret write out of the config guard
- * (ADR-1391): no guard opens, and a guard already watching the scope
+ * (ADR-1451): no guard opens, and a guard already watching the scope
  * closes as superseded. Omitted or `true` guards the change when the
  * scope has a live deployment.
  *

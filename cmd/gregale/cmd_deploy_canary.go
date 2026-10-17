@@ -45,7 +45,7 @@ func buildCanarySpec(preset, stages string) (*api.CanaryPresetSpec, error) {
 			return nil, fmt.Errorf("--canary-stages requires --canary-preset=custom")
 		}
 		// Fast path: no flag → no canary on the request. The server
-		// applies the app's release policy (ADR-1353): the balanced
+		// applies the app's release policy (ADR-1446): the balanced
 		// canary for a live app unless release_policy=immediate.
 		return nil, nil
 	}

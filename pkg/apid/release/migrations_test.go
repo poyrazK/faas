@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestCrossingProblem pins the ADR-1355 409: every crossed release is listed,
+// TestCrossingProblem pins the ADR-1448 409: every crossed release is listed,
 // and each migratable database gets one restore point at the start of the
 // earliest crossed release, truncated so it falls before the release ran.
 func TestCrossingProblem(t *testing.T) {

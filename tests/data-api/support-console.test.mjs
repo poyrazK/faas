@@ -3,11 +3,12 @@ import assert from 'node:assert/strict'
 import {pathToFileURL} from 'node:url'
 import {join} from 'node:path'
 import {browserInspector} from './browser-inspector.mjs'
+import {waitUntil} from './browser-wait.mjs'
 const runtime=process.env.DATA_API_SUPPORT_CONSOLE_DIR
 test('support console browser signs in, isolates tenants, searches, navigates and exports without browser tokens',{skip:!runtime||!process.env.DATA_API_CHROMIUM_BIN,timeout:60000},async t=>{
  const {startDemo}=await import(pathToFileURL(join(runtime,'demo.mjs'))),demo=await startDemo({port:0});t.after(demo.close)
  await browserInspector(demo.url,async evaluate=>{
-  const until=async expression=>{for(let index=0;index<250;index++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,30))}assert.fail('Support console browser action did not finish')}
+  const until=expression=>waitUntil(evaluate,expression,'Support console browser action did not finish')
   await until("document.querySelector('#welcome')&&!document.querySelector('#welcome').hidden")
   await evaluate("document.querySelector('.button').click()")
   await until("document.querySelector('h1')?.textContent==='Demo staff sign-in'")

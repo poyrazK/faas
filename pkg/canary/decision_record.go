@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
-// The decision-recording APID surface (ADR-1354). Each is optional so the
+// The decision-recording APID surface (ADR-1447). Each is optional so the
 // package's small fakes keep compiling; the production InternalSafeDeployClient
 // implements all three.
 type decisionAdvanceClient interface {
@@ -25,7 +25,7 @@ type rolloutHoldRecorder interface {
 	RecordRolloutHold(ctx context.Context, id string, expectedStep int, decision api.RolloutDecision) (api.RecordRolloutHoldResponse, error)
 }
 
-// circuitBreakerRule maps a breaker decision onto ADR-1354's closed rule set,
+// circuitBreakerRule maps a breaker decision onto ADR-1447's closed rule set,
 // which reuses the canary_progression_circuit_breaker_total event names.
 func circuitBreakerRule(d CircuitBreakerDecision) string {
 	switch d.Action {
@@ -95,7 +95,7 @@ func nonNegative(f float64) float64 {
 	return f
 }
 
-// recordHold reports a hold to APID (ADR-1354). It is best effort: a hold
+// recordHold reports a hold to APID (ADR-1447). It is best effort: a hold
 // changes no traffic, so a failed report is logged and retried next tick.
 func (p *Progression) recordHold(ctx context.Context, row CanaryRow, record api.RolloutDecision) {
 	recorder, ok := p.APID.(rolloutHoldRecorder)

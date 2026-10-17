@@ -172,7 +172,7 @@ func TestLowTrafficAdvanceAllowed(t *testing.T) {
 	}
 }
 
-// adr: 1353
+// adr: 1446
 // Synthetic probes join the 5xx sample while organic traffic is below the
 // request floor: a failing quiet candidate aborts, and clean probes on both
 // sides let the stage advance without waiting for organic traffic.

@@ -16,7 +16,7 @@ T = TypeVar("T", bound="ConfigRevision")
 
 @_attrs_define
 class ConfigRevision:
-    """One recorded config change, without values (ADR-1391)."""
+    """One recorded config change, without values (ADR-1451)."""
 
     revision: int
     scope: str

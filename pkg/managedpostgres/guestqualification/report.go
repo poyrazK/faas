@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = 1
+const Version = 3
 const MaxTTL = 7 * 24 * time.Hour
 const IdentityPrefix = "GREGALE_POSTGRES_GUEST_IDENTITY "
 
@@ -28,6 +28,7 @@ type Contract struct {
 	Version   int      `json:"version"`
 	Package   string   `json:"package"`
 	Root      string   `json:"root"`
+	Workloads []string `json:"workloads"`
 	Phases    []string `json:"phases"`
 	Artifacts []string `json:"artifacts"`
 }
@@ -97,6 +98,14 @@ func (m RuntimeManifest) Valid() bool {
 			return false
 		}
 	}
+	applications, sources := map[string]bool{}, map[string]bool{}
+	for _, workload := range c.Workloads {
+		app, source := m.Artifacts[workload+"_app_layer"], m.Artifacts[workload+"_source_archive"]
+		if applications[app] || sources[source] {
+			return false
+		}
+		applications[app], sources[source] = true, true
+	}
 	return true
 }
 
@@ -160,7 +169,10 @@ func Evaluate(report *Report, expected *RuntimeManifest, postgresMajor int, now 
 	}
 	checks := make(map[string]bool)
 	validChecks := len(report.Checks) == len(c.Phases)
-	for _, check := range report.Checks {
+	for index, check := range report.Checks {
+		if index >= len(c.Phases) || check.Name != c.Phases[index] {
+			validChecks = false
+		}
 		if _, duplicate := checks[check.Name]; duplicate || !check.Passed {
 			validChecks = false
 		}

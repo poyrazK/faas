@@ -38,12 +38,12 @@ func (l *Loop) recordFinancialPricing(ctx context.Context, now time.Time) error 
 			failures = append(failures, err)
 			continue
 		}
-		compute := financial.Price{Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: int64(account.Plan.PlanIncludedGBHours()) * api.SecondsPerGBHour}
+		compute := financial.Price{Meter: "compute", Currency: financial.BillingCurrency, Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: int64(account.Plan.PlanIncludedGBHours()) * api.SecondsPerGBHour}
 		if account.Plan == api.PlanFree {
 			compute.MillicentsPerUnit = 0
 		}
 		contracts := []state.FinancialPriceSnapshot{{Price: compute, DeliveryMode: "live"}}
-		egress := state.FinancialPriceSnapshot{Price: financial.Price{Meter: "egress", Currency: "EUR", Unit: "interface_bytes", UnitQuantity: 1}, DeliveryMode: "off"}
+		egress := state.FinancialPriceSnapshot{Price: financial.Price{Meter: "egress", Currency: financial.BillingCurrency, Unit: "interface_bytes", UnitQuantity: 1}, DeliveryMode: "off"}
 		if policies, ok := l.pusher.(billing.MeterUsagePolicyProvider); ok {
 			if policy, configured := policies.MeterUsagePolicy(account.Plan, state.BillingMeterEgress); configured && !policy.EffectiveFrom.After(now) {
 				if err := validateMeterUsagePolicy(policy); err != nil {

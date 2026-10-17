@@ -1,6 +1,6 @@
 package main
 
-// ADR-1391: config history, rollback and the config guard notice.
+// ADR-1451: config history, rollback and the config guard notice.
 
 import (
 	"context"
@@ -90,13 +90,6 @@ func configChangeLabel(r api.ConfigRevision) string {
 		return fmt.Sprintf("guard restored %d", r.RestoredRevision)
 	}
 	return r.Source + " " + r.Key
-}
-
-func dashIfEmpty(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
 
 // configGuardLine summarizes a scope's newest guard in one line.

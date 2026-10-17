@@ -118,7 +118,7 @@ type CanaryRow struct {
 	CanaryStep       int
 	CanaryTotalSteps int
 	// TrafficPercent is the candidate's current share; rollout decision
-	// records report it (ADR-1354).
+	// records report it (ADR-1447).
 	TrafficPercent    int
 	CanaryStepStarted time.Time
 	RolloutStarted    time.Time
@@ -441,7 +441,7 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 // at the stage boundary, so the normal stage timer still controls exposure.
 //
 // The returned record is the evidence for an advance taken this tick
-// (ADR-1354); holds are reported to APID here and aborts carry their record.
+// (ADR-1447); holds are reported to APID here and aborts carry their record.
 // Before the stage's timer ends the record is nil unless the stage is paced
 // by evidence and that evidence is conclusive and clean (ADR-1321).
 func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stage canarycatalog.Stage, now time.Time, stats *Stats) (bool, *api.RolloutDecision) {
@@ -539,7 +539,7 @@ func earlyAdvanceAllowed(stage canarycatalog.Stage, elapsed time.Duration) bool 
 }
 
 // advance asks APID for one step, carrying the evidence when the client can
-// record it (ADR-1354).
+// record it (ADR-1447).
 func (p *Progression) advance(ctx context.Context, row CanaryRow, record *api.RolloutDecision) (api.CanaryAdvanceResponse, error) {
 	if client, ok := p.APID.(decisionAdvanceClient); ok && record != nil {
 		err := record.Validate()

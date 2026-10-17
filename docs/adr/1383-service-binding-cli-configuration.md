@@ -1,0 +1,10 @@
+# ADR-1383: Service binding CLI configuration
+
+- **Date:** 2026-10-16
+- **Status:** accepted
+- **Context:** Standalone service authorization has API support and binding inspection/verification commands, but no customer CLI configuration path.
+- **Decision:** Add `gregale bindings service configure APP --file policy.json [--dry-run]`. Accept only outbound targets, caller-side authorization policy, target-side caller lists, and caller method/path scopes. Reuse shared API normalization. Reject unknown fields, duplicate keys at every depth, malformed input, empty operations and self-targets before API access. Bound input using the existing source-manifest size limit.
+- **Semantics:** Preserve omitted/null/empty distinctions. Null caller lists or scopes clear restrictions; empty lists/maps deny every caller. Null targets/policy retain prior values. Targets and caller lists/scopes are replacements when supplied. No automatic clearing of another restriction or switching to declared-only authorization.
+- **Preview and apply:** Read app-level state for before/after previews; dry-run performs only GET. Apply sends one ordinary partial app PATCH and reports saved server-returned values for requested fields. The API retains ownership of account membership, target existence and project-managed policy validation. No cross-app update, environment inference, concurrency guarantee, runtime adoption assertion, or permission bypass is introduced.
+- **Scope:** Reliability and transport configuration remain outside this command. Binding removal retains the API's existing dependent reliability cleanup. Documentation explains intersecting authorization policies, access-broadening resets, snapshot preview limits and follow-up verification.
+- **Validation:** CLI regressions cover explicit deny-all, clearing, omission, normalized grants, preview without mutation, exact partial PATCH payloads, invalid-input failures before network access, help and API-surface coverage. Existing shared API authorization matching tests continue to define enforcement semantics.

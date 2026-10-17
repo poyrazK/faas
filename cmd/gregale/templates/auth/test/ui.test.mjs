@@ -29,6 +29,8 @@ test('explains known errors without echoing server text', () => {
   assert.equal(errorMessage({ code: 'invitation_email_mismatch' }, 403), 'This invitation was sent to a different email address.')
   assert.equal(errorMessage({ msg: '<img src=x onerror=alert(1)>' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage(null, 429), 'Too many attempts. Wait a minute and try again.')
+  assert.equal(errorMessage({ error_code: 'otp_expired' }, 403), 'That code is wrong or has expired. Request a new one.')
+  assert.equal(errorMessage({ error_code: 'over_sms_send_rate_limit' }, 429), 'Too many codes sent. Wait a minute and try again.')
 })
 
 test('serves the hosted pages with a strict policy', async t => {
@@ -37,7 +39,7 @@ test('serves the hosted pages with a strict policy', async t => {
   await once(server, 'listening')
   t.after(() => server.close())
   const base = `http://127.0.0.1:${server.address().port}`
-  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation']) {
+  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso']) {
     const response = await fetch(base + path)
     assert.equal(response.status, 200, path)
     assert.match(response.headers.get('content-type'), /^text\/html/)

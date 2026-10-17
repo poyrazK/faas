@@ -40,7 +40,7 @@ type releaseRunFixture struct {
 	base           time.Time
 }
 
-// releaseRunsSuite pins ADR-1355's crossing rule at the store: started
+// releaseRunsSuite pins ADR-1448's crossing rule at the store: started
 // release tasks of other deployments in the target's scope after the target
 // was created (it never served), oldest first, failed ones included.
 func releaseRunsSuite(t *testing.T, store releaseRunTestStore) releaseRunFixture {

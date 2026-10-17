@@ -137,7 +137,7 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		}
 	}
 	// (6) Atomic-tx recovery, recording a person's request as a manual
-	// decision (ADR-1354).
+	// decision (ADR-1447).
 	updated, auditID, err := s.recoverRolloutRecordingDecision(r, app, req)
 	if err != nil {
 		if problem := routeRemovalBlockedProblem(err); problem != nil {

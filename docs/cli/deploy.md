@@ -190,7 +190,7 @@ warning to stderr, including with `--json`, so a script's stdout stays parseable
 
 A production release of an app that already serves traffic uses the
 adaptive health-gated canary and first-wake 5xx rollback by default
-([ADR-1353](../adr/1353-safe-releases-by-default.md),
+([ADR-1446](../adr/1446-safe-releases-by-default.md),
 [ADR-1321](../adr/1321-evidence-paced-default-rollouts.md)); see
 [Safe by default](../deploys.md#safe-by-default). To also wait for the
 rollout to reach 100% before the command returns, use the safe path:

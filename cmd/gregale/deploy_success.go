@@ -174,6 +174,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	if appOK {
 		appURL = canonicalAppURL(app)
 	}
+	noHTTP := appOK && servesNoHTTP(app.Manifest.ExecutionMode)
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
@@ -198,7 +199,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		}
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
-		// ADR-1353: a production release rolls out behind the health-gated
+		// ADR-1446: a production release rolls out behind the health-gated
 		// canary by default, so name both ways out of it.
 		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate {
 			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
@@ -226,15 +227,27 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		} else {
 			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale traffic status %s", appSlug)
 		}
+	} else if noHTTP {
+		// A worker or job has no URL to visit; the cold-wake and access
+		// lines describe request apps only (H10-137).
+		if label := renderRevision(final.Revision); label != "" {
+			PrintOK(osStdout, "Deployed %s.", label)
+		} else {
+			PrintOK(osStdout, "Deployed.")
+		}
 	} else if label := renderRevision(final.Revision); label != "" {
 		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
-	if !darkDeploy {
+	switch {
+	case darkDeploy:
+	case noHTTP:
+		printDeployNoHTTPSentence(app.Manifest.ExecutionMode, appSlug)
+	default:
 		printDeployColdWakeSentence()
 	}
-	if appOK {
+	if appOK && !noHTTP {
 		renderDeploymentAccess(osStdout, app, appSlug)
 	}
 	if cache := formatArtifactCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {

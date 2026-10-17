@@ -3943,9 +3943,20 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		return App{}, mapErr(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var found int
-	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
-		return App{}, mapErr(err)
+	if p.ExpectedServiceBindingFingerprint != "" {
+		var before App
+		if err := scanAppInto(&before, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id)); err != nil {
+			return App{}, mapErr(err)
+		}
+		p, err = prepareServiceBindingPlanUpdate(before, p)
+		if err != nil {
+			return App{}, err
+		}
+	} else {
+		var found int
+		if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&found); err != nil {
+			return App{}, mapErr(err)
+		}
 	}
 	app, err := updateApp(ctx, tx, id, p)
 	if err != nil {
@@ -5213,7 +5224,7 @@ func (s *PgStore) UpdateProjectBinding(ctx context.Context, accountID, projectID
 func (s *PgStore) DeleteProject(ctx context.Context, projectID string) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID)
 	if err != nil {
-		return fmt.Errorf("pgstore: delete project %q: %w", projectID, err)
+		return fmt.Errorf("pgstore: delete project %q: %w", projectID, hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -5435,7 +5446,7 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ProjectEnvironmentCleanupJob{}, ErrNotFound
@@ -8941,7 +8952,7 @@ func (s *PgStore) RecoverRollout(ctx context.Context, appID string, action, reas
 }
 
 // RecoverRolloutWithDecision is RecoverRollout recording the validated
-// api.RolloutDecision behind the transition (ADR-1354).
+// api.RolloutDecision behind the transition (ADR-1447).
 func (s *PgStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	return s.recoverRollout(ctx, appID, "", "", action, reason, nil, decision)
 }
@@ -8957,7 +8968,7 @@ func (s *PgStore) RecoverRolloutForDeployment(ctx context.Context, appID, deploy
 }
 
 // RecoverRolloutForDeploymentWithDecision is the exact abort recording the
-// circuit-breaker evidence that decided it (ADR-1354).
+// circuit-breaker evidence that decided it (ADR-1447).
 func (s *PgStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
@@ -8993,7 +9004,7 @@ func (s *PgStore) recoverRollout(ctx context.Context, appID, deploymentID, expec
 }
 
 // decision is the validated api.RolloutDecision behind the transition
-// (ADR-1354). It is written in the same UPDATE as the rollout-state change so
+// (ADR-1447). It is written in the same UPDATE as the rollout-state change so
 // the rollout outcome webhook trigger sees it; nil clears the column, except
 // on the worker lease expiry abort, which records abort_worker_lease_expired.
 func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploymentID, expectedPredecessorID, action, reason string, emergencyGrace *time.Duration, auditOverride *DeploymentAudit, decision json.RawMessage) (Deployment, int64, error) {
@@ -9714,7 +9725,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 			}
 		}
 	}
-	// ADR-1353: a prepared rollback is consumed by its promotion. Clearing it
+	// ADR-1446: a prepared rollback is consumed by its promotion. Clearing it
 	// in this transaction means a failed promotion keeps the marker for retry.
 	if _, err := tx.Exec(ctx, `update deployments set rollback_prepared_at = null where id = $1 and rollback_prepared_at is not null`, id); err != nil {
 		return fmt.Errorf("state: clear rollback marker: %w", err)
@@ -14901,7 +14912,7 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
 	// account_spend_snapshot has no production writer (only
 	// UpsertAccountSpendSnapshot, which nothing calls), so summing it
-	// returned 0 for every account: the enabled "Spend exceeds €20"
+	// returned 0 for every account: the enabled "Spend exceeds $20"
 	// preset and the meterd_account_spend_eur gauge could never move.
 	// Read the month-to-date usage spend beyond the plan's included
 	// allowance from usage_minutes — the same figure the billing page
@@ -15923,6 +15934,7 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			select id, quota_reserved
 			  from invocations
 			 where state = 'dispatching'
+ and not exists(select 1 from event_delivery_acknowledgments a where a.invocation_id=invocations.id and a.attempt=invocations.attempts and a.replay_generation=invocations.replay_generation and a.phase='awaiting')
            and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)
 			   and lease_expires_at is not null
 			   and lease_expires_at <= $1
@@ -25008,7 +25020,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
 	coalesce(environment_workload_runtime::text,''),
-	environment_workload_held, secret_reload_signal`
+	environment_workload_held, secret_reload_signal, runtime_base`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -25069,7 +25081,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
 	coalesce(d.environment_workload_runtime::text,''),
-	d.environment_workload_held, d.secret_reload_signal`
+	d.environment_workload_held, d.secret_reload_signal, d.runtime_base`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -25179,7 +25191,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&canaryStepStartedAt, &d.CanaryStages, &d.RolloutState,
 		&rolloutStartedAt, &rolloutCompletedAt, &rolloutAbortedAt,
 		&d.RolloutAbortedReason, &serviceRolloutHandoff,
-		// ADR-1354: nullable jsonb; NULL scans to a nil slice.
+		// ADR-1447: nullable jsonb; NULL scans to a nil slice.
 		&rolloutDecision,
 		// ADR-124 deployment queue controls (migration 00391/00491). The
 		// scan order mirrors the SELECT projection above — see the
@@ -25192,7 +25204,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.APIHostingReceipt,
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
-		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal,
+		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal, &d.RuntimeBase,
 	); err != nil {
 		return mapErr(err)
 	}

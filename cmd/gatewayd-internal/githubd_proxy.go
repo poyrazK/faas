@@ -32,6 +32,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubd"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
@@ -179,21 +180,30 @@ func (g *githubdProxy) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing delivery id", http.StatusBadRequest)
 		return
 	}
-	if err := g.checkReplay(r.Context(), deliveryID); err != nil {
-		if !webhookdedupe.IsReplay(err) {
-			g.log.Error("githubd replay claim failed", "delivery_id", logsanitize.Field(deliveryID), "err", err)
-			http.Error(w, "webhook replay protection unavailable", http.StatusServiceUnavailable)
+	if r.Header.Get("X-GitHub-Event") == "issues" {
+		// The durable githubd inbox owns issue delivery acknowledgment. Edge claims
+		// must not turn a failed upstream attempt into a successful replay response.
+		if _, err := issuetracker.DecodeGitHubIssueCallback(body, deliveryID); err != nil {
+			http.Error(w, "invalid issue callback", http.StatusBadRequest)
 			return
 		}
-		g.log.Info("githubd replay rejected", "delivery_id", logsanitize.Field(deliveryID), "err", err)
-		if g.auditor != nil {
-			g.auditor.Emit(r.Context(), "webhook.replay_rejected", nil, map[string]any{
-				"provider":    webhookdedupe.ProviderGitHub,
-				"delivery_id": logsanitize.Field(deliveryID),
-			})
+	} else {
+		if err := g.checkReplay(r.Context(), deliveryID); err != nil {
+			if !webhookdedupe.IsReplay(err) {
+				g.log.Error("githubd replay claim failed", "delivery_id", logsanitize.Field(deliveryID), "err", err)
+				http.Error(w, "webhook replay protection unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			g.log.Info("githubd replay rejected", "delivery_id", logsanitize.Field(deliveryID), "err", err)
+			if g.auditor != nil {
+				g.auditor.Emit(r.Context(), "webhook.replay_rejected", nil, map[string]any{
+					"provider":    webhookdedupe.ProviderGitHub,
+					"delivery_id": logsanitize.Field(deliveryID),
+				})
+			}
+			w.WriteHeader(http.StatusOK)
+			return
 		}
-		w.WriteHeader(http.StatusOK)
-		return
 	}
 	// Hand the original body back to the upstream via a fresh
 	// request body reader. We rebuild the upstream URL from the

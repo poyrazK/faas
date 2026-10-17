@@ -1,6 +1,6 @@
 -- filename: 20261013193623910_deployment_rollback_outcomes.sql
 --
--- ADR-1353 follow-up: verified rollback outcomes. A plain rollback (manual,
+-- ADR-1446 follow-up: verified rollback outcomes. A plain rollback (manual,
 -- dashboard, or first-wake 5xx auto-rollback) was recorded when it was
 -- requested, never when it took effect, so a rollback that never served
 -- looked identical to one that did. Each plain rollback now writes one row

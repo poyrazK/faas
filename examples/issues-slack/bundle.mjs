@@ -1,0 +1,12 @@
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const target = await mkdtemp(join(tmpdir(), 'gregale-issues-slack-'));
+for (const file of ['server.mjs', 'receipts.mjs', 'schema.sql', 'setup.mjs', 'package-lock.json']) await cp(new URL(file, import.meta.url), join(target, file));
+const manifest = JSON.parse(await readFile(new URL('package.json', import.meta.url), 'utf8'));
+manifest.scripts = { start: manifest.scripts.start, setup: manifest.scripts.setup };
+await writeFile(join(target, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
+await mkdir(join(target, 'gregale-sdk'));
+for (const file of ['issue-slack.js', 'webhook.js']) await cp(new URL(`../../sdk/node/dist/${file}`, import.meta.url), join(target, 'gregale-sdk', file));
+await writeFile(join(target, 'sdk.mjs'), "export {issueSlackMessageFromWebhook,formatIssueSlackMessage} from './gregale-sdk/issue-slack.js';\nexport {WebhookVerificationError} from './gregale-sdk/webhook.js';\n");
+process.stdout.write(target + '\n');

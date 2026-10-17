@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1353
+// adr: 1446
 func TestMergeProbeTargets(t *testing.T) {
 	gated := []state.RouteProbeTarget{
 		{AppID: "a", CandidateID: "a2"},
@@ -34,8 +34,8 @@ func TestMergeProbeTargets(t *testing.T) {
 	}
 }
 
-// adr: 1353
-// TestDefaultProbeRoutes pins ADR-1351: the app's paths replace "/", invalid
+// adr: 1446
+// TestDefaultProbeRoutes pins ADR-1449: the app's paths replace "/", invalid
 // or surplus paths are dropped, and a round's probes split so the total still
 // meets the request floor.
 func TestDefaultProbeRoutes(t *testing.T) {

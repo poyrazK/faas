@@ -123,11 +123,11 @@ export type AppManifest = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Effective default rollout for production releases (ADR-1353, ADR-1352).
+   * Effective default rollout for production releases (ADR-1446, ADR-1450).
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Paths the default rollout probe checks; absent means / (ADR-1351).
+   * Paths the default rollout probe checks; absent means / (ADR-1449).
    */
   release_probe_paths?: Array<string>;
 };

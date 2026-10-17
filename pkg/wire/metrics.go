@@ -900,7 +900,7 @@ type OpsMetrics struct {
 	// operator can distinguish regressions from unavailable evidence without
 	// putting deployment IDs or customer-controlled strings in Prometheus.
 	canaryProgressionCircuitBreakerTotal *prometheus.CounterVec
-	// rollbackOutcomesTotal and rollbackRecoverySeconds (ADR-1353) record
+	// rollbackOutcomesTotal and rollbackRecoverySeconds (ADR-1446) record
 	// what each plain rollback actually did: trigger ∈ {manual, auto_5xx,
 	// alert}, outcome ∈ {complete, failed}. The histogram measures request
 	// to serving for completed rollbacks, the API-hosting scorecard's
@@ -993,7 +993,7 @@ type OpsMetrics struct {
 	canaryFleetInFlightHighAlertFiredTotal    prometheus.Counter
 
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
-	// meterdAccountSpendEur (account_id) is the MTD EUR spend
+	// meterdAccountSpendEur (account_id) is the MTD spend in the billing currency (ADR-1430; the name keeps eur)
 	// computed by the meterd tick loop and stamped every
 	// AlertEvalInterval. Cardinity is bounded by account count.
 	meterdAccountSpendEur *prometheus.GaugeVec
@@ -3237,11 +3237,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	rollbackOutcomesTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_rollback_outcomes_total",
-		Help: "Plain rollback outcomes verified by apid (ADR-1353), labelled by trigger ∈ {manual, auto_5xx, alert, post_release} and outcome ∈ {complete, failed}. A failed outcome means the rollback target never served: the previous release was not restored.",
+		Help: "Plain rollback outcomes verified by apid (ADR-1446), labelled by trigger ∈ {manual, auto_5xx, alert, post_release} and outcome ∈ {complete, failed}. A failed outcome means the rollback target never served: the previous release was not restored.",
 	}, []string{"trigger", "outcome"})
 	rollbackRecoverySeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_rollback_recovery_seconds",
-		Help:    "Seconds from a plain rollback request to its target serving (ADR-1353), labelled by trigger ∈ {manual, auto_5xx, alert, post_release}. The API-hosting scorecard bar is p95 <= 60 s.",
+		Help:    "Seconds from a plain rollback request to its target serving (ADR-1446), labelled by trigger ∈ {manual, auto_5xx, alert, post_release}. The API-hosting scorecard bar is p95 <= 60 s.",
 		Buckets: []float64{1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 300, 600},
 	}, []string{"trigger"})
 	for _, trigger := range rollbackOutcomeTriggers {
@@ -3379,7 +3379,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Issue #1233 / ADR-123 — alert-preset signal gauges.
 	meterdAccountSpendEur := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_account_spend_eur",
-		Help: "Per-{account_id} MTD EUR spend, recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
+		Help: "Per-{account_id} MTD spend in the billing currency (USD, ADR-1430), recomputed by the meterd tick loop every AlertEvalInterval. Backs the alert preset spend_eur_20. Cardinity is bounded by account count.",
 	}, []string{"account_id"})
 	apidTenantSurfaceCertExpirySeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_tenant_surface_cert_expiry_seconds",
@@ -8732,7 +8732,7 @@ func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Coun
 	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
 }
 
-// rollbackOutcomeTriggers is the closed trigger vocabulary for the ADR-1353
+// rollbackOutcomeTriggers is the closed trigger vocabulary for the ADR-1446
 // rollback outcome metrics; post_release is the ADR-1445 watch.
 var rollbackOutcomeTriggers = []string{"manual", "auto_5xx", "alert", "post_release"}
 
@@ -8745,7 +8745,7 @@ func knownRollbackTrigger(trigger string) bool {
 	return false
 }
 
-// RollbackOutcome records one verified plain rollback outcome (ADR-1353).
+// RollbackOutcome records one verified plain rollback outcome (ADR-1446).
 // recovery is observed only for a complete outcome. Unknown triggers or
 // outcomes are dropped so labels stay a closed set.
 func (m *OpsMetrics) RollbackOutcome(trigger, outcome string, recovery time.Duration) {
@@ -9000,7 +9000,7 @@ func (m *OpsMetrics) AlertActionExecutedTotal(action string) func() {
 	return func() {}
 }
 
-// MeterdAccountSpendEur returns the per-{account_id} MTD EUR-spend
+// MeterdAccountSpendEur returns the per-{account_id} MTD billing-currency spend
 // gauge fed by the meterd spend aggregator. Issue #1233 / ADR-123
 // backs the alert preset spend_eur_20. Returns nil on a nil receiver.
 func (m *OpsMetrics) MeterdAccountSpendEur() *prometheus.GaugeVec {

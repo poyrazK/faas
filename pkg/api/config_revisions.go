@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// Config revisions and config guards (ADR-1391).
+// Config revisions and config guards (ADR-1451).
 
 // ConfigGuardSummary is the guard an env or secret write opened or joined.
 type ConfigGuardSummary struct {

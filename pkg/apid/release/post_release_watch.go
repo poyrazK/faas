@@ -31,7 +31,7 @@ func JudgePostRelease(release, predecessor canary.HealthWindow) (rule, reason st
 	return "", "", false
 }
 
-// PostReleaseDecision is the ADR-1354 record of a post-release rollback.
+// PostReleaseDecision is the ADR-1447 record of a post-release rollback.
 func PostReleaseDecision(rule, reason, predecessorID string, release, predecessor canary.HealthWindow, windowStart, windowEnd, now time.Time) api.RolloutDecision {
 	sample := func(w canary.HealthWindow) *api.RolloutDecisionSample {
 		return &api.RolloutDecisionSample{Requests: w.Requests, ServerErrors: w.ServerErrors, P95LatencyMS: w.P95LatencyMS,

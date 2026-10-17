@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// withRelease fills Release on a single-deployment read (ADR-1355). A read
+// withRelease fills Release on a single-deployment read (ADR-1448). A read
 // failure omits the field; it explains the deployment, it is not state a
 // client must act on.
 func (s *server) withRelease(ctx context.Context, resp api.DeploymentResponse, d state.Deployment) api.DeploymentResponse {
@@ -23,7 +23,7 @@ func (s *server) withRelease(ctx context.Context, resp api.DeploymentResponse, d
 
 // rollbackReleaseGuard refuses a rollback over release commands that ran
 // after its target last served unless the caller acknowledged them
-// (ADR-1355). It returns the crossed releases for the audit row.
+// (ADR-1448). It returns the crossed releases for the audit row.
 func (s *server) rollbackReleaseGuard(ctx context.Context, app state.App, target state.Deployment, acknowledged bool) ([]state.ReleaseRun, *api.Problem) {
 	runs, problem, err := release.RollbackGuard(ctx, s.store, app.ID, target, acknowledged)
 	if err != nil {

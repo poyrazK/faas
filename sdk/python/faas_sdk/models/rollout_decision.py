@@ -22,7 +22,7 @@ T = TypeVar("T", bound="RolloutDecision")
 
 @_attrs_define
 class RolloutDecision:
-    """Evidence behind one decision about a rollout (ADR-1354): why a canary stage advanced, is held, or was aborted.
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was aborted.
     Aggregates only; no request payloads, routes, URLs or customer text.
 
     """
@@ -47,7 +47,7 @@ class RolloutDecision:
     """One side's aggregates over the observation window. Request counts are organic requests; probe counts are
     reported separately."""
     probes_included: bool | Unset = UNSET
-    """The 5xx sample included synthetic probes of the app (ADR-1353)."""
+    """The 5xx sample included synthetic probes of the app (ADR-1446)."""
     signals: RolloutDecisionSignals | Unset = UNSET
     """The candidate's OOM kills and both sides' liveness-driven restarts over the window."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

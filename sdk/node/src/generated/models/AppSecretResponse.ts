@@ -9,7 +9,7 @@ import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObserv
  */
 export type AppSecretResponse = {
   /**
-   * Present on writes: the config revision recorded and the config guard watching it (ADR-1391).
+   * Present on writes: the config revision recorded and the config guard watching it (ADR-1451).
    */
   config_change?: ConfigChangeReceipt;
   key: string;

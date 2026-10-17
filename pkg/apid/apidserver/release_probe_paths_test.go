@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routeprobe"
 )
 
-// TestReleaseProbePathsRoundTripAndProbe pins ADR-1351: an app sets the
+// TestReleaseProbePathsRoundTripAndProbe pins ADR-1449: an app sets the
 // paths its default rollout probe checks, invalid paths are refused, and a
 // probe round splits the request floor across the named paths instead of
 // probing "/".

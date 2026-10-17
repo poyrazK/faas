@@ -21,6 +21,10 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
 export type AppResponse = {
+  /**
+   * Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic precondition for a reviewed service-only update.
+   */
+  service_binding_fingerprint?: string;
   id: string;
   slug: string;
   type: 'app' | 'function';
@@ -165,11 +169,11 @@ export type AppResponse = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Default rollout for production releases that name no rollout policy (ADR-1353). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1352); immediate moves all traffic at once.
+   * Default rollout for production releases that name no rollout policy (ADR-1446). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1450); immediate moves all traffic at once.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1351). No queries, fragments, wildcards or parameters.
+   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449). No queries, fragments, wildcards or parameters.
    */
   release_probe_paths?: Array<string>;
   /**

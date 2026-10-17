@@ -236,7 +236,7 @@ func TestDataAPIRuntimeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, bound := range map[string]int{"pool": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes} {
+	for name, bound := range map[string]int{"pool": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "responseBytes": api.DataAPIMaxResponseBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes, "queuedRequests": api.DataAPIMaxQueuedRequests, "admissionWaitMs": api.DataAPIAdmissionWaitMS, "overloadRetrySeconds": api.DataAPIOverloadRetrySeconds, "healthProbeMs": api.DataAPIHealthProbeMS, "healthBytes": api.DataAPIHealthMaxBytes, "rateLimitDefaultPerSecond": api.DataAPIRateLimitDefaultPerSecond, "rateLimitDefaultBurst": api.DataAPIRateLimitDefaultBurst, "rateLimitMaxPerSecond": api.DataAPIRateLimitMaxPerSecond, "rateLimitMaxBurst": api.DataAPIRateLimitMaxBurst, "rateLimitMaxSubjects": api.DataAPIRateLimitMaxSubjects, "rateLimitSweepMs": api.DataAPIRateLimitSweepMS} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}

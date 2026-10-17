@@ -31,7 +31,7 @@ class AdvanceCanaryRequest:
     profile_gate_override: ProfileGateOverride | Unset = UNSET
     """Audited customer exception bound to the current profiling policy revision."""
     decision: RolloutDecision | Unset = UNSET
-    """Evidence behind one decision about a rollout (ADR-1354): why a canary stage advanced, is held, or was
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
     aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

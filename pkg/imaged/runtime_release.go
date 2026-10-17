@@ -151,6 +151,11 @@ func (h *Handler) verifyRuntimeUpgradeScan(ctx context.Context, target state.Run
 }
 
 func (h *Handler) ensureDeploymentRuntimeBaseForDeployment(ctx context.Context, app state.App, dep state.Deployment) error {
+	if dep.Kind != state.DeploymentKindImage {
+		// Source container apps retain their OCI entrypoint and minimal base,
+		// including legacy rows carrying a function runtime from older clients.
+		_, app.Runtime = state.SourceBuildRootfsKind(app, dep)
+	}
 	target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, app.Runtime)
 	if err != nil {
 		return err

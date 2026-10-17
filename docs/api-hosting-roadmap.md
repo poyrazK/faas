@@ -152,7 +152,7 @@ cold boot; it is not a standalone VM wake-time measurement. Broader dependency
 instrumentation and richer startup signals remain follow-up work because
 customer OTLP spans are sampled and slowest-span-truncated, not a safe
 deployment-scoped denominator for automatic aborts.
-[ADR-1353](adr/1353-safe-releases-by-default.md) makes this the production
+[ADR-1446](adr/1446-safe-releases-by-default.md) makes this the production
 deploy default, bounds the low-traffic hold, and adds an operator kill switch;
 the rollback and low-traffic drills it lists remain the gate for claiming the
 behavior beyond `preview`.

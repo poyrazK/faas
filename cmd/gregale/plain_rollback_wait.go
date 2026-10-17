@@ -12,7 +12,7 @@ import (
 )
 
 // waitPlainRollback follows a plain rollback's receipt until the previous
-// release serves again (ADR-1353). The rollback request alone proves nothing:
+// release serves again (ADR-1446). The rollback request alone proves nothing:
 // a target that never activates used to look identical to one that did.
 func waitPlainRollback(client rollbackOperationClient, slug string, operation api.RollbackOperation, timeout, interval time.Duration) int {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

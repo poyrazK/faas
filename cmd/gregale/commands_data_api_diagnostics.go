@@ -24,19 +24,24 @@ var dataAPIDiagnosticUUID = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[
 var dataAPIDiagnosticRoutes = []string{"rest", "rpc", "health", "schema", "openapi", "unknown"}
 
 type dataAPIRequestRecord struct {
-	Time          string             `json:"time"`
-	RequestID     string             `json:"request_id"`
-	Method        string             `json:"method"`
-	Route         string             `json:"route"`
-	Status        *int               `json:"status"`
-	DurationMS    float64            `json:"duration_ms"`
-	Outcome       string             `json:"outcome"`
-	Code          *string            `json:"code"`
-	Operation     string             `json:"operation,omitempty"`
-	OperationKind string             `json:"operation_kind,omitempty"`
-	ShapeID       string             `json:"query_shape_id,omitempty"`
-	Shape         *dataAPIQueryShape `json:"query_shape,omitempty"`
-	Fingerprint   string             `json:"schema_fingerprint,omitempty"`
+	Time          string                         `json:"time"`
+	RequestID     string                         `json:"request_id"`
+	Method        string                         `json:"method"`
+	Route         string                         `json:"route"`
+	Status        *int                           `json:"status"`
+	DurationMS    float64                        `json:"duration_ms"`
+	Outcome       string                         `json:"outcome"`
+	Code          *string                        `json:"code"`
+	Operation     string                         `json:"operation,omitempty"`
+	OperationKind string                         `json:"operation_kind,omitempty"`
+	ShapeID       string                         `json:"query_shape_id,omitempty"`
+	Shape         *dataAPIQueryShape             `json:"query_shape,omitempty"`
+	Fingerprint   string                         `json:"schema_fingerprint,omitempty"`
+	Admission     *dataAPIAdmissionRecord        `json:"admission,omitempty"`
+	Deadline      *dataAPIDeadlineRecord         `json:"deadline,omitempty"`
+	Timings       map[string]dataAPITimingRecord `json:"timings,omitempty"`
+	ResponseLimit *dataAPIResponseLimitRecord    `json:"response_limit,omitempty"`
+	RateLimit     *dataAPIRateLimitRecord        `json:"rate_limit,omitempty"`
 }
 type dataAPILatency struct {
 	P50 *float64 `json:"p50"`
@@ -44,21 +49,27 @@ type dataAPILatency struct {
 	P99 *float64 `json:"p99"`
 }
 type dataAPIRequestStats struct {
-	Requests     int            `json:"requests"`
-	Errors       int            `json:"errors"`
-	HTTPErrors   int            `json:"http_errors"`
-	ServerErrors int            `json:"server_errors"`
-	Aborted      int            `json:"aborted"`
-	ErrorRate    *float64       `json:"error_rate_percent"`
-	LatencyMS    dataAPILatency `json:"latency_ms"`
+	Requests     int                `json:"requests"`
+	Errors       int                `json:"errors"`
+	HTTPErrors   int                `json:"http_errors"`
+	ServerErrors int                `json:"server_errors"`
+	Aborted      int                `json:"aborted"`
+	ErrorRate    *float64           `json:"error_rate_percent"`
+	LatencyMS    dataAPILatency     `json:"latency_ms"`
+	Timings      dataAPITimingStats `json:"timings"`
 	durations    []float64
 }
 type dataAPIFailureCounts struct {
-	Authentication   int `json:"authentication"`
-	Timeouts         int `json:"timeouts"`
-	Unavailable      int `json:"unavailable"`
-	ContractMismatch int `json:"contract_mismatch"`
-	Upstream         int `json:"upstream"`
+	Authentication     int `json:"authentication"`
+	Timeouts           int `json:"timeouts"`
+	Unavailable        int `json:"unavailable"`
+	ContractMismatch   int `json:"contract_mismatch"`
+	Upstream           int `json:"upstream"`
+	Overloaded         int `json:"overloaded"`
+	RefreshPaused      int `json:"refresh_paused"`
+	RefreshUnavailable int `json:"refresh_unavailable"`
+	ResponseTooLarge   int `json:"response_too_large"`
+	RateLimited        int `json:"rate_limited"`
 }
 type dataAPIDiagnosticsReport struct {
 	Version              int                             `json:"version"`
@@ -82,9 +93,12 @@ type dataAPIDiagnosticsReport struct {
 	Authentication       dataAPIRequestStats             `json:"authentication"`
 	ByRoute              map[string]*dataAPIRequestStats `json:"by_route"`
 	Failures             dataAPIFailureCounts            `json:"failures"`
+	Admission            dataAPIAdmissionStats           `json:"admission"`
+	Deadlines            dataAPIDeadlineStats            `json:"deadlines"`
 	RequestID            string                          `json:"request_id,omitempty"`
 	Operations           []dataAPIOperationStats         `json:"operations"`
 	QueryShapes          []dataAPIShapeStats             `json:"query_shapes"`
+	QueryShapeSort       string                          `json:"query_shape_sort"`
 	ShapedRequests       int                             `json:"shaped_requests"`
 	UnshapedDataRequests int                             `json:"unshaped_data_requests"`
 	Matches              []dataAPIRequestRecord          `json:"matches,omitempty"`
@@ -105,13 +119,14 @@ func cmdDataAPIDiagnostics(args []string) int {
 	since := fs.String("since", "", "positive lookback duration or RFC3339 timestamp")
 	deployment := fs.String("deployment", "", "restrict the hosted retained log sample to a deployment")
 	requestID := fs.String("request-id", "", "look up one gateway-generated request UUID")
+	shapeSort := fs.String("sort", "requests", "query shape ranking: requests, p95 or errors")
 	timeout := fs.Duration("timeout", 2*time.Minute, "entire hosted read deadline (maximum 1h)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	targetOK := (*file == "" && fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))) || (*file != "" && fs.NArg() == 0 && *deployment == "")
-	if !targetOK || *timeout <= 0 || *timeout > time.Hour || (*requestID != "" && !dataAPIDiagnosticUUID.MatchString(*requestID)) {
-		PrintUsage(os.Stderr, "usage: gregale data-api diagnostics [NAME | --file FILE] [--since DURATION|RFC3339] [--deployment ID] [--request-id UUID] [--timeout DURATION]", "data-api")
+	if !targetOK || *timeout <= 0 || *timeout > time.Hour || (*requestID != "" && !dataAPIDiagnosticUUID.MatchString(*requestID)) || !dataAPIDiagnosticAllowed(*shapeSort, "requests", "p95", "errors") {
+		PrintUsage(os.Stderr, "usage: gregale data-api diagnostics [NAME | --file FILE] [--since DURATION|RFC3339] [--deployment ID] [--request-id UUID] [--sort requests|p95|errors] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	normalized, err := normalizeLogsSince(*since, logsSourceRuntime, time.Now())
@@ -120,6 +135,7 @@ func cmdDataAPIDiagnostics(args []string) int {
 	}
 	collector := newDataAPIDiagnosticsCollector(normalized, strings.ToLower(*requestID))
 	collector.report.App, collector.report.Deployment = fs.Arg(0), *deployment
+	collector.report.QueryShapeSort = *shapeSort
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, *timeout)
@@ -170,6 +186,8 @@ func newDataAPIDiagnosticsCollector(since, requestID string) *dataAPIDiagnostics
 	for _, route := range dataAPIDiagnosticRoutes {
 		c.report.ByRoute[route] = &dataAPIRequestStats{}
 	}
+	c.report.Deadlines.ByPhase = map[string]int{}
+	c.report.QueryShapeSort = "requests"
 	if since != "" {
 		c.since, _ = time.Parse(time.RFC3339Nano, since)
 	}
@@ -238,16 +256,31 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 		}
 	}
 	timestamp, err := time.Parse(time.RFC3339Nano, record.Time)
-	if err != nil || !dataAPIDiagnosticUUID.MatchString(record.RequestID) || !dataAPIDiagnosticAllowed(record.Route, dataAPIDiagnosticRoutes...) || !dataAPIDiagnosticAllowed(record.Method, "GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS", "PUT", "OTHER") || !dataAPIDiagnosticAllowed(record.Outcome, "completed", "rejected", "authentication_failed", "query_timeout", "unavailable", "upstream_error", "aborted") || math.IsNaN(record.DurationMS) || math.IsInf(record.DurationMS, 0) || record.DurationMS < 0 {
+	if err != nil || !dataAPIDiagnosticUUID.MatchString(record.RequestID) || !dataAPIDiagnosticAllowed(record.Route, dataAPIDiagnosticRoutes...) || !dataAPIDiagnosticAllowed(record.Method, "GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS", "PUT", "OTHER") || !dataAPIDiagnosticAllowed(record.Outcome, "completed", "rejected", "authentication_failed", "query_timeout", "unavailable", "upstream_error", "aborted", "overloaded") || math.IsNaN(record.DurationMS) || math.IsInf(record.DurationMS, 0) || record.DurationMS < 0 {
 		return record, true, errors.New("invalid request metadata")
 	}
 	if (record.Status == nil && record.Outcome != "aborted") || (record.Status != nil && (*record.Status < 100 || *record.Status > 599)) {
 		return record, true, errors.New("invalid request status")
 	}
-	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "query_timeout", "schema_document_too_large", "schema_contract_mismatch", "upstream_error") {
+	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large", "schema_contract_mismatch", "upstream_error", "data_api_overloaded", "data_api_rate_limited") {
 		return record, true, errors.New("invalid request code")
 	}
 	if err := validateDataAPIQueryShape(record); err != nil {
+		return record, true, err
+	}
+	if err := validateDataAPIAdmission(record.Admission); err != nil {
+		return record, true, err
+	}
+	if err := validateDataAPIDeadline(record); err != nil {
+		return record, true, err
+	}
+	if err := validateDataAPITimings(record.Timings); err != nil {
+		return record, true, err
+	}
+	if err := validateDataAPIResponseLimit(record); err != nil {
+		return record, true, err
+	}
+	if err := validateDataAPIRateLimit(record); err != nil {
 		return record, true, err
 	}
 	record.Time = timestamp.UTC().Format(time.RFC3339Nano)
@@ -308,6 +341,8 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 		c.last = timestamp
 	}
 	c.report.Summary.add(record)
+	c.report.Admission.add(record.Admission)
+	c.report.Deadlines.add(record.Deadline)
 	c.report.ByRoute[record.Route].add(record)
 	if record.Route == "rest" || record.Route == "rpc" {
 		c.report.DataRequests.add(record)
@@ -346,14 +381,26 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 	}
 	if record.Code != nil {
 		switch *record.Code {
-		case "query_timeout":
+		case "query_timeout", "request_deadline_exceeded":
 			c.report.Failures.Timeouts++
-		case "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "serving_contract_unavailable":
+		case "data_api_refresh_paused":
+			c.report.Failures.RefreshPaused++
+			c.report.Failures.Unavailable++
+		case "data_api_refresh_unavailable":
+			c.report.Failures.RefreshUnavailable++
+			c.report.Failures.Unavailable++
+		case "data_api_unavailable", "serving_contract_unavailable":
 			c.report.Failures.Unavailable++
 		case "schema_contract_mismatch":
 			c.report.Failures.ContractMismatch++
 		case "upstream_error":
 			c.report.Failures.Upstream++
+		case "data_api_overloaded":
+			c.report.Failures.Overloaded++
+		case "response_too_large":
+			c.report.Failures.ResponseTooLarge++
+		case "data_api_rate_limited":
+			c.report.Failures.RateLimited++
 		}
 	}
 	if c.report.RequestID != "" {
@@ -364,6 +411,7 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 func (s *dataAPIRequestStats) add(record dataAPIRequestRecord) {
 	s.Requests++
 	s.durations = append(s.durations, record.DurationMS)
+	s.Timings.add(record.Timings)
 	httpError := record.Status != nil && *record.Status >= 400
 	if httpError {
 		s.HTTPErrors++
@@ -379,17 +427,13 @@ func (s *dataAPIRequestStats) add(record dataAPIRequestRecord) {
 	}
 }
 func (s *dataAPIRequestStats) finish() {
+	s.Timings.finish()
 	if s.Requests == 0 {
 		return
 	}
 	rate := float64(s.Errors) * 100 / float64(s.Requests)
 	s.ErrorRate = &rate
-	sort.Float64s(s.durations)
-	rank := func(p float64) *float64 {
-		value := s.durations[int(math.Ceil(p*float64(len(s.durations))))-1]
-		return &value
-	}
-	s.LatencyMS = dataAPILatency{P50: rank(.50), P95: rank(.95), P99: rank(.99)}
+	s.LatencyMS = dataAPIPercentiles(s.durations)
 	s.durations = nil
 }
 func (c *dataAPIDiagnosticsCollector) finish() {
@@ -402,22 +446,7 @@ func (c *dataAPIDiagnosticsCollector) finish() {
 		}
 		c.report.QueryShapes = append(c.report.QueryShapes, *stats)
 	}
-	sort.Slice(c.report.QueryShapes, func(i, j int) bool {
-		a, b := c.report.QueryShapes[i], c.report.QueryShapes[j]
-		if a.Stats.Requests != b.Stats.Requests {
-			return a.Stats.Requests > b.Stats.Requests
-		}
-		if a.Operation != b.Operation {
-			return a.Operation < b.Operation
-		}
-		if a.Method != b.Method {
-			return a.Method < b.Method
-		}
-		if a.Fingerprint != b.Fingerprint {
-			return a.Fingerprint < b.Fingerprint
-		}
-		return a.ShapeID < b.ShapeID
-	})
+	rankDataAPIQueryShapes(c.report.QueryShapes, c.report.QueryShapeSort)
 	c.report.Operations = []dataAPIOperationStats{}
 	for _, operation := range c.operations {
 		operation.Stats.finish()
@@ -439,6 +468,7 @@ func (c *dataAPIDiagnosticsCollector) finish() {
 	c.report.Summary.finish()
 	c.report.DataRequests.finish()
 	c.report.Authentication.finish()
+	c.report.Admission.finish()
 	for _, stats := range c.report.ByRoute {
 		stats.finish()
 	}
@@ -573,7 +603,28 @@ func writeDataAPIDiagnostics(report dataAPIDiagnosticsReport) error {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(osStdout, "Gateway failures: %d authentication, %d timeouts, %d unavailable, %d contract mismatches, %d upstream\nIgnored: %d; invalid: %d; duplicates: %d; filtered: %d; gaps: %d\n", report.Failures.Authentication, report.Failures.Timeouts, report.Failures.Unavailable, report.Failures.ContractMismatch, report.Failures.Upstream, report.Ignored, report.Invalid, report.Duplicates, report.Filtered, report.Gaps); err != nil {
+	if _, err := fmt.Fprintf(osStdout, "Gateway failures: %d authentication, %d timeouts, %d unavailable, %d contract mismatches, %d upstream, %d overloaded\nIgnored: %d; invalid: %d; duplicates: %d; filtered: %d; gaps: %d\n", report.Failures.Authentication, report.Failures.Timeouts, report.Failures.Unavailable, report.Failures.ContractMismatch, report.Failures.Upstream, report.Failures.Overloaded, report.Ignored, report.Invalid, report.Duplicates, report.Filtered, report.Gaps); err != nil {
+		return err
+	}
+	if report.Failures.RefreshPaused > 0 || report.Failures.RefreshUnavailable > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Refresh findings within unavailable: %d paused, %d reader unavailable\n", report.Failures.RefreshPaused, report.Failures.RefreshUnavailable); err != nil {
+			return err
+		}
+	}
+	if report.Failures.RateLimited > 0 {
+		if _, err := fmt.Fprintf(osStdout, "User rate limits: %d observed (rejected before SQL dispatch)\n", report.Failures.RateLimited); err != nil {
+			return err
+		}
+	}
+	if report.Failures.ResponseTooLarge > 0 {
+		if _, err := fmt.Fprintf(osStdout, "Response size limits: %d observed (writes may have committed)\n", report.Failures.ResponseTooLarge); err != nil {
+			return err
+		}
+	}
+	if err := writeDataAPIAdmission(report.Admission); err != nil {
+		return err
+	}
+	if err := writeDataAPIDeadlines(report.Deadlines); err != nil {
 		return err
 	}
 	if report.First != "" {
@@ -587,6 +638,9 @@ func writeDataAPIDiagnostics(report dataAPIDiagnosticsReport) error {
 		}
 	}
 	if _, err := fmt.Fprintf(osStdout, "Query-shape coverage: %d shaped, %d unshaped data requests\n", report.ShapedRequests, report.UnshapedDataRequests); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(osStdout, "Query shape ranking: %s (gateway request observations)\n", report.QueryShapeSort); err != nil {
 		return err
 	}
 	for _, operation := range report.Operations {
@@ -637,6 +691,8 @@ func writeDataAPIDiagnosticStats(name string, stats dataAPIRequestStats) error {
 	if stats.LatencyMS.P50 != nil {
 		latency = fmt.Sprintf("%.3f / %.3f / %.3f ms", *stats.LatencyMS.P50, *stats.LatencyMS.P95, *stats.LatencyMS.P99)
 	}
-	_, err := fmt.Fprintf(osStdout, "%s: %d requests, %d errors (%s), p50/p95/p99 %s\n", name, stats.Requests, stats.Errors, rate, latency)
-	return err
+	if _, err := fmt.Fprintf(osStdout, "%s: %d requests, %d errors (%s), p50/p95/p99 %s\n", name, stats.Requests, stats.Errors, rate, latency); err != nil {
+		return err
+	}
+	return writeDataAPITimings(stats.Timings)
 }

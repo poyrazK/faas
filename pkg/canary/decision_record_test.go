@@ -13,7 +13,7 @@ import (
 	canarycatalog "github.com/onebox-faas/faas/pkg/api/canary"
 )
 
-// decisionAPID records every decision-carrying call (ADR-1354).
+// decisionAPID records every decision-carrying call (ADR-1447).
 type decisionAPID struct {
 	*exactRecoveryStub
 	advanced  []api.RolloutDecision

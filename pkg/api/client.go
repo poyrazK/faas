@@ -135,12 +135,12 @@ type Client struct {
 	cache *CompletionCache
 
 	// noConfigGuard sends `guard=false` on env and secret writes, so they
-	// open no config guard (ADR-1391, CLI --no-guard).
+	// open no config guard (ADR-1451, CLI --no-guard).
 	noConfigGuard bool
 }
 
 // WithoutConfigGuard returns a client whose env and secret writes open no
-// config guard (ADR-1391). The receiver is unchanged.
+// config guard (ADR-1451). The receiver is unchanged.
 func (c *Client) WithoutConfigGuard() *Client {
 	cp := *c
 	cp.noConfigGuard = true
@@ -2318,7 +2318,7 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 }
 
 // RollbackWithRequest sends a full rollback request, for fields such as
-// AcknowledgeReleases (ADR-1355) that the narrower helpers do not carry.
+// AcknowledgeReleases (ADR-1448) that the narrower helpers do not carry.
 func (c *Client) RollbackWithRequest(ctx context.Context, slug string, req RollbackRequest) (DeploymentResponse, error) {
 	var out DeploymentResponse
 	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", req, &out, "")
@@ -4711,7 +4711,7 @@ func (c *Client) RotateSecretWithScope(ctx context.Context, slug, key, value, sc
 }
 
 // ListConfigRevisions lists a scope's config revisions, newest first, with
-// its newest config guard (ADR-1391). limit <= 0 uses the server default.
+// its newest config guard (ADR-1451). limit <= 0 uses the server default.
 func (c *Client) ListConfigRevisions(ctx context.Context, slug, scope string, limit int) (ListConfigRevisionsResponse, error) {
 	var out ListConfigRevisionsResponse
 	v := url.Values{}

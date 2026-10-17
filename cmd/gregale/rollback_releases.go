@@ -13,7 +13,7 @@ import (
 // release commands; requireTyped has already said so.
 var errRollbackDeclined = errors.New("rollback over release commands not confirmed")
 
-// sendRollbackOverReleases sends a rollback and handles ADR-1355's
+// sendRollbackOverReleases sends a rollback and handles ADR-1448's
 // rollback_crosses_release: it prints the release commands the rollback
 // would not undo and the restore commands for managed databases, then
 // retries with acknowledgement when acknowledge is set or the person retypes
@@ -40,7 +40,7 @@ func sendRollbackOverReleases(slug string, req api.RollbackRequest, acknowledge 
 }
 
 // releaseSummaryLine describes a deployment's release command run
-// (ADR-1355), or "" for a deployment without one.
+// (ADR-1448), or "" for a deployment without one.
 func releaseSummaryLine(r *api.DeploymentRelease) string {
 	if r == nil {
 		return ""

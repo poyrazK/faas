@@ -24,7 +24,7 @@ func StageDwell(stage canary.Stage, decision *api.RolloutDecision) time.Duration
 }
 
 // WorkerDecision validates the evidence meterd attached to a Safe Deploy
-// request and encodes it for storage (ADR-1354). A nil decision is allowed
+// request and encodes it for storage (ADR-1447). A nil decision is allowed
 // (an older meterd sends none) and encodes to nil. kind is the decision kind
 // the route accepts.
 func WorkerDecision(decision *api.RolloutDecision, kind string) (json.RawMessage, error) {
@@ -41,7 +41,7 @@ func WorkerDecision(decision *api.RolloutDecision, kind string) (json.RawMessage
 }
 
 // ManualDecision is the record APID writes for a transition a person asked
-// for (ADR-1354). It names the rule only; no request text is copied.
+// for (ADR-1447). It names the rule only; no request text is copied.
 func ManualDecision(rule string, d state.Deployment, at time.Time) json.RawMessage {
 	summary := "requested through the API"
 	if rule == api.RolloutRuleAbortManual {

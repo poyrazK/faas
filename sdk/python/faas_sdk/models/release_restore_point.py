@@ -14,7 +14,7 @@ T = TypeVar("T", bound="ReleaseRestorePoint")
 @_attrs_define
 class ReleaseRestorePoint:
     """The moment before the earliest crossed release for one managed PostgreSQL database the app's release commands can
-    migrate (ADR-1355), with the command that restores it into a new database.
+    migrate (ADR-1448), with the command that restores it into a new database.
 
     """
 

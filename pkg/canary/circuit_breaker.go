@@ -30,7 +30,7 @@ const (
 	// require a smaller but still useful denominator before comparing rates.
 	CircuitBreakerMinDependencyCalls int64 = 10
 	// CircuitBreakerMinCrashLoopRestarts is how many liveness-driven restarts
-	// of the candidate mark a crash loop (ADR-1353). Restarts need no request
+	// of the candidate mark a crash loop (ADR-1446). Restarts need no request
 	// sample, so a crash-looping release is caught even with no traffic.
 	CircuitBreakerMinCrashLoopRestarts float64 = 2
 
@@ -77,7 +77,7 @@ type HealthWindow struct {
 	DependencyCalls      int64
 	DependencyErrors     int64
 	// ProbeRequests and ProbeServerErrors are synthetic probe responses
-	// attributed to this deployment over the stage (ADR-1353), excluding
+	// attributed to this deployment over the stage (ADR-1446), excluding
 	// responses rejected by the app's own auth. They join the 5xx sample only
 	// while organic traffic is below the request floor and never feed
 	// latency, cold-boot, CPU, or dependency comparisons.
@@ -95,7 +95,7 @@ type CircuitBreakerObservation struct {
 	OOMKills           float64
 	OOMSignalAvailable bool
 	// Liveness-driven destroy+cold-boot cycles in the rollout window
-	// (ADR-1353). LivenessSignalAvailable is false when the metric family is
+	// (ADR-1446). LivenessSignalAvailable is false when the metric family is
 	// not exported, which holds rather than reading as zero restarts.
 	CandidateLivenessRestarts float64
 	StableLivenessRestarts    float64
@@ -217,7 +217,7 @@ func EvaluateCircuitBreaker(o CircuitBreakerObservation) CircuitBreakerDecision 
 }
 
 // LowTrafficAdvanceAllowed reports whether an inconclusive hold is only a
-// sample-size hold with no negative evidence (ADR-1353). A scale-to-zero app
+// sample-size hold with no negative evidence (ADR-1446). A scale-to-zero app
 // may never send twenty requests to a 1% candidate, so an unbounded hold
 // would strand it there. Any candidate 5xx, OOM kill, liveness restart, or
 // unreadable OOM or liveness signal keeps the hold; regressions with enough
@@ -236,7 +236,7 @@ func LowTrafficAdvanceAllowed(d CircuitBreakerDecision, o CircuitBreakerObservat
 }
 
 // ProbeEvidenceAdvanceAllowed reports whether synthetic probes cover a
-// request-sample hold (ADR-1353): organic plus probe responses meet the
+// request-sample hold (ADR-1446): organic plus probe responses meet the
 // request floor on both sides, the candidate shows no 5xx regression against
 // its predecessor, and the OOM and liveness signals are readable and clean.
 // The canary then advances at the stage boundary on evidence instead of
@@ -268,7 +268,7 @@ func withProbes(w HealthWindow) HealthWindow {
 }
 
 // probeBacked5xx applies the 5xx rules to organic plus probe responses while
-// organic traffic is below the request floor (ADR-1353), so a quiet canary
+// organic traffic is below the request floor (ADR-1446), so a quiet canary
 // that fails its probes aborts before it is promoted.
 func probeBacked5xx(o CircuitBreakerObservation) (CircuitBreakerDecision, bool) {
 	if o.Candidate.ProbeRequests == 0 && o.Stable.ProbeRequests == 0 {
@@ -286,7 +286,7 @@ func probeBacked5xx(o CircuitBreakerObservation) (CircuitBreakerDecision, bool) 
 }
 
 // ServerErrorRegression applies the breaker's 5xx rate comparison to two
-// samples that both meet CircuitBreakerMinRequests. Config guards (ADR-1391)
+// samples that both meet CircuitBreakerMinRequests. Config guards (ADR-1451)
 // judge a config change against the config before it with the same rule.
 func ServerErrorRegression(candidate, stable HealthWindow) (CircuitBreakerDecision, bool) {
 	if candidate.Requests < CircuitBreakerMinRequests || stable.Requests < CircuitBreakerMinRequests {

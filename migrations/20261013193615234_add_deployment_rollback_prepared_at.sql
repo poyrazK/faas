@@ -1,6 +1,6 @@
 -- filename: 20261013193615234_add_deployment_rollback_prepared_at.sql
 --
--- ADR-1353 follow-up: a plain rollback (`POST /v1/apps/{slug}/rollback`,
+-- ADR-1446 follow-up: a plain rollback (`POST /v1/apps/{slug}/rollback`,
 -- including the first-wake 5xx auto-rollback) prepares an older revision and
 -- asks imaged to activate it. imaged fences automatic promotion of image,
 -- GitHub, and preview deployments against newer revisions, which superseded

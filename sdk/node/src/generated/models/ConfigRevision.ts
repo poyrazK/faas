@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One recorded config change, without values (ADR-1391).
+ * One recorded config change, without values (ADR-1451).
  */
 export type ConfigRevision = {
   revision: number;

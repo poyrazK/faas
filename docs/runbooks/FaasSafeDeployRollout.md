@@ -112,7 +112,7 @@ ORDER BY at ASC, id ASC;
 ```
 
 Why a canary advanced, is held, or was aborted is recorded with the transition
-([ADR-1354](../adr/1354-explained-rollout-decisions.md)), so meterd's log is
+([ADR-1447](../adr/1447-explained-rollout-decisions.md)), so meterd's log is
 not needed to explain a rollout:
 
 ```sql
@@ -168,14 +168,14 @@ these staging checks against an app with a known-good predecessor:
   `canary_progression_circuit_breaker_total{event="hold_insufficient_samples"}`
   increases. Send enough requests to both revisions; after the next stage
   boundary, confirm progression resumes.
-- **Bounded low-traffic hold (ADR-1353):** repeat the low-traffic check without
+- **Bounded low-traffic hold (ADR-1446):** repeat the low-traffic check without
   sending requests. Once the stage duration plus `CanaryLowTrafficMaxHold`
   (5 minutes) has passed with zero candidate 5xx and a readable zero OOM
   signal, confirm the stage advances and
   `canary_progression_circuit_breaker_total{event="advance_low_traffic"}`
   increases. Send a single candidate 5xx in a fresh rollout and confirm it
   keeps holding instead. This path runs only when probes give no evidence.
-- **Probe-backed low traffic (ADR-1353):** with `FAAS_ROUTE_PROBE_URL` set on
+- **Probe-backed low traffic (ADR-1446):** with `FAAS_ROUTE_PROBE_URL` set on
   apid, a quiet safe-policy canary gets `GET /` probes on both revisions.
   Confirm `route_probe_observations` gains rows with path `/` for the
   candidate and the predecessor (20 requests each per minute, ADR-1321), and
@@ -196,19 +196,19 @@ these staging checks against an app with a known-good predecessor:
   meterd logs "canary: stage advanced before its timer on clean evidence" for
   the early ones. A stage still at its first minute never advances, and one
   with too few samples waits for its 2-minute timer as before.
-- **Smoke verifier prerequisite (ADR-1353):** confirm imaged has
+- **Smoke verifier prerequisite (ADR-1446):** confirm imaged has
   `FAAS_API_HOSTING_SMOKE_URL` before relying on the default. Without it every
   canary deployment, including a defaulted one, fails with
   `public hosting smoke verifier is required but not configured`; on such a
   host set `FAAS_SAFE_RELEASE_DEFAULT_ENABLED=false` on apid.
-- **Crash loop (ADR-1353):** deploy a candidate whose liveness endpoint fails
+- **Crash loop (ADR-1446):** deploy a candidate whose liveness endpoint fails
   after startup, on an app with almost no traffic. Confirm the rollout aborts
   after two liveness restarts without waiting for request samples, the exact
   predecessor returns to 100%, and
   `canary_progression_circuit_breaker_total{event="abort_crash_loop"}`
   increases. With the `liveness_restarts_total` family missing, confirm the
   stage holds with `hold_signal_unavailable` instead.
-- **Rollback outcome (ADR-1353, `FaasRollbackNotRestored`,
+- **Rollback outcome (ADR-1446, `FaasRollbackNotRestored`,
   `FaasRollbackRecoverySlow`):** after a plain rollback, read the receipt with
   `gregale rollback status <app> --operation <id>`. `complete` carries
   `recovery_ms`; `failed` carries `code` and `error` and means the release
@@ -217,7 +217,7 @@ these staging checks against an app with a known-good predecessor:
   `--to <revision>` or deploy a fix; `rollback_target_not_activated` with a
   smoke error code points at the target's post-readiness smoke, and
   `rollback_timeout` at a restore or cold boot that never finished.
-- **Default policy fallback (ADR-1353):** with meterd stopped and its lease
+- **Default policy fallback (ADR-1446):** with meterd stopped and its lease
   expired, deploy a flag-free release of a live app. Confirm the deploy
   succeeds with an immediate cutover and `rollback_on_5xx=true`, and apid
   logs `default release policy: canary worker unavailable`. To disable the

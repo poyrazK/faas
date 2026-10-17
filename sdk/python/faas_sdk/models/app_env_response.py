@@ -27,7 +27,7 @@ class AppEnvResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     config_change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it (ADR-1391)."""
+    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

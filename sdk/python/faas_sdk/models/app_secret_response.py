@@ -60,7 +60,7 @@ class AppSecretResponse:
     """Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact
     version starts successfully."""
     config_change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it (ADR-1391)."""
+    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
     kid: str | Unset = UNSET
     """age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before
     migration 00166."""

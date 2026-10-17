@@ -3642,7 +3642,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
-	// ADR-1353: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// ADR-1446: a plain rollback (manual or first-wake 5xx auto-rollback)
 	// deliberately activates an older revision. Like a checked rollback it
 	// must skip the latest-revision fence and the source-branch freshness
 	// check, which would otherwise supersede every rollback target.
@@ -4179,8 +4179,8 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 }
 
 // markDeployFailed transitions a deployment to `failed` with the given
-// RFC 7807 code (or "" if the upstream error didn't map to a sentinel)
-// and a free-text message. The code column carries the stable signal;
+// RFC 7807 code (deploy_failed if the upstream error didn't map to a
+// sentinel, as schedd's prime failure does; H10-107) and a free-text message. The code column carries the stable signal;
 // the message preserves the upstream string for debugging. Returns
 // the mark error so the caller can choose to log-and-continue or
 // bubble it up; in practice callers ignore the mark error (the
@@ -4205,6 +4205,9 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	}
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
 	}
 	detail := err.Error()
 	if prefix != "" {

@@ -140,6 +140,26 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
+	hostingCredentials                         map[string]api.HostingAutomationCredential
+	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
+	hostingCIRuns                              map[string]api.HostingCIRun
+	hostingHistory                             map[string][]api.HostingPromotionEvent
+	hostingPreviews                            map[string]api.HostingPreview
+	hostingDomains                             map[string]memHostingDomain
+	hostingDomainClaims                        map[string]string
+	hostingSites                               map[string]api.HostingSite
+	hostingReleases                            map[string]api.HostingRelease
+	hostingPublications                        map[string]hostingPublication
+	eventAcknowledgmentWriters                 map[string]eventAcknowledgmentWriter
+	eventAcknowledgmentCoverageHead            eventAcknowledgmentCoverageHead
+	eventAcknowledgmentMetrics                 map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
+	eventAcknowledgments                       map[string]eventAcknowledgment
+	eventAcknowledgmentOutcomes                map[eventAcknowledgmentOutcomeKey]api.EventAcknowledgmentOutcome
+	projectReleaseStages                       map[string]projectReleaseStage
+	bindingVerificationRuns                    map[string]verificationRunRecord
+	graphVerificationRuns                      map[string]graphVerificationRecord
+	queueBindingCanaries                       map[string]queueCanaryRecord
 	baseImageProducers                         map[string]BaseImageProducer
 	baseImageProducerCurrent                   map[string]string
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
@@ -261,6 +281,7 @@ type MemStore struct {
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
+	eventSubscriptionRateCommands     map[string]memSubscriptionRateCommand
 	eventSubscriptionCapacityCommands map[string]memSubscriptionCapacityCommand
 	eventRecoveryJobs                 map[string]*memEventRecoveryJob
 	workflowCodePins                  map[string]time.Time
@@ -280,13 +301,13 @@ type MemStore struct {
 	// environmentWorkloadQueueServingAcks can arrive before the controller has
 	// created the serving receipt; keyed per graph/binding to mirror Postgres.
 	environmentWorkloadQueueServingAcks map[string]map[string]EnvironmentWorkloadServingQueueAck
-	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1353).
+	// rollbackPrepared mirrors deployments.rollback_prepared_at (ADR-1446).
 	rollbackPrepared map[string]time.Time
-	// rollbackRecords mirrors deployment_rollbacks (ADR-1353).
+	// rollbackRecords mirrors deployment_rollbacks (ADR-1446).
 	rollbackRecords map[string]RollbackRecord
 	// configRevisions, configGuards and configGuardSecrets mirror
 	// app_config_revisions, app_config_guards and app_config_guard_secrets
-	// (ADR-1391). Revisions are kept in revision order per scope.
+	// (ADR-1451). Revisions are kept in revision order per scope.
 	configRevisions    map[configScopeKey][]ConfigRevision
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
@@ -401,6 +422,10 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
+	apiConsumerTrials                    map[string]APIConsumerTrial            // ADR-1314
+	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket // ADR-1318
+	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy    // ADR-1315, by app
+	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold      // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
@@ -528,24 +553,28 @@ type MemStore struct {
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
-	workflowResumes             map[string][]WorkflowResume
-	workflowRuns                map[string]WorkflowRun
-	workflowRunCreateKeys       map[workflowRunCreateKey]workflowRunCreateKeyEntry
-	workflowSchedules           map[string]WorkflowScheduleCursor
-	workflowTenantSchedules     map[string]WorkflowScheduleCursor
-	workflowScheduleOccurrences map[string]WorkflowScheduleOccurrence
-	automationFailurePolicies   map[string]api.AutomationFailurePolicy
-	automationFailureGuards     map[string]automationFailureGuard
-	automationFailureHistory    map[string][]api.AutomationFailureTransition
-	automationPublishPolicies   map[string]api.AutomationPublishPolicy
-	automationPublishReceipts   map[string]automationPublishReceipt
-	automationVersion           int64
-	automations                 map[string]Automation
-	automationRevisions         map[string][]AutomationRevision
-	workflowSteps               map[string]map[string]WorkflowStep // run_id → step_name → step
-	workflowStepAttempts        map[workflowStepAttemptKey]WorkflowStepAttempt
-	workflowOperationEffects    map[workflowStepAttemptKey][]workflowOperationStoredEffect
-	workflowEvents              map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowResumes                   map[string][]WorkflowResume
+	workflowRuns                      map[string]WorkflowRun
+	workflowRunCreateKeys             map[workflowRunCreateKey]workflowRunCreateKeyEntry
+	automationLiveVerifications       map[string]automationLiveRecord
+	automationLiveSuites              map[string]automationLiveSuiteRecord
+	automationLiveBaselines           map[string][]api.AutomationLiveBaseline
+	automationLiveBaselineRetirements map[string]api.AutomationLiveBaselineRetirement
+	workflowSchedules                 map[string]WorkflowScheduleCursor
+	workflowTenantSchedules           map[string]WorkflowScheduleCursor
+	workflowScheduleOccurrences       map[string]WorkflowScheduleOccurrence
+	automationFailurePolicies         map[string]api.AutomationFailurePolicy
+	automationFailureGuards           map[string]automationFailureGuard
+	automationFailureHistory          map[string][]api.AutomationFailureTransition
+	automationPublishPolicies         map[string]api.AutomationPublishPolicy
+	automationPublishReceipts         map[string]automationPublishReceipt
+	automationVersion                 int64
+	automations                       map[string]Automation
+	automationRevisions               map[string][]AutomationRevision
+	workflowSteps                     map[string]map[string]WorkflowStep // run_id → step_name → step
+	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
+	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
+	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -936,6 +965,9 @@ type MemStore struct {
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
 	routePriorities     map[string]memRoutePriorities
 	platformTenantUsage map[string]APIConsumerUsageBucket
+	// platformTenantSourceRouteUsage counts surface and JWT-rule requests per
+	// route (ADR-1310).
+	platformTenantSourceRouteUsage map[string]PlatformTenantSourceRouteUsageBucket
 	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
 	apiConsumerPlans           map[string]APIConsumerPlan
@@ -946,6 +978,21 @@ type MemStore struct {
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
 	// apiConsumerUsageAlerts are recorded plan alert crossings (ADR-849).
 	apiConsumerUsageAlerts []APIConsumerUsageAlert
+	// apiConsumerCreditGrants (by ID), apiConsumerCreditApplications and
+	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
+	// caps (ADR-1306).
+	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditApplications []apiConsumerCreditApplication
+	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
+	// billingConnections and statementInvoiceExports back statement invoice
+	// exports (ADR-1502); keyed by account/provider and export ID.
+	billingConnections      map[string]BillingConnection
+	statementInvoiceExports map[string]StatementInvoiceExport
+	// billingRuns, billingRunItems (run ID → item key) and
+	// billingRunSchedules (account ID) back billing runs (ADR-1503).
+	billingRuns            map[string]BillingRun
+	billingRunItems        map[string]map[string]BillingRunItem
+	billingRunSchedules    map[string]BillingRunSchedule
 	apiConsumerUsageEvents map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
@@ -954,6 +1001,10 @@ type MemStore struct {
 	// platformTenantRateCards is keyed by card ID and unique per tenant and
 	// effective minute, matching the immutable Postgres commercial tariff log.
 	platformTenantRateCards map[string]PlatformTenantRateCard
+	// platformTenantPlans (by ID) and platformTenantPlanAssignments back
+	// tenant plans (ADR-1307).
+	platformTenantPlans           map[string]PlatformTenantPlan
+	platformTenantPlanAssignments []PlatformTenantPlanAssignment
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
@@ -3475,6 +3526,11 @@ func (m *MemStore) UpdateProjectBinding(_ context.Context, accountID, projectID,
 func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID {
+			return ErrConflict
+		}
+	}
 	p, ok := m.projects[projectID]
 	if !ok {
 		return ErrNotFound
@@ -3694,6 +3750,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID && site.Environment == slug {
+			return ProjectEnvironmentCleanupJob{}, ErrConflict
+		}
 	}
 
 	for _, app := range m.apps {
@@ -6324,11 +6385,16 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	var guardErr error
+	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if (p.SetRequireSigned && boolOrFalse(p.RequireSigned) != a.RequireSigned && m.standardManagedControlLocked(a.ID, appstandards.RequireSigned)) ||
 		(p.SetSecurityPolicy && p.SecurityPolicy != nil && *p.SecurityPolicy != a.SecurityPolicy && m.standardManagedControlLocked(a.ID, appstandards.SecurityPolicy)) ||
 		(p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.EgressAllowlist) && m.standardManagedControlLocked(a.ID, appstandards.EgressCIDRs)) ||
@@ -8057,7 +8123,7 @@ func (m *MemStore) RecoverRolloutForDeployment(ctx context.Context, appID, deplo
 	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, nil)
 }
 
-// RecoverRolloutForDeploymentWithDecision mirrors PgStore (ADR-1354).
+// RecoverRolloutForDeploymentWithDecision mirrors PgStore (ADR-1447).
 func (m *MemStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, appID, deploymentID, expectedPredecessorID, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	if deploymentID == "" || expectedPredecessorID == "" || sameDeploymentID(deploymentID, expectedPredecessorID) || action != "abort" {
 		return Deployment{}, 0, ErrRolloutStateInvalid
@@ -8065,7 +8131,7 @@ func (m *MemStore) RecoverRolloutForDeploymentWithDecision(ctx context.Context, 
 	return m.recoverRollout(ctx, appID, deploymentID, expectedPredecessorID, action, reason, decision)
 }
 
-// RecoverRolloutWithDecision mirrors PgStore (ADR-1354).
+// RecoverRolloutWithDecision mirrors PgStore (ADR-1447).
 func (m *MemStore) RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error) {
 	return m.recoverRollout(ctx, appID, "", "", action, reason, decision)
 }
@@ -8221,7 +8287,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return *target, auditID, nil
 	}
 
-	// ADR-1354: the transition records its decision, or clears a stale one.
+	// ADR-1447: the transition records its decision, or clears a stale one.
 	target.RolloutDecision = cloneRawJSON(decision)
 	switch action {
 	case "advance":
@@ -9033,7 +9099,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
-	// A prepared rollback is consumed by its promotion (ADR-1353).
+	// A prepared rollback is consumed by its promotion (ADR-1446).
 	defer func() {
 		if err == nil {
 			delete(m.rollbackPrepared, id)
@@ -13645,6 +13711,9 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	defer m.mu.Unlock()
 	ids := make([]string, 0)
 	for id, inv := range m.invocations {
+		if ack, ok := m.eventAcknowledgments[id]; ok && ack.phase == "awaiting" && ack.claim.Attempt == inv.Attempts && ack.claim.ReplayGeneration == inv.ReplayGeneration {
+			continue
+		}
 		if inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(now) {
 			continue
 		}
@@ -13728,6 +13797,9 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.completeInvocationAndQueueServingAckLocked(id, attempt, claim, result, queueServingAck, classification...)
+}
+func (m *MemStore) completeInvocationAndQueueServingAckLocked(id string, attempt int, claim *InvocationClaim, result json.RawMessage, queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement, classification ...InvocationWorkClassification) error {
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound
@@ -18432,7 +18504,7 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 		inv.PeriodEnd = inv.PeriodStart
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	if inv.Status == "" {
 		inv.Status = "open"
@@ -18674,7 +18746,7 @@ func (m *MemStore) SeedInvoiceForTest(inv Invoice) {
 		inv.ID = "inv-" + inv.ProviderInvoiceID
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	m.invoices[inv.ID] = cloneInvoice(inv)
 }
@@ -25815,7 +25887,7 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 	// SQLSTATE 23514. Pin the surface here so pg ↔ memstore agree.
 	for _, s := range scopes {
 		switch s {
-		case "read", "write", "admin":
+		case "read", "write", "admin", "billing":
 			// ok
 		default:
 			return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: scope %q is not in the closed-set {read, write, admin} (00329 vocab CHECK)", s)

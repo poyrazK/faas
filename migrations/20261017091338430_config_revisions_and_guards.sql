@@ -1,6 +1,6 @@
 -- filename: 20261017091338430_config_revisions_and_guards.sql
 --
--- ADR-1391: guarded, reversible config changes. Customer writes to an app
+-- ADR-1451: guarded, reversible config changes. Customer writes to an app
 -- scope's variables or secrets overwrite app_envs/app_secrets in place, so a
 -- bad value could neither be noticed nor undone. Each write now records a
 -- complete revision of the scope (variable values, secret versions and value

@@ -12,7 +12,7 @@ T = TypeVar("T", bound="ReleaseDatabaseRef")
 
 @_attrs_define
 class ReleaseDatabaseRef:
-    """A managed PostgreSQL database a release command can migrate (ADR-1355)."""
+    """A managed PostgreSQL database a release command can migrate (ADR-1448)."""
 
     id: UUID
     name: str

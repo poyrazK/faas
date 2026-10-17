@@ -62,8 +62,8 @@ T = TypeVar("T", bound="CreateAppRequest")
 
 @_attrs_define
 class CreateAppRequest:
-    """App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout,
-    and optional manifest.
+    """App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB,
+    max concurrency, idle timeout, and optional manifest.
 
     """
 
@@ -184,9 +184,9 @@ class CreateAppRequest:
     revision_pin_ttl_seconds: int | Unset = 0
     """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     release_policy: CreateAppRequestReleasePolicy | Unset = UNSET
-    """Default rollout for production releases that name no rollout policy (ADR-1353, ADR-1352). Omit for safe."""
+    """Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe."""
     release_probe_paths: list[str] | Unset = UNSET
-    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1351)."""
+    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449)."""
     streaming_enabled: bool | Unset = UNSET
     """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
     websocket_enabled: bool | Unset = UNSET

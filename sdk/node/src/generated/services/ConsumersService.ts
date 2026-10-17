@@ -2,7 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APIConsumerBillingPolicyResponse } from '../models/APIConsumerBillingPolicyResponse.js';
+import type { APIConsumerCreditListResponse } from '../models/APIConsumerCreditListResponse.js';
+import type { APIConsumerCreditResponse } from '../models/APIConsumerCreditResponse.js';
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
+import type { APIConsumerOverdueHoldListResponse } from '../models/APIConsumerOverdueHoldListResponse.js';
 import type { APIConsumerPlanAssignmentListResponse } from '../models/APIConsumerPlanAssignmentListResponse.js';
 import type { APIConsumerPlanAssignmentResponse } from '../models/APIConsumerPlanAssignmentResponse.js';
 import type { APIConsumerPlanListResponse } from '../models/APIConsumerPlanListResponse.js';
@@ -10,6 +14,8 @@ import type { APIConsumerPlanResponse } from '../models/APIConsumerPlanResponse.
 import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateCardListResponse.js';
 import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerSpendCapResponse } from '../models/APIConsumerSpendCapResponse.js';
+import type { APIConsumerTrialResponse } from '../models/APIConsumerTrialResponse.js';
 import type { APIConsumerUsageAlertListResponse } from '../models/APIConsumerUsageAlertListResponse.js';
 import type { APIConsumerUsageCompletenessResponse } from '../models/APIConsumerUsageCompletenessResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
@@ -19,18 +25,124 @@ import type { APIConsumerUsageStatementListResponse } from '../models/APIConsume
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
 import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
+import type { ConsumerBillingStatementsResponse } from '../models/ConsumerBillingStatementsResponse.js';
+import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSummaryResponse.js';
+import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
+import type { CreateAPIConsumerCreditRequest } from '../models/CreateAPIConsumerCreditRequest.js';
 import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPlanRequest.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
+import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
+import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
+import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
+import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ConsumersService {
+  /**
+   * Read your own month-to-date usage and spend with your consumer key (ADR-1506).
+   * For an app's customers, not operators. Authenticate with a consumer
+   * key that carries the billing scope. The amount is priced like the
+   * next statement, but late usage can still change it.
+   *
+   * @returns ConsumerBillingSummaryResponse The consumer's month to date.
+   * @throws ApiError
+   */
+  public static getConsumerBillingSummary({
+    slug,
+  }: {
+    /**
+     * The app whose consumer key authenticates the request.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerBillingSummaryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `The consumer key lacks the billing scope.`,
+        429: `The key exceeded 60 billing requests per minute (\`consumer_billing_rate_limited\`).`,
+      },
+    });
+  }
+  /**
+   * Read your own daily usage with your consumer key.
+   * @returns ConsumerBillingUsageResponse Requests and billable units per UTC day.
+   * @throws ApiError
+   */
+  public static getConsumerBillingUsage({
+    slug,
+    since,
+    until,
+  }: {
+    /**
+     * The app whose usage is read.
+     */
+    slug: string,
+    /**
+     * RFC 3339 start (default the start of the current UTC month).
+     */
+    since?: string,
+    /**
+     * RFC 3339 end, at most 31 days after since (default now).
+     */
+    until?: string,
+  }): CancelablePromise<ConsumerBillingUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/usage',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `This consumer key has no billing scope.`,
+        429: `Too many billing requests for this key.`,
+      },
+    });
+  }
+  /**
+   * Read your own finalized statements and invoice status with your consumer key.
+   * @returns ConsumerBillingStatementsResponse The latest 24 finalized statements, newest first, each with its invoice's payment status.
+   * @throws ApiError
+   */
+  public static listConsumerBillingStatements({
+    slug,
+  }: {
+    /**
+     * The app whose statements are read.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerBillingStatementsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/statements',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `A consumer key without the billing scope cannot list statements.`,
+        429: `Statement reads for this key are rate limited.`,
+      },
+    });
+  }
   /**
    * List stable API consumer identities for an app.
    * @returns APIConsumerListResponse Consumer identities (never includes credentials).
@@ -563,6 +675,110 @@ export class ConsumersService {
     });
   }
   /**
+   * Read the app consumer statement's invoice export.
+   * @returns StatementInvoiceExportResponse The app consumer statement's export.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageStatementInvoice({
+    slug,
+    consumerId,
+    statementId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose statement is exported.
+     */
+    consumerId: string,
+    /**
+     * Finalized statement revision to export.
+     */
+    statementId: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
+   * Exports one finalized app consumer statement revision to the
+   * provider in the body (default stripe; connect it with
+   * PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
+   * Stripe and Paddle receive drafts that Gregale never finalizes or
+   * sends; Lago issues its one-off invoice immediately but never charges
+   * it. One item per rate card and unit price, plus a rounding item, makes
+   * the invoice equal the statement total rounded to the cent; with a
+   * negative line, Paddle and Lago get a single summary item instead. The
+   * statement's handoff records the provider invoice ID on success. A retry
+   * resumes the same invoice, a completed export is returned as is, and a
+   * statement exports to one provider only. Two-decimal currencies only;
+   * Paddle takes USD, EUR and GBP.
+   *
+   * @returns StatementInvoiceExportResponse The completed app consumer statement export.
+   * @throws ApiError
+   */
+  public static exportApiConsumerUsageStatementInvoice({
+    slug,
+    consumerId,
+    statementId,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose statement is exported.
+     */
+    consumerId: string,
+    /**
+     * Finalized statement revision to export.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateStatementInvoiceRequest,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The app consumer statement or customer cannot be invoiced, or the provider rejected the request.`,
+        502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
+      },
+    });
+  }
+  /**
    * List an app's immutable API consumer rate cards.
    * @returns APIConsumerRateCardListResponse Rate-card history in effective-time order.
    * @throws ApiError
@@ -817,6 +1033,452 @@ export class ConsumersService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List a consumer's prepaid credit grants, newest first, with the usable balance per currency (ADR-1306).
+   * @returns APIConsumerCreditListResponse The consumer's grants and balances.
+   * @throws ApiError
+   */
+  public static listApiConsumerCredits({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose prepaid credit is listed or granted.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerCreditListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/credits',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Grant a consumer prepaid credit.
+   * Finalized statements in the credit's currency draw it down, the grant
+   * that expires first before grants that never expire, in the same
+   * transaction that finalizes them (ADR-1306). Credit never pays more
+   * than a statement's amount. A consumer holds at most 100 grants with
+   * credit left.
+   *
+   * @returns APIConsumerCreditResponse The new grant.
+   * @throws ApiError
+   */
+  public static createApiConsumerCredit({
+    slug,
+    consumerId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose prepaid credit is listed or granted.
+     */
+    consumerId: string,
+    requestBody: CreateAPIConsumerCreditRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerCreditResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/credits',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The consumer already holds 100 grants with credit left.`,
+        422: `Invalid currency, amount, note or expiry.`,
+      },
+    });
+  }
+  /**
+   * Void what is left of a prepaid credit grant; credit already applied stays applied.
+   * @returns APIConsumerCreditResponse The voided grant.
+   * @throws ApiError
+   */
+  public static voidApiConsumerCredit({
+    slug,
+    consumerId,
+    creditId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer that holds the credit.
+     */
+    consumerId: string,
+    /**
+     * Credit grant to void.
+     */
+    creditId: string,
+  }): CancelablePromise<APIConsumerCreditResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/credits/{credit_id}',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'credit_id': creditId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read a consumer's monthly spend cap and its last check.
+   * @returns APIConsumerSpendCapResponse The cap and whether it is reached this month.
+   * @throws ApiError
+   */
+  public static getApiConsumerSpendCap({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose monthly spend is capped.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerSpendCapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set a consumer's monthly spend cap (ADR-1306).
+   * Once the month's amount due passes the cap, the gateway answers the
+   * consumer with 402 `consumer_spend_cap_reached` until the month ends,
+   * the cap rises or credit is added. The amount due is the month to
+   * date priced like a statement, minus usable prepaid credit. apid
+   * checks it every minute and at once when the cap or credit changes,
+   * so a consumer can overshoot by about two minutes of traffic. A zero
+   * cap allows prepaid usage only.
+   *
+   * @returns APIConsumerSpendCapResponse The stored cap, checked at once.
+   * @throws ApiError
+   */
+  public static putApiConsumerSpendCap({
+    slug,
+    consumerId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose monthly spend is capped.
+     */
+    consumerId: string,
+    requestBody: PutAPIConsumerSpendCapRequest,
+  }): CancelablePromise<APIConsumerSpendCapResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Invalid currency or cap.`,
+      },
+    });
+  }
+  /**
+   * Remove a consumer's spend cap.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiConsumerSpendCap({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose monthly spend is capped.
+     */
+    consumerId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read a consumer's free trial (ADR-1314).
+   * @returns APIConsumerTrialResponse The consumer's trial.
+   * @throws ApiError
+   */
+  public static getApiConsumerTrial({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose free trial is read or changed.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Start a consumer's one free trial, or move the end of a running one.
+   * Usage in the trial is priced at zero and consumes no included units.
+   * A new trial starts at the next UTC minute; a running trial's end can
+   * move, never before the next minute. A consumer whose trial has ended
+   * cannot get another (409).
+   *
+   * @returns APIConsumerTrialResponse The stored trial.
+   * @throws ApiError
+   */
+  public static putApiConsumerTrial({
+    slug,
+    consumerId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose free trial is read or changed.
+     */
+    consumerId: string,
+    requestBody: PutAPIConsumerTrialRequest,
+  }): CancelablePromise<APIConsumerTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid trial length or end.`,
+      },
+    });
+  }
+  /**
+   * End a consumer's running trial at the next minute.
+   * @returns void
+   * @throws ApiError
+   */
+  public static endApiConsumerTrial({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose free trial is read or changed.
+     */
+    consumerId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the app's overdue-invoice rule (ADR-1315).
+   * @returns APIConsumerBillingPolicyResponse The app's overdue rule.
+   * @throws ApiError
+   */
+  public static getApiConsumerBillingPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIConsumerBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Refuse consumers whose exported invoice is unpaid some days after its due date.
+   * Every 5 minutes apid places a hold on each consumer whose exported
+   * invoice is open or uncollectible with an amount left at least
+   * block_overdue_after_days past its due date, and lifts holds that no
+   * longer apply. The gateway answers a held consumer with 402
+   * `consumer_invoice_overdue`.
+   *
+   * @returns APIConsumerBillingPolicyResponse The stored rule.
+   * @throws ApiError
+   */
+  public static putApiConsumerBillingPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutAPIConsumerBillingPolicyRequest,
+  }): CancelablePromise<APIConsumerBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Days outside 0 to 365.`,
+      },
+    });
+  }
+  /**
+   * Remove the app's overdue rule; holds lift at the next check.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiConsumerBillingPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the consumers the gateway refuses because of an overdue invoice.
+   * @returns APIConsumerOverdueHoldListResponse The app's held consumers, oldest due date first.
+   * @throws ApiError
+   */
+  public static listApiConsumerOverdueHolds({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIConsumerOverdueHoldListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-overdue-holds',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

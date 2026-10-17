@@ -191,9 +191,9 @@ class AppManifest:
     revision_pin_ttl_seconds: int | Unset = 0
     """Configured revision pin window in seconds; zero disables pinning."""
     release_policy: AppManifestReleasePolicy | Unset = UNSET
-    """Effective default rollout for production releases (ADR-1353, ADR-1352)."""
+    """Effective default rollout for production releases (ADR-1446, ADR-1450)."""
     release_probe_paths: list[str] | Unset = UNSET
-    """Paths the default rollout probe checks; absent means / (ADR-1351)."""
+    """Paths the default rollout probe checks; absent means / (ADR-1449)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

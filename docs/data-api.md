@@ -14,6 +14,225 @@ remain ordinary, separately deployed apps.
 Use [CLI/SDK bundles](data-api-packaging.md) to package a matching pair,
 pin their checksums in the application, and restore the SDK in client CI.
 
+## Runtime admission and overload
+
+`gregale data-api health NAME` now also reads account-scoped database connection
+planning reports. The report's `connection_budget` is separate from current SQL
+readiness and per-engine pool metrics. `unknown` capacity or incomplete coverage
+makes the report partial and the command exits nonzero; it does not declare a
+database outage. Older management APIs and keys without `managed-postgres:read`
+also leave this section unknown. Apps with no visible managed Data API binding
+report `not_applicable`.
+
+`GET /v1/postgres/databases/{id}/connection-budget` reads one database snapshot;
+`GET /v1/apps/{slug}/data-api/connection-budget` lists its shared Data API database
+reports, including demand from other bindings and scopes in the same account.
+Both require managed PostgreSQL read permission and return `Cache-Control:
+no-store`. No provider calls, SQL probes, credential delivery or admission changes
+occur. Different database snapshots are independent.
+
+The canonical planning model uses two total connections per Data API runtime,
+including the reserved reader when coordinated refresh splits the pool, and four
+per Auth runtime. It retains nonterminal resident states and parked instances,
+deduplicates app/scope/access consumers, and plans for the greater of observed
+resident-plus-parked instances or effective concurrency plus one overlap slot
+when rotation/deployment overlap is observed. Existing replacements are not
+added a second time. One database control slot and a migration slot when such a
+binding exists are planning headroom, not reserved connections or a measured
+maximum. Unknown client pools, auxiliary workloads/tasks, migration uncertainty,
+stale node heartbeats, incomplete inventory and unverified pool versions remain
+explicit reasons. Counts and estimates are not live SQL sessions or available
+database capacity.
+
+Current adapters do not provide verified tenant-usable capacity after other
+reservations, so their reports remain `unknown`. A future qualified cached
+observation must match the database, backend placement and generation and be
+fresh before `within_budget` or `over_budget` can be reported. Compute class,
+`max_connections` alone and successful SQL readiness cannot supply that evidence.
+Reports expire within 30 seconds, cap database/binding inventory at 100/1,024,
+and omit credentials, provider identities, node addresses and consumer app names.
+
+Each Data API runtime admits at most two requests to authenticated endpoints
+at a time and queues at most eight more in arrival order. Coordinated refresh reserves one
+database connection for its control reader and admits one request at a time.
+These bounds cover JWT verification, REST/RPC and authenticated schema/OpenAPI
+requests through response completion. Health checks and CORS preflight bypass
+the queue; a healthy engine does not imply spare request capacity.
+
+A full queue or a wait of one second returns HTTP 503 with stable code
+`data_api_overloaded`, a gateway request ID and `Retry-After: 1`. Allowed browser
+origins can read `Retry-After`. These rejections happen before authentication or
+PostgREST dispatch; they do not execute the queued mutation. Queued disconnects
+are removed, and authentication and coordinated-refresh checks run after admission.
+Disconnecting during verification retains the active slot until verification
+settles. Active requests also have the elapsed-time deadline described below.
+
+Admission is local to each runtime, not an account rate limit, a global database
+connection budget or a per-user fairness guarantee. A request already dispatched
+to PostgREST can commit after a timeout or disconnect; reconcile uncertain writes
+using application receipts before retrying. The runtime and SDK add no automatic
+mutation retries. `classifyDataError` recognizes the overload code as `unavailable`,
+including errors returned by `throwOnError()`.
+
+Request logs add safe `admission` metadata: outcome, queue wait in milliseconds,
+and active/queued counts at the admission decision. `data-api diagnostics`
+summarizes observed admissions, full queues, expired waits, queued cancellations,
+wait p50/p95/p99 and observed active/queued peaks. `failures.overloaded` counts
+overload responses separately from query timeouts and engine unavailability.
+Older logs and routes bypassing admission have no admission metadata; zero
+observations give null wait percentiles. These are retained-log samples, not
+durable counters, SQL execution timing or measurements of SQL pool wait.
+
+## Per-user request rate limits
+
+Enable an optional policy through the Data API deployment environment:
+
+```sh
+DATA_API_RATE_LIMIT_PER_SECOND=10
+DATA_API_RATE_LIMIT_BURST=20
+```
+
+Either variable enables the policy. If one is omitted, its default is 10 requests
+per second or a burst of 20. Both must be decimal integers from 1 to 1,000;
+empty, zero, fractional and out-of-range values fail startup. Remove both
+variables to disable. Update the runtime and fresh-restart after changing these
+deployment settings; existing templates without this feature ignore them.
+These are owner-selected application limits, separate from platform plan quotas.
+
+The gateway checks a token bucket keyed by the verified JWT `sub` after admission
+and JWT/claim validation, before refresh checks, SQL readiness probes, signing
+or data-engine dispatch. A new subject starts with `burst` credit; each request
+uses one credit, replenished continuously at `per_second` up to that burst.
+REST reads/writes, RPCs, OpenAPI and serving-contract reads share one bucket.
+Rotating tokens or changing routes does not reset the same subject's budget.
+Missing/invalid JWTs do not create buckets. Health probes and CORS preflight
+bypass this policy. Valid subjects' subsequent permission/contract failures can
+consume credit. Each request has the same cost; this is not a SQL-cost budget.
+
+Rejection returns HTTP 429 with code `data_api_rate_limited`, `Retry-After: 1`,
+`Cache-Control: no-store` and the gateway request ID. Allowed browser origins
+can read the retry header. The problem includes `reason`, `per_second`, `burst`,
+`retry_after_seconds`, policy `limit`, safe `observed` counts and a documentation
+link. `reason: "subject"` means there is no whole request credit available;
+`reason: "tracking_capacity"` means no slot is available for a new subject.
+HEAD returns status/headers without a problem body. A rejected write never
+reaches PostgreSQL through this gateway. No automatic replay is added.
+Generated OpenAPI advertises the 429 problem shape and retry header.
+
+Each runtime holds at most 4,096 hashed subject keys. A lazy sweep at most once
+per second removes only fully refilled buckets, which can safely restart full.
+When tracking fills, new subjects are rejected until slots become available;
+existing depleted buckets are not evicted to make room, preventing identity
+churn from resetting their budgets. Existing subjects may still use their
+available credit. Cleanup adds no timers or SQL connections. Logs retain no
+subjects, hashes, tokens or per-user counters: `rate_limit` contains only fixed
+`reason`, `per_second`, `burst` and `retry_after_seconds`.
+
+CLI diagnostics validate this metadata, count `failures.rate_limited` separately
+from overload/unavailability, and retain the safe policy in request-ID lookup.
+Unknown fields are discarded; malformed/inconsistent metadata makes coverage
+partial. Old records without rate-limit observations remain readable. Health
+adds `rate_limits_observed` to recent findings without changing current readiness.
+The SDK recognizes the stable code and HTTP 429 as `rate_limited` with recovery
+`wait`, including `throwOnError()` when the code is available. This guidance
+defers a decision; it never retries. Generic 429 can come from another service
+or application SQL and does not establish that a mutation was rejected before
+execution. Reconcile uncertain writes before replaying them.
+
+Budgets are local to a runtime and reset on a cold process start; snapshots may
+retain in-memory state. Replicas do not share counters. The existing global
+admission queue runs before authentication, so this does not provide per-user
+queue fairness, protect against all verification floods, or enforce a distributed
+account/tenant quota. Shared quotas and deployed load qualification remain separate.
+
+## Total request deadline
+
+Each admitted authenticated request has one 15-second elapsed-time budget, using
+the canonical query bound in `pkg/api/limits.go`. The budget starts when the
+request receives an active slot, after the separate one-second admission wait.
+It includes JWT verification, coordinated-refresh checks, signing, upstream
+request/body handling and response streaming. Authenticated schema and OpenAPI
+requests share this budget; public health and CORS checks retain their existing
+separate behavior. Continuous response chunks cannot extend the deadline.
+
+The runtime checks monotonic elapsed time after asynchronous work and before
+engine dispatch, as well as through a deadline timer. Expired verification,
+refresh or signing cannot later dispatch the original request. Before response
+headers, expiry returns HTTP 504 with stable code `request_deadline_exceeded`,
+the gateway request ID and `Connection: close`. After headers, expiry closes the
+incomplete response; a previously sent status such as 200 cannot become a 504.
+HTTP work is aborted, and normal completion or client cancellation clears the
+timer. Timers run when the Node event loop can execute them; this is not a
+preemptive CPU execution limit.
+
+An active verification or refresh operation retains its admission slot until it
+settles, even if its HTTP response already timed out. This preserves the active
+work bound; a timeout must not admit more unfinished verification work. Closing
+an engine HTTP request does not prove PostgreSQL cancelled or rolled back SQL.
+Dispatched writes remain uncertain and require receipt/data reconciliation before
+retry. SQL statement timeouts remain independent. No automatic mutation retry is
+introduced, and the new SDK classifies `request_deadline_exceeded` as `timeout`
+with recovery guidance `reconcile`, including `throwOnError()` errors.
+
+Timed-out request logs add safe `deadline` metadata: `phase`, `elapsed_ms` since
+admission and `dispatched`. Fixed phases are `verification`, `refresh`, `readiness`,
+`signing`, `upstream` and `streaming`. Streaming includes engine response buffering
+and OpenAPI rendering. `dispatched` records an attempted data-engine HTTP request;
+it is not evidence of SQL execution/commit and excludes refresh/admin SQL probes.
+An upstream-phase expiry can precede dispatch and then records `dispatched: false`.
+Pre-header expiry has outcome `query_timeout`; incomplete responses keep outcome
+`aborted`, the already-sent status and the deadline code. No raw error, token,
+SQL, query value or response body enters the metadata.
+
+`data-api diagnostics` reports `deadlines.observed`, `deadlines.dispatched` and
+counts in `deadlines.by_phase`. `failures.timeouts` includes both old inactivity
+timeouts and total deadlines, including interrupted streams whose sent status was
+200. Older records remain readable with no deadline-phase observations. Request
+ID lookup retains the validated timeout metadata; malformed phase records make
+the retained sample partial rather than publishing untrusted fields. These are
+sampled HTTP observations, not SQL execution timings or rollback guarantees.
+
+## Response byte limit
+
+Normal REST/RPC response bodies, including engine error bodies, have a 16 MiB
+(16,777,216-byte) limit from `api.DataAPIMaxResponseBytes`. Exactly that many
+bytes are allowed. The gateway counts actual body bytes while streaming and
+preserves downstream backpressure; it does not buffer the full result. This
+limit is independent of the 1,000-row cap: a single large JSON value can exceed
+it. Request bodies and successful OpenAPI/schema rendering retain their separate
+1 MiB bounds. HEAD and bodyless HTTP responses do not count a representation's
+advertised size, and HTTP headers are excluded from body byte accounting.
+
+If the engine advertises an oversized `Content-Length`, the gateway rejects it
+before sending headers with HTTP 502 and stable code `response_too_large`. The
+problem includes `request_id`, `limit`, `observed`, `observed_is_lower_bound: true`
+and a documentation link. `observed` is always the safe lower bound 16,777,217,
+not a measurement of the complete result. Otherwise the gateway checks each
+chunk before forwarding it. Overflow after a prefix was sent closes the
+incomplete response, keeping its original sent status, which may be 200. It
+cannot append a JSON problem or replace those headers. A first oversized chunk
+can still return the 502 problem if headers have not been sent.
+
+Safe logs record code `response_too_large` and `response_limit` metadata with
+`source` (`content_length` or `stream`), `limit_bytes` and
+`observed_at_least_bytes`. They contain no result values or exact result size.
+An interrupted stream records outcome `aborted` and its sent status; a completed
+502 problem records `rejected`. The streaming timing remains incomplete.
+`data-api diagnostics` counts both in `failures.response_too_large`, and request-ID
+lookup retains the validated metadata. `data-api health` reports
+`response_limits_observed` among recent findings, separately from current readiness.
+Older records remain readable; malformed metadata marks the sample partial.
+
+The SDK classifies the problem code as `response_too_large` with recovery
+`reconcile`, including errors from `throwOnError()`. An interrupted body can
+instead surface as status 0 / `no_response`; a transport failure alone does not
+identify its cause. Capture the header request ID with `onResponse` and look up
+the gateway log. A mutation may commit before its response exceeds this limit.
+Reconcile its receipt or resulting data before replaying it; a 502 does not
+establish rollback. No automatic mutation retries are added. For future requests,
+use smaller projections/pages and bounded RPC results. Existing apps need the
+updated runtime; applications need the updated SDK for the new category.
+
 ## Guided first application
 
 With Node.js 22+, npm, a running local Docker daemon and an approved matching
@@ -792,7 +1011,8 @@ engine readiness. Browser origins must be explicitly allowed. The service
 rejects missing, expired, wrong-audience and invalid tokens with HTTP 401.
 
 V1 bounds each instance to two database connections, 1,000 returned rows,
-1 MiB request bodies and a 15-second upstream timeout. Type generation is
+1 MiB request bodies, 16 MiB normal REST/RPC response bodies and a 15-second
+upstream timeout. Type generation is
 bounded to 1,000 exposed relations, 10,000 columns, 20,000 catalog types,
 and 1 MiB output. Truncated output fails without replacing your types file.
 The normal app, task and database quotas and billing rules apply.
@@ -886,7 +1106,8 @@ handling returns `{ data: null, error, status: 0 }` for an aborted read or a
 network failure; inspect `signal.aborted` to distinguish cancellation. With
 `.throwOnError()`, transport failures throw their original error and database
 errors throw `PostgrestError` with the server's code. The proxy returns HTTP 504
-with `query_timeout` for its upstream timeout, HTTP 503 with
+with `request_deadline_exceeded` for its total admitted deadline (or
+`query_timeout` for an earlier upstream inactivity timeout), HTTP 503 with
 `data_api_unavailable` when the engine is unavailable, and HTTP 401 with
 `token_invalid` for invalid or expired sessions.
 
@@ -948,7 +1169,7 @@ not undo a successful earlier insert. The example above is therefore two
 transactions. RPC can provide one transaction per function call; transactions cannot span HTTP requests.
 Use an application-owned transaction on a trusted backend when multiple writes
 must commit together. Avoid automatic retries after ambiguous network failures.
-The existing request-body and response-row caps apply to bulk writes; the number
+The existing request-body, response-byte and response-row caps apply to bulk writes; the number
 of returned rows does not prove the number committed for oversized batches.
 Keep batches small enough to verify every returned id before relying on the
 result for follow-up writes or cleanup.
@@ -2055,6 +2276,105 @@ Structural checks do not cover RLS policy bodies, arbitrary RPC behavior, or
 whether every serving replica has refreshed. Keep authorization replay and
 coordinated refresh checks for those concerns.
 
+### Check liveness, readiness and recent failures
+
+```sh
+gregale data-api health notes-data
+gregale --json data-api health notes-data --since 15m --timeout 30s
+```
+
+The read-only health report combines public process and readiness probes with
+the existing owner-authorized retained log sample. Account credentials are sent
+only to the management API. Probes follow no redirects and require no application
+JWT. The default recent window is 15 minutes; one 30-second deadline covers the
+report (`--timeout` accepts up to one hour). Individual public probes have a
+five-second deadline. Probing may wake a parked app through normal routing.
+
+`/livez` returns `200 {"version":1,"live":true}` when the gateway can handle the
+request. It performs no engine, JWT or database work. `/healthz` retains engine
+SQL readiness and returns HTTP 200 or 503 with `ready`, `live`, `version: 1`,
+safe `checks` and an `admission` snapshot. Both bypass request admission and use
+`Cache-Control: no-store`. Liveness does not prove startup completion or database
+availability; startup failures and engine exit still stop the production runtime.
+Keep deployment health checks on `/healthz`.
+
+The observations have deliberately separate meanings:
+
+| Field | Values and meaning |
+| --- | --- |
+| `checks.engine` | `reachable` means a TCP connection to the loopback engine listener succeeded; `unreachable` means it failed or timed out. It does not test SQL. |
+| `checks.sql` | `ready` means the pinned engine's `/ready` check succeeded; `unready` means it returned a failing status; `unknown` means no status arrived before the deadline. The runtime disables PostgREST's DB listener, so readiness checks SQL connectivity through its existing pool. |
+| `checks.database` | `reachable` means SQL readiness or the separate coordinated refresh reader succeeded during this probe; `unknown` means connectivity could not be established. It never infers a database outage from SQL unreadiness. |
+| `checks.refresh` | `disabled`, `active`, `paused` or `unavailable`. A deliberate pause remains visible even when SQL is ready. An unavailable refresh reader makes readiness fail. |
+| `admission` | Current `active`, `queued`, `capacity` and `queue_capacity` for this runtime. Full active capacity is evidence of admission saturation, not proof of SQL pool exhaustion. |
+| `pool` | An allowlisted observation from the engine's private loopback metrics endpoint, with its own `checked_at` timestamp. `state: "observed"` includes `capacity`, `available`, `waiting` and `timeouts_total`; `state: "unknown"` omits all counts and includes a fixed reason. |
+
+The engine pool has capacity two, or one with coordinated refresh (the separate
+refresh reader retains the other connection). `available` counts existing idle
+connections in the engine's lazy pool. It is not unused configured capacity:
+`capacity - available` cannot be used as an active-connection count. Zero
+available connections alone does not change current health. Positive `waiting`
+records pending pool acquisitions and adds the CLI finding `pool_waiting`.
+Waiters can include the SQL readiness probe itself; they are distinct from
+the gateway's HTTP admission queue and do not count only customer requests.
+
+`timeouts_total` is a cumulative engine acquisition-timeout counter. It may reset
+on engine restart and does not establish timeouts within the CLI's `--since`
+window. A positive counter or a reset does not add a current or recent failure.
+Acquisition timeouts include engine admin/health work, including diagnostic probes.
+Pool observations do not measure SQL execution time, acquisition latency or
+database-wide connection usage.
+
+Metrics callers have a two-second deadline and cap responses at the existing
+8 KiB health-response bound. The pinned engine checks SQL twice before exporting
+metrics when its DB listener is disabled, so saturation can make this observation
+unknown. Reads reuse the engine pool, share in-flight work even after caller
+timeout, and have the existing 15-second hard HTTP cap (including continuous
+chunks). Completed observations are not cached. SQL work can outlive HTTP
+cancellation. The metrics endpoint stays private and its raw response is never
+forwarded.
+Fixed unknown reasons are `unavailable`, `timeout`, `unsupported`, `too_large`
+and `invalid_metrics`. Missing, duplicate, fractional, negative, unsafe-integer
+or inconsistent required metrics fail the observation rather than producing zeros.
+Unrelated metric series are discarded. Required pool metrics must be unlabelled.
+
+Pool telemetry does not affect `/healthz` SQL readiness or its HTTP status.
+The CLI retains valid readiness when pool metadata is unknown or malformed,
+marks coverage partial (`pool_unknown`, `pool_invalid` or `pool_unsupported`),
+and exits 1. A versioned older runtime without `pool` is unsupported for this
+observation; update that runtime. Valid counts appear in `readiness.pool` in JSON
+and the text report. Each timestamp belongs to its own probe; concurrent fields
+are observations rather than a single atomic snapshot.
+
+Runtime observations run concurrently with a two-second caller deadline. Engine
+SQL probes share one in-flight admin request per runtime, retained until it
+finishes or the existing 15-second query deadline; a caller timing out cannot
+immediately create another pool waiter. Refresh health reads likewise stay shared
+until the reserved reader settles. No new database connection pool is added.
+PostgREST 14.3's admin `/live` also checks SQL in this configuration, which is why
+the independent engine observation uses TCP. Already-started engine SQL work can
+outlive an HTTP probe deadline.
+
+JSON reports separate `current_findings` from `recent_findings` and include the
+validated diagnostics report with its sample coverage. Current findings include
+admission saturation, engine pool waiters, refresh pauses, engine reachability and SQL readiness;
+recent findings include observed overloads, query timeouts, refresh pauses,
+unavailability, response-size limits and user rate limits. `failures.refresh_paused` and `failures.refresh_unavailable` refine
+the existing aggregate `failures.unavailable` count. Recent failures do not mark
+a recovered runtime unhealthy. No matching retained records are not proof that
+no failures occurred. Logs that are unavailable, truncated or contain gaps remain
+explicit partial coverage; valid current observations are retained.
+
+The command exits 0 for a healthy current observation and a completely read log
+sample, and 1 for degraded/unavailable/unknown current health or partial coverage.
+An older runtime without the versioned health response is reported as unsupported
+and partial; redeploy the updated runtime. HTTP errors and malformed/oversized
+responses expose fixed findings only, never raw response bodies. Public probes
+can reach different replicas; neither the report nor the retained sample proves
+the health of every deployment or replica, and the fields are observations rather
+than an atomic snapshot. `data-api status` continues to inspect coordinated
+refresh ownership and fingerprints.
+
 ### Summarize request logs and look up request IDs
 
 `data-api diagnostics` summarizes existing safe request records without changing
@@ -2092,6 +2412,28 @@ aborted requests and measure the gateway's local response finish/close interval,
 not SQL execution, client receipt, network latency or platform wake time. Empty
 groups report null percentiles and error rate, rather than a healthy zero.
 Percentiles are exact for the observed sample; small samples have coarse ranks.
+
+Updated runtimes also attach `timings` to admitted requests. Each entered phase
+has `duration_ms` and `complete`: `verification` covers JWT verification and
+gateway authorization/contract checks; `refresh` covers the refresh barrier;
+`readiness` covers authenticated schema readiness probes; `signing` covers the
+engine JWT; `upstream` covers engine HTTP dispatch until response headers arrive;
+`streaming` covers response headers through the gateway's finish/close event.
+These are sequential gateway intervals. Engine wait can include request upload,
+transport, pool wait and SQL work; it does not isolate SQL execution or pool wait.
+Admission queue wait remains separate in `admission.wait_ms`.
+
+Every statistics group exposes `timings.observed_requests`, `without_timings`
+and `by_phase`. Each phase reports `observed`, `completed`, `interrupted`, and
+completed-only `latency_ms` p50/p95/p99. A normally returned error is a completed
+phase observation. Cancellation or timeout marks the active phase incomplete;
+earlier completed phases still contribute samples. Interrupted elapsed times are
+lower bounds, reported separately in `interrupted_elapsed_ms` in JSON. Phases
+never entered are absent, not zero. Legacy logs and requests rejected before
+admission or bypassing it (including health probes) count as `without_timings`.
+Missing completed samples produce null percentiles (`n/a` in text).
+Phase populations can differ, so their percentiles cannot be added to reconstruct
+the request-latency percentile.
 
 Request IDs are deduplicated across the sample. `--request-id UUID` narrows all
 summaries and includes the matching safe metadata record in `matches`. A missing
@@ -2134,7 +2476,7 @@ configured staging target.
 ### Classify SDK errors
 
 `@gregale/data` exports `classifyDataError(error, { status })` for stable SQL,
-authentication, permission, contract, deadline, cancellation and availability
+authentication, permission, contract, deadline, cancellation, response-size and availability
 categories. Pass `result.error` and `result.status`; successful null errors return
 `null`. Caught `throwOnError()` errors can be classified without a status. The
 helper preserves the original error and performs no requests or retries. See the
@@ -2939,8 +3281,8 @@ Schema contracts and coverage policies retain their existing validation and boun
 ### Observe redacted query shapes
 
 Set runtime environment variable `DATA_API_QUERY_SHAPES=1` to opt in to structural
-query metadata in existing Data API request logs. The default logging format stays
-unchanged. Metadata is attached only after authentication/contract checks for known
+query metadata in existing Data API request logs. Operation/query metadata is
+omitted unless enabled. It is attached only after authentication/contract checks for known
 catalog relations or RPCs with simple identifiers and a serving schema fingerprint.
 Unknown paths, unsupported names, unauthenticated requests and oversized shapes
 retain their normal request log without operation/query metadata.
@@ -2949,12 +3291,19 @@ Use existing diagnostics against hosted retained logs or saved NDJSON:
 
 ```sh
 gregale --json data-api diagnostics --file requests.ndjson > diagnostics.json
+gregale data-api diagnostics notes-data --since 15m --sort p95
+gregale data-api diagnostics notes-data --since 15m --sort errors
 ```
 
 Reports now include `operations` and `query_shapes`, with request/error counts,
 error rates, gateway-latency p50/p95/p99 and up to three sample request IDs per shape.
 Use the existing request-ID lookup to correlate an operation with a specific failure.
-Shapes are grouped by schema fingerprint and operation, and ranked by request count.
+Shapes are grouped by schema fingerprint and operation. `--sort requests` (the
+default) ranks by request count; `--sort p95` ranks by total gateway-request p95,
+including aborted requests; `--sort errors` ranks by failure count, not error rate.
+Ties use request count and stable shape identifiers. These rankings apply to
+`query_shapes`, with the chosen order recorded in `query_shape_sort`.
+Operation and shape statistics also include phase timings and their coverage.
 Existing deployment/lookback filters let you compare samples across releases. These
 are bounded retained-log summaries, not persistent metrics or complete traffic counts.
 `shaped_requests` and `unshaped_data_requests` expose metadata coverage alongside
@@ -3870,3 +4219,14 @@ minutes without refresh tokens. Sign-out clears the browser cookie; immediate
 provider/session revocation requires provider-specific support. Test real staff
 and tenant authorization against your issuer and database before exposing customer
 records. No deployment or provider account provisioning happens automatically.
+
+## Local load and recovery verification
+
+Run `make data-api-load-check` for portable verifier contracts and
+`make data-api-load-verify` for disposable PostgreSQL REST/RPC traffic, pressure,
+write reconciliation and recovery checks. The [load verifier guide](../tests/data-api/load/README.md)
+describes explicit configuration, workload bounds, redacted evidence and cleanup.
+The acceptance workflow includes these checks. The [manual staging canary](../tests/data-api/staging/README.md#hosted-load-and-recovery)
+also includes a hosted adapter for public-edge traffic, receipt reconciliation,
+managed restart and observed park/wake, with explicit unsupported coverage.
+Hosted capacity and native lifecycle qualification require live evidence.

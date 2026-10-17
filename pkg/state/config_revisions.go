@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Config revision sources (app_config_revisions.source, ADR-1391).
+// Config revision sources (app_config_revisions.source, ADR-1451).
 const (
 	ConfigSourceBaseline     = "baseline"
 	ConfigSourceEnvSet       = "env.set"
@@ -23,7 +23,7 @@ const (
 	ConfigSourceGuardRestore = "config.guard_restore"
 )
 
-// Config guard states (app_config_guards.status, ADR-1391).
+// Config guard states (app_config_guards.status, ADR-1451).
 const (
 	ConfigGuardWatching   = "watching"
 	ConfigGuardClean      = "clean"
@@ -139,7 +139,7 @@ type ConfigGuardTelemetryQuery struct {
 	Until        time.Time
 }
 
-// ConfigRevisionStore persists config revisions and guards (ADR-1391).
+// ConfigRevisionStore persists config revisions and guards (ADR-1451).
 type ConfigRevisionStore interface {
 	// ConfigState reads a scope's current variables and secret fingerprints.
 	ConfigState(ctx context.Context, accountID, appID, scope string) (map[string]string, map[string]ConfigSecretFingerprint, error)

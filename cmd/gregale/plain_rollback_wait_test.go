@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-1353: a plain `gregale rollback APP` waits for its receipt and exits
+// ADR-1446: a plain `gregale rollback APP` waits for its receipt and exits
 // non-zero when the previous release was not restored; --no-wait keeps the
 // request-only behaviour and never reads the receipt.
 func TestCmdPlainRollbackWaitsForTheOutcome(t *testing.T) {

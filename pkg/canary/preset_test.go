@@ -348,7 +348,7 @@ func TestProgressionOnce_CircuitBreakerHoldsLowTrafficAndExportsEvent(t *testing
 	}
 }
 
-// ADR-1353: a sample-size hold is bounded. Past the dwell time plus
+// ADR-1446: a sample-size hold is bounded. Past the dwell time plus
 // CanaryLowTrafficMaxHold, a stage with no negative evidence advances, while
 // any candidate 5xx keeps holding.
 func TestProgressionOnce_CircuitBreakerBoundsLowTrafficHold(t *testing.T) {
@@ -403,7 +403,7 @@ func TestProgressionOnce_CircuitBreakerBoundsLowTrafficHold(t *testing.T) {
 	}
 }
 
-// adr: 1353
+// adr: 1446
 // Clean probe evidence advances a quiet stage at its boundary instead of
 // after api.CanaryLowTrafficMaxHold.
 func TestProgressionOnce_ProbeEvidenceAdvancesAtStageBoundary(t *testing.T) {

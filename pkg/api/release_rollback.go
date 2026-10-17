@@ -7,7 +7,7 @@ import (
 )
 
 // RollbackCrossedRelease is a release command that ran after a rollback
-// target last served (ADR-1355). A rollback does not undo it.
+// target last served (ADR-1448). A rollback does not undo it.
 type RollbackCrossedRelease struct {
 	DeploymentID string `json:"deployment_id"`
 	Revision     int    `json:"revision,omitempty"`
@@ -34,7 +34,7 @@ type ReleaseDatabaseRef struct {
 	Name string `json:"name"`
 }
 
-// DeploymentRelease reports a deployment's release command run (ADR-1355).
+// DeploymentRelease reports a deployment's release command run (ADR-1448).
 type DeploymentRelease struct {
 	// Status is the release task's status: queued, restoring, running,
 	// succeeded, failed, timed_out, or cancelled; pending before imaged has
@@ -48,7 +48,7 @@ type DeploymentRelease struct {
 }
 
 // ErrRollbackCrossesRelease refuses an unacknowledged rollback over release
-// commands that ran after its target last served (ADR-1355).
+// commands that ran after its target last served (ADR-1448).
 func ErrRollbackCrossesRelease(target string, crossed []RollbackCrossedRelease, restore []ReleaseRestorePoint) *Problem {
 	refs := make([]string, 0, len(crossed))
 	for _, c := range crossed {

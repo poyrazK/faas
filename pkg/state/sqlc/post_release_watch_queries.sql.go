@@ -100,7 +100,7 @@ type RecordPostReleaseRolloutDecisionParams struct {
 	ID       pgtype.UUID
 }
 
-// Records the watch's explained decision (ADR-1354 shape) on the release.
+// Records the watch's explained decision (ADR-1447 shape) on the release.
 func (q *Queries) RecordPostReleaseRolloutDecision(ctx context.Context, db DBTX, arg RecordPostReleaseRolloutDecisionParams) (int64, error) {
 	result, err := db.Exec(ctx, recordPostReleaseRolloutDecision, arg.Decision, arg.ID)
 	if err != nil {

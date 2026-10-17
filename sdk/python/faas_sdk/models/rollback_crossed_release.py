@@ -15,7 +15,7 @@ T = TypeVar("T", bound="RollbackCrossedRelease")
 
 @_attrs_define
 class RollbackCrossedRelease:
-    """A release command that ran after a rollback target last served (ADR-1355). A rollback does not undo it."""
+    """A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it."""
 
     deployment_id: UUID
     status: str

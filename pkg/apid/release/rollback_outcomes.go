@@ -26,7 +26,7 @@ type OutcomeMetrics interface {
 	RollbackOutcome(trigger, outcome string, recovery time.Duration)
 }
 
-// Rollbacks verifies plain rollback outcomes (ADR-1353). A plain rollback
+// Rollbacks verifies plain rollback outcomes (ADR-1446). A plain rollback
 // used to be recorded as done when it was requested; the safe-release drill
 // found rollbacks that never served while the records said otherwise. Each
 // plain rollback now opens a ledger row, and Run resolves it from the

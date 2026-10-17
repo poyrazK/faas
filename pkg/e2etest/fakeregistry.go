@@ -191,17 +191,23 @@ func HelloImageWithoutHealthz(repo, helloBody string) (fakeImage, string) {
 // numeric user/group, working directory, and image environment in a shell-free
 // full-rootfs image. Its /contract endpoint exposes only fixed fixture fields.
 func HelloImageWithProcessContract(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, false)
+	return helloImageWithProcessContract(repo, body, user, false, 8080)
+}
+
+// HelloImageWithProcessContractOnPort is HelloImageWithProcessContract served
+// on an image-declared port. An empty user models an image without USER.
+func HelloImageWithProcessContractOnPort(repo, body, user string, port int) (fakeImage, string) {
+	return helloImageWithProcessContract(repo, body, user, false, port)
 }
 
 // HelloImageWithProcessHealthcheck adds a shell-free OCI exec probe that
 // reports its process context to the fixture's /contract endpoint.
 func HelloImageWithProcessHealthcheck(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, true)
+	return helloImageWithProcessContract(repo, body, user, true, 8080)
 }
 
-func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (fakeImage, string) {
-	img, _ := HelloImage(repo, body)
+func helloImageWithProcessContract(repo, body, user string, healthcheck bool, port int) (fakeImage, string) {
+	img, _ := layeredHelloImageOnPort(repo, body, false, port)
 	var cfg map[string]any
 	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
 		panic(err)
@@ -267,7 +273,7 @@ func FailingLivenessImageAboveBase(repo, helloBody string) (fakeImage, string) {
 
 // DelayedRootFailureImageAboveBase is HelloImageAboveBase whose / answers 500
 // after its first few requests, so the release passes the post-readiness
-// smoke and then fails / under synthetic probes (ADR-1353).
+// smoke and then fails / under synthetic probes (ADR-1446).
 func DelayedRootFailureImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root-after-requests", "3")
 }

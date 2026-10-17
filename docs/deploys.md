@@ -102,7 +102,7 @@ that was serving when the migration ran is the usual case and needs nothing
 extra: that code already ran against the migrated schema. Rolling back
 further is different. If a release command ran after the target last served,
 the rollback is refused with `rollback_crosses_release`
-([ADR-1355](adr/1355-releases-that-change-the-database.md)):
+([ADR-1448](adr/1448-releases-that-change-the-database.md)):
 
 ```text
 This rollback crosses release commands that ran after its target last served:
@@ -183,7 +183,7 @@ is guaranteed to be live.
 
 Instead of moving all traffic at once, shift it in stages and let the platform
 promote only while the app stays healthy. `--rollout` picks how a release
-reaches traffic ([ADR-1352](adr/1352-one-rollout-flag-and-live-rollout.md)):
+reaches traffic ([ADR-1450](adr/1450-one-rollout-flag-and-live-rollout.md)):
 
 ```bash
 gregale deploy --rollout safe        # adaptive 1% -> 10% -> 50% -> 100%, rollback, wait for 100%
@@ -221,7 +221,7 @@ the previous one is ready again. If a rollout wedges,
 
 A production release of an app that already serves traffic rolls out on the
 `adaptive` ladder with first-wake 5xx rollback even when the deploy names no
-rollout policy ([ADR-1353](adr/1353-safe-releases-by-default.md)). This covers
+rollout policy ([ADR-1446](adr/1446-safe-releases-by-default.md)). This covers
 `gregale deploy`, GitHub App pushes, the API, and Terraform. It does not
 apply to an app's first deploy, PR previews, named project environments, or
 service, worker, and job apps, which keep their own rollout behavior.
@@ -252,7 +252,7 @@ returns to the previous revision. If the probes are clean, each stage
 advances after its first minute.
 
 To probe the routes that matter instead of `/`, name up to three of them
-([ADR-1351](adr/1351-app-chosen-rollout-probe-routes.md)):
+([ADR-1449](adr/1449-app-chosen-rollout-probe-routes.md)):
 
 ```bash
 gregale app my-api --release-probe-paths /healthz,/api/orders
@@ -297,7 +297,7 @@ deprecated `--canary-preset`) always wins over the default.
 ### Why a rollout advanced, waits, or stopped
 
 Gregale records the evidence behind every rollout decision
-([ADR-1354](adr/1354-explained-rollout-decisions.md)): the request, 5xx, probe,
+([ADR-1447](adr/1447-explained-rollout-decisions.md)): the request, 5xx, probe,
 latency, OOM, and restart counts for both revisions, and which rule decided.
 `gregale deployment wait --rollout` prints why a stage is waiting and why each
 stage advanced:

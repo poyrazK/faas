@@ -3,7 +3,7 @@ package state
 import "context"
 
 // RollbackPreparedStore reports whether an explicit rollback prepared a
-// deployment for activation (ADR-1353). imaged promotes such a target without
+// deployment for activation (ADR-1446). imaged promotes such a target without
 // the latest-revision fence: an older revision is the point of a rollback.
 // PrepareDeploymentRollback sets the marker and promotion clears it.
 type RollbackPreparedStore interface {

@@ -1845,7 +1845,7 @@ func testInvoiceRefunds(t *testing.T, fx *Fixture) {
 		TotalCents:        1000,
 		AmountPaidCents:   1000,
 		Plan:              api.PlanPro,
-		Currency:          "eur",
+		Currency:          api.BillingCurrencyLower,
 	}); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
 	}
@@ -1974,7 +1974,7 @@ func testInvoiceHistoryImport(t *testing.T, fx *Fixture) {
 		Number:            "HISTORY-001", Status: "paid",
 		PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 900, TaxCents: 100, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: true,
+		Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower, PDFAvailable: true,
 		Details: &state.InvoiceDetails{PaymentTerms: "Net 30"},
 	}
 
@@ -2020,7 +2020,7 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 		ProviderInvoiceID: "refresh-" + uuid.NewString(),
 		Status:            "paid", PeriodStart: now.Add(-30 * 24 * time.Hour), PeriodEnd: now,
 		SubtotalCents: 1000, TotalCents: 1000, AmountPaidCents: 1000,
-		Plan: api.PlanPro, Currency: "eur",
+		Plan: api.PlanPro, Currency: api.BillingCurrencyLower,
 	}
 	if err := fx.Store.UpsertInvoice(fx.Ctx, inv); err != nil {
 		t.Fatalf("UpsertInvoice: %v", err)
@@ -3729,7 +3729,7 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 		prepared.RolloutState != "pending" || prepared.CanaryPreset != "none" {
 		t.Fatalf("prepared rollback target = %+v", prepared)
 	}
-	// ADR-1353: imaged reads this marker to promote the older revision
+	// ADR-1446: imaged reads this marker to promote the older revision
 	// without the latest-revision fence.
 	if markers, ok := fx.Store.(state.RollbackPreparedStore); ok {
 		isPrepared, err := markers.DeploymentRollbackPrepared(fx.Ctx, fx.Deployment.ID)

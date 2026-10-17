@@ -10,7 +10,7 @@ import (
 var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent", "rollback-on-5xx"}
 
 // applyRolloutFlag maps `gregale deploy --rollout` onto the rollout flags the
-// rest of deploy already understands (ADR-1352): safe is --safe, fast and
+// rest of deploy already understands (ADR-1450): safe is --safe, fast and
 // immediate choose a canary preset. explicit records the mapped flag so the
 // existing validation treats it as given.
 func applyRolloutFlag(rollout string, explicit map[string]bool, safe *bool, canaryPreset *string) error {
@@ -36,7 +36,7 @@ func applyRolloutFlag(rollout string, explicit map[string]bool, safe *bool, cana
 }
 
 // followRolloutByDefault reports whether deploy follows a canary rollout to
-// its end (ADR-1352): only for a person at a terminal, never in CI or JSON.
+// its end (ADR-1450): only for a person at a terminal, never in CI or JSON.
 func followRolloutByDefault() bool {
 	return !jsonOutput && !nonInteractive && stdoutIsTTY()
 }

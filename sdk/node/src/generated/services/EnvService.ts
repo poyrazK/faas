@@ -112,7 +112,7 @@ export class EnvService {
     });
   }
   /**
-   * List a scope's config revisions (ADR-1391).
+   * List a scope's config revisions (ADR-1451).
    * Newest first. Each customer env or secret write records a revision of the scope's complete config; the newest 100 are kept. Values are not listed; read one revision for its variables.
    * @returns ListConfigRevisionsResponse Config revisions and the scope's newest config guard.
    * @throws ApiError
@@ -161,7 +161,7 @@ export class EnvService {
     });
   }
   /**
-   * Read one config revision (ADR-1391).
+   * Read one config revision (ADR-1451).
    * The scope's variables and secret versions after the change. Secret values and fingerprints are never returned.
    * @returns ConfigRevisionDetail The config revision.
    * @throws ApiError
@@ -210,7 +210,7 @@ export class EnvService {
     });
   }
   /**
-   * Read a scope's newest config guard (ADR-1391).
+   * Read a scope's newest config guard (ADR-1451).
    * A guard judges the first traffic served with a changed config against the config before it, and restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in the scope was guarded.
    * @returns ConfigGuard The config guard and, once closed, its decision.
    * @throws ApiError
@@ -255,7 +255,7 @@ export class EnvService {
     });
   }
   /**
-   * Restore a scope's variables to a config revision (ADR-1391).
+   * Restore a scope's variables to a config revision (ADR-1451).
    * Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
    * @returns ConfigRollbackResponse What the rollback changed.
    * @throws ApiError
@@ -343,7 +343,7 @@ export class EnvService {
     requestBody: PutAppEnvRequest,
     /**
      * `false` opts this env or secret write out of the config guard
-     * (ADR-1391): no guard opens, and a guard already watching the scope
+     * (ADR-1451): no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
@@ -415,7 +415,7 @@ export class EnvService {
     key: string,
     /**
      * `false` opts this env or secret write out of the config guard
-     * (ADR-1391): no guard opens, and a guard already watching the scope
+     * (ADR-1451): no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *

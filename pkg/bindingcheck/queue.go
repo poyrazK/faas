@@ -2,10 +2,34 @@
 package bindingcheck
 
 import (
+	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func (r *Report) checkQueueRequirements(inventory api.AppBindingInventory, policy Policy) {
+	names := make([]string, 0, len(policy.QueueRequirements))
+	for name := range policy.QueueRequirements {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		count := 0
+		for _, item := range inventory.Bindings {
+			if api.QueueBindingInScope(item, r.Scope) && item.Binding == name {
+				count++
+			}
+		}
+		code, message := "queue_binding_missing", "The required queue binding is absent from the selected deployment scope."
+		if count > 1 {
+			code, message = "queue_binding_ambiguous", "The required queue binding name is ambiguous between shared and environment bindings; select a unique binding name."
+		}
+		if count != 1 {
+			r.Blockers = append(r.Blockers, Finding{Type: api.BindingTypeQueue, Binding: name, Scope: r.Scope, Code: code, Message: message})
+		}
+	}
+}
 
 func queueConsumerBlocker(item api.AppBindingInventoryItem, now time.Time) (string, string) {
 	if item.Access == "pull" {
@@ -42,4 +66,29 @@ func queueConsumerBlocker(item api.AppBindingInventoryItem, now time.Time) (stri
 	default:
 		return "queue_consumer_unknown", "Push consumer liveness is unknown; restore consumer observations and check again."
 	}
+}
+
+func (r *Report) checkQueueCanary(item api.AppBindingInventoryItem, policy Policy, result *BindingResult) {
+	if item.State != "enabled" || item.Access != "push" || item.QueueEnvironment == nil {
+		r.bindingBlock(item, "queue_canary_unsupported", "Handler completion requires an enabled, scoped push consumer.")
+		return
+	}
+	if *item.QueueEnvironment == "" && r.Scope != "production" && r.Scope != "default" {
+		r.bindingBlock(item, "queue_canary_scope_unsupported", "Shared queue canaries support production/default only; use a queue binding for the selected environment.")
+		return
+	}
+	if !item.QueueCanarySupported {
+		r.bindingBlock(item, "queue_canary_unsupported", "The selected deployment must declare safe canary handling.")
+		return
+	}
+	c := item.QueueCanary
+	if c == nil || c.Status != "succeeded" || c.CompletedAt == nil || c.DeliveredAt == nil || c.DeploymentID != r.DeploymentID || c.Scope != r.Scope || c.Binding != item.Binding {
+		r.bindingBlock(item, "queue_completion_unverified", "Publish and complete a canary through this binding on the exact selected deployment.")
+		return
+	}
+	if c.CompletedAt.After(r.CheckedAt) || !c.ExpiresAt.After(r.CheckedAt) || r.CheckedAt.Sub(*c.CompletedAt) > policy.MaxVerificationAge {
+		r.bindingBlock(item, "queue_completion_expired", "Queue completion evidence expired; verify again.")
+		return
+	}
+	result.CheckedAt = c.CompletedAt
 }

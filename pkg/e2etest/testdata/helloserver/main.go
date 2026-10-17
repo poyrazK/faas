@@ -225,9 +225,9 @@ func main() {
 		_, _ = w.Write(body)
 	})
 	// A release that passes its post-readiness smoke and then fails /, which
-	// only synthetic probes see on a quiet app (ADR-1353).
+	// only synthetic probes see on a quiet app (ADR-1446).
 	var rootRequests atomic.Int64
-	// FIXTURE_FAIL_REQUESTS=1 is a broken config value (ADR-1391): the app
+	// FIXTURE_FAIL_REQUESTS=1 is a broken config value (ADR-1451): the app
 	// boots and passes /healthz, then answers / with 500.
 	failRequests := os.Getenv("FIXTURE_FAIL_REQUESTS") == "1"
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -130,7 +130,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// advanceDecision is the ADR-1354 record for an advance: meterd's validated
+// advanceDecision is the ADR-1447 record for an advance: meterd's validated
 // evidence on the worker route, or advance_manual for a person's request.
 // Customer requests cannot supply evidence.
 func advanceDecision(req api.AdvanceCanaryRequest, d state.Deployment, worker bool) (json.RawMessage, *api.Problem) {

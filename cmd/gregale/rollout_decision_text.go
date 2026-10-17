@@ -11,7 +11,7 @@ import (
 
 var rolloutNeedPerSide = regexp.MustCompile(`need (\d+) each`)
 
-// describeRolloutDecision renders an ADR-1354 decision record as one line a
+// describeRolloutDecision renders an ADR-1447 decision record as one line a
 // person can act on. The numbers come from the record; the summary is the
 // breaker's own aggregate-only reason and is the fallback for rules without a
 // dedicated phrasing.
@@ -73,7 +73,7 @@ func describeRolloutDecision(d *api.RolloutDecision) string {
 }
 
 // renderRolloutDecisions prints the deployment's latest decision and current
-// hold for `deployment summary` (ADR-1354).
+// hold for `deployment summary` (ADR-1447).
 func renderRolloutDecisions(w io.Writer, d api.DeploymentResponse) {
 	if d.CanaryTotalSteps <= 0 {
 		return

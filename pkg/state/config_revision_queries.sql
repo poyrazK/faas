@@ -1,4 +1,4 @@
--- ADR-1391: config revisions and config guards.
+-- ADR-1451: config revisions and config guards.
 
 -- name: LockAppConfigScope :exec
 -- Serializes revision numbering and guard bookkeeping for one app scope.

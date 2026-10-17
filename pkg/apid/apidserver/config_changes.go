@@ -1,4 +1,4 @@
-// adr: 1391 — customer config writes record revisions and open config guards.
+// adr: 1451 — customer config writes record revisions and open config guards.
 package apidserver
 
 import (

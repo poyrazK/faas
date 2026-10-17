@@ -86,7 +86,7 @@ type Problem struct {
 	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
 	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
 	// CrossedReleases and RestorePoints explain rollback_crosses_release
-	// (ADR-1355).
+	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
@@ -874,12 +874,12 @@ const (
 	// verified. The current serving deployment is left untouched.
 	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
 	// CodeRollbackCrossesRelease means release commands ran after the
-	// rollback target last served (ADR-1355). Rollback does not undo them,
+	// rollback target last served (ADR-1448). Rollback does not undo them,
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
-	// (ADR-1391), or it was pruned past ConfigRevisionsRetained.
+	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"
 	// CodeConfigGuardNotFound means no config change in the scope was guarded.
 	CodeConfigGuardNotFound = "config_guard_not_found"
@@ -1640,6 +1640,10 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeExecutionModeConflict means the workload's startup behavior
+	// contradicts its declared execution mode: a worker that bound a port or
+	// exited, or a job that served. Customer-caused, like app_startup_crash.
+	CodeExecutionModeConflict = "execution_mode_conflict"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -2138,6 +2142,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:

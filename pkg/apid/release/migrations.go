@@ -12,7 +12,7 @@ import (
 )
 
 // RollbackGuard reports the release commands a rollback to target would not
-// undo (ADR-1355): release tasks of other deployments in its scope that
+// undo (ADR-1448): release tasks of other deployments in its scope that
 // started after it last served. It returns nil when there are none or the
 // caller acknowledged them, and the rollback_crosses_release problem
 // otherwise. A store without release history reports none.
@@ -86,7 +86,7 @@ func deploymentRef(d state.Deployment) string {
 }
 
 // ReleaseSummary reports a deployment's release command run for single
-// deployment reads (ADR-1355). It returns nil for a deployment without a
+// deployment reads (ADR-1448). It returns nil for a deployment without a
 // release command or when the store has no release tasks.
 func ReleaseSummary(ctx context.Context, store any, d state.Deployment) (*api.DeploymentRelease, error) {
 	if len(d.ReleaseCommand) == 0 {

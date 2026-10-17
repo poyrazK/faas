@@ -34,6 +34,6 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
  LIMIT sqlc.arg('row_limit')::int;
 
 -- name: RecordPostReleaseRolloutDecision :execrows
--- Records the watch's explained decision (ADR-1354 shape) on the release.
+-- Records the watch's explained decision (ADR-1447 shape) on the release.
 UPDATE deployments SET rollout_decision = sqlc.arg(decision)::jsonb
  WHERE id = sqlc.arg(id)::uuid;

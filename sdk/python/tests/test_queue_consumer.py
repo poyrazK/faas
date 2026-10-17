@@ -4,7 +4,6 @@ import time
 
 import httpx
 import pytest
-
 from faas_sdk.queue_consumer import QueueConsumer
 
 

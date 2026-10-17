@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// plainRollbacks is the verified plain-rollback ledger (ADR-1353).
+// plainRollbacks is the verified plain-rollback ledger (ADR-1446).
 func (s *server) plainRollbacks() release.Rollbacks {
 	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops}
 }
@@ -113,7 +113,7 @@ func (s *server) getCheckedRollback(w http.ResponseWriter, r *http.Request, acct
 	}
 	operation, err := store.GetCheckedRollback(r.Context(), acct.ID, app.ID, id.String())
 	if errors.Is(err, state.ErrNotFound) {
-		// ADR-1353: plain rollbacks share this receipt endpoint.
+		// ADR-1446: plain rollbacks share this receipt endpoint.
 		if plain, ok := s.plainRollbacks().Operation(r.Context(), acct.ID, app.ID, id.String()); ok {
 			writeJSON(w, http.StatusOK, plain)
 			return

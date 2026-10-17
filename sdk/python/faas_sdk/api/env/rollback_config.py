@@ -94,7 +94,7 @@ def sync_detailed(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigRollbackResponse | Problem]:
-    """Restore a scope's variables to a config revision (ADR-1391).
+    """Restore a scope's variables to a config revision (ADR-1451).
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -132,7 +132,7 @@ def sync(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> ConfigRollbackResponse | Problem | None:
-    """Restore a scope's variables to a config revision (ADR-1391).
+    """Restore a scope's variables to a config revision (ADR-1451).
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -165,7 +165,7 @@ async def asyncio_detailed(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigRollbackResponse | Problem]:
-    """Restore a scope's variables to a config revision (ADR-1391).
+    """Restore a scope's variables to a config revision (ADR-1451).
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -201,7 +201,7 @@ async def asyncio(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> ConfigRollbackResponse | Problem | None:
-    """Restore a scope's variables to a config revision (ADR-1391).
+    """Restore a scope's variables to a config revision (ADR-1451).
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.

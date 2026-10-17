@@ -38,7 +38,7 @@ func TestDescribeRolloutDecision(t *testing.T) {
 	}
 }
 
-// TestRolloutHeldNoticeUsesRecordedHold — ADR-1354: the wait prints the
+// TestRolloutHeldNoticeUsesRecordedHold — ADR-1447: the wait prints the
 // reason meterd recorded, once per step and rule, instead of a generic guess.
 func TestRolloutHeldNoticeUsesRecordedHold(t *testing.T) {
 	now := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)

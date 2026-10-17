@@ -114,7 +114,7 @@ type Harness struct {
 	GatewayPublicURL        string
 	GatewayPublicControlURL string
 	// ScheddMetricsURL is schedd's loopback /metrics endpoint. The canary
-	// circuit breaker reads its liveness and OOM counters (ADR-1353).
+	// circuit breaker reads its liveness and OOM counters (ADR-1446).
 	ScheddMetricsURL string
 	// gatewayPublicAddr and gatewayControlAddr are reserved before schedd
 	// starts so its RPS scale-up scraper can be pointed at the real
@@ -1719,7 +1719,7 @@ func (h *Harness) KillSchedd() error {
 
 // KillMeterd terminates and reaps meterd, the canary progression worker.
 // The safe-release drill uses it to prove a defaulted canary falls back to
-// an immediate cutover once the worker lease expires (ADR-1353).
+// an immediate cutover once the worker lease expires (ADR-1446).
 func (h *Harness) KillMeterd() error {
 	return h.killChild("meterd")
 }

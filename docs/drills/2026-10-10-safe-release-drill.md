@@ -1,14 +1,14 @@
-# Safe-release drill — 2026-10-10 (ADR-1353)
+# Safe-release drill — 2026-10-10 (ADR-1446)
 
 ## Acceptance bar
 
-ADR-1353 §Rollout lists four drills before progressive rollouts may claim more
+ADR-1446 §Rollout lists four drills before progressive rollouts may claim more
 than `preview`: a bad release aborts and restores its predecessor, a
 low-traffic release reaches 100%, a defaulted deploy falls back when the
 canary worker is down, and rollback recovery is at most 60 s p95. With
 ADR-847 probes as quiet-canary evidence, a low-traffic release advances on
 probe evidence and a quiet release that fails after its hosting smoke aborts
-on it. The drill also covers the crash-loop gate added to ADR-1353.
+on it. The drill also covers the crash-loop gate added to ADR-1446.
 
 ## Run summary
 
@@ -47,12 +47,12 @@ on it. The drill also covers the crash-loop gate added to ADR-1353.
    restoring traffic. GitHub and preview kinds were fenced before; #4311
    (2026-10-08) added image. Canary aborts use rollout recovery and are not
    affected. Fixed in this branch: `deployments.rollback_prepared_at` marks a
-   prepared rollback target and imaged promotes it unfenced (ADR-1353
+   prepared rollback target and imaged promotes it unfenced (ADR-1446
    §Plain rollback is promoted unfenced); rollback recovery is re-run below.
 2. **A defaulted canary requires imaged's hosting smoke verifier.** imaged
    requires the post-readiness smoke for every canary deployment; a host
    without `FAAS_API_HOSTING_SMOKE_URL` fails it. Production compute nodes
-   configure it. Recorded in ADR-1353 and the runbook.
+   configure it. Recorded in ADR-1446 and the runbook.
 3. **The post-readiness smoke rejects a release whose `/` returns 5xx**
    before it serves any canary traffic, so the bad-release fixture fails
    `/api` instead.

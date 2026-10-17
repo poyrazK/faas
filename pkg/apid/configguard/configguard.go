@@ -1,4 +1,4 @@
-// Package configguard judges config changes (ADR-1391): whether the traffic
+// Package configguard judges config changes (ADR-1451): whether the traffic
 // served with a new config failed against the config before it, and which
 // writes return a scope to an earlier revision.
 package configguard
@@ -22,7 +22,7 @@ const (
 )
 
 // Decision is the explained verdict stored on a closed guard, in the shape of
-// ADR-1354 rollout decisions: a rule, a one-line summary and both samples.
+// ADR-1447 rollout decisions: a rule, a one-line summary and both samples.
 type Decision = api.ConfigGuardDecision
 
 func pct(errors, requests int64) float64 {

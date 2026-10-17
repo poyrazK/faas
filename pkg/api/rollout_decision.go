@@ -12,14 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Rollout decision kinds (ADR-1354).
+// Rollout decision kinds (ADR-1447).
 const (
 	RolloutDecisionAdvance = "advance"
 	RolloutDecisionHold    = "hold"
 	RolloutDecisionAbort   = "abort"
 )
 
-// Rollout decision rules (ADR-1354). The breaker rules reuse the
+// Rollout decision rules (ADR-1447). The breaker rules reuse the
 // canary_progression_circuit_breaker_total event names, so a receipt, a
 // metric and the runbook use one vocabulary.
 const (
@@ -70,7 +70,7 @@ var rolloutDecisionRules = map[string]string{
 }
 
 // RolloutDecision is the evidence behind one decision about a rollout
-// (ADR-1354): why a canary stage advanced, why it is held, or why it was
+// (ADR-1447): why a canary stage advanced, why it is held, or why it was
 // aborted. It carries only metric names and aggregates; no request payload,
 // route, URL, trace ID or customer text.
 type RolloutDecision struct {
@@ -87,7 +87,7 @@ type RolloutDecision struct {
 	Candidate          *RolloutDecisionSample `json:"candidate,omitempty"`
 	Stable             *RolloutDecisionSample `json:"stable,omitempty"`
 	// ProbesIncluded marks a decision whose 5xx sample included synthetic
-	// probes of the app (ADR-1353).
+	// probes of the app (ADR-1446).
 	ProbesIncluded bool `json:"probes_included,omitempty"`
 	// Signals is present when the OOM and liveness signals were readable.
 	Signals   *RolloutDecisionSignals `json:"signals,omitempty"`

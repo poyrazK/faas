@@ -540,7 +540,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrCapacity("could not delete secret"))
 		return
 	}
-	// ADR-1391: deletion is revocation; a guard never restores it.
+	// ADR-1451: deletion is revocation; a guard never restores it.
 	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretDelete, key, true)
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {

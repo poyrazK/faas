@@ -279,34 +279,34 @@ type AppManifest struct {
 	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
 	// ReleasePolicy selects how a production release with a serving
 	// predecessor rolls out when the deploy names no rollout policy
-	// (ADR-1353). Empty or "safe" is the adaptive health-gated canary with
+	// (ADR-1446). Empty or "safe" is the adaptive health-gated canary with
 	// first-wake 5xx rollback; "fast" the aggressive ladder with the same
-	// rollback (ADR-1352); "immediate" moves all traffic at once.
+	// rollback (ADR-1450); "immediate" moves all traffic at once.
 	ReleasePolicy string `json:"release_policy,omitempty"`
 	// ReleaseProbePaths are up to ReleaseProbePathsMax concrete GET paths the
-	// default rollout probe checks instead of "/" (ADR-1351).
+	// default rollout probe checks instead of "/" (ADR-1449).
 	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 }
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
 
-// Release policies (ADR-1353). The empty string reads as ReleasePolicySafe.
+// Release policies (ADR-1446). The empty string reads as ReleasePolicySafe.
 const (
 	ReleasePolicySafe      = "safe"
 	ReleasePolicyImmediate = "immediate"
-	// ReleasePolicyFast rolls out on FastReleaseCanaryPreset (ADR-1352).
+	// ReleasePolicyFast rolls out on FastReleaseCanaryPreset (ADR-1450).
 	ReleasePolicyFast = "fast"
 	// DefaultReleaseCanaryPreset is the ladder a safe release uses when the
 	// deploy names none; it is the same ladder `gregale deploy --safe` uses.
 	// "adaptive" is the balanced ladder paced by evidence (ADR-1321).
 	DefaultReleaseCanaryPreset = "adaptive"
 	// FastReleaseCanaryPreset is the ladder for release_policy and
-	// `deploy --rollout` fast: 5% -> 50% -> 100%, a minute each (ADR-1352).
+	// `deploy --rollout` fast: 5% -> 50% -> 100%, a minute each (ADR-1450).
 	FastReleaseCanaryPreset = "aggressive"
 )
 
 // ValidProbePath reports whether path is a concrete absolute path a synthetic
-// probe may request (ADR-847, ADR-1351): at most RouteHealthMaxPathBytes, with
+// probe may request (ADR-847, ADR-1449): at most RouteHealthMaxPathBytes, with
 // no query, fragment, wildcard, parameter, whitespace or control character.
 func ValidProbePath(path string) bool {
 	return len(path) > 0 && len(path) <= RouteHealthMaxPathBytes && strings.HasPrefix(path, "/") &&
@@ -314,7 +314,7 @@ func ValidProbePath(path string) bool {
 		strings.IndexFunc(path, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
-// ValidateReleaseProbePaths checks an app's release_probe_paths (ADR-1351):
+// ValidateReleaseProbePaths checks an app's release_probe_paths (ADR-1449):
 // at most ReleaseProbePathsMax distinct probe paths.
 func ValidateReleaseProbePaths(paths []string) error {
 	if len(paths) > ReleaseProbePathsMax {
@@ -348,7 +348,7 @@ func EffectiveReleasePolicy(p string) string {
 }
 
 // ReleasePolicyCanaryPreset is the ladder the default fills for a policy
-// that rolls out on a canary (ADR-1352): adaptive for safe, aggressive for
+// that rolls out on a canary (ADR-1450): adaptive for safe, aggressive for
 // fast.
 func ReleasePolicyCanaryPreset(p string) string {
 	if p == ReleasePolicyFast {

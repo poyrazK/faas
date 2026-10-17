@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-1353: a plain rollback of an image deployment must activate the older
+// ADR-1446: a plain rollback of an image deployment must activate the older
 // revision. PrepareDeploymentRollback marks it and promotion consumes the
 // marker; the unfenced promotion imaged uses for a marked target succeeds even
 // though a newer revision exists, where the fenced one supersedes it.

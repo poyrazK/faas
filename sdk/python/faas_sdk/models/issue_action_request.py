@@ -29,6 +29,8 @@ class IssueActionRequest:
     assignee_account_id: UUID | Unset = UNSET
     fixed_deployment_id: UUID | Unset = UNSET
     ignored_until: datetime.datetime | Unset = UNSET
+    assignee_team_id: UUID | Unset = UNSET
+    """Target team for this assignment action; clear the account assignee when selecting a team."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +56,10 @@ class IssueActionRequest:
         if not isinstance(self.ignored_until, Unset):
             ignored_until = self.ignored_until.isoformat()
 
+        assignee_team_id: str | Unset = UNSET
+        if not isinstance(self.assignee_team_id, Unset):
+            assignee_team_id = str(self.assignee_team_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -71,6 +77,8 @@ class IssueActionRequest:
             field_dict["fixed_deployment_id"] = fixed_deployment_id
         if ignored_until is not UNSET:
             field_dict["ignored_until"] = ignored_until
+        if assignee_team_id is not UNSET:
+            field_dict["assignee_team_id"] = assignee_team_id
 
         return field_dict
 
@@ -114,6 +122,13 @@ class IssueActionRequest:
         else:
             ignored_until = datetime.datetime.fromisoformat(_ignored_until)
 
+        _assignee_team_id = d.pop("assignee_team_id", UNSET)
+        assignee_team_id: UUID | Unset
+        if isinstance(_assignee_team_id, Unset):
+            assignee_team_id = UNSET
+        else:
+            assignee_team_id = UUID(_assignee_team_id)
+
         issue_action_request = cls(
             action=action,
             target_issue_id=target_issue_id,
@@ -121,6 +136,7 @@ class IssueActionRequest:
             assignee_account_id=assignee_account_id,
             fixed_deployment_id=fixed_deployment_id,
             ignored_until=ignored_until,
+            assignee_team_id=assignee_team_id,
         )
 
         issue_action_request.additional_properties = d

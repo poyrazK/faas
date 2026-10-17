@@ -18,7 +18,7 @@ type configCLIRequest struct {
 	body                string
 }
 
-// configCLIServer fakes the ADR-1391 endpoints and records every request.
+// configCLIServer fakes the ADR-1451 endpoints and records every request.
 func configCLIServer(t *testing.T, guard api.ConfigGuard) (*[]configCLIRequest, func()) {
 	t.Helper()
 	var mu sync.Mutex

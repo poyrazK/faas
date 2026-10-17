@@ -50,7 +50,7 @@ func TestEnvironmentSyntheticFloorCoverage(t *testing.T) {
 	if _, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage, Scope: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	price := state.FinancialPriceSnapshot{AccountID: account.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "review-v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
+	price := state.FinancialPriceSnapshot{AccountID: account.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "review-v1", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
 	if _, err := store.PutFinancialPriceSnapshot(t.Context(), price); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestEnvironmentSyntheticFloorCoverage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	spec := financial.BudgetSpec{Name: "staging", Scope: financial.BudgetScope{Kind: "environment", ID: env.ID}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, Mode: "monitored", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "staging", Scope: financial.BudgetScope{Kind: "environment", ID: env.ID}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, Mode: "monitored", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	out, err := billing.PreviewFinancialBudget(t.Context(), store, account.ID, spec, store.timeNow)
 	if err != nil {
 		t.Fatal(err)

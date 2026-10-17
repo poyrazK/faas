@@ -15,7 +15,7 @@ T = TypeVar("T", bound="ConfigGuardSummary")
 
 @_attrs_define
 class ConfigGuardSummary:
-    """The config guard an env or secret write opened or joined (ADR-1391)."""
+    """The config guard an env or secret write opened or joined (ADR-1451)."""
 
     id: UUID
     status: ConfigGuardSummaryStatus

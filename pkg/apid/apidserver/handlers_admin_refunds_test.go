@@ -40,7 +40,7 @@ func seedPaidPolarInvoice(t *testing.T, e apidserver.TestEnv, status string, acc
 		Status:            status,
 		TotalCents:        1000,
 		AmountPaidCents:   1000,
-		Currency:          "eur",
+		Currency:          "usd",
 	}
 	(*e.Store()).SeedInvoiceForTest(invoice)
 	return invoice
@@ -79,7 +79,7 @@ func TestAdminRefund_HappyPathForwardsIdempotencyAndAudits(t *testing.T) {
 		}
 		gotKey = gotBody.Metadata["faas_idempotency_key"]
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"eur","status":"succeeded"}`)
+		_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"usd","status":"succeeded"}`)
 	}))
 	(*e.S()).WithBillingProvider(provider)
 

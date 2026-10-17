@@ -161,7 +161,7 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	// ADR-1391: rotation is a security action; a guard never undoes it.
+	// ADR-1451: rotation is a security action; a guard never undoes it.
 	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretRotate, key, true)
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {

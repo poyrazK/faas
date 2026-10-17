@@ -75,7 +75,7 @@ func (c *InternalSafeDeployClient) AdvanceCanary(ctx context.Context, id string,
 }
 
 // AdvanceCanaryWithDecision advances one step and records the circuit-breaker
-// evidence that allowed it (ADR-1354).
+// evidence that allowed it (ADR-1447).
 func (c *InternalSafeDeployClient) AdvanceCanaryWithDecision(ctx context.Context, id string, expectedStep int, decision RolloutDecision) (CanaryAdvanceResponse, error) {
 	var out CanaryAdvanceResponse
 	err := c.canary.do(ctx, http.MethodPost,
@@ -85,7 +85,7 @@ func (c *InternalSafeDeployClient) AdvanceCanaryWithDecision(ctx context.Context
 }
 
 // RecordRolloutHold records why the canary at expectedStep is held
-// (ADR-1354). APID deduplicates repeated holds.
+// (ADR-1447). APID deduplicates repeated holds.
 func (c *InternalSafeDeployClient) RecordRolloutHold(ctx context.Context, id string, expectedStep int, decision RolloutDecision) (RecordRolloutHoldResponse, error) {
 	var out RecordRolloutHoldResponse
 	err := c.canary.do(ctx, http.MethodPost,
@@ -119,7 +119,7 @@ func (c *InternalSafeDeployClient) RecoverDeploymentRolloutAndIdempotencyKey(ctx
 }
 
 // RecoverDeploymentRolloutWithDecision is the exact abort with the
-// circuit-breaker evidence that decided it (ADR-1354).
+// circuit-breaker evidence that decided it (ADR-1447).
 func (c *InternalSafeDeployClient) RecoverDeploymentRolloutWithDecision(ctx context.Context, deploymentID, predecessorDeploymentID, action, reason, key string, decision RolloutDecision) (RolloutTransitionResponse, error) {
 	var out RolloutTransitionResponse
 	err := c.action.doWithIdempotencyKey(ctx, http.MethodPost,

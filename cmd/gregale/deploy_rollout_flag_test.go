@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// TestApplyRolloutFlag pins ADR-1352's mapping of --rollout onto the flags
+// TestApplyRolloutFlag pins ADR-1450's mapping of --rollout onto the flags
 // deploy already understands, and its refusal to mix with them.
 func TestApplyRolloutFlag(t *testing.T) {
 	for _, tc := range []struct {
@@ -46,7 +46,7 @@ func TestApplyRolloutFlag(t *testing.T) {
 }
 
 // TestFollowRolloutOnlyForAPersonAtATerminal: JSON and non-interactive runs
-// never follow (ADR-1352).
+// never follow (ADR-1450).
 func TestFollowRolloutOnlyForAPersonAtATerminal(t *testing.T) {
 	oldJSON, oldNonInteractive := jsonOutput, nonInteractive
 	t.Cleanup(func() { jsonOutput, nonInteractive = oldJSON, oldNonInteractive })

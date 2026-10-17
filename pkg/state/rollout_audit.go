@@ -84,7 +84,7 @@ func addRolloutRecoveryAuditFences(data []byte, predecessorID string, fences []B
 }
 
 // rolloutAuditDataWithDecision is rolloutAuditData carrying the
-// api.RolloutDecision behind the transition (ADR-1354).
+// api.RolloutDecision behind the transition (ADR-1447).
 func rolloutAuditDataWithDecision(action, reason string, decision json.RawMessage) []byte {
 	return withAuditDecision(rolloutAuditData(action, reason), decision)
 }
@@ -115,7 +115,7 @@ func WithAuditDecision(data []byte, decision json.RawMessage) []byte {
 }
 
 // leaseExpiredRolloutDecision is the record for the emergency abort taken when
-// meterd's Safe Deploy lease expires during an active canary (ADR-1354).
+// meterd's Safe Deploy lease expires during an active canary (ADR-1447).
 func leaseExpiredRolloutDecision(reason string, dep Deployment, at time.Time) json.RawMessage {
 	decision := api.ManualRolloutDecision(api.RolloutRuleAbortLeaseExpired,
 		safetext.Truncate(reason, api.RolloutDecisionSummaryMaxBytes), dep.CanaryStep, dep.TrafficPercent, at)

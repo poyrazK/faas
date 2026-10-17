@@ -18,7 +18,7 @@ func crossesReleaseError() error {
 	}}
 }
 
-// TestSendRollbackOverReleases pins ADR-1355's CLI flow: the refusal is
+// TestSendRollbackOverReleases pins ADR-1448's CLI flow: the refusal is
 // explained, --acknowledge-releases retries with acknowledgement, and a
 // script without it gets the refusal back after one request.
 func TestSendRollbackOverReleases(t *testing.T) {

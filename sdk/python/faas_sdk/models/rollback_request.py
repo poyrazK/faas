@@ -38,7 +38,7 @@ class RollbackRequest:
     reason: str | Unset = UNSET
     """One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id."""
     acknowledge_releases: bool | Unset = UNSET
-    """Roll back although release commands ran after the target last served (ADR-1355). Rollback does not undo
+    """Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo
     them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks
     never set it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

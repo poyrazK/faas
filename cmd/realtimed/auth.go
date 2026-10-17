@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/edgejwks"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -34,12 +35,31 @@ func newRealtimeJWTAuthorizer(log *slog.Logger) realtime.JWTAuthorizer {
 }
 
 func (a *realtimeJWTAuthorizer) Authorize(ctx context.Context, rawToken string, policy realtime.AuthPolicy) (string, error) {
+	claims, err := a.verifyClaims(ctx, rawToken, policy, false)
+	if err != nil {
+		return "", err
+	}
+	return claims.Subject, nil
+}
+
+func (a *realtimeJWTAuthorizer) AuthorizeIdentity(ctx context.Context, rawToken string, policy realtime.AuthPolicy) (realtime.JWTIdentity, error) {
+	claims, err := a.verifyClaims(ctx, rawToken, policy, true)
+	if err != nil {
+		return realtime.JWTIdentity{}, err
+	}
+	if claims.Exp.IsZero() || !time.Now().Before(claims.Exp) {
+		return realtime.JWTIdentity{}, realtime.ErrUnauthorized
+	}
+	return realtime.JWTIdentity{Principal: claims.Subject, SessionID: claims.Custom["session_id"], ExpiresAt: claims.Exp}, nil
+}
+
+func (a *realtimeJWTAuthorizer) verifyClaims(ctx context.Context, rawToken string, policy realtime.AuthPolicy, requireExpiry bool) (*edgejwks.Claims, error) {
 	if a == nil || a.cache == nil || a.verify == nil {
-		return "", fmt.Errorf("realtime: jwt authorizer unavailable")
+		return nil, fmt.Errorf("realtime: jwt authorizer unavailable")
 	}
 	if _, registered, _ := a.cache.Get(ctx, policy.JWKSURL, ""); !registered {
 		if err := a.cache.Register(policy.JWKSURL); err != nil {
-			return "", fmt.Errorf("realtime: register jwks: %w", err)
+			return nil, fmt.Errorf("realtime: register jwks: %w", err)
 		}
 	}
 	claims, err := a.verify.Verify(ctx, rawToken, edgejwks.VerifierRule{
@@ -48,14 +68,16 @@ func (a *realtimeJWTAuthorizer) Authorize(ctx context.Context, rawToken string, 
 		Audience:       policy.Audience,
 		Algorithms:     policy.Algorithms,
 		RequiredClaims: policy.RequiredClaims,
+		ExtractClaims:  []string{"session_id"},
+		RequireExpiry:  requireExpiry,
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if claims.Subject == "" {
-		return "", fmt.Errorf("realtime: jwt subject is missing")
+		return nil, fmt.Errorf("realtime: jwt subject is missing")
 	}
-	return claims.Subject, nil
+	return claims, nil
 }
 
 // newJWKSHTTPClient fetches an endpoint's customer-supplied JWKS URL. The

@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// ReleaseRun is one started release task of a deployment (ADR-1355).
+// ReleaseRun is one started release task of a deployment (ADR-1448).
 type ReleaseRun struct {
 	DeploymentID string
 	Revision     int
@@ -33,7 +33,7 @@ type ReleaseDatabase struct {
 }
 
 // ReleaseMigrationDatabaseStore lists the managed PostgreSQL databases whose
-// migration binding delivers into an app scope (ADR-1355). Only PgStore
+// migration binding delivers into an app scope (ADR-1448). Only PgStore
 // implements it: MemStore has no managed PostgreSQL catalog.
 type ReleaseMigrationDatabaseStore interface {
 	ReleaseMigrationDatabases(ctx context.Context, appID, scope string) ([]ReleaseDatabase, error)

@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ConfigGuard")
 
 @_attrs_define
 class ConfigGuard:
-    """A scope's config guard (ADR-1391)."""
+    """A scope's config guard (ADR-1451)."""
 
     id: UUID
     scope: str

@@ -42,7 +42,8 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_consumer_completeness_test.go::TestAPIConsumerUsageCompletenessEndpoint"},
-        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"}
+        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer"}
       ]
     },
     {

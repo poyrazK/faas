@@ -488,7 +488,7 @@ type LockAppConfigScopeParams struct {
 	Scope string
 }
 
-// ADR-1391: config revisions and config guards.
+// ADR-1451: config revisions and config guards.
 // Serializes revision numbering and guard bookkeeping for one app scope.
 func (q *Queries) LockAppConfigScope(ctx context.Context, db DBTX, arg LockAppConfigScopeParams) error {
 	_, err := db.Exec(ctx, lockAppConfigScope, arg.AppID, arg.Scope)

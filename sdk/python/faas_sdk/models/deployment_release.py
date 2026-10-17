@@ -19,7 +19,7 @@ T = TypeVar("T", bound="DeploymentRelease")
 
 @_attrs_define
 class DeploymentRelease:
-    """A deployment's release command run (ADR-1355)."""
+    """A deployment's release command run (ADR-1448)."""
 
     status: DeploymentReleaseStatus
     """The release task's status; pending before imaged has admitted the task."""

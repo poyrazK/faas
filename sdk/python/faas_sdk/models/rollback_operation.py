@@ -22,7 +22,7 @@ T = TypeVar("T", bound="RollbackOperation")
 @_attrs_define
 class RollbackOperation:
     """Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback (manual,
-    dashboard, alert, or first-wake 5xx auto-rollback, ADR-1353) reports preparing until its target serves (complete,
+    dashboard, alert, or first-wake 5xx auto-rollback, ADR-1446) reports preparing until its target serves (complete,
     with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move traffic for another
     operation.
 

@@ -1,6 +1,6 @@
 -- filename: 20261014074443400_rollout_decisions.sql
 --
--- ADR-1354: explained rollout decisions.
+-- ADR-1447: explained rollout decisions.
 --   * deployments.rollout_decision holds the evidence recorded with the
 --     latest rollout transition. It is written only in the same UPDATE as an
 --     advance or recovery, never on a hold. The structural ceiling is twice

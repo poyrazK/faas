@@ -53,7 +53,7 @@ func (h *defaultProbeHarness) Probe(_ context.Context, _ string, deploymentID, t
 	return h.outcomes[deploymentID], nil
 }
 
-// adr: 1353
+// adr: 1446
 // A safe-policy canary with no route health probes of its own gets the
 // default probe of "/" on the candidate and its predecessor, once per minute
 // and with the circuit breaker's request floor per deployment (ADR-1321),

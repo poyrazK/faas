@@ -5,7 +5,7 @@
 import type { RolloutDecisionSample } from './RolloutDecisionSample.js';
 import type { RolloutDecisionSignals } from './RolloutDecisionSignals.js';
 /**
- * Evidence behind one decision about a rollout (ADR-1354): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text.
+ * Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text.
  */
 export type RolloutDecision = {
   kind: 'advance' | 'hold' | 'abort';
@@ -31,7 +31,7 @@ export type RolloutDecision = {
   candidate?: RolloutDecisionSample;
   stable?: RolloutDecisionSample;
   /**
-   * The 5xx sample included synthetic probes of the app (ADR-1353).
+   * The 5xx sample included synthetic probes of the app (ADR-1446).
    */
   probes_included?: boolean;
   signals?: RolloutDecisionSignals;

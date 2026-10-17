@@ -19,7 +19,7 @@ import (
 // Only an exact canary abort has a synchronous, known traffic recipient.
 // Service rollouts retain their separate gateway acknowledgement/drain path.
 //
-// workerDecision is meterd's validated abort evidence (ADR-1354); a person's
+// workerDecision is meterd's validated abort evidence (ADR-1447); a person's
 // request records abort_manual instead.
 func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RecoverRolloutRequest, workerDecision json.RawMessage) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)

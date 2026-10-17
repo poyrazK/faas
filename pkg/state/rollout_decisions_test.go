@@ -44,7 +44,7 @@ func decisionRule(t *testing.T, raw json.RawMessage) string {
 	return d.Rule
 }
 
-// rolloutDecisionSuite pins ADR-1354's storage contract on both stores: an
+// rolloutDecisionSuite pins ADR-1447's storage contract on both stores: an
 // advance and an abort record their decision on the deployment and in the
 // audit row, holds are deduplicated against the step's newest hold, and the
 // rollout.aborted webhook carries an abort decision.
@@ -213,7 +213,7 @@ func TestRolloutCompletedDecisionPG(t *testing.T) {
 }
 
 // rolloutCompletedDecisionCase pins that the advance which completes a
-// rollout puts its decision on the rollout.completed webhook (ADR-1354).
+// rollout puts its decision on the rollout.completed webhook (ADR-1447).
 func rolloutCompletedDecisionCase(t *testing.T, s state.Store) {
 	t.Helper()
 	ctx := context.Background()

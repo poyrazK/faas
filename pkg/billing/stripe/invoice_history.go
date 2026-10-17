@@ -78,7 +78,7 @@ func (c *Client) FetchInvoiceHistory(ctx context.Context, acct state.Account, cu
 			continue
 		}
 		tax := stripeHistoryInvoiceTax(rawInvoice)
-		if tax < 0 || source.Currency != "eur" {
+		if tax < 0 || source.Currency != api.BillingCurrencyLower {
 			continue
 		}
 		inv := state.Invoice{
@@ -86,7 +86,7 @@ func (c *Client) FetchInvoiceHistory(ctx context.Context, acct state.Account, cu
 			ProviderChargeID: stripeResourceID(source.PaymentIntent), Number: source.Number, Status: status,
 			PeriodStart: time.Unix(source.PeriodStart, 0).UTC(), PeriodEnd: time.Unix(source.PeriodEnd, 0).UTC(),
 			SubtotalCents: *source.Subtotal, TaxCents: tax, TotalCents: *source.Total, AmountPaidCents: *source.AmountPaid,
-			Plan: state.InvoicePlanUnknown, Currency: "eur", PDFAvailable: source.InvoicePDF != "",
+			Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower, PDFAvailable: source.InvoicePDF != "",
 		}
 		if err := state.ValidateInvoiceHistoryInvoice(inv, acct.ID, "stripe"); err != nil {
 			continue

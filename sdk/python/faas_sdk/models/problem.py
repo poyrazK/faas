@@ -69,10 +69,10 @@ class Problem:
     passed report does not independently establish application readiness or credential use. Optional application
     acknowledgements are version-bound self-attestations."""
     crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
-    """rollback_crosses_release: release commands the rollback would not undo (ADR-1355)."""
+    """rollback_crosses_release: release commands the rollback would not undo (ADR-1448)."""
     restore_points: list[ReleaseRestorePoint] | Unset = UNSET
     """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases
-    (ADR-1355)."""
+    (ADR-1448)."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""

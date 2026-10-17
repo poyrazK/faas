@@ -621,9 +621,9 @@ type CreateAppRequest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
-	// ReleasePolicy (ADR-1353): "safe" (default) or "immediate".
+	// ReleasePolicy (ADR-1446): "safe" (default) or "immediate".
 	ReleasePolicy string `json:"release_policy,omitempty"`
-	// ReleaseProbePaths (ADR-1351): up to ReleaseProbePathsMax GET paths the
+	// ReleaseProbePaths (ADR-1449): up to ReleaseProbePathsMax GET paths the
 	// default rollout probe checks instead of "/".
 	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
@@ -943,6 +943,8 @@ type ScenarioTestChaosMatch struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// ExpectedServiceBindingFingerprint guards service-only updates atomically.
+	ExpectedServiceBindingFingerprint *string `json:"expected_service_binding_fingerprint,omitempty"`
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
 	// values are public or internal. Internal is available on every plan.
 	Visibility *string `json:"visibility,omitempty"`
@@ -1030,10 +1032,10 @@ type UpdateAppRequest struct {
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
-	// ReleasePolicy (ADR-1353) replaces the app's default rollout for
+	// ReleasePolicy (ADR-1446) replaces the app's default rollout for
 	// production releases: "safe" or "immediate".
 	ReleasePolicy *string `json:"release_policy,omitempty"`
-	// ReleaseProbePaths (ADR-1351) replaces the paths the default rollout
+	// ReleaseProbePaths (ADR-1449) replaces the paths the default rollout
 	// probe checks; an empty list restores "/".
 	ReleaseProbePaths *[]string `json:"release_probe_paths,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
@@ -1305,6 +1307,54 @@ type DeclaredRoute struct {
 type CreateAPIConsumerRequest struct {
 	ExternalRef string `json:"external_ref"`
 	Name        string `json:"name"`
+	// TrialDays starts the consumer's one free trial at the next UTC minute
+	// (ADR-1314); 0 means none.
+	TrialDays int `json:"trial_days,omitempty"`
+}
+
+// PutAPIConsumerTrialRequest starts a consumer's trial or moves the end of
+// a running one (ADR-1314). Set days (from the trial's start) or ends_at.
+type PutAPIConsumerTrialRequest struct {
+	Days   int        `json:"days,omitempty"`
+	EndsAt *time.Time `json:"ends_at,omitempty"`
+}
+
+// APIConsumerTrialResponse is a consumer's free trial: usage in
+// [starts_at, ends_at) is priced at zero (ADR-1314).
+type APIConsumerTrialResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	StartsAt   time.Time `json:"starts_at"`
+	EndsAt     time.Time `json:"ends_at"`
+	Active     bool      `json:"active"`
+}
+
+// PutAPIConsumerBillingPolicyRequest sets an app's overdue rule (ADR-1315):
+// consumers whose exported invoice is unpaid block_overdue_after_days after
+// its due date are refused until it is paid or voided.
+type PutAPIConsumerBillingPolicyRequest struct {
+	BlockOverdueAfterDays *int `json:"block_overdue_after_days"`
+}
+
+// APIConsumerBillingPolicyResponse is an app's overdue rule.
+type APIConsumerBillingPolicyResponse struct {
+	AppID                 string    `json:"app_id"`
+	BlockOverdueAfterDays int       `json:"block_overdue_after_days"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// APIConsumerOverdueHoldResponse is one consumer the gateway refuses
+// because of an overdue invoice.
+type APIConsumerOverdueHoldResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	ExportID   string    `json:"export_id"`
+	DueAt      time.Time `json:"due_at"`
+	Since      time.Time `json:"since"`
+}
+
+// APIConsumerOverdueHoldListResponse lists an app's blocked consumers,
+// oldest due date first.
+type APIConsumerOverdueHoldListResponse struct {
+	Holds []APIConsumerOverdueHoldResponse `json:"holds"`
 }
 
 // APIConsumerResponse is the public representation of an API consumer.
@@ -1396,6 +1446,20 @@ type CreateAPIConsumerRateCardRequest struct {
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+	// Unit is what the card prices (ADR-1308): request (default),
+	// compute_second, or response_megabyte. Compute and response size count
+	// billable requests per consumer minute, rounded to the nearest unit.
+	Unit string `json:"unit,omitempty"`
+	// TierMode is how tiers price a month (ADR-1309): graduated (default)
+	// prices each unit at its position's step; volume prices every unit at
+	// the step the month's total reaches.
+	TierMode string `json:"tier_mode,omitempty"`
+	// BaseFeeMillicentsPerMonth is a fixed charge per consumer per UTC
+	// month, and MinimumMillicentsPerMonth a minimum usage charge, topped
+	// up when usage costs less (ADR-1316). The card in force when a
+	// consumer's month starts sets both for that month.
+	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1417,10 +1481,14 @@ type APIConsumerRateCardResponse struct {
 	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
 	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
-	EffectiveFrom          time.Time                 `json:"effective_from"`
-	CreatedAt              time.Time                 `json:"created_at"`
+	// Monthly base fee and minimum spend per consumer (ADR-1316).
+	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	EffectiveFrom             time.Time `json:"effective_from"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 // APIConsumerRateCardListResponse wraps an app's rate-card history in
@@ -1443,6 +1511,10 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	// TierUnits splits billable_units across a tiered card's steps.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the bucket's price stream when it is not request (ADR-1317).
+	Unit string `json:"unit,omitempty"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1485,6 +1557,19 @@ type APIConsumerUsageStatementBucketResponse struct {
 	// never is.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the bucket's price stream when it is not request (ADR-1317).
+	Unit string `json:"unit,omitempty"`
+}
+
+// APIConsumerStatementFeeResponse is a statement's monthly base fee or
+// minimum-spend top-up (ADR-1316). A minimum top-up in an adjustment can be
+// negative when late usage covers part of it.
+type APIConsumerStatementFeeResponse struct {
+	Kind             string `json:"kind"`
+	RateCardID       string `json:"rate_card_id"`
+	AmountMillicents int64  `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
@@ -1504,9 +1589,16 @@ type APIConsumerUsageStatementResponse struct {
 	AmountMillicents int64                                     `json:"amount_millicents"`
 	Priced           bool                                      `json:"priced"`
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
-	AsOf             string                                    `json:"as_of"`
-	CreatedAt        time.Time                                 `json:"created_at"`
-	FinalizedAt      *time.Time                                `json:"finalized_at,omitempty"`
+	// Fees are the month's base fee and minimum top-up (ADR-1316);
+	// amount_millicents includes them.
+	Fees        []APIConsumerStatementFeeResponse `json:"fees,omitempty"`
+	AsOf        string                            `json:"as_of"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	FinalizedAt *time.Time                        `json:"finalized_at,omitempty"`
+	// CreditAppliedMillicents is prepaid credit drawn when the statement was
+	// finalized; AmountDueMillicents is what is left to bill (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // APIConsumerUsageStatementListResponse wraps statements newest-period first.
@@ -1795,9 +1887,10 @@ const (
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Type string `json:"type"`
+	ServiceBindingFingerprint string `json:"service_binding_fingerprint,omitempty"`
+	ID                        string `json:"id"`
+	Slug                      string `json:"slug"`
+	Type                      string `json:"type"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`
@@ -1940,10 +2033,10 @@ type AppResponse struct {
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
 	// ReleasePolicy is the effective default rollout for production
-	// releases (ADR-1353): "safe" or "immediate".
+	// releases (ADR-1446): "safe" or "immediate".
 	ReleasePolicy string `json:"release_policy"`
 	// ReleaseProbePaths are the paths the default rollout probe checks; empty
-	// means "/" (ADR-1351).
+	// means "/" (ADR-1449).
 	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
@@ -3429,15 +3522,15 @@ type DeploymentResponse struct {
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
 	// RolloutDecision is the evidence recorded with the latest rollout
-	// transition (ADR-1354). It explains an outcome only when its kind matches:
+	// transition (ADR-1447). It explains an outcome only when its kind matches:
 	// an advance record for completion, an abort record for an abort.
 	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
 	// RolloutHold is the newest hold recorded since the current canary step
-	// started, while the rollout is in flight (ADR-1354). Only single-deployment
+	// started, while the rollout is in flight (ADR-1447). Only single-deployment
 	// reads and the deployment summary fill it.
 	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
 	// Release is the deployment's release command run, for a deployment that
-	// declares one (ADR-1355). Only single-deployment reads and the
+	// declares one (ADR-1448). Only single-deployment reads and the
 	// deployment summary fill it.
 	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
@@ -3606,7 +3699,7 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
-	// Decision is the circuit-breaker evidence for this advance (ADR-1354).
+	// Decision is the circuit-breaker evidence for this advance (ADR-1447).
 	// Reserved for the lease-bound internal worker; public requests reject it.
 	Decision *RolloutDecision `json:"decision,omitempty"`
 }
@@ -3865,7 +3958,7 @@ type RollbackRequest struct {
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
 
 	// AcknowledgeReleases lets the rollback proceed although release
-	// commands ran after its target last served (ADR-1355). Without it such a
+	// commands ran after its target last served (ADR-1448). Without it such a
 	// rollback is refused with rollback_crosses_release. Automated rollbacks
 	// never set it.
 	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
@@ -4645,7 +4738,7 @@ type DeploymentChange struct {
 
 // Invoice is one persisted invoice from a billing provider, surfaced
 // via GET /v1/invoices. Money is integer cents in the provider's
-// currency (the financial model distills to EUR at the API edge).
+// currency (the financial model distills to the billing currency at the API edge).
 // PDFAvailable is the only PDF surface we expose — the hosted PDF URL
 // is provider-scoped and customer-fetched via the Stripe/Paddle
 // portal, not via this API. HostedURL is intentionally not on the
@@ -4908,7 +5001,7 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model (€0.01/GB-h). Cents are integer.
+// overage rate in the financial model ($0.01/GB-h). Cents are integer.
 //
 // Issue #279 / PR-B: UsedCPUHours is informational and NOT billed.
 // The billing math is on UsedGBHours (plan RAM + 8 MB per running
@@ -6831,7 +6924,7 @@ type WakeTimelineApp struct {
 //     a second round-trip.
 //   - OverageGBHours: max(0, gb_hours - plan_included). 0 when
 //     gb_hours ≤ plan_included. The dashboard renders this as the
-//     red overage chip; the Stripe pusher bills it at €0.01/GB-h.
+//     red overage chip; the Stripe pusher bills it at $0.01/GB-h.
 //   - Source: "usage_minutes" today (after the 30d retention cap).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
@@ -12091,7 +12184,7 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
-	// Decision is the circuit-breaker evidence for the abort (ADR-1354).
+	// Decision is the circuit-breaker evidence for the abort (ADR-1447).
 	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
@@ -12952,6 +13045,8 @@ type AppEventPublishStatusResponse struct {
 }
 
 type AppPublishEventRequest struct {
+	// ExpectedAppID fences slug reuse when set.
+	ExpectedAppID string          `json:"expected_app_id,omitempty"`
 	Key           string          `json:"key"`
 	Type          string          `json:"type"`
 	Data          json.RawMessage `json:"data"`

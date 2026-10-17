@@ -170,11 +170,11 @@ export type UpdateAppRequest = {
    */
   revision_pin_ttl_seconds?: number | null;
   /**
-   * Set the default rollout for production releases (ADR-1353, ADR-1352). Omit for no change.
+   * Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Replace the paths the default rollout probe checks (ADR-1351). An empty list restores /. Omit for no change.
+   * Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change.
    */
   release_probe_paths?: any[] | null;
   min_instances?: number | null;
@@ -272,5 +272,9 @@ export type UpdateAppRequest = {
   overflow_node?: string | null;
   cors_default_enabled?: boolean | null;
   cors_default_origins?: Array<string>;
+  /**
+   * Apply only if the locked app service settings still match this fingerprint. Supported only for app-level service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior.
+   */
+  expected_service_binding_fingerprint?: string;
 };
 

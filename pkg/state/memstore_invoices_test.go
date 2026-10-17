@@ -20,7 +20,7 @@ func seedInvoice(t *testing.T, m *MemStore, accountID, provider, providerInvoice
 		PeriodStart:       periodEnd.AddDate(0, 0, -30),
 		PeriodEnd:         periodEnd,
 		TotalCents:        totalCents,
-		Currency:          "eur",
+		Currency:          "usd",
 		PDFAvailable:      true,
 	}
 	m.mu.Lock()
@@ -83,7 +83,7 @@ func TestMemStore_UpsertInvoiceIsIdempotentAndUpdatesStatus(t *testing.T) {
 	inv := Invoice{
 		AccountID: "alice", Provider: "polar", ProviderInvoiceID: "order-1",
 		Status: "open", PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0),
-		TotalCents: 1000, Currency: "eur",
+		TotalCents: 1000, Currency: "usd",
 	}
 	if err := m.UpsertInvoice(ctx, inv); err != nil {
 		t.Fatal(err)

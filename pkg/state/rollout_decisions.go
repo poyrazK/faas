@@ -14,7 +14,7 @@ import (
 )
 
 // RolloutDecisionStore records and reads the evidence behind rollout
-// decisions (ADR-1354). It is separate from Store so narrow test doubles do
+// decisions (ADR-1447). It is separate from Store so narrow test doubles do
 // not grow; PgStore and MemStore implement it and APID type-asserts it.
 type RolloutDecisionStore interface {
 	RecoverRolloutWithDecision(ctx context.Context, appID string, action, reason string, decision json.RawMessage) (Deployment, int64, error)
@@ -216,7 +216,7 @@ func cloneRawJSON(b json.RawMessage) json.RawMessage {
 }
 
 // rolloutDecisionOfKind decodes a stored decision only when it explains an
-// outcome of the given kind (ADR-1354): an advance record for a completed
+// outcome of the given kind (ADR-1447): an advance record for a completed
 // rollout, an abort record for an aborted one.
 func rolloutDecisionOfKind(raw json.RawMessage, kind string) *api.RolloutDecision {
 	if len(raw) == 0 {

@@ -77,19 +77,7 @@ func (s *PgStore) CreateAPIConsumerUsageStatementHandoff(ctx context.Context, in
 		return APIConsumerUsageStatementHandoff{}, false, ErrConflict
 	}
 	var conflict bool
-	err = tx.QueryRow(ctx, `select
-		exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_consumers c on c.statement_id = p.id
-		 where c.app_id = $1::uuid and c.consumer_id = $2::uuid
-		   and p.period_start < $4 and p.period_end > $3)
-		or exists (select 1 from api_consumer_usage_statement_handoffs h
-		  join api_consumer_usage_statements a on a.id = h.statement_id
-		 where a.app_id = $1::uuid and a.consumer_id = $2::uuid
-		   and a.period_start < $4 and a.period_end > $3
-		   -- Revisions of the same period are additive adjustments that
-		   -- never repeat finalized units, so each may be handed off.
-		   and not (a.period_start = $3 and a.period_end = $4))
+	err = tx.QueryRow(ctx, `select `+apiConsumerHandoffOverlapSQL+`
 		or exists (select 1 from platform_tenant_statement_handoffs
 		 where account_id = $5::uuid and external_invoice_id = $6)`,
 		input.AppID, input.ConsumerID, start, end, input.AccountID, input.ExternalInvoiceID).Scan(&conflict)

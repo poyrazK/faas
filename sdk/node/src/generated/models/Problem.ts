@@ -48,11 +48,11 @@ export type Problem = {
   expected_sequence?: number;
   bindings_check?: BindingCheckReport;
   /**
-   * rollback_crosses_release: release commands the rollback would not undo (ADR-1355).
+   * rollback_crosses_release: release commands the rollback would not undo (ADR-1448).
    */
   crossed_releases?: Array<RollbackCrossedRelease>;
   /**
-   * rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1355).
+   * rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448).
    */
   restore_points?: Array<ReleaseRestorePoint>;
   type?: string;

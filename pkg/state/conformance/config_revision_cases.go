@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// testConfigRevisionsAndGuards pins ADR-1391's bookkeeping on both stores:
+// testConfigRevisionsAndGuards pins ADR-1451's bookkeeping on both stores:
 // a baseline before the first write, complete revisions after each write,
 // one watching guard per scope that later writes join, the sealed rows a
 // guard retains (first capture wins, erased on close), the judging window's

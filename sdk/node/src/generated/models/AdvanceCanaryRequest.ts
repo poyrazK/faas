@@ -18,7 +18,7 @@ export type AdvanceCanaryRequest = {
    */
   expected_step: number;
   /**
-   * Reserved for Gregale's Safe Deploy worker (ADR-1354). Public requests that set it are rejected with 422.
+   * Reserved for Gregale's Safe Deploy worker (ADR-1447). Public requests that set it are rejected with 422.
    */
   decision?: RolloutDecision;
 };

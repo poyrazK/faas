@@ -1,6 +1,6 @@
 //go:build metal
 
-// safe_release_drill_metal_test.go — ADR-1353 safe-release drills through the
+// safe_release_drill_metal_test.go — ADR-1446 safe-release drills through the
 // real wire: apid stamps the default policy, meterd's canary progression
 // evaluates the circuit breaker against live counters, schedd and vmmd run
 // the revisions, and gatewayd-internal splits real requests between them.
@@ -90,7 +90,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 	)
 	prom.setTargets(h.ScheddMetricsURL, h.GatewayControlURL+"/metrics")
-	// ADR-1353 default probes enter through the same edge as the hosting
+	// ADR-1446 default probes enter through the same edge as the hosting
 	// smoke. apid starts before the gateway, so point it there and restart.
 	if err := h.SetAPIDEnv("FAAS_ROUTE_PROBE_URL", h.GatewayURL); err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		if elapsed >= 30*time.Second+api.CanaryLowTrafficMaxHold {
 			t.Fatalf("quiet candidate advanced after %s; want probe evidence before the %s bound", elapsed, api.CanaryLowTrafficMaxHold)
 		}
-		// ADR-1354: the completing advance carries its probe evidence.
+		// ADR-1447: the completing advance carries its probe evidence.
 		why := d.decision(t, got)
 		t.Logf("DRILL low_traffic_decision rule=%s probes_included=%v candidate_probes=%d stable_probes=%d holds=%v",
 			why.Rule, why.ProbesIncluded, why.Candidate.ProbeRequests, why.Stable.ProbeRequests, d.holdRules(t, candidate.ID))
@@ -206,7 +206,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		if recovery > 60*time.Second {
 			t.Errorf("rollback recovery %.1fs exceeds the 60s scorecard bar", recovery.Seconds())
 		}
-		// ADR-1353: the outcome worker must record the same success, with the
+		// ADR-1446: the outcome worker must record the same success, with the
 		// measured recovery and a committed audit receipt.
 		receipt := d.waitRollbackReceipt(t, "sr-quiet", receiptID, time.Minute)
 		if receipt.Status != "complete" || receipt.RecoveryMS == nil || receipt.AuditID == "" {
@@ -299,7 +299,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		})
 	})
 
-	// ADR-1391: a variable that makes every new instance answer 500 is
+	// ADR-1451: a variable that makes every new instance answer 500 is
 	// restored by the config guard without a person, and the app serves again.
 	t.Run("config change that breaks the app is restored by the config guard", func(t *testing.T) {
 		// Reuses the first case's live app: the drill account is on the
@@ -432,7 +432,7 @@ func (d *safeReleaseDrill) createApp(t *testing.T, slug string) {
 	})
 }
 
-// decision decodes the ADR-1354 record stored with the deployment's latest
+// decision decodes the ADR-1447 record stored with the deployment's latest
 // rollout transition.
 func (d *safeReleaseDrill) decision(t *testing.T, dep state.Deployment) api.RolloutDecision {
 	t.Helper()

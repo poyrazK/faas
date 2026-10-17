@@ -84,7 +84,7 @@ type rolloutHeldNotice struct {
 	step     int
 	notified bool
 	// held is the step and rule of the last recorded hold printed
-	// (ADR-1354), so a changed reason is printed again.
+	// (ADR-1447), so a changed reason is printed again.
 	held string
 }
 
@@ -117,7 +117,7 @@ func (n *rolloutHeldNotice) maybeWarn(w io.Writer, d api.DeploymentResponse, now
 }
 
 // rolloutDecisionOfKind describes the deployment's recorded decision only
-// when it explains an outcome of that kind (ADR-1354).
+// when it explains an outcome of that kind (ADR-1447).
 func rolloutDecisionOfKind(d api.DeploymentResponse, kind string) string {
 	if d.RolloutDecision == nil || d.RolloutDecision.Kind != kind {
 		return ""

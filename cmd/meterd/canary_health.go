@@ -126,7 +126,7 @@ func (a *canaryStoreAdapter) CircuitBreakerObservation(ctx context.Context, row 
 	}
 	out.OOMSignalAvailable = true
 
-	// ADR-1353 crash-loop gate: liveness-driven restarts need no request
+	// ADR-1446 crash-loop gate: liveness-driven restarts need no request
 	// sample, so they catch a crash-looping release on a quiet app. The same
 	// always-present sentinel series proves the family is exported.
 	livenessCoverage, err := a.promQL.QueryScalar(ctx, `(count({__name__=~".*_liveness_restarts_total"}) or vector(0))`)
@@ -168,7 +168,7 @@ func (a *canaryStoreAdapter) CircuitBreakerObservation(ctx context.Context, row 
 	return out, nil
 }
 
-// addProbeEvidence adds the stage's synthetic probe responses (ADR-1353:
+// addProbeEvidence adds the stage's synthetic probe responses (ADR-1446:
 // apid's default probe, plus any ADR-847 route probes). Evidence counts only
 // when both sides were probed and fewer than half of either side's probes
 // were rejected by the app's own auth, the ADR-847 rule for "unknown".

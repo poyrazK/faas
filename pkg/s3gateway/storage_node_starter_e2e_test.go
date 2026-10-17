@@ -45,13 +45,69 @@ type starterProvider struct {
 	mu        sync.Mutex
 	objects   map[string]starterStoredObject
 	holds     map[string]*starterStreamHold
+	listHold  *starterListingHold
+	failList  bool
+	listConns []string
+	reads     map[string]int
+}
+
+type starterListingHold struct {
+	entered, release, cancelled chan struct{}
+	once                        sync.Once
+	cancelOnce                  sync.Once
+}
+
+func (p *starterProvider) listing(w http.ResponseWriter, r *http.Request) {
+	p.mu.Lock()
+	hold, fail := p.listHold, p.failList
+	p.mu.Unlock()
+	if hold != nil {
+		hold.once.Do(func() { close(hold.entered) })
+		select {
+		case <-hold.release:
+		case <-r.Context().Done():
+			hold.cancelOnce.Do(func() { close(hold.cancelled) })
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	if fail {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`)
+		return
+	}
+	_, _ = io.WriteString(w, `<ListBucketResult><Name>physical</Name><KeyCount>0</KeyCount><IsTruncated>false</IsTruncated></ListBucketResult>`)
+}
+
+func (p *starterProvider) blockListing(t *testing.T) *starterListingHold {
+	t.Helper()
+	hold := &starterListingHold{entered: make(chan struct{}), release: make(chan struct{}), cancelled: make(chan struct{})}
+	p.mu.Lock()
+	p.listHold = hold
+	p.mu.Unlock()
+	t.Cleanup(func() { p.unblockListing(hold) })
+	return hold
+}
+
+func (p *starterProvider) unblockListing(hold *starterListingHold) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.listHold == hold {
+		p.listHold = nil
+		close(hold.release)
+	}
+}
+
+func (p *starterProvider) listConnection() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.listConns[len(p.listConns)-1]
 }
 
 func (p *starterProvider) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
 	if r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
-		w.Header().Set("Content-Type", "application/xml")
-		_, _ = io.WriteString(w, `<ListBucketResult><Name>physical</Name><KeyCount>0</KeyCount><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		p.listing(w, r)
 		return
 	}
 	key := strings.TrimPrefix(r.URL.Path, "/physical/")
@@ -98,6 +154,9 @@ func (p *starterProvider) read(t *testing.T, w http.ResponseWriter, r *http.Requ
 	p.mu.Lock()
 	object, exists := p.objects[key]
 	hold := p.holds[key]
+	if r.Method == http.MethodGet {
+		p.reads[key]++
+	}
 	p.mu.Unlock()
 	if !exists {
 		w.WriteHeader(404)
@@ -325,8 +384,8 @@ func TestManagedStorageNodeStarterJourney(t *testing.T) {
 	if !filepath.IsAbs(directory) {
 		t.Fatal("starter fixture path must be absolute")
 	}
-	provider := &starterProvider{directory: t.TempDir(), objects: map[string]starterStoredObject{}, holds: map[string]*starterStreamHold{}}
-	for _, key := range []string{"rotate.bin", "revoke.bin", "cancel.bin", "shutdown.bin"} {
+	provider := &starterProvider{directory: t.TempDir(), objects: map[string]starterStoredObject{}, holds: map[string]*starterStreamHold{}, reads: map[string]int{}}
+	for _, key := range []string{"rotate.bin", "revoke.bin", "restore.bin", "cancel.bin", "shutdown.bin"} {
 		hold := &starterStreamHold{release: make(chan struct{}), cancelled: make(chan struct{})}
 		provider.holds[key] = hold
 		t.Cleanup(hold.finish)
@@ -334,6 +393,11 @@ func TestManagedStorageNodeStarterJourney(t *testing.T) {
 	st := state.NewMemStore()
 	f := newMultipartCopyIntegrationWithTransfer(t, st, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { provider.serve(t, w, r) }), transferIntegrationConfig(30), 0)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+			provider.mu.Lock()
+			provider.listConns = append(provider.listConns, r.RemoteAddr)
+			provider.mu.Unlock()
+		}
 		observed := &starterGatewayWriter{ResponseWriter: w, status: 200}
 		f.handler.ServeHTTP(observed, r)
 		if observed.status >= 400 {
@@ -399,7 +463,141 @@ func starterRotationJourney(t *testing.T, p *starterProcess, st *state.MemStore,
 	recovered := starterCredential(t, st, bucket, "GRGAAAAAAAAAAAAAAAAC")
 	p.reload(t, "d", recovered.AccessKeyID, "applied")
 	_ = p.request(t, "GET", "/readyz", nil, 200).Body.Close()
+	starterRestoreJourney(t, p, provider, recovered.AccessKeyID)
 	starterStopJourney(t, p, provider)
+}
+
+type starterHookResult struct {
+	status int
+	err    error
+}
+
+func (p *starterProcess) hook(t *testing.T) <-chan starterHookResult {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, p.base+"/internal/after-restore", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Faas-After-Restore", "1")
+	result := make(chan starterHookResult, 1)
+	go func() {
+		response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		if err != nil {
+			result <- starterHookResult{err: err}
+			return
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		result <- starterHookResult{status: response.StatusCode}
+	}()
+	return result
+}
+
+func starterHookStatus(t *testing.T, result <-chan starterHookResult, status int) {
+	t.Helper()
+	select {
+	case got := <-result:
+		if got.err != nil || got.status != status {
+			t.Fatalf("restore hook: status %d, want %d, err=%v", got.status, status, got.err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("restore hook did not return within its application budget")
+	}
+}
+
+func starterRestoreJourney(t *testing.T, p *starterProcess, provider *starterProvider, access string) {
+	t.Helper()
+	held := starterHeld(t, p, "restore.bin")
+	defer held.Body.Close()
+	oldConnection := provider.listConnection()
+	starterHookStatus(t, p.hook(t), 204)
+	p.ack(t, "d", "applied") // Same revision, fresh real AWS SDK transport.
+	if provider.listConnection() == oldConnection {
+		t.Fatal("same-revision restore reused the captured gateway connection")
+	}
+	select {
+	case <-provider.holds["restore.bin"].cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("restore did not cancel the captured provider stream")
+	}
+	if data, err := io.ReadAll(held.Body); err == nil || len(data) != 0 {
+		t.Fatal("captured download unexpectedly completed after restore")
+	}
+	provider.mu.Lock()
+	reads := provider.reads["restore.bin"]
+	provider.failList = true
+	provider.mu.Unlock()
+	if reads != 1 {
+		t.Fatal("captured download was replayed")
+	}
+	starterHookStatus(t, p.hook(t), 503)
+	p.ack(t, "d", "failed")
+	_ = p.request(t, "GET", "/readyz", nil, 503).Body.Close()
+	provider.mu.Lock()
+	provider.failList = false
+	provider.mu.Unlock()
+	p.reload(t, "d", access, "applied")
+	_ = p.request(t, "GET", "/readyz", nil, 503).Body.Close()
+	starterHookStatus(t, p.hook(t), 204)
+	p.ack(t, "d", "applied")
+	starterRestoreTimeout(t, p, provider, access)
+	starterQueuedRestoreTimeout(t, p, provider, access)
+}
+
+func starterRestoreTimeout(t *testing.T, p *starterProcess, provider *starterProvider, access string) {
+	t.Helper()
+	hold := provider.blockListing(t)
+	p.publish(t, "e", access)
+	started := time.Now()
+	result := p.hook(t)
+	select {
+	case <-hold.entered:
+	case <-time.After(time.Second):
+		t.Fatal("restore did not validate a new signed client")
+	}
+	_ = p.request(t, "GET", "/readyz", nil, 503).Body.Close()
+	_ = p.request(t, "GET", "/objects/binary.bin", nil, 503).Body.Close()
+	starterHookStatus(t, result, 503)
+	if time.Since(started) > 2500*time.Millisecond {
+		t.Fatal("restore exceeded its application hook budget")
+	}
+	select {
+	case <-hold.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("timed-out validation left the provider request running")
+	}
+	provider.unblockListing(hold)
+	select {
+	case <-p.acks:
+		t.Fatal("cancelled validation emitted an adoption ACK")
+	default:
+	}
+	p.publish(t, "f", access)
+	starterHookStatus(t, p.hook(t), 204)
+	p.ack(t, "f", "applied")
+	_ = p.request(t, "GET", "/readyz", nil, 200).Body.Close()
+}
+
+func starterQueuedRestoreTimeout(t *testing.T, p *starterProcess, provider *starterProvider, access string) {
+	t.Helper()
+	hold := provider.blockListing(t)
+	p.publish(t, "1", access)
+	if err := p.command.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-hold.entered:
+	case <-time.After(time.Second):
+		t.Fatal("SIGHUP did not enter validation")
+	}
+	starterHookStatus(t, p.hook(t), 503)
+	_ = p.request(t, "GET", "/readyz", nil, 503).Body.Close()
+	provider.unblockListing(hold)
+	p.ack(t, "1", "failed") // The captured candidate was fenced synchronously.
+	p.publish(t, "2", access)
+	starterHookStatus(t, p.hook(t), 204)
+	p.ack(t, "2", "applied")
+	_ = p.request(t, "GET", "/readyz", nil, 200).Body.Close()
 }
 
 func starterStopJourney(t *testing.T, p *starterProcess, provider *starterProvider) {

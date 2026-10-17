@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// DefaultProbePath is what apid probes on a safe-policy canary (ADR-1353):
+// DefaultProbePath is what apid probes on a safe-policy canary (ADR-1446):
 // the path the post-readiness hosting smoke already checks once. Probes keep
 // checking it on the candidate and its predecessor while the canary runs, so
 // a quiet release is judged on evidence instead of on the absence of errors.
@@ -20,7 +20,7 @@ func DefaultProbeRoute() api.RouteHealthRoute {
 }
 
 // DefaultProbeRoutes are the selectors the default probe checks for an app:
-// its release_probe_paths (ADR-1351), or "/" when it names none. Paths the
+// its release_probe_paths (ADR-1449), or "/" when it names none. Paths the
 // manifest validator would reject are skipped, and none left means "/".
 func DefaultProbeRoutes(paths []string) []api.RouteHealthRoute {
 	routes := make([]api.RouteHealthRoute, 0, len(paths))
@@ -37,7 +37,7 @@ func DefaultProbeRoutes(paths []string) []api.RouteHealthRoute {
 
 // DefaultProbeRequests is how many probes each of n default routes gets per
 // deployment and round, so one round still meets the circuit breaker's
-// request floor in total (ADR-1321, ADR-1351).
+// request floor in total (ADR-1321, ADR-1449).
 func DefaultProbeRequests(n int) int {
 	if n <= 1 {
 		return api.DefaultRouteProbeRequestsPerRound

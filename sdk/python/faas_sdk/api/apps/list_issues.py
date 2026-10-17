@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -17,8 +18,10 @@ def _get_kwargs(
     *,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -29,6 +32,11 @@ def _get_kwargs(
 
     params["environment"] = environment
 
+    json_team: str | Unset = UNSET
+    if not isinstance(team, Unset):
+        json_team = str(team)
+    params["team"] = json_team
+
     params["assignee"] = assignee
 
     json_sort: str | Unset = UNSET
@@ -36,6 +44,8 @@ def _get_kwargs(
         json_sort = sort
 
     params["sort"] = json_sort
+
+    params["tag"] = tag
 
     params["min_customers"] = min_customers
 
@@ -125,8 +135,10 @@ def sync_detailed(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
@@ -136,8 +148,10 @@ def sync_detailed(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -153,8 +167,10 @@ def sync_detailed(
         slug=slug,
         state=state,
         environment=environment,
+        team=team,
         assignee=assignee,
         sort=sort,
+        tag=tag,
         min_customers=min_customers,
         cursor=cursor,
     )
@@ -172,8 +188,10 @@ def sync(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
@@ -183,8 +201,10 @@ def sync(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -201,8 +221,10 @@ def sync(
         client=client,
         state=state,
         environment=environment,
+        team=team,
         assignee=assignee,
         sort=sort,
+        tag=tag,
         min_customers=min_customers,
         cursor=cursor,
     ).parsed
@@ -214,8 +236,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
@@ -225,8 +249,10 @@ async def asyncio_detailed(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -242,8 +268,10 @@ async def asyncio_detailed(
         slug=slug,
         state=state,
         environment=environment,
+        team=team,
         assignee=assignee,
         sort=sort,
+        tag=tag,
         min_customers=min_customers,
         cursor=cursor,
     )
@@ -259,8 +287,10 @@ async def asyncio(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    team: UUID | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
@@ -270,8 +300,10 @@ async def asyncio(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        team (UUID | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -289,8 +321,10 @@ async def asyncio(
             client=client,
             state=state,
             environment=environment,
+            team=team,
             assignee=assignee,
             sort=sort,
+            tag=tag,
             min_customers=min_customers,
             cursor=cursor,
         )

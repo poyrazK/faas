@@ -15,9 +15,9 @@ import (
 )
 
 // RouteProbeTarget is an app with probe selectors and an in-flight canary
-// (ADR-847). StableID is set only for ADR-1353 default probe targets; ADR-847
+// (ADR-847). StableID is set only for ADR-1446 default probe targets; ADR-847
 // targets read the predecessor from the route health report. ProbePaths are
-// the app's release_probe_paths for a default target (ADR-1351); empty means
+// the app's release_probe_paths for a default target (ADR-1449); empty means
 // "/".
 type RouteProbeTarget struct {
 	AccountID, AppID, Slug, CandidateID, StableID string
@@ -54,7 +54,7 @@ type RouteProbeTotal struct {
 	Requests, ServerErrors, Unauthenticated int64
 }
 
-// DefaultRouteProbeStore backs the ADR-1353 default probe: canaries of
+// DefaultRouteProbeStore backs the ADR-1446 default probe: canaries of
 // safe-policy request apps that apid probes without a route health gate, and
 // the per-deployment totals meterd's circuit breaker reads.
 type DefaultRouteProbeStore interface {

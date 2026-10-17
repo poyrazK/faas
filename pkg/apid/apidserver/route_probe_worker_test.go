@@ -90,7 +90,7 @@ func (s *sparseReportStore) GetRouteHealthReport(_ context.Context, _, _, deploy
 
 // adr: 847
 func TestRouteProbeWorkerProbesSparseSelectorsOncePerMinute(t *testing.T) {
-	// The fixture app is on the safe release policy; turn the ADR-1353
+	// The fixture app is on the safe release policy; turn the ADR-1446
 	// default probe off so only the ADR-847 selectors are probed.
 	t.Setenv(release.DefaultEnabledEnv, "false")
 	old := routeProbeChallengeDelay

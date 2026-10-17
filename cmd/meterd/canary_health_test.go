@@ -205,7 +205,7 @@ func TestCanaryCircuitBreakerObservationRequiresOOMMetricCoverage(t *testing.T) 
 	})
 }
 
-// adr: 1353
+// adr: 1446
 // Probe totals join the breaker input only when both sides were probed and
 // fewer than half of either side's probes hit the app's own auth.
 func TestCanaryHealthAddsProbeEvidence(t *testing.T) {

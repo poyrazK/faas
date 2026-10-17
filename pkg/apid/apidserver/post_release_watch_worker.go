@@ -94,7 +94,7 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 	target := c.PredecessorID
 	if _, _, problem := s.rollbackAppCore(request, acct, app, api.RollbackRequest{TargetDeploymentID: &target}, state.RollbackTriggerPostRelease); problem != nil {
 		if problem.Code == api.CodeRollbackCrossesRelease {
-			// ADR-1355: automation never runs code on changes it has not
+			// ADR-1448: automation never runs code on changes it has not
 			// served with. The release keeps serving; a person decides.
 			s.log.Warn("post-release watch: rollback skipped; it would cross release commands",
 				"app", app.ID, "deployment", c.DeploymentID, "target", target, "detail", problem.Detail)

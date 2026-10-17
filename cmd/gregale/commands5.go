@@ -435,7 +435,7 @@ func envPush(args []string) int {
 	// "SECRET_KEY", not "my live Stripe key". Override with
 	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
 	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
-	noGuard := fs.Bool("no-guard", false, "do not open a config guard for these changes (ADR-1391)")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for these changes (ADR-1451)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

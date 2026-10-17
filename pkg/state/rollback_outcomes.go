@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Plain rollback outcome ledger (ADR-1353). A plain rollback — manual,
+// Plain rollback outcome ledger (ADR-1446). A plain rollback — manual,
 // dashboard, or first-wake 5xx auto-rollback — writes one row when it is
 // requested; apid's outcome worker resolves it against the target
 // deployment. Checked rollbacks keep deployment_rollback_operations.
