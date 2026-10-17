@@ -36,7 +36,7 @@ func writeOrgAppList(w http.ResponseWriter, apps []state.App) {
 	for _, app := range apps {
 		response.Apps = append(response.Apps, api.OrgAppSummary{
 			ID: app.ID, Slug: app.Slug, Type: string(app.Type), Runtime: app.Runtime,
-			Status: string(app.Status), CreatedAt: api.FormatAlertTime(app.CreatedAt),
+			ProjectID: app.ProjectID, Status: string(app.Status), CreatedAt: api.FormatAlertTime(app.CreatedAt),
 		})
 	}
 	writeJSON(w, http.StatusOK, response)

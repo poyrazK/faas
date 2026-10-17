@@ -65992,6 +65992,11 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', example: "hello-world" }
         type: { type: string, enum: [app, function] , example: "app"}
+        project_id:
+          type: string
+          format: uuid
+          description: "Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it."
+          example: "3f2b8c1e-6a4d-4e5f-9b7a-1c2d3e4f5a6b"
         visibility: { type: string, enum: [public, internal], default: public, description: "Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan." }
         workload_class:
           type: string
@@ -90283,6 +90288,7 @@ components:
         slug: { type: string }
         type: { type: string, enum: [app, function] }
         runtime: { type: string, description: Runtime identifier for functions when configured. }
+        project_id: { type: string, format: uuid, description: Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. }
         status: { type: string }
         created_at: { type: string, format: date-time }
 

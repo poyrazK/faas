@@ -16,6 +16,10 @@ export type OrgAppSummary = {
    * Runtime identifier for functions when configured.
    */
   runtime?: string;
+  /**
+   * Parent project as a canonical hyphenated UUID. Omitted when the app is standalone.
+   */
+  project_id?: string;
   status: string;
   created_at: string;
 };

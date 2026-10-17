@@ -93,6 +93,9 @@ class AppResponse:
     """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
     measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See
     ADR-037."""
+    project_id: UUID | Unset = UNSET
+    """Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app
+    create and update requests do not accept it."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
     service routing. Available on every plan."""
@@ -289,6 +292,10 @@ class AppResponse:
         autoscale_target_rps = self.autoscale_target_rps
 
         autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
+
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
 
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
@@ -537,6 +544,8 @@ class AppResponse:
                 "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
             }
         )
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if workload_class is not UNSET:
@@ -696,6 +705,13 @@ class AppResponse:
         autoscale_target_rps = d.pop("autoscale_target_rps")
 
         autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
+
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
 
         _visibility = d.pop("visibility", UNSET)
         visibility: AppResponseVisibility | Unset
@@ -1076,6 +1092,7 @@ class AppResponse:
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            project_id=project_id,
             visibility=visibility,
             workload_class=workload_class,
             runtime=runtime,

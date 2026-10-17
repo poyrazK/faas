@@ -29,6 +29,8 @@ class OrgAppSummary:
     created_at: datetime.datetime
     runtime: str | Unset = UNSET
     """Runtime identifier for functions when configured."""
+    project_id: UUID | Unset = UNSET
+    """Parent project as a canonical hyphenated UUID. Omitted when the app is standalone."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +46,10 @@ class OrgAppSummary:
 
         runtime = self.runtime
 
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,6 +63,8 @@ class OrgAppSummary:
         )
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
 
         return field_dict
 
@@ -75,6 +83,13 @@ class OrgAppSummary:
 
         runtime = d.pop("runtime", UNSET)
 
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
+
         org_app_summary = cls(
             id=id,
             slug=slug,
@@ -82,6 +97,7 @@ class OrgAppSummary:
             status=status,
             created_at=created_at,
             runtime=runtime,
+            project_id=project_id,
         )
 
         org_app_summary.additional_properties = d

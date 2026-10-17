@@ -942,6 +942,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	ea := egressStringList(a.EgressAllowlist)
 	return api.AppResponse{
 		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
+		ProjectID:  a.ProjectID,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
 		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
