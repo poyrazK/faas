@@ -511,6 +511,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_RECOVERY_HMAC_KEY_FILE` | apid | `default` |  |  | `` |  |
+| `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
 | `FAAS_REHEARSAL_ACTION_SIMULATION` | apid | `default` |  | 0 | `` | opt-in simulated outbound actions for contained rehearsals; keep disabled until native containment qualification |
 | `FAAS_REHEARSAL_COLD_START` | apid | `default` |  | 0 | `` | opt-in contained cold-start rehearsal; disabled pending native lifecycle qualification |
 | `FAAS_REHEARSAL_COMMAND_EXECUTION` | apid | `default` |  | 0 | `` | opt-in contained command microVM execution; disabled pending native command isolation qualification |
@@ -523,8 +525,6 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REHEARSAL_SUSPEND_RESUME` | apid | `default` |  | 0 | `` | opt-in in-place rehearsal suspend/resume; disabled pending native lifecycle qualification |
 | `FAAS_REHEARSAL_WORKERS` | apid | `default` |  | 0 | `` | opt-in managed async rehearsal participants; disabled pending native execution qualification |
 | `FAAS_REHEARSAL_WORKER_FAULTS` | apid | `default` |  | 0 | `` | opt-in cooperative worker-termination rehearsals; disabled pending native lifecycle qualification |
-| `FAAS_RECOVERY_HMAC_KEY_FILE` | apid | `default` |  |  | `` |  |
-| `FAAS_REGION` | meterd, shared | `default` |  |  | `` | optional host region for meterd; the scheduler also injects the platform-authored workload identity value |
 | `FAAS_REKEY_ENABLED` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_REKEY_PROGRESS_FILE` | apid | `default` |  |  | `` |  |
 | `FAAS_RELEASE_PHASE_ENABLED` | imaged | `default` |  |  | `` | exact opt-in for pre-boot release commands; deployments declaring a release command fail with `release_phase_unavailable` while off; enable only alongside `FAAS_APP_TASK_DISPATCH=1` on schedd |
