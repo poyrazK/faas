@@ -5,6 +5,10 @@ consumer receipts and immediate terminal callbacks. It uses the existing
 [deferred acknowledgment protocol](event-deferred-acknowledgments.md) and
 [application-owned consumer receipt table](event-consumer-transactions.md).
 
+For atomic transfer of callback responsibility to an independent recovery host,
+use [durable completion intents](event-acknowledgment-python-intents.md). The
+immediate mode documented here retains its original ingestion-job contract.
+
 ## Configure and retain original inputs
 
 Configure one SDK client with `apps:read` plus `deploy:write`, or `admin`. Pass

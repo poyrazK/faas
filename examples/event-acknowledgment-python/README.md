@@ -103,3 +103,53 @@ hard timeout for an in-flight transaction. See [recovery and cancellation detail
 Local validation covers compilation/lint, package inclusion and static checks.
 No tests/assertions were added or changed and no local tests were run. Hosted
 database/callback/cancellation acceptance remains required before release.
+
+## Durable callback mode
+
+`durable_consumer.py` adds explicit version-2 `python-durable` records. Install
+`event_acknowledgment_intent_schema` beside the receipt table before accepting
+these jobs. Keep the same protected queue, authenticated ingress, exclusive
+ownership, idle autocommit connection and bounded driver contract. Use a separate
+ingress/queue configuration for new durable-mode jobs; never relabel saved
+version-1 immediate records. Each processor rejects the other mode/version.
+
+```python
+from durable_consumer import (
+    accept_authenticated_durable_delivery,
+    process_owned_durable_delivery,
+    save_owned_completion_intent,
+    recover_one_saved_callback,
+)
+
+# Authenticated ingress; enqueue_protected must commit before returning 202.
+response = await accept_authenticated_durable_delivery(
+    client.inner, original_headers, original_body, scope, queue,
+)
+
+# Exclusively owned job; apply has the same cursor/cancel/original-bytes contract.
+queued = await process_owned_durable_delivery(client.inner, job, scope, connection, apply)
+# Its fenced job ack follows a confirmed atomic business/receipt/intent COMMIT.
+# A separate, available recovery host now owns prompt callback delivery.
+
+# Explicit receipt-only reconciliation after unknown COMMIT, on a fresh connection:
+queued = await save_owned_completion_intent(client.inner, job, scope, fresh_connection)
+
+# One independent recovery-host iteration, not a business-processing queue job:
+status = await recover_one_saved_callback(client.inner, recovery_connection, scope, shutdown)
+# None means no due unclaimed intent; inspect non-None state/last_code.
+```
+
+The phases above are alternatives chosen by the durable owner, not one sequential
+pipeline. Persist an explicit receipt-only phase with the queue's fenced update
+before using it. Missing receipts require an owner policy. Never select negative
+acknowledgments or infer rollback from exceptions. If cancellation or job ack
+fails after confirmed staging, retain/retry the original job; the receipt and
+immutable intent prevent repeated committed business effects or reset claims.
+
+Recovery sends only saved callbacks, never business code or platform renewals.
+The host owns polling, concurrency, client lifetime and connection acquisition;
+no loop starts on import. Use returned local status to distinguish confirmation,
+supersession and scheduled uncertainty. Database/HTTP are not atomic together;
+unknown settlement can repeat the same callback safely through server idempotency.
+Keep intent tokens/results and backups protected and retain newest metadata across
+the stale-job/restore horizon. See the [durable protocol and claim fences](../../docs/event-acknowledgment-python-intents.md).

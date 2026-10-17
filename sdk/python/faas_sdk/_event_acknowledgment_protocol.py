@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
 from ._event_deadline_policy import timestamp
-from .event_consumer_delivery_context import EventConsumerDeliveryContext
 from .event_consumer_transactions import EventConsumerTransactionResult
 
 
@@ -139,7 +139,18 @@ def callback_error(error: CallbackFailure, result: EventAcknowledgmentWorkerResu
     )
 
 
-def observation(delivery: EventConsumerDeliveryContext, raw: Any) -> EventAcknowledgmentWorkerStatus:
+class DeliveryFence(Protocol):
+    @property
+    def invocation_id(self) -> str: ...
+
+    @property
+    def attempt(self) -> int: ...
+
+    @property
+    def replay_generation(self) -> int: ...
+
+
+def observation(delivery: DeliveryFence, raw: Any) -> EventAcknowledgmentWorkerStatus:
     if not isinstance(raw, dict):
         raise CallbackFailure()
     if (
@@ -240,3 +251,46 @@ async def pause(milliseconds: float, control: Control) -> None:
     except TimeoutError:
         pass
     control.check()
+
+
+_T = TypeVar("_T")
+
+
+async def owned_operation(operation: Callable[[Control], Awaitable[_T]], stop_event: asyncio.Event | None) -> _T:
+    """Signal cancellation, shield active SQL/cleanup, and join the owned operation."""
+    if stop_event is not None and not isinstance(stop_event, asyncio.Event):
+        raise ValueError("invalid event acknowledgment stop event")
+    current = asyncio.current_task()
+    if stop_event is not None and stop_event.is_set() or current is not None and current.cancelling():
+        raise EventAcknowledgmentWorkerCancelled()
+    control = Control(stop_event, current)
+
+    async def forward() -> None:
+        try:
+            await stop_event.wait()
+        except Exception:
+            control.stop(EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed"))
+        else:
+            control.stop()
+
+    async def owned() -> _T:
+        watcher = asyncio.create_task(forward()) if stop_event is not None else None
+        try:
+            control.check()
+            return await operation(control)
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+
+    pending = asyncio.create_task(owned())
+    while True:
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            if pending.done():
+                try:
+                    return pending.result()
+                except asyncio.CancelledError:
+                    raise EventAcknowledgmentWorkerCancelled(control.result) from None
+            control.stop()

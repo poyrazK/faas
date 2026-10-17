@@ -1,13 +1,13 @@
-"""Immediate callback worker for authenticated, application-owned deferred event jobs."""
+"""Immediate and durable callback modes for authenticated, application-owned event jobs."""
 
 from __future__ import annotations
 
 import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, TypeVar
 
-from ._event_acknowledgment_callbacks import call
+from ._event_acknowledgment_callbacks import call, terminal
 from ._event_acknowledgment_protocol import (
     CallbackFailure,
     Control,
@@ -18,12 +18,14 @@ from ._event_acknowledgment_protocol import (
     EventAcknowledgmentWorkerResult,
     callback_error,
     observation,
+    owned_operation,
     pause,
     reason_code,
     renewed,
     settings,
 )
 from .client import AuthenticatedClient
+from .event_acknowledgment_intents import EventAcknowledgmentIntentResult, _save_completion
 from .event_consumer_delivery_context import event_consumer_delivery_context_from_headers
 from .event_consumer_transactions import (
     EventConsumerCommitUnknownError,
@@ -33,6 +35,7 @@ from .event_consumer_transactions import (
 )
 
 _SUPPORTED = object()
+_T = TypeVar("_T")
 Handler = Callable[[Any, EventAcknowledgmentWorkerCancellation], Awaitable[bytes | str]]
 
 
@@ -56,7 +59,7 @@ def _header(headers: Mapping[str, str | Sequence[str]], name: str) -> str:
 class AsyncEventAcknowledgmentWorker:
     """Factory-created capability. Own one loop; keep durable jobs exclusively owned."""
 
-    __slots__ = ("_client", "_path", "_token", "_input", "_delivery", "_budget", "_busy", "_loop")
+    __slots__ = ("_client", "_path", "_token", "_input", "_delivery", "_budget", "_busy", "_loop", "_slug", "_seconds")
 
     def __init__(self, key: object):
         if key is not _SUPPORTED:
@@ -99,6 +102,7 @@ class AsyncEventAcknowledgmentWorker:
         worker._input = event_consumer_request_from_headers(snapshot, body, account_id, app_id)
         worker._delivery = event_consumer_delivery_context_from_headers(snapshot, body, account_id, app_id)
         worker._budget = settings(options, int(lease))
+        worker._slug, worker._seconds = app, int(lease)
         worker._client = client.get_async_httpx_client()
         worker._path = f"/v1/apps/{app}/event-deliveries/{worker._delivery.invocation_id}/acknowledgment"
         worker._token, worker._busy, worker._loop = token, False, None
@@ -165,6 +169,78 @@ class AsyncEventAcknowledgmentWorker:
 
         return await self._operate(complete, stop_event)
 
+    async def run_durable(
+        self, connection: Any, handler: Handler, *, stop_event: asyncio.Event | None = None
+    ) -> EventAcknowledgmentIntentResult:
+        """Atomically commit business SQL, receipt and saved completion. Sends no terminal callback."""
+        if not callable(handler):
+            raise ValueError("invalid event consumer handler")
+
+        async def process(control: Control) -> EventAcknowledgmentIntentResult:
+            try:
+                return await self._stage(connection, None, control)
+            except EventAcknowledgmentWorkerError as error:
+                if error.code != "event_consumer_receipt_missing":
+                    raise
+            await self._start(control)
+            monitor = asyncio.create_task(self._monitor(control))
+            try:
+                return await self._stage(
+                    connection, lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(control)), control
+                )
+            except EventConsumerCommitUnknownError:
+                raise
+            except BaseException:
+                control.check()
+                raise
+            finally:
+                monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
+
+        return await self._operate(process, stop_event)
+
+    async def save_completion_intent(
+        self, connection: Any, *, stop_event: asyncio.Event | None = None
+    ) -> EventAcknowledgmentIntentResult:
+        """Stage a committed receipt after unknown COMMIT. Never invokes business code."""
+        return await self._operate(lambda control: self._stage(connection, None, control), stop_event)
+
+    async def _stage(
+        self, connection: Any, handler: Callable[[Any], Awaitable[bytes | str]] | None, control: Control
+    ) -> EventAcknowledgmentIntentResult:
+        intent = None
+
+        async def missing(_cursor: Any) -> bytes:
+            raise EventAcknowledgmentWorkerError("event_consumer_receipt_missing")
+
+        async def save(cursor: Any, receipt: EventConsumerTransactionResult) -> None:
+            nonlocal intent
+            intent = await _save_completion(
+                cursor,
+                self._input,
+                self._delivery.invocation_id,
+                self._delivery.replay_generation,
+                self._delivery.attempt,
+                self._slug,
+                self._seconds,
+                self._token,
+                receipt,
+                control,
+            )
+
+        unknown = False
+        try:
+            receipt = await self._transaction(connection, missing if handler is None else handler, control, save)
+        except EventConsumerCommitUnknownError:
+            unknown = True
+        if unknown:
+            # Keep the category/uncertainty without retaining driver parameters as a cause.
+            raise EventConsumerCommitUnknownError(
+                "event consumer/intent commit outcome unknown; reconcile on a fresh connection"
+            )
+        control.result = EventAcknowledgmentWorkerResult(True, receipt)
+        return EventAcknowledgmentIntentResult(receipt, intent)
+
     async def retry(
         self, connection: Any, reason: str, *, stop_event: asyncio.Event | None = None
     ) -> EventAcknowledgmentWorkerResult:
@@ -204,10 +280,16 @@ class AsyncEventAcknowledgmentWorker:
         return await self._transaction(connection, missing, control)
 
     async def _transaction(
-        self, connection: Any, handler: Callable[[Any], Awaitable[bytes | str]], control: Control
+        self,
+        connection: Any,
+        handler: Callable[[Any], Awaitable[bytes | str]],
+        control: Control,
+        before_commit: Callable[[Any, EventConsumerTransactionResult], Awaitable[None]] | None = None,
     ) -> EventConsumerTransactionResult:
         try:
-            return await _awith_event_consumer_transaction(connection, self._input, handler, control.check)
+            return await _awith_event_consumer_transaction(
+                connection, self._input, handler, control.check, before_commit
+            )
         except EventConsumerCommitUnknownError:
             # Discard this exclusively leased connection before owner reconciliation.
             # The owned task remains shielded while SQL/close cleanup is joined.
@@ -267,49 +349,15 @@ class AsyncEventAcknowledgmentWorker:
             control.stop(EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed"))
 
     async def _terminal(self, action: str, value: bytes | str, control: Control) -> EventAcknowledgmentWorkerResult:
-        for attempt in range(self._budget.attempts):
-            try:
-                status = observation(
-                    self._delivery,
-                    await call(self._client, self._path, self._token, action, self._budget, control, value),
-                )
-                valid = (
-                    (
-                        status.state == "completed"
-                        and status.processing_state == "completed"
-                        and not status.disposition
-                        and not status.failure_reason
-                    )
-                    if action == "complete"
-                    else (
-                        status.disposition == action
-                        and status.failure_reason == value
-                        and status.lease_expires_at is None
-                        and (
-                            action == "retry"
-                            and status.state == "pending"
-                            and status.processing_state == "waiting"
-                            and status.next_attempt_at is not None
-                            or status.state == "dead_letter"
-                            and status.processing_state == "dead_letter"
-                            and status.next_attempt_at is None
-                        )
-                    )
-                )
-                if not valid:
-                    raise CallbackFailure()
-                return EventAcknowledgmentWorkerResult(control.result.receipt_confirmed, control.result.receipt, status)
-            except CallbackFailure as error:
-                if error.delay_ms is None or attempt + 1 == self._budget.attempts:
-                    raise callback_error(error, control.result) from None
-                await pause(error.delay_ms, control)
-        raise EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed", control.result)
+        return await terminal(
+            self._client, self._path, self._token, self._delivery, self._budget, action, value, control
+        )
 
     async def _operate(
         self,
-        operation: Callable[[Control], Awaitable[EventAcknowledgmentWorkerResult]],
+        operation: Callable[[Control], Awaitable[_T]],
         stop_event: asyncio.Event | None,
-    ) -> EventAcknowledgmentWorkerResult:
+    ) -> _T:
         if stop_event is not None and not isinstance(stop_event, asyncio.Event):
             raise ValueError("invalid event acknowledgment stop event")
         if stop_event is not None and stop_event.is_set():
@@ -323,38 +371,7 @@ class AsyncEventAcknowledgmentWorker:
         if self._busy:
             raise EventAcknowledgmentWorkerError("event_acknowledgment_worker_busy")
         self._loop, self._busy = loop, True
-        control = Control(stop_event, current)
-
-        async def forward() -> None:
-            try:
-                await stop_event.wait()
-            except Exception:
-                control.stop(EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed"))
-            else:
-                control.stop()
-
-        async def owned() -> EventAcknowledgmentWorkerResult:
-            watcher = asyncio.create_task(forward()) if stop_event is not None else None
-            try:
-                if stop_event is not None and stop_event.is_set():
-                    control.stop()
-                return await operation(control)
-            finally:
-                if watcher is not None:
-                    watcher.cancel()
-                    await asyncio.gather(watcher, return_exceptions=True)
-
-        pending = asyncio.create_task(owned())
         try:
-            while True:
-                try:
-                    return await asyncio.shield(pending)
-                except asyncio.CancelledError:
-                    if pending.done():
-                        try:
-                            return pending.result()
-                        except asyncio.CancelledError:
-                            raise EventAcknowledgmentWorkerCancelled(control.result) from None
-                    control.stop()
+            return await owned_operation(operation, stop_event)
         finally:
             self._busy = False

@@ -11,7 +11,17 @@ from typing import Any
 
 import httpx
 
-from ._event_acknowledgment_protocol import Budget, CallbackFailure, Control
+from ._event_acknowledgment_protocol import (
+    Budget,
+    CallbackFailure,
+    Control,
+    DeliveryFence,
+    EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerResult,
+    callback_error,
+    observation,
+    pause,
+)
 from ._rfc7807 import FaasProblemError
 
 _RESPONSE_MAX = 65536
@@ -133,3 +143,50 @@ async def call(
             if not task.done():
                 task.cancel()
         await asyncio.gather(pending, stopped, return_exceptions=True)
+
+
+async def terminal(
+    client: httpx.AsyncClient,
+    path: str,
+    token: str,
+    delivery: DeliveryFence,
+    budget: Budget,
+    action: str,
+    value: bytes | str,
+    control: Control,
+) -> EventAcknowledgmentWorkerResult:
+    """Same fenced terminal callback for live workers and saved-intent recovery."""
+    for attempt in range(budget.attempts):
+        try:
+            status = observation(delivery, await call(client, path, token, action, budget, control, value))
+            valid = (
+                (
+                    status.state == "completed"
+                    and status.processing_state == "completed"
+                    and not status.disposition
+                    and not status.failure_reason
+                )
+                if action == "complete"
+                else (
+                    status.disposition == action
+                    and status.failure_reason == value
+                    and status.lease_expires_at is None
+                    and (
+                        action == "retry"
+                        and status.state == "pending"
+                        and status.processing_state == "waiting"
+                        and status.next_attempt_at is not None
+                        or status.state == "dead_letter"
+                        and status.processing_state == "dead_letter"
+                        and status.next_attempt_at is None
+                    )
+                )
+            )
+            if not valid:
+                raise CallbackFailure()
+            return EventAcknowledgmentWorkerResult(control.result.receipt_confirmed, control.result.receipt, status)
+        except CallbackFailure as error:
+            if error.delay_ms is None or attempt + 1 == budget.attempts:
+                raise callback_error(error, control.result) from None
+            await pause(error.delay_ms, control)
+    raise EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed", control.result)

@@ -2726,3 +2726,17 @@ bounded callback retries and retain the protected ingestion job until terminal
 confirmation. No schema, queue or host starts automatically. See the
 [worker protocol](../../docs/event-acknowledgment-python-worker.md) and
 [protected-job integration](../../examples/event-acknowledgment-python/README.md).
+
+### Durable acknowledgment handoff
+
+`run_durable` commits business SQL, the receipt and a completion intent together;
+`save_completion_intent` stages a saved receipt without business work. Explicitly
+install `event_acknowledgment_intent_schema` beside the inbox. A confirmed local
+commit transfers callback responsibility from the ingestion job to recovery.
+
+`arecover_next_event_acknowledgment_intent(client.inner, connection, account_id,
+app_id, ...)` claims one due intent and sends only its saved callback. Separate
+`aclaim_event_acknowledgment_intent` / `claim.deliver` calls and bounded
+`alist_event_acknowledgment_intents` diagnostics are also available. Applications
+own polling, protected storage, driver timeouts and retention. See the
+[durable Python protocol](../../docs/event-acknowledgment-python-intents.md).

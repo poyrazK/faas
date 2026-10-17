@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python durable acknowledgment intents](20261017140016-python-durable-acknowledgment-intents.md)
+
 - [Python async event acknowledgment worker](20261017131506-python-async-event-acknowledgment-worker.md)
 
 - [Opt-in Node preparation monitoring](20261017125950-node-preparation-monitoring.md)

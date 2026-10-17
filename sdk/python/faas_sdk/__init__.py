@@ -651,3 +651,23 @@ __all__ += (
     "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
     "EventAcknowledgmentWorkerCancellation",
 )
+
+from .event_acknowledgment_intent_recovery import (
+    EventAcknowledgmentIntentClaim,
+    aclaim_event_acknowledgment_intent,
+    arecover_next_event_acknowledgment_intent,
+)
+from .event_acknowledgment_intents import (
+    EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentResult,
+    EventAcknowledgmentIntentStatus,
+    alist_event_acknowledgment_intents,
+    event_acknowledgment_intent_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentError", "EventAcknowledgmentIntentResult", "EventAcknowledgmentIntentStatus",
+    "EventAcknowledgmentIntentClaim", "aclaim_event_acknowledgment_intent",
+    "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
+    "event_acknowledgment_intent_schema",
+)

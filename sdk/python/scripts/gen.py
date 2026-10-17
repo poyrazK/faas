@@ -225,6 +225,9 @@ WRAPPER_MODULES = (
     "event_consumer_transactions.py",
     "event_consumer_delivery_context.py",
     "event_acknowledgment_worker.py",
+    "event_acknowledgment_intents.py",
+    "event_acknowledgment_intent_recovery.py",
+    "event_acknowledgment_intent_schema.sql",
     "_event_acknowledgment_protocol.py",
     "_event_acknowledgment_callbacks.py",
     "_event_deadline_policy.py",
@@ -1381,6 +1384,26 @@ __all__ += (
     "AsyncEventAcknowledgmentWorker", "EventAcknowledgmentWorkerOptions", "EventAcknowledgmentWorkerResult",
     "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
     "EventAcknowledgmentWorkerCancellation",
+)
+
+from .event_acknowledgment_intent_recovery import (
+    EventAcknowledgmentIntentClaim,
+    aclaim_event_acknowledgment_intent,
+    arecover_next_event_acknowledgment_intent,
+)
+from .event_acknowledgment_intents import (
+    EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentResult,
+    EventAcknowledgmentIntentStatus,
+    alist_event_acknowledgment_intents,
+    event_acknowledgment_intent_schema,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentError", "EventAcknowledgmentIntentResult", "EventAcknowledgmentIntentStatus",
+    "EventAcknowledgmentIntentClaim", "aclaim_event_acknowledgment_intent",
+    "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
+    "event_acknowledgment_intent_schema",
 )
 '''
 

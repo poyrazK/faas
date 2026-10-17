@@ -151,6 +151,11 @@ def _prepare(connection: Any, input: EventConsumerRequest, handler: Any) -> tupl
     )
     if connection.autocommit is not True or int(connection.info.transaction_status) != 0:
         raise ValueError("event consumer requires an exclusively leased idle autocommit connection")
+    identity, digest = _digests(request)
+    return request, identity, digest
+
+
+def _digests(request: EventConsumerRequest) -> tuple[bytes, bytes]:
     frame = "\n".join(
         (
             "gregale.event-consumer.v1",
@@ -162,7 +167,7 @@ def _prepare(connection: Any, input: EventConsumerRequest, handler: Any) -> tupl
     )
     identity = hashlib.sha256(frame.encode("utf-8")).digest()
     digest = hashlib.sha256(b"gregale.event-consumer-input.v1\n" + request.body).digest()
-    return request, identity, digest
+    return identity, digest
 
 
 def _result(value: bytes | str) -> bytes:
@@ -254,6 +259,7 @@ async def _awith_event_consumer_transaction(
     input: EventConsumerRequest,
     handler: Callable[[Any], Awaitable[bytes | str]],
     check: Callable[[], None] = lambda: None,
+    before_commit: Callable[[Any, EventConsumerTransactionResult], Awaitable[None]] | None = None,
 ) -> EventConsumerTransactionResult:
     """Internal cooperative checkpoints; the worker shields active SQL from task cancellation."""
     check()
@@ -281,6 +287,9 @@ async def _awith_event_consumer_transaction(
                     check()
                     await cursor.execute(_INSERT, _params(request, identity, digest, body))
                 check()
+                if before_commit is not None:
+                    await before_commit(cursor, EventConsumerTransactionResult(body, row is not None))
+                    check()
             check()
             completed = True
     except BaseException as error:

@@ -48,6 +48,20 @@ async def accept_authenticated_delivery(
     queue: Any,
 ) -> dict[str, Any]:
     """Call after ingress authorization. enqueue_protected must commit before resolving."""
+    return await _enqueue_authenticated_delivery(
+        client, headers, original_body, scope, queue, 1, "python-immediate"
+    )
+
+
+async def _enqueue_authenticated_delivery(
+    client: Any,
+    headers: Mapping[str, str | Sequence[str]],
+    original_body: bytes,
+    scope: Mapping[str, str],
+    queue: Any,
+    version: int,
+    mode: str,
+) -> dict[str, Any]:
     if not isinstance(headers, Mapping) or any(
         not isinstance(key, str) for key in headers
     ):
@@ -71,8 +85,8 @@ async def accept_authenticated_delivery(
     await queue.enqueue_protected(
         {
             "id": str(uuid4()),
-            "version": 1,
-            "mode": "python-immediate",
+            "version": version,
+            "mode": mode,
             "owner": owner,
             "headers": saved_headers,
             "body_base64": base64.b64encode(original_body).decode("ascii"),
@@ -82,7 +96,12 @@ async def accept_authenticated_delivery(
 
 
 def _owned_delivery(
-    client: Any, job: Any, scope: Mapping[str, str]
+    client: Any,
+    job: Any,
+    scope: Mapping[str, str],
+    *,
+    version: int = 1,
+    mode: str = "python-immediate",
 ) -> tuple[AsyncEventAcknowledgmentWorker, bytes]:
     if not isinstance(job.stop_event, asyncio.Event):
         raise TypeError("owned job cancellation required")
@@ -92,8 +111,8 @@ def _owned_delivery(
     if (
         not isinstance(record, Mapping)
         or type(record.get("version")) is not int
-        or record["version"] != 1
-        or record.get("mode") != "python-immediate"
+        or record["version"] != version
+        or record.get("mode") != mode
         or record.get("owner") != owner
         or not isinstance(record.get("body_base64"), str)
         or len(record["body_base64"]) > 1398104

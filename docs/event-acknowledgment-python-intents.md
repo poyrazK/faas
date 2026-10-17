@@ -1,0 +1,172 @@
+# Durable Python acknowledgment intents
+
+`AsyncEventAcknowledgmentWorker.run_durable` commits business SQL, the consumer
+receipt and a completion intent in one application PostgreSQL transaction. A
+separate recovery host sends the saved callback. A crash after local COMMIT does
+not require running business code again. This uses the same application-owned
+[intent protocol as Go](event-acknowledgment-intents.md) and
+[Node](event-acknowledgment-node-intents.md).
+
+## Install and protect
+
+Explicitly install `event_consumer_receipt_schema` and
+`event_acknowledgment_intent_schema` in the business database. The latter is packaged
+byte for byte from the Go SDK schema by `scripts/gen-operation-inbox-schema.py`.
+No helper installs, migrates or prunes either table. Existing immediate worker
+methods continue to use only the receipt table.
+
+Pending/unconfirmed intents contain the raw platform token and completion JSON.
+Restrict database/backup/worker access and protect their storage. Status objects
+contain metadata only. Claims redact string/repr and reject copying/pickling;
+they are process-local capabilities, never a persistence format. Python private
+attributes and debugger locals are not a security boundary. Do not publish them.
+Intent storage errors use fixed messages/codes and omit driver diagnostics, which
+may contain rejected rows. Application SQL/business errors remain application-owned.
+
+Use the configured generated `AuthenticatedClient` (`FaaSClient.inner`), exclusive
+idle autocommit psycopg async connections, and bounded pool acquisition, driver and
+PostgreSQL statement timeouts. Authenticate/authorize ingress first, durably retain
+the original bytes/headers before HTTP 202, and retain exclusive ingestion-job
+ownership. Keep one mode per attempt: immediate and durable callbacks must not mix.
+
+## Commit completion atomically
+
+```python
+async def apply(cursor, cancel):
+    cancel.check()
+    await cursor.execute("UPDATE invoices SET paid=true WHERE id=%s", (invoice_id,))
+    cancel.check()
+    return b'{"applied":true}'
+
+queued = await worker.run_durable(connection, apply, stop_event=job.stop_event)
+# queued.receipt_confirmed is True; queued.intent is locally committed.
+# Recovery now owns callbacks. job.ack() must independently fence ownership.
+await job.ack()
+```
+
+The handler uses only its supplied cursor and transactional SQL. External effects
+need an outbox or an independent idempotency protocol. A private pre-commit hook
+saves the intent for both new and replayed receipts. Hook failure, intent conflict
+or pre-commit cancellation rolls back the whole transaction, including new
+business writes. Saved completion JSON is never reserialized.
+
+Without a receipt, the worker confirms the platform lease and renews during
+processing using the [existing cancellation contract](event-acknowledgment-python-worker.md).
+Renewal stops and joins before return. Durable staging sends no terminal callback.
+Run recovery promptly: staging does not extend the platform lease after processing,
+and HTTP 202 does not keep a VM awake. An expired attempt can require redelivery;
+the receipt still prevents repeated committed effects for that consumer/acceptance.
+
+`queued.intent` is a snapshot from staging; recovery may already have advanced it.
+Local commit confirms durable callback responsibility, not platform completion.
+
+## Reconcile uncertain commits
+
+```python
+queued = await worker.save_completion_intent(fresh_connection, stop_event=job.stop_event)
+```
+
+This receipt-only path never runs business code or renews the platform lease.
+Use it after `EventConsumerCommitUnknownError`. Missing receipts raise
+`event_consumer_receipt_missing` and require an explicit owner policy. Absence
+alone is not proof of rollback or exclusive ownership.
+
+Unknown receipt/intent COMMIT returns no confirmed intent result, preserves
+`EventConsumerCommitUnknownError` and closes the exclusively leased connection.
+Discard it through the pool and acquire a fresh idle autocommit connection. Never
+infer rollback or choose a negative acknowledgment from uncertainty. Retrying
+`run_durable` with the same original delivery and exclusive ownership waits on
+the receipt identity lock: a receipt skips the handler, while a missing receipt
+still requires confirmed platform renewal before new work.
+
+Repeated staging binds owner scope, invocation, generation/attempt, consumer/input
+digests, app slug, advertised lease, token digest and exact action/JSON digest.
+An identical stage retains its state, claim, counters and due time. Changed
+immutable inputs conflict. Newer generation/attempt pairs supersede unfinished
+older intents, clear their secrets and invalidate claims. Stale stages cannot
+replace newer ones; confirmed history remains confirmed.
+
+Python staging in this increment creates completion intents. Existing immediate
+`retry`/`dead_letter` methods retain their known-rollback/stopped-work requirements
+and do not create intents. Recovery understands Go/Node negative intents and
+rechecks for a receipt before sending one. A present receipt supersedes the
+negative intent with `receipt_committed`. This absence check does not fence
+unrelated legacy processing; use consistent modes and exclusive owners.
+
+## Recover one saved callback
+
+```python
+from faas_sdk import EventAcknowledgmentIntentError, arecover_next_event_acknowledgment_intent
+
+try:
+    status = await arecover_next_event_acknowledgment_intent(
+        client.inner, connection, account_id, app_id,
+        claim_duration_ms=30000, backoff_ms=1000, stop_event=shutdown,
+    )
+    # Inspect state/last_code; a successful return need not mean confirmation.
+except EventAcknowledgmentIntentError as error:
+    if error.code != "event_acknowledgment_intent_empty":
+        raise
+    # No due unclaimed row. The application chooses when to poll again.
+```
+
+For separate steps, use `aclaim_event_acknowledgment_intent(connection, account_id,
+app_id, ...)`, then `claim.deliver(client.inner, connection, ...)`. Both accept
+`stop_event` and `callback_options=EventAcknowledgmentWorkerOptions(...)`.
+Acquisition accepts `claim_duration_ms` (whole milliseconds 1000..300000; default
+30000). Delivery accepts `backoff_ms` (whole milliseconds 1..3600000; default 1000).
+The combined helper accepts both. Callback budgets use the live worker's
+lease-dependent bounds and are checked against the row before its claim commits.
+
+Claims use owner scope, database time, 32 random bytes and `FOR UPDATE SKIP LOCKED`.
+Each claim increments the saturating delivery-attempt counter. Recovery verifies
+saved capability/action hashes, preserves full int64 generations using Python
+integers, and sends the original token and exact result/reason. It never executes
+business handlers or renews platform leases.
+
+Remaining database claim time minus all elapsed local time bounds HTTP/retries.
+Settlement rechecks the opaque claim token, unfinished state and database expiry.
+Expired, replaced or superseded claims cannot settle another worker's row. There
+is no PostgreSQL/HTTP transaction: an in-flight callback may finish after local
+supersession. The platform attempt/token fence protects newer platform attempts.
+A successful callback with uncertain settlement can be repeated with unchanged
+inputs and server idempotency.
+
+| Local state | Meaning |
+| --- | --- |
+| `pending` | Saved callback is due or claimed for recovery. |
+| `unconfirmed` | Uncertainty retains protected inputs, releases the claim and schedules database time plus backoff. |
+| `confirmed` | Matching callback succeeded and local settlement committed. |
+| `superseded` | Newer lineage, unavailable platform attempt or a receipt blocks this intent. |
+
+Terminal settlement clears raw tokens, results and claims. In-memory capabilities
+and backups can still contain secrets. Thrown storage, cancellation or claim-loss
+errors can leave active claims until expiry; they do not establish callback
+failure or settlement. Unknown settlement COMMIT closes the connection and retains
+the unknown outcome category. Inspect metadata using a fresh connection.
+
+Public operations shield active SQL/cleanup from native task cancellation, signal
+cooperative control and join owned work. HTTP is cancelled/joined when the callback
+budget or claim deadline ends. Driver cleanup still requires bounded driver
+timeouts; cancellation is not a hard transaction timeout. Claims belong to one
+event loop and reject overlapping delivery calls. Expiry may permit another
+process to retry while a slow transport drains; unchanged-input idempotency remains
+necessary at the server.
+
+## Diagnostics and retention
+
+`alist_event_acknowledgment_intents(connection, account_id, app_id, invocation_id=None,
+limit=25, stop_event=None)` returns immutable metadata, at most 100 rows. It does
+not claim work or return raw results/tokens. Generations/counters are native
+integers; timestamps are UTC RFC 3339 strings with microseconds.
+
+The application owns polling, concurrency, retention and host/client lifetime.
+Keep receipts through the retry/replay horizon and intent metadata while stale
+jobs/restores can return. Deleting the newest intent removes the supersession
+fence. No pruning, platform migration, route, global ordering or external
+exactly-once guarantee is added. Consumer deliveries remain independent.
+
+See the [versioned durable integration](../examples/event-acknowledgment-python/README.md#durable-callback-mode).
+Local evidence covers generation, packaging, compilation, lint and static checks.
+Hosted PostgreSQL/callback/restart/cancellation and cross-SDK qualification remains
+required before release; no local tests or assertion changes are included.
