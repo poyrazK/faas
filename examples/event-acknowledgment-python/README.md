@@ -563,3 +563,44 @@ saturation before deriving rates/averages. Duplicate observations count again;
 missing shutdowns or crashes prevent active-work or deduplication inferences.
 Metrics select no recovery and prove no acknowledgment. See
 [counting, validation and export details](../../docs/event-acknowledgment-python-metrics.md).
+
+## Expose preparation metrics to Prometheus
+
+`metrics.py` exports `create_preparation_metrics_app(metrics)`, an explicit ASGI
+application factory. Supply the same long-lived collector passed to `on_event`.
+Keep scraping on the processing event-loop thread, in one process. For example,
+with an application-supplied Uvicorn installation and host lifecycle:
+
+```python
+import uvicorn  # Supplied by the application, outside the SDK's dependencies.
+from metrics import create_preparation_metrics_app
+
+scrape_app = create_preparation_metrics_app(metrics)
+scrape_server = uvicorn.Server(uvicorn.Config(
+    scrape_app, host="127.0.0.1", port=9464, workers=1,
+    lifespan="off", access_log=False,
+))
+# The host runs await scrape_server.serve() alongside its owned workers on the
+# same event loop. On shutdown, set scrape_server.should_exit = True and await
+# server completion, then finish draining workers before closing their resources.
+```
+
+Importing or creating the app opens no listener. The host owns server startup,
+listener failures, concurrent host tasks and shutdown. Do not launch a separate
+Uvicorn process or worker thread with its own collector; it would observe a
+different stream or require external access serialization. The app handles only
+HTTP; disable lifespan as shown and keep delivery ingress separate.
+
+Only `GET /metrics` without a query is served. Other paths/queries return 404;
+other methods return 405 with `Allow: GET`. The full snapshot/body is generated
+synchronously before the first response await. Validation errors return generic
+503 without raw diagnostics; host cancellation and unexpected host failures
+propagate. All responses use `Cache-Control: no-store`. Successful responses use
+the exported Prometheus text 0.0.4 content type.
+
+Configure a same-host scrape target at `127.0.0.1:9464`. Remote scrapes use the
+host's authenticated proxy or protected transport; no authentication layer is
+provided by this example. Reuse the collector across scrapes, publish absolute
+cumulative totals, preserve process/reset boundaries and export outside the
+observer. No monitoring deployment or metrics library is installed. See
+[families, seconds, saturation and validation](../../docs/event-acknowledgment-python-prometheus.md).

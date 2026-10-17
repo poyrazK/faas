@@ -1,5 +1,8 @@
 # Node preparation metrics in Prometheus
 
+Python exposes the same metric names, labels and histogram contract through
+[Python Prometheus exposition](event-acknowledgment-python-prometheus.md).
+
 `formatEventAcknowledgmentPreparationMetrics` renders a complete
 [preparation collector snapshot](event-acknowledgment-node-metrics.md) as
 Prometheus text 0.0.4. Read from the same long-lived collector that receives

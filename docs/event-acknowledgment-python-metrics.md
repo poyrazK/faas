@@ -114,6 +114,11 @@ snapshots, and avoid blocking the processing loop.
 
 ## Export outside the observer
 
+For Prometheus text 0.0.4, use the pure
+[`format_event_acknowledgment_preparation_metrics`](event-acknowledgment-python-prometheus.md)
+formatter. It handles fixed labels, cumulative buckets, seconds and saturation
+without registering metrics or opening a listener.
+
 Read snapshots from an application-owned export path. Publish cumulative bucket
 counts, `count` and `sum_ms` as absolute observations. For Prometheus-style seconds,
 map `None` to `+Inf` and divide finite bounds and `sum_ms` by 1000. Choose a fixed
@@ -123,8 +128,8 @@ whole cumulative total on each poll; that would count old observations again.
 An OpenTelemetry adapter must handle its histogram aggregation and temporality,
 converting cumulative to per-bucket counts and managing deltas/resets as required.
 Do not fabricate individual samples from means or feed snapshots back as events.
-This helper includes no Python Prometheus formatter, exporter, automatic delta
-conversion or network publication.
+The collector includes no exporter, automatic delta conversion or network
+publication.
 
 Collection is process-local and cumulative from construction. Duplicate events
 count again. There are no IDs, sequence tracking, deduplication, active-work gauges,

@@ -760,3 +760,12 @@ __all__ += (
     "EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS", "EventAcknowledgmentPreparationHistogram",
     "EventAcknowledgmentPreparationMetrics", "EventAcknowledgmentPreparationMetricsSnapshot",
 )
+
+from .event_acknowledgment_preparation_prometheus import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
+    format_event_acknowledgment_preparation_metrics,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE", "format_event_acknowledgment_preparation_metrics",
+)

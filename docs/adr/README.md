@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Prometheus exposition for Python preparation metrics](20261017164707-python-preparation-prometheus.md)
+
 - [Bounded Python preparation metrics](20261017164105-python-preparation-metrics.md)
 
 - [Python preparation lifecycle telemetry](20261017161548-python-preparation-lifecycle-telemetry.md)

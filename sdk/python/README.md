@@ -2763,6 +2763,13 @@ export path. Serialize access in one execution context; no exporter, background
 task or retained event data is installed. Safe-integer saturation is explicit.
 See [counting and export rules](../../docs/event-acknowledgment-python-metrics.md).
 
+`format_event_acknowledgment_preparation_metrics(metrics.snapshot(), prefix=...)`
+renders Prometheus text 0.0.4 with fixed labels, cumulative histograms in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` from the host's independent
+scrape path. Complete validation precedes rendering; no registry, listener, task
+or metrics dependency is added. See [formatting and the ASGI scrape example](../../docs/event-acknowledgment-python-prometheus.md).
+
 `ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
 frozen receipt/claim metadata for one original consumer request in one statement.
 It reports matching/completed, active, expired, absent or conflicting evidence and
