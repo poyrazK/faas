@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -34,7 +35,7 @@ func cmdIssueSavedViews(args []string) int {
 	cursor := fs.String("cursor", "", "cursor from the same saved filter set")
 	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "key": true, "name": true, "state": true, "environment": true, "team": true, "assignee": true, "sort": true, "min-customers": true, "tag": true, "cursor": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
@@ -87,7 +88,7 @@ func cmdIssueSavedViews(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		for _, view := range out.Items {
-			fmt.Fprintf(osStdout, "%s\t%s\n", view.Key, view.Name)
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\n", view.Key, view.Name)
 		}
 	case "get", "save":
 		var out api.IssueSavedView
@@ -102,7 +103,7 @@ func cmdIssueSavedViews(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
 		}
-		fmt.Fprintf(osStdout, "%s: %s\nFilters: %s\n", out.Key, out.Name, out.Filters.Query().Encode())
+		_, _ = fmt.Fprintf(osStdout, "%s: %s\nFilters: %s\n", out.Key, out.Name, out.Filters.Query().Encode())
 	case "delete":
 		if err := c.DeleteIssueSavedView(ctx, *app, *key); err != nil {
 			return printErr("Could not delete saved view", err)
@@ -110,7 +111,7 @@ func cmdIssueSavedViews(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"deleted": true, "key": *key}))
 		}
-		fmt.Fprintf(osStdout, "Deleted saved view %s.\n", *key)
+		_, _ = fmt.Fprintf(osStdout, "Deleted saved view %s.\n", *key)
 	case "apply":
 		out, err := c.ListIssuesForSavedView(ctx, *app, *key, *cursor)
 		if err != nil {
@@ -120,10 +121,10 @@ func cmdIssueSavedViews(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		for _, issue := range out.Items {
-			fmt.Fprintf(osStdout, "%s\t%s\t%s\n", issue.ID, issue.State, issue.Title)
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\n", issue.ID, issue.State, issue.Title)
 		}
 		if out.NextCursor != "" {
-			fmt.Fprintf(osStdout, "Next cursor: %s\n", out.NextCursor)
+			_, _ = fmt.Fprintf(osStdout, "Next cursor: %s\n", out.NextCursor)
 		}
 	}
 	return 0

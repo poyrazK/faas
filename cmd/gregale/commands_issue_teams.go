@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -29,7 +30,7 @@ func cmdIssueTeams(args []string) int {
 	cursor := fs.String("cursor", "", "team inbox cursor")
 	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "key": true, "name": true, "members": true, "cursor": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1

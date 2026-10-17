@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -30,7 +31,7 @@ func cmdIssueTrackerLinks(args []string) int {
 	cursor := fs.String("cursor", "", "tracker-link cursor")
 	flags, pos := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "issue": true, "link": true, "url": true, "title": true, "cursor": true})
 	if err := fs.Parse(flags); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 1
