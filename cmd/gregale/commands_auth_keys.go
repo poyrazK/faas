@@ -397,7 +397,12 @@ type authPublicSettings struct {
 		EntityID string `json:"entity_id"`
 		ACSURL   string `json:"acs_url"`
 	} `json:"sso"`
-	Keys struct {
+	Anonymous struct {
+		Enabled       bool `json:"enabled"`
+		RetentionDays *int `json:"retention_days"`
+	} `json:"anonymous"`
+	IdentityLinking bool `json:"identity_linking"`
+	Keys            struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

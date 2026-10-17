@@ -56,3 +56,10 @@ Email goes through GoTrue's send-email hook to a loopback-only listener in the
 front, which delivers through Resend or Postmark over HTTPS (`AUTH_EMAIL_*`);
 tenant egress blocks SMTP. Hosted pages are served under `/ui`. The front drops
 GoTrue's info-level logs and redacts email addresses from the rest.
+
+`gregale auth config NAME --anonymous on` lets people start without an
+account (`signInAnonymously`); their tokens carry `is_anonymous`, they cannot
+create organizations, and `--anonymous-retention DAYS` deletes those idle
+that long (`AUTH_ANONYMOUS_RETENTION_DAYS`). `--identity-linking on`
+(`AUTH_IDENTITY_LINKING`) lets users link a provider account, which also
+makes an anonymous user permanent, and unlink sign-in methods.

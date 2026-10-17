@@ -31,3 +31,8 @@ HTTP `status` and a stable `code`.
 `signOut({ scope: 'global' })` ends every session of the user. Authorization
 checks and row-level security honour sign-out on the next request; edge-only
 JWT rules honour it when the access token expires.
+
+When the Auth app allows anonymous users, `signInAnonymously()` starts a
+session without an account. Make the user permanent, keeping its data, with
+`updateUser({ email, password })` or `linkIdentity({ provider, redirectTo })`
+(identity linking must be on); `unlinkIdentity(id)` removes a sign-in method.
