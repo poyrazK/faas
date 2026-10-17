@@ -3134,6 +3134,10 @@ from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
 from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
+from .outbound_ai_tag_limit import OutboundAITagLimit
+from .outbound_ai_tag_limits import OutboundAITagLimits
+from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
+from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -3631,6 +3635,7 @@ from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
 from .put_outbound_ai_route_canary_request import PutOutboundAIRouteCanaryRequest
 from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
 from .put_outbound_ai_route_targets_request_strategy import PutOutboundAIRouteTargetsRequestStrategy
+from .put_outbound_ai_tag_limits_request import PutOutboundAITagLimitsRequest
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
@@ -7701,6 +7706,10 @@ __all__ = (
     "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
     "OutboundAIRouteTargetStats",
+    "OutboundAITagLimit",
+    "OutboundAITagLimits",
+    "OutboundAITagUsageItem",
+    "OutboundAITagUsageResponse",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",
@@ -8152,6 +8161,7 @@ __all__ = (
     "PutOutboundAIRouteCanaryRequest",
     "PutOutboundAIRouteTargetsRequest",
     "PutOutboundAIRouteTargetsRequestStrategy",
+    "PutOutboundAITagLimitsRequest",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingAIGuardrailsRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",

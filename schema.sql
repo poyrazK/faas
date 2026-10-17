@@ -32120,8 +32120,10 @@ CREATE TABLE public.outbound_admission_leases (
     ai_reserved_tokens bigint DEFAULT 0 NOT NULL,
     ai_reserved_cost_millicents bigint DEFAULT 0 NOT NULL,
     ai_end_user text,
+    ai_tags text[],
     CONSTRAINT outbound_admission_leases_ai_end_user_chk CHECK (((ai_end_user IS NULL) OR (ai_end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
-    CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0)))
+    CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0))),
+    CONSTRAINT outbound_admission_leases_ai_tags_chk CHECK (((ai_tags IS NULL) OR (array_to_string(ai_tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text)))
 );
 
 
@@ -32463,11 +32465,13 @@ CREATE TABLE public.outbound_ai_request_log (
     ttfb_ms integer,
     attempts smallint NOT NULL,
     end_user text,
+    tags text[],
     CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
     CONSTRAINT outbound_ai_request_log_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
     CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT outbound_ai_request_log_tags_chk CHECK (((tags IS NULL) OR (array_to_string(tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text))),
     CONSTRAINT outbound_ai_request_log_values_chk CHECK (((input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (duration_ms >= 0) AND ((ttfb_ms IS NULL) OR (ttfb_ms >= 0)) AND ((attempts >= 0) AND (attempts <= 100))))
 );
 
@@ -32553,6 +32557,39 @@ CREATE TABLE public.outbound_ai_settlements (
     lease_id uuid NOT NULL,
     integration_id uuid NOT NULL,
     settled_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_ai_tag_limits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_tag_limits (
+    integration_id uuid NOT NULL,
+    tag text NOT NULL,
+    daily_cost_limit_millicents bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_tag_limits_cost_chk CHECK (((daily_cost_limit_millicents >= 1) AND (daily_cost_limit_millicents <= '1000000000000'::bigint))),
+    CONSTRAINT outbound_ai_tag_limits_tag_chk CHECK ((tag ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}$'::text))
+);
+
+
+--
+-- Name: outbound_ai_tag_usage_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_tag_usage_daily (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    tag text NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_tag_usage_daily_tag_chk CHECK ((tag ~ '^[a-z][a-z0-9_.-]{0,31}=([A-Za-z0-9._:@+/-]{1,64}|~other)$'::text)),
+    CONSTRAINT outbound_ai_tag_usage_daily_values_chk CHECK (((requests >= 0) AND ((error_requests >= 0) AND (error_requests <= requests)) AND (input_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0)))
 );
 
 
@@ -43734,6 +43771,22 @@ ALTER TABLE ONLY public.outbound_ai_settlements
 
 
 --
+-- Name: outbound_ai_tag_limits outbound_ai_tag_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_tag_limits
+    ADD CONSTRAINT outbound_ai_tag_limits_pkey PRIMARY KEY (integration_id, tag);
+
+
+--
+-- Name: outbound_ai_tag_usage_daily outbound_ai_tag_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_tag_usage_daily
+    ADD CONSTRAINT outbound_ai_tag_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, tag);
+
+
+--
 -- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -51876,6 +51929,13 @@ CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_rou
 --
 
 CREATE INDEX outbound_ai_settlements_settled_at_idx ON public.outbound_ai_settlements USING btree (settled_at);
+
+
+--
+-- Name: outbound_ai_tag_usage_daily_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_tag_usage_daily_prune_idx ON public.outbound_ai_tag_usage_daily USING btree (usage_date);
 
 
 --
@@ -65367,6 +65427,22 @@ ALTER TABLE ONLY public.outbound_ai_routes
 
 ALTER TABLE ONLY public.outbound_ai_settlements
     ADD CONSTRAINT outbound_ai_settlements_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_tag_limits outbound_ai_tag_limits_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_tag_limits
+    ADD CONSTRAINT outbound_ai_tag_limits_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_tag_usage_daily outbound_ai_tag_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_tag_usage_daily
+    ADD CONSTRAINT outbound_ai_tag_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

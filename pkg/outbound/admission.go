@@ -40,6 +40,9 @@ const (
 	// Per-end-user UTC-day AI limits (ADR-994).
 	ReasonUserDailyTokenLimit = "user_daily_token_limit"
 	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
+	// ReasonTagDailyCostLimit refuses a call one of whose tags reached its
+	// daily cost limit (ADR-1410).
+	ReasonTagDailyCostLimit = "tag_daily_cost_limit"
 	// ReasonUserTrackingFull refuses a new end user once the day already
 	// tracks the maximum number of end users and per-user limits are set
 	// (ADR-996).
@@ -126,6 +129,9 @@ type Integration struct {
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
 	AIUserDailyCostLimit  *int64
+	// AITagDailyCostLimits caps the UTC-day cost of exact usage tags
+	// (ADR-1410).
+	AITagDailyCostLimits map[string]int64
 }
 
 // AIGuardrails are one app binding's AI restrictions; nil fields are unset.
@@ -346,6 +352,10 @@ type AdmissionSpec struct {
 	AIEndUser             string
 	UserDailyAITokenLimit *int64
 	UserDailyAICostLimit  *int64
+	// AITags are the call's usage tags (ADR-1410). AITagDailyCostLimits caps
+	// a tag's UTC day; the Postgres backend reads the stored limits.
+	AITags               []string
+	AITagDailyCostLimits map[string]int64
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string

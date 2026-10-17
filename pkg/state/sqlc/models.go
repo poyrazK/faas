@@ -6613,6 +6613,7 @@ type OutboundAdmissionLease struct {
 	AiReservedTokens         int64
 	AiReservedCostMillicents int64
 	AiEndUser                pgtype.Text
+	AiTags                   []string
 }
 
 type OutboundAdmissionState struct {
@@ -6832,6 +6833,7 @@ type OutboundAiRequestLog struct {
 	TtfbMs            pgtype.Int4
 	Attempts          int16
 	EndUser           pgtype.Text
+	Tags              []string
 }
 
 type OutboundAiRoute struct {
@@ -6882,6 +6884,25 @@ type OutboundAiSettlement struct {
 	LeaseID       pgtype.UUID
 	IntegrationID pgtype.UUID
 	SettledAt     pgtype.Timestamptz
+}
+
+type OutboundAiTagLimit struct {
+	IntegrationID            pgtype.UUID
+	Tag                      string
+	DailyCostLimitMillicents int64
+	CreatedAt                pgtype.Timestamptz
+}
+
+type OutboundAiTagUsageDaily struct {
+	IntegrationID  pgtype.UUID
+	UsageDate      pgtype.Date
+	Tag            string
+	Requests       int64
+	ErrorRequests  int64
+	InputTokens    int64
+	OutputTokens   int64
+	CostMillicents int64
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type OutboundAiUsageDaily struct {

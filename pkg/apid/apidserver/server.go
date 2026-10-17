@@ -2965,6 +2965,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteCredentialKey)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetUserUsage)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ExportUserUsage)))))
+	// ADR-1410: usage by tag, and per-tag daily cost limits.
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/tags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTagUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTagLimits)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutTagLimits)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListBudgetAlerts)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListRequestLog)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))

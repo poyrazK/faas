@@ -955,7 +955,17 @@ const (
 	OutboundAIUsersPerDay            = 10_000
 	OutboundAIUserUsageRetentionDays = 31
 	OutboundAIUserUsagePageMax       = 1_000
-	OutboundAIUserIDMaxBytes         = 64
+	// Usage tags (ADR-1410): tags per call, the longest key and value, the
+	// distinct tags one integration tracks per UTC day (later ones add to
+	// their key's overflow row), and the tag limits per integration. Tag
+	// rows follow OutboundAIUserUsageRetentionDays.
+	OutboundAITagsPerCall      = 5
+	OutboundAITagKeyMaxBytes   = 32
+	OutboundAITagValueMaxBytes = 64
+	OutboundAITagsPerDay       = 1_000
+	OutboundAITagLimitsMax     = 20
+	OutboundAITagUsagePageMax  = 1_000
+	OutboundAIUserIDMaxBytes   = 64
 	// Opt-in content capture (ADR-996): the bytes kept of each logged
 	// call's request and response body, the captures per integration and
 	// UTC day, and how long they stay.

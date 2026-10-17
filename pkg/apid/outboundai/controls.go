@@ -221,7 +221,7 @@ func requestLogResponse(entries []state.OutboundAIRequestLogEntry, limit int) ap
 			Outcome: entry.Outcome, InputTokens: entry.InputTokens, CachedInputTokens: entry.CachedInputTokens,
 			CacheWriteTokens: entry.CacheWriteTokens, OutputTokens: entry.OutputTokens, CostMillicents: entry.CostMillicents,
 			DurationMS: entry.DurationMS, TimeToFirstByteMS: copyInt64(entry.TTFBMS), Attempts: entry.Attempts,
-			ContentCaptured: entry.ContentCaptured,
+			ContentCaptured: entry.ContentCaptured, Tags: append([]string{}, entry.Tags...),
 		}
 		if entry.RouteID != "" {
 			routeID := entry.RouteID

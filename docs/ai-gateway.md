@@ -48,6 +48,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **Usage tags.** Name up to five `key=value` tags per call, such as
+  `feature=search` or `tier=free`, to see cost by your own dimensions, and cap
+  one tag's daily cost.
 - **Log export.** Send each call's metadata to your app's log drains, HTTP or
   OpenTelemetry, as one JSON line. Prompts and completions are never
   exported.
@@ -107,6 +110,14 @@ gregale ai usage <id>
 
 Name the end user of a call with the `X-Gregale-AI-User` header (an opaque ID,
 not an e-mail address) to get per-user usage and limits.
+
+Tag a call with `X-Gregale-AI-Tags: feature=search,tier=free` to see its
+usage by tag, and cap one tag's daily cost:
+
+```sh
+gregale ai tags <id> --key feature
+gregale ai tag-limits <id> --set feature=search:20     # EUR per UTC day
+```
 
 ### Outside Gregale
 

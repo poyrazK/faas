@@ -7733,6 +7733,7 @@
       "ai_end_user",
       "ai_reserved_cost_millicents",
       "ai_reserved_tokens",
+      "ai_tags",
       "binding_app_id",
       "created_at",
       "expires_at",
@@ -7995,6 +7996,7 @@
       "output_tokens",
       "route_id",
       "status",
+      "tags",
       "ttfb_ms"
     ],
     "kind": "operational"
@@ -8061,6 +8063,31 @@
       "integration_id",
       "lease_id",
       "settled_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_tag_limits",
+    "columns": [
+      "created_at",
+      "daily_cost_limit_millicents",
+      "integration_id",
+      "tag"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_tag_usage_daily",
+    "columns": [
+      "cost_millicents",
+      "error_requests",
+      "input_tokens",
+      "integration_id",
+      "output_tokens",
+      "requests",
+      "tag",
+      "updated_at",
+      "usage_date"
     ],
     "kind": "operational"
   },

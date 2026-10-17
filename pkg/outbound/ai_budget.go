@@ -25,6 +25,14 @@ func validateAIAdmissionSpec(spec AdmissionSpec) error {
 	if spec.AIEndUser != "" && !api.ValidOutboundAIUserID(spec.AIEndUser) {
 		return fmt.Errorf("%w: AI end user is invalid", ErrInvalidIntegration)
 	}
+	if !validAITags(spec.AITags) {
+		return fmt.Errorf("%w: AI usage tags are invalid", ErrInvalidIntegration)
+	}
+	for _, limit := range spec.AITagDailyCostLimits {
+		if limit < 1 || limit > api.MaxOutboundAICostMillicents {
+			return fmt.Errorf("%w: AI tag limit is invalid", ErrInvalidIntegration)
+		}
+	}
 	if (spec.UserDailyAITokenLimit != nil && (*spec.UserDailyAITokenLimit < 1 || *spec.UserDailyAITokenLimit > api.MaxOutboundAITokensPerDay)) ||
 		(spec.UserDailyAICostLimit != nil && (*spec.UserDailyAICostLimit < 1 || *spec.UserDailyAICostLimit > api.MaxOutboundAICostMillicents)) {
 		return fmt.Errorf("%w: per-end-user AI limit is invalid", ErrInvalidIntegration)

@@ -591,6 +591,8 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int       `json:"attempts"`
 	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
 	EndUser *string `json:"end_user"`
+	// Tags are the call's X-Gregale-AI-Tags, sorted by key (ADR-1410).
+	Tags []string `json:"tags"`
 	// ContentCaptured reports that the call's bodies can be read (ADR-996).
 	ContentCaptured bool `json:"content_captured"`
 }

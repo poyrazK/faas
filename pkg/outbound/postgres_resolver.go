@@ -64,7 +64,11 @@ const integrationPolicySQL = `
 	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
 	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
 	       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
-	       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation
+	       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation,
+	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
+	       ARRAY(SELECT tag_limit.daily_cost_limit_millicents FROM outbound_ai_tag_limits tag_limit
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag)
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -126,6 +130,8 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport, aiAllowUnmetered bool
 	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
+	var tagLimitTags []string
+	var tagLimitCosts []int64
 	err := results.QueryRow().
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
@@ -136,7 +142,8 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
 			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered,
 			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
-			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation)
+			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
+			&tagLimitTags, &tagLimitCosts)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -268,6 +275,15 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
+	// ADR-1410: the integration's tag limits.
+	for index, tag := range tagLimitTags {
+		if index < len(tagLimitCosts) {
+			if i.AITagDailyCostLimits == nil {
+				i.AITagDailyCostLimits = make(map[string]int64, len(tagLimitTags))
+			}
+			i.AITagDailyCostLimits[tag] = tagLimitCosts[index]
+		}
+	}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}

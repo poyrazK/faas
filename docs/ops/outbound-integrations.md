@@ -826,6 +826,42 @@ Python offers `ai_gateway_url`, `ai_gateway_headers` and `opaque_ai_user_id`
 from `faas_sdk`. `opaqueAIUserId` turns an e-mail address into a stable
 `u_…` ID. Pass a secret so the ID cannot be traced back to the address.
 
+## AI usage tags
+
+An AI call can name up to five tags with `X-Gregale-AI-Tags:
+feature=search,tier=free` (ADR-1410):
+
+- A key is 1 to 32 lowercase letters, digits, `_`, `.` or `-` that starts with
+  a letter. A value is 1 to 64 letters, digits or `. _ : @ + / -`.
+- Keys must be distinct, and the whole list goes in one header. A malformed
+  header gets `400 outbound_ai_tags_invalid`. The gateway never forwards it.
+- Like end-user IDs, tag values are stored for 31 days in the rollup and, with
+  the request log on, in the log. Do not put personal data in them.
+
+**Usage.** `gregale ai tags <id> [--date D] [--key K]` (or
+`GET .../ai-usage/tags`) lists a day's tags by cost, with each tag's limit.
+
+- Each integration tracks up to 1,000 distinct tags per UTC day. Later new
+  tags add to their key's overflow row, `<key>=~other`, so each key keeps a
+  total. A tag with a limit always keeps its own row.
+- Request-log entries carry `tags`. The log-export line carries a `tags`
+  object, and OTLP drains get `gregale.ai.tags`.
+
+**Limits.** `gregale ai tag-limits <id> --set feature=search:20` (or `PUT
+.../ai-tag-limits`) caps one exact tag's UTC-day cost. An integration holds up
+to 20 limits; `--remove` drops one and `--clear` drops them all.
+
+- A call carrying a limited tag is refused when the tag's settled cost today,
+  plus the reservations of the tag's in-flight calls, plus the call's own
+  reservation, would pass the limit. It gets `429` with
+  `X-Gregale-Outbound-Rejection: tag_daily_cost_limit` until the next UTC day.
+- Calls without the tag are unaffected. To cap each customer instead of one
+  tag, use the per-end-user limits above.
+- Tag limits have no budget alerts yet.
+
+The tag check joins admission's existing database read, so it adds no round
+trip.
+
 ## Provider key pools
 
 `gregale ai keys add <id> --label second --from-stdin` adds an extra sealed

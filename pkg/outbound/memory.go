@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ type memoryLease struct {
 	// lease lives (ADR-991).
 	bindingApp     string
 	endUser        string
+	tags           []string
 	reservedTokens int64
 	reservedCost   int64
 }
@@ -50,8 +52,11 @@ type memoryState struct {
 	usageMonth               string
 	monthlyAICost            int64
 	aiUsage                  map[memoryAIUsageKey]AIUsageTotals
-	// userUsage is today's per-end-user rollup (ADR-994).
+	// userUsage is today's per-end-user rollup (ADR-994), and tagUsage the
+	// per-tag one, with the tags the latest admissions limited (ADR-1410).
 	userUsage      map[string]AIUserUsageTotals
+	tagUsage       map[string]AIUserUsageTotals
+	limitedTags    map[string]struct{}
 	bindingMinutes map[string]memoryMinute
 	// The limits of the latest admission, used to detect budget alerts at
 	// settlement (ADR-991), and the alerts and request log recorded.
@@ -250,6 +255,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	}, aiBudgetLimitsFromSpec(spec), reserve); limited {
 		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
 	}
+	if reason, retry, limited := aiTagBudgetExhausted(utcNow, state.tagStates(spec), reserve); limited {
+		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+	}
 	minute := state.bindingMinute(spec.BindingAppID, utcNow)
 	if spec.BindingAppID != "" {
 		if reason, retry, limited := aiMinuteExhausted(utcNow, aiMinuteState{
@@ -267,7 +275,7 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	}
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl), bindingApp: spec.BindingAppID, endUser: spec.AIEndUser,
-		reservedTokens: reserve.tokens, reservedCost: reserve.cost}
+		tags: append([]string(nil), spec.AITags...), reservedTokens: reserve.tokens, reservedCost: reserve.cost}
 	decision := Decision{
 		Granted: true, LeaseID: id, RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
@@ -533,12 +541,16 @@ func (s *memoryState) rollDay(today string) {
 		s.bindingAITokenCounts = make(map[string]int64)
 		s.aiUsage = make(map[memoryAIUsageKey]AIUsageTotals)
 		s.userUsage = make(map[string]AIUserUsageTotals)
+		s.tagUsage = make(map[string]AIUserUsageTotals)
 		s.contentCaptures = 0
 		s.settledLeases = nil
 		return
 	}
 	if s.userUsage == nil {
 		s.userUsage = make(map[string]AIUserUsageTotals)
+	}
+	if s.tagUsage == nil {
+		s.tagUsage = make(map[string]AIUserUsageTotals)
 	}
 	if s.bindingDailyCounts == nil {
 		s.bindingDailyCounts = make(map[string]int64)
@@ -631,6 +643,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 		{api.OutboundAIBudgetDailyCost, "", utcDayStart(utcNow), state.aiLimits.dailyCost, before.dailyCost, state.dailyAICost, ""},
 		{api.OutboundAIBudgetMonthlyCost, "", utcMonthStart(utcNow), state.aiLimits.monthlyCost, before.monthlyCost, state.monthlyAICost, ""},
 	}
+	for _, tag := range record.Tags {
+		state.recordTagUsage(tag, record)
+	}
 	if record.EndUser != "" {
 		endUser, totals := state.recordUserUsage(record)
 		crossings = append(crossings, userBudgetCrossings(endUser, utcDayStart(utcNow), state.aiLimits.userTokens, state.aiLimits.userCost,
@@ -708,6 +723,60 @@ func (s *memoryState) recordUserUsage(record AIUsageRecord) (string, AIUserUsage
 	row.CostMillicents += record.CostMillicents
 	s.userUsage[endUser] = row
 	return endUser, row
+}
+
+// tagStates reads the call's limited tags like the Postgres backend, and
+// remembers them so their rows never overflow.
+func (s *memoryState) tagStates(spec AdmissionSpec) []aiTagState {
+	var states []aiTagState
+	for _, tag := range spec.AITags {
+		limit, ok := spec.AITagDailyCostLimits[tag]
+		if !ok {
+			continue
+		}
+		if s.limitedTags == nil {
+			s.limitedTags = make(map[string]struct{})
+		}
+		s.limitedTags[tag] = struct{}{}
+		state := aiTagState{tag: tag, limit: limit, used: s.tagUsage[tag].CostMillicents}
+		for _, lease := range s.leases {
+			if slices.Contains(lease.tags, tag) {
+				state.held += lease.reservedCost
+			}
+		}
+		states = append(states, state)
+	}
+	return states
+}
+
+// recordTagUsage adds a call to one tag's rollup, or to its key's overflow
+// row past the day's cap of distinct tags (ADR-1410).
+func (s *memoryState) recordTagUsage(tag string, record AIUsageRecord) {
+	_, limited := s.limitedTags[tag]
+	if _, exists := s.tagUsage[tag]; !exists && !limited && len(s.tagUsage) >= api.OutboundAITagsPerDay {
+		tag = tagOverflow(tag)
+	}
+	row := s.tagUsage[tag]
+	row.Requests++
+	if record.Outcome == AIUsageOutcomeError {
+		row.ErrorRequests++
+	}
+	row.InputTokens += record.Usage.InputTokens
+	row.OutputTokens += record.Usage.OutputTokens
+	row.CostMillicents += record.CostMillicents
+	s.tagUsage[tag] = row
+}
+
+// AITagUsage reports one tag's UTC-day rollup for tests.
+func (b *MemoryBackend) AITagUsage(integrationID, tag string) (AIUserUsageTotals, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.dailyUsageDate != b.now().UTC().Format("2006-01-02") {
+		return AIUserUsageTotals{}, false
+	}
+	row, ok := state.tagUsage[tag]
+	return row, ok
 }
 
 // AIUserUsage reports one end user's UTC-day rollup for tests.

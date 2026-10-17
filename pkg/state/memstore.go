@@ -347,6 +347,8 @@ type MemStore struct {
 	outboundAIReplays           map[string]OutboundAIReplay
 	outboundAIEvaluations       map[string]OutboundAIEvaluation
 	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
+	outboundAITagUsage          map[string][]OutboundAITagUsageItem
+	outboundAITagLimits         map[string][]api.OutboundAITagLimit
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex

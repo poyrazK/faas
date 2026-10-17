@@ -3,6 +3,7 @@ package outbound
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,25 +16,27 @@ const aiLogExportAttributesMax = 8
 // aiLogExportLine is the JSON line an exported call adds to the app's log
 // drains (ADR-1340). It holds metadata only, never prompts or completions.
 type aiLogExportLine struct {
-	Source               string   `json:"source"`
-	IntegrationID        string   `json:"integration_id"`
-	Model                string   `json:"model"`
-	Status               int      `json:"status"`
-	Outcome              string   `json:"outcome"`
-	InputTokens          int64    `json:"input_tokens"`
-	CachedInputTokens    int64    `json:"cached_input_tokens"`
-	CacheWriteTokens     int64    `json:"cache_write_tokens"`
-	OutputTokens         int64    `json:"output_tokens"`
-	CostMillicents       int64    `json:"cost_millicents"`
-	DurationMS           int64    `json:"duration_ms"`
-	TTFBMS               *int64   `json:"ttfb_ms,omitempty"`
-	Attempts             int      `json:"attempts"`
-	RouteID              string   `json:"route_id,omitempty"`
-	RouteTarget          int      `json:"route_target,omitempty"`
-	Canary               bool     `json:"canary,omitempty"`
-	EndUser              string   `json:"end_user,omitempty"`
-	Moderation           string   `json:"moderation,omitempty"`
-	ModerationCategories []string `json:"moderation_categories,omitempty"`
+	Source            string `json:"source"`
+	IntegrationID     string `json:"integration_id"`
+	Model             string `json:"model"`
+	Status            int    `json:"status"`
+	Outcome           string `json:"outcome"`
+	InputTokens       int64  `json:"input_tokens"`
+	CachedInputTokens int64  `json:"cached_input_tokens"`
+	CacheWriteTokens  int64  `json:"cache_write_tokens"`
+	OutputTokens      int64  `json:"output_tokens"`
+	CostMillicents    int64  `json:"cost_millicents"`
+	DurationMS        int64  `json:"duration_ms"`
+	TTFBMS            *int64 `json:"ttfb_ms,omitempty"`
+	Attempts          int    `json:"attempts"`
+	RouteID           string `json:"route_id,omitempty"`
+	RouteTarget       int    `json:"route_target,omitempty"`
+	Canary            bool   `json:"canary,omitempty"`
+	EndUser           string `json:"end_user,omitempty"`
+	// Tags are the call's usage tags by key (ADR-1410).
+	Tags                 map[string]string `json:"tags,omitempty"`
+	Moderation           string            `json:"moderation,omitempty"`
+	ModerationCategories []string          `json:"moderation_categories,omitempty"`
 	// ADR-1400: the response check's result, what it found and the
 	// categories its moderation flagged.
 	ResponseCheck                string   `json:"response_check,omitempty"`
@@ -70,11 +73,18 @@ func aiLogExportFor(integration Integration, record AIUsageRecord, settlement ai
 		ttfb := timeToFirstByte.Milliseconds()
 		line.TTFBMS = &ttfb
 	}
+	for _, tag := range record.Tags {
+		key, value, _ := strings.Cut(tag, "=")
+		if line.Tags == nil {
+			line.Tags = make(map[string]string, len(record.Tags))
+		}
+		line.Tags[key] = value
+	}
 	encoded, err := json.Marshal(line)
 	if err != nil {
 		return nil
 	}
-	return &AILogExport{
+	export := &AILogExport{
 		AppID: record.Caller, AccountID: integration.AccountID, Line: string(encoded),
 		Attributes: map[string]string{
 			"gen_ai.system":              integration.AIProvider,
@@ -85,4 +95,8 @@ func aiLogExportFor(integration Integration, record AIUsageRecord, settlement ai
 			"gregale.ai.integration_id":  integration.ID,
 		},
 	}
+	if len(record.Tags) > 0 {
+		export.Attributes["gregale.ai.tags"] = formatAITags(record.Tags)
+	}
+	return export
 }

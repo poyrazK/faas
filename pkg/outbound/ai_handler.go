@@ -124,8 +124,10 @@ type aiSettlement struct {
 	attempts int
 	started  time.Time
 	routeID  string
-	// endUser is the call's X-Gregale-AI-User value (ADR-994).
+	// endUser is the call's X-Gregale-AI-User value (ADR-994), and tags its
+	// X-Gregale-AI-Tags (ADR-1410).
 	endUser string
+	tags    []string
 	// reserve and billable let a billable call whose usage cannot be read
 	// settle at its admission estimate instead of zero (ADR-996).
 	reserve  aiReservation
@@ -280,7 +282,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
-		EndUser: settlement.endUser, LeaseID: settlement.leaseID,
+		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())

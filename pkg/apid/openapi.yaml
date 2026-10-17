@@ -4384,6 +4384,94 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-usage/tags:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI usage by tag is being read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITagUsage
+      summary: Read one UTC day of AI gateway usage by tag.
+      description: >-
+        Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+        kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+          schema: { type: string, format: date }
+        - name: key
+          in: query
+          required: false
+          description: Read only this tag key's tags, its overflow row included.
+          schema: { type: string, maxLength: 32 }
+        - name: limit
+          in: query
+          required: false
+          description: Rows to return, 1 to 1000; defaults to 1000.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '200':
+          description: AI usage by tag for the selected day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITagUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-tag-limits:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the managed AI integration.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITagLimits
+      summary: Read an AI integration's per-tag daily cost limits.
+      description: Requires MFA and read scope (ADR-1410).
+      responses:
+        '200':
+          description: The integration's tag limits, ordered by tag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITagLimits' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [outbound]
+      operationId: setOutboundAITagLimits
+      summary: Replace an AI integration's per-tag daily cost limits.
+      description: >-
+        Requires MFA and deploy-write scope (ADR-1410). A call carrying a limited tag is refused with 429
+        outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled UTC-day cost,
+        live reservations and the call's reservation would pass the limit. An empty list removes every limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAITagLimitsRequest' }
+      responses:
+        '204': { description: The limits were replaced. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-alerts:
     parameters:
       - name: integration
@@ -62374,6 +62462,56 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIUserUsageItem' }
+    OutboundAITagUsageItem:
+      type: object
+      description: >-
+        One tag's UTC-day AI usage on an integration (ADR-1410); tokens is input plus output. A key's tags past the day's
+        cap of distinct tags add to its overflow row, <key>=~other.
+      required: [tag, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents, daily_cost_limit_millicents]
+      properties:
+        tag: { type: string, maxLength: 97 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        daily_cost_limit_millicents: { type: [integer, 'null'], format: int64 }
+    OutboundAITagUsageResponse:
+      type: object
+      description: One UTC day of AI usage by tag, most expensive first (ADR-1410).
+      required: [usage_date, tracked_tags, items]
+      properties:
+        usage_date: { type: string, format: date }
+        tracked_tags: { type: integer, format: int64, minimum: 0, description: 'Distinct tag rows of the day, overflow rows included.' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITagUsageItem' }
+    OutboundAITagLimit:
+      type: object
+      description: A UTC-day cost limit on one exact tag (ADR-1410).
+      required: [tag, daily_cost_limit_millicents]
+      properties:
+        tag:
+          type: string
+          pattern: '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}$'
+        daily_cost_limit_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+    OutboundAITagLimits:
+      type: object
+      required: [limits]
+      properties:
+        limits:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITagLimit' }
+    PutOutboundAITagLimitsRequest:
+      type: object
+      description: The complete list of tag limits; an empty list removes them.
+      required: [limits]
+      properties:
+        limits:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/OutboundAITagLimit' }
     OutboundAIUserUsageExportRow:
       description: One NDJSON line of a per-end-user usage export (ADR-995); CSV rows carry the same fields in this order.
       allOf:
@@ -62745,7 +62883,7 @@ components:
     OutboundAIRequestLogEntry:
       type: object
       description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
-      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured]
+      required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured, tags]
       properties:
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
@@ -62764,6 +62902,11 @@ components:
         attempts: { type: integer, minimum: 0 }
         end_user: { type: [string, 'null'], maxLength: 64, description: The call's X-Gregale-AI-User value (ADR-994). }
         content_captured: { type: boolean, description: Whether the call's bodies can be read from its content endpoint (ADR-996). }
+        tags:
+          type: array
+          maxItems: 5
+          description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1410).
+          items: { type: string, maxLength: 97 }
     OutboundAIContentBody:
       type: object
       description: The start of one captured body.

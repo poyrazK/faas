@@ -787,6 +787,8 @@ var cliCommands = []cliCommand{
 			"gregale ai content-policy <integration-id> --moderation block --moderation-kind classifier --moderation-integration <id> --moderation-model gpt-5-nano --moderation-categories prompt_injection,harassment",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
+			"gregale ai tags <integration-id> --key feature",
+			"gregale ai tag-limits <integration-id> --set feature=search:20",
 			"gregale ai logs show <integration-id> <request-id>",
 			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
 			"gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag",
@@ -826,6 +828,16 @@ var cliCommands = []cliCommand{
 				{Name: "response-secrets", Short: "API keys, tokens and private keys in responses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
 				{Name: "response-terms", Short: "block responses containing a blocked term", Value: "off|block", ClosedSet: []string{"off", "block"}},
 				{Name: "response-moderation", Short: "check responses with the moderation check", Value: "ACTION", ClosedSet: []string{"off", "flag", "block"}},
+			}},
+			{Name: "tags", Short: "Show one UTC day's AI usage by X-Gregale-AI-Tags tag, with each tag's limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "date", Short: "UTC day within the last 31 days (default today)", Value: "YYYY-MM-DD"},
+				{Name: "key", Short: "show only this tag key's tags", Value: "KEY"},
+				{Name: "limit", Short: "tags to show, 1 to 1000", Value: "N"},
+			}},
+			{Name: "tag-limits", Short: "Show or change per-tag daily cost limits (unchanged limits are kept)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "set", Short: "cap a tag's UTC-day cost: key=value:EUR (repeat)", Value: "SPEC"},
+				{Name: "remove", Short: "remove a tag's limit (repeat)", Value: "TAG"},
+				{Name: "clear", Short: "remove every limit before applying --set", Bool: true},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},

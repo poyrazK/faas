@@ -74,6 +74,8 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int
 	// EndUser is empty when the call named no end user (ADR-994).
 	EndUser string
+	// Tags are the call's usage tags (ADR-1410).
+	Tags []string
 	// ContentCaptured reports stored bodies for the call (ADR-996).
 	ContentCaptured bool
 }

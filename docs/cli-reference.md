@@ -2142,6 +2142,8 @@ gregale ai routes set <route-id> --target <openai-id> --target <anthropic-id>:cl
 gregale ai content-policy <integration-id> --moderation block --moderation-kind classifier --moderation-integration <id> --moderation-model gpt-5-nano --moderation-categories prompt_injection,harassment
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
+gregale ai tags <integration-id> --key feature
+gregale ai tag-limits <integration-id> --set feature=search:20
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
 gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag
@@ -2195,6 +2197,30 @@ Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets
 | `--response-secrets <ACTION>` | API keys, tokens and private keys in responses | one of `off` · `redact` · `block` |
 | `--response-terms <off|block>` | block responses containing a blocked term | one of `off` · `block` |
 | `--response-moderation <ACTION>` | check responses with the moderation check | one of `off` · `flag` · `block` |
+
+### ai tags
+
+Show one UTC day&#39;s AI usage by X-Gregale-AI-Tags tag, with each tag&#39;s limit
+
+`gregale ai tags [--date <YYYY-MM-DD>] [--key <KEY>] [--limit <N>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--date <YYYY-MM-DD>` | UTC day within the last 31 days (default today) |  |
+| `--key <KEY>` | show only this tag key&#39;s tags |  |
+| `--limit <N>` | tags to show, 1 to 1000 |  |
+
+### ai tag-limits
+
+Show or change per-tag daily cost limits (unchanged limits are kept)
+
+`gregale ai tag-limits [--set <SPEC>] [--remove <TAG>] [--clear] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--set <SPEC>` | cap a tag&#39;s UTC-day cost: key=value:EUR (repeat) |  |
+| `--remove <TAG>` | remove a tag&#39;s limit (repeat) |  |
+| `--clear` | remove every limit before applying --set |  |
 
 ### ai app-limit
 

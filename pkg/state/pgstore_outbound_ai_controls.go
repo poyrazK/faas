@@ -181,7 +181,8 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		SELECT log.id, log.created_at, log.caller, log.route_id, log.model, log.status, log.outcome,
 		       log.input_tokens, log.cached_input_tokens, log.cache_write_tokens, log.output_tokens,
 		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts, COALESCE(log.end_user, ''),
-		       EXISTS (SELECT 1 FROM outbound_ai_request_content content WHERE content.log_id = log.id)
+		       EXISTS (SELECT 1 FROM outbound_ai_request_content content WHERE content.log_id = log.id),
+		       COALESCE(log.tags, '{}'::text[])
 		  FROM outbound_ai_request_log log
 		 WHERE log.integration_id = $1 AND ($2::timestamptz IS NULL OR log.created_at < $2)
 		 ORDER BY log.created_at DESC, log.id DESC
@@ -199,7 +200,7 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		var entry OutboundAIRequestLogEntry
 		if err := rows.Scan(&id, &entry.CreatedAt, &entry.Caller, &routeID, &entry.Model, &status, &entry.Outcome,
 			&entry.InputTokens, &entry.CachedInputTokens, &entry.CacheWriteTokens, &entry.OutputTokens,
-			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser, &entry.ContentCaptured); err != nil {
+			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser, &entry.ContentCaptured, &entry.Tags); err != nil {
 			return nil, mapErr(err)
 		}
 		entry.ID, entry.CreatedAt = pgUUIDString(id), entry.CreatedAt.UTC()

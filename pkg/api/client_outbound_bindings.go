@@ -156,6 +156,43 @@ func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model 
 
 // GetOutboundAIUserUsage lists one UTC day's AI usage by end user; an empty
 // date is today and an empty endUser lists the top users (ADR-994).
+// GetOutboundAITagUsage reads one UTC day's usage by tag, optionally for
+// one tag key (ADR-1410).
+func (c *Client) GetOutboundAITagUsage(ctx context.Context, integrationID, date, key string, limit int) (OutboundAITagUsageResponse, error) {
+	query := url.Values{}
+	if date != "" {
+		query.Set("date", date)
+	}
+	if key != "" {
+		query.Set("key", key)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/tags"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out OutboundAITagUsageResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetOutboundAITagLimits reads an integration's tag limits (ADR-1410).
+func (c *Client) GetOutboundAITagLimits(ctx context.Context, integrationID string) (OutboundAITagLimits, error) {
+	var out OutboundAITagLimits
+	return out, c.do(ctx, "GET", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/ai-tag-limits", nil, &out)
+}
+
+// SetOutboundAITagLimits replaces an integration's tag limits; an empty
+// list removes them (ADR-1410).
+func (c *Client) SetOutboundAITagLimits(ctx context.Context, integrationID string, limits []OutboundAITagLimit) error {
+	if limits == nil {
+		limits = []OutboundAITagLimit{}
+	}
+	return c.do(ctx, "PUT", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/ai-tag-limits",
+		PutOutboundAITagLimitsRequest{Limits: limits}, nil)
+}
+
 func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date, endUser string, limit int) (OutboundAIUserUsageResponse, error) {
 	query := url.Values{}
 	if date != "" {

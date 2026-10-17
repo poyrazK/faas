@@ -24,6 +24,8 @@ import type { OutboundAIRouteCanary } from '../models/OutboundAIRouteCanary.js';
 import type { OutboundAIRouteCanaryStatus } from '../models/OutboundAIRouteCanaryStatus.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIRouteStats } from '../models/OutboundAIRouteStats.js';
+import type { OutboundAITagLimits } from '../models/OutboundAITagLimits.js';
+import type { OutboundAITagUsageResponse } from '../models/OutboundAITagUsageResponse.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
@@ -40,6 +42,7 @@ import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRe
 import type { PutOutboundAIPricesRequest } from '../models/PutOutboundAIPricesRequest.js';
 import type { PutOutboundAIRouteCanaryRequest } from '../models/PutOutboundAIRouteCanaryRequest.js';
 import type { PutOutboundAIRouteTargetsRequest } from '../models/PutOutboundAIRouteTargetsRequest.js';
+import type { PutOutboundAITagLimitsRequest } from '../models/PutOutboundAITagLimitsRequest.js';
 import type { PutOutboundBindingAIBudgetRequest } from '../models/PutOutboundBindingAIBudgetRequest.js';
 import type { PutOutboundBindingAIGuardrailsRequest } from '../models/PutOutboundBindingAIGuardrailsRequest.js';
 import type { PutOutboundBindingDailyRequestBudgetRequest } from '../models/PutOutboundBindingDailyRequestBudgetRequest.js';
@@ -696,6 +699,128 @@ export class OutboundService {
         'integration': integration,
         'key': key,
       },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one UTC day of AI gateway usage by tag.
+   * Requires MFA and read scope (ADR-1410). Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+   * @returns OutboundAITagUsageResponse AI usage by tag for the selected day.
+   * @throws ApiError
+   */
+  public static getOutboundAiTagUsage({
+    integration,
+    date,
+    key,
+    limit,
+  }: {
+    /**
+     * UUID of the integration whose AI usage by tag is being read.
+     */
+    integration: string,
+    /**
+     * UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+     */
+    date?: string,
+    /**
+     * Read only this tag key's tags, its overflow row included.
+     */
+    key?: string,
+    /**
+     * Rows to return, 1 to 1000; defaults to 1000.
+     */
+    limit?: number,
+  }): CancelablePromise<OutboundAITagUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage/tags',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'date': date,
+        'key': key,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an AI integration's per-tag daily cost limits.
+   * Requires MFA and read scope (ADR-1410).
+   * @returns OutboundAITagLimits The integration's tag limits, ordered by tag.
+   * @throws ApiError
+   */
+  public static getOutboundAiTagLimits({
+    integration,
+  }: {
+    /**
+     * UUID of the managed AI integration.
+     */
+    integration: string,
+  }): CancelablePromise<OutboundAITagLimits> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-tag-limits',
+      path: {
+        'integration': integration,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an AI integration's per-tag daily cost limits.
+   * Requires MFA and deploy-write scope (ADR-1410). A call carrying a limited tag is refused with 429 outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list removes every limit.
+   * @returns void
+   * @throws ApiError
+   */
+  public static setOutboundAiTagLimits({
+    integration,
+    requestBody,
+  }: {
+    /**
+     * UUID of the managed AI integration.
+     */
+    integration: string,
+    requestBody: PutOutboundAITagLimitsRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/ai-tag-limits',
+      path: {
+        'integration': integration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

@@ -1592,6 +1592,10 @@ export type { OutboundAIRouteList } from './models/OutboundAIRouteList.js';
 export type { OutboundAIRouteStats } from './models/OutboundAIRouteStats.js';
 export type { OutboundAIRouteTarget } from './models/OutboundAIRouteTarget.js';
 export type { OutboundAIRouteTargetStats } from './models/OutboundAIRouteTargetStats.js';
+export type { OutboundAITagLimit } from './models/OutboundAITagLimit.js';
+export type { OutboundAITagLimits } from './models/OutboundAITagLimits.js';
+export type { OutboundAITagUsageItem } from './models/OutboundAITagUsageItem.js';
+export type { OutboundAITagUsageResponse } from './models/OutboundAITagUsageResponse.js';
 export type { OutboundAIUsageItem } from './models/OutboundAIUsageItem.js';
 export type { OutboundAIUsageResponse } from './models/OutboundAIUsageResponse.js';
 export type { OutboundAIUserUsageExportRow } from './models/OutboundAIUserUsageExportRow.js';
@@ -1855,6 +1859,7 @@ export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyReq
 export type { PutOutboundAIPricesRequest } from './models/PutOutboundAIPricesRequest.js';
 export type { PutOutboundAIRouteCanaryRequest } from './models/PutOutboundAIRouteCanaryRequest.js';
 export type { PutOutboundAIRouteTargetsRequest } from './models/PutOutboundAIRouteTargetsRequest.js';
+export type { PutOutboundAITagLimitsRequest } from './models/PutOutboundAITagLimitsRequest.js';
 export type { PutOutboundBindingAIBudgetRequest } from './models/PutOutboundBindingAIBudgetRequest.js';
 export type { PutOutboundBindingAIGuardrailsRequest } from './models/PutOutboundBindingAIGuardrailsRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './models/PutOutboundBindingDailyRequestBudgetRequest.js';

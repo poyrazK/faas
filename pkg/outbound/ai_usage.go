@@ -81,6 +81,8 @@ type AIUsageRecord struct {
 	Log *AIRequestLog
 	// EndUser is the call's X-Gregale-AI-User value, or empty (ADR-994).
 	EndUser string
+	// Tags are the call's usage tags, sorted by key (ADR-1410).
+	Tags []string
 	// LeaseID is the call's admission lease. It keys the settlement, so a
 	// retried settlement counts the call once, and the settlement deletes
 	// the lease (ADR-1120). Empty settles without a key.
@@ -256,6 +258,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	}
 	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
 		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
+	}
+	if !validAITags(record.Tags) {
+		return fmt.Errorf("%w: AI usage tags are invalid", ErrInvalidIntegration)
 	}
 	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
 		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)

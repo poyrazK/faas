@@ -32,5 +32,9 @@ export type OutboundAIRequestLogEntry = {
    * Whether the call's bodies can be read from its content endpoint (ADR-996).
    */
   content_captured: boolean;
+  /**
+   * The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1410).
+   */
+  tags: Array<string>;
 };
 

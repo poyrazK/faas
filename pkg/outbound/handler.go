@@ -300,6 +300,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"X-Gregale-AI-User and X-Gregale-AI-Session must each be one ID of 1 to 64 letters, digits or . _ : @ + = / | -", "")
 		return
 	}
+	aiTags, ok := aiCallTags(r, integration)
+	if !ok {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_tags_invalid")
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_tags_invalid",
+			"X-Gregale-AI-Tags must be one header of at most 5 key=value tags with distinct keys: keys of 1 to 32 lowercase "+
+				"letters, digits, _ . or - starting with a letter, values of 1 to 64 letters, digits or . _ : @ + / -", "")
+		return
+	}
 	var managedAuthorization string
 	var poolKeys []ManagedKey
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
@@ -379,6 +387,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AIEndUser:                      aiEndUser,
 		UserDailyAITokenLimit:          copyInt64Pointer(integration.AIUserDailyTokenLimit),
 		UserDailyAICostLimit:           copyInt64Pointer(integration.AIUserDailyCostLimit),
+		AITags:                         aiTags,
+		AITagDailyCostLimits:           tagDailyCostLimits(integration, aiTags),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -671,7 +681,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
+			endUser: aiEndUser, tags: aiTags, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
 			response: responseCheck,
 		}
 		if aiPlan != nil {
