@@ -1049,9 +1049,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so a panic during the ~465 lines of setup below cannot
 	// leave /readyz reporting ready while no gRPC server is
 	// actually running (PR #1091 review Finding 5).
-	gsrv := grpc.NewServer(append(
+	// Gateways' warm-hint and log streams and vmmd's capacity reports stay
+	// open indefinitely; the drain ends them at shutdown so GracefulStop
+	// waits only for unary RPCs and the replacement starts sooner.
+	streamDrain := wire.NewStreamDrain()
+	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
-		wire.TraceServerOptions()...,
+		wire.TraceServerOptions()...),
+		streamDrain.ServerOption(),
 	)...)
 	// scheddgrpc.New(gsrv) is called after the instancestats.Reader
 	// is constructed below, so the server can serve
@@ -2452,6 +2457,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
+	streamDrain.Begin()
 	//nolint:contextcheck // shutdown must outlive the canceled daemon context.
 	stopGRPCServer(stopCtx, gsrv)
 	if httpSrv != nil {
