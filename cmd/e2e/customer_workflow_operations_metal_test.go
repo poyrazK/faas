@@ -321,7 +321,13 @@ func (f *customerWorkflowFixture) logWorkflowDiagnostics(t *testing.T, id string
 	}
 	for _, step := range []string{"collect", "transform", "finish"} {
 		attempts, err := f.store.GetWorkflowStepAttempts(t.Context(), op.WorkflowRunID, step)
-		t.Logf("diagnostics: step %s attempts=%+v err=%v", step, attempts, err)
+		if err != nil {
+			t.Logf("diagnostics: step %s: %v", step, err)
+		}
+		for _, attempt := range attempts {
+			raw, _ := json.Marshal(attempt)
+			t.Logf("diagnostics: step %s attempt %s", step, raw)
+		}
 	}
 	if page, err := f.owner.GetAccountOperationEvents(t.Context(), f.app.Slug, id, 0); err == nil {
 		for _, event := range page.Events {
