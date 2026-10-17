@@ -11745,6 +11745,175 @@ const (
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
 )
 
+// Internal static hosting (ADR-20261015). These caps bound control-plane memory,
+// publication work, retained artifacts, and the edge kill-switch convergence.
+const (
+	HostingFilesMax                            = 1000
+	HostingDeploymentPlanTimeout               = 15 * time.Second
+	HostingDeploymentPlanVersion               = 1
+	HostingDeploymentPlanMaxBytes              = 4 << 20
+	HostingDeploymentPlanJSONDepth             = 16
+	HostingPlannedStageTimeout                 = 10 * time.Minute
+	HostingPublicationWaitDefault              = 2 * time.Minute
+	HostingPublicationWaitMax                  = 10 * time.Minute
+	HostingPublicationPollInterval             = time.Second
+	HostingConfigMaxBytes                      = 32 << 10
+	HostingConfigRedirectsMax                  = 32
+	HostingConfigHeaderRulesMax                = 16
+	HostingConfigHeadersPerRuleMax             = 8
+	HostingConfigHeaderValueMaxBytes           = 2048
+	HostingAnalyticsDatasetMaxBytes            = 64
+	HostingTrafficQueryTimeout                 = 5 * time.Second
+	HostingTrafficQueryConcurrency             = 2
+	HostingTrafficCacheTTL                     = time.Minute
+	HostingTrafficCacheEntries                 = 128
+	HostingTrafficWindow                       = 24 * time.Hour
+	HostingTrafficRowsMax                      = 2048
+	HostingTrafficResponseMaxBytes             = 512 << 10
+	HostingTrafficCounterMax             int64 = 1<<53 - 1
+	HostingTrafficFailureGroupsMax             = 20
+	HostingAccountStorageMaxBytes        int64 = 1 << 30
+	HostingAccountPendingUploadsMax      int64 = 4
+	HostingStorageCopies                 int64 = 2
+	HostingFileMaxBytes                  int64 = 32 << 20
+	HostingReleaseMaxBytes               int64 = 100 << 20
+	HostingManifestMaxBytes              int64 = 512 << 10
+	HostingPathMaxBytes                        = 512
+	HostingContentTypeMaxBytes                 = 128
+	HostingNameMaxBytes                        = 48
+	HostingSitesPerAccount                     = 25
+	HostingReleasesPerSite                     = 10
+	HostingPublishConcurrency                  = 1
+	HostingRoutePageSize                       = 100
+	HostingUploadTTL                           = 5 * time.Minute
+	HostingStorageTimeout                      = 30 * time.Second
+	HostingFinalizeTimeout                     = 2 * time.Minute
+	HostingRouteLease                          = 120 * time.Second
+	HostingReconcileInterval                   = 30 * time.Second
+	HostingRetirementGrace                     = HostingUploadTTL + 2*HostingRouteLease + HostingStorageTimeout
+	HostingDurableRouteMaxBytes                = 8 << 10
+	HostingRouteCacheTTL                       = time.Minute
+	HostingRouteRepairInterval                 = 6 * time.Hour
+	HostingRouteRetryInterval                  = 30 * time.Second
+	HostingRouteCASAttempts                    = 3
+	HostingRoutePublishConcurrency             = 4
+	HostingRouteDispatchTimeout                = 30 * time.Second
+	HostingRouteStatusReadTimeout              = 5 * time.Second
+	HostingDomainsPerSite                      = 5
+	HostingDomainHostnameMaxBytes              = 64
+	HostingPilotRelaySocketMaxBytes            = 100
+	HostingDomainPageSize                      = 10
+	HostingDomainConcurrency                   = 2
+	HostingDomainDetailsMaxBytes               = 16 << 10
+	HostingDomainProviderMaxBytes              = 256 << 10
+	HostingDomainRecordsMax                    = 16
+	HostingDomainRecordMaxBytes                = 2048
+	HostingDomainProviderPagesMax              = 20
+	HostingDomainProviderTimeout               = 10 * time.Second
+	HostingDomainDNSTimeout                    = 5 * time.Second
+	HostingDomainDispatchTimeout               = 30 * time.Second
+	HostingDomainLease                         = 2 * time.Minute
+	HostingDomainRecoveryDelay                 = HostingDomainLease + HostingDomainProviderTimeout + HostingDomainDispatchTimeout
+	HostingDomainRetryInterval                 = time.Minute
+	HostingDomainCheckInterval                 = 30 * time.Minute
+	HostingDomainValidationRetryInterval       = 30 * time.Minute
+	HostingDomainRemovalGrace                  = 2*HostingRouteCacheTTL + HostingStorageTimeout
+)
+
+// Private immutable previews share release bytes and the existing wildcard Access policy.
+const (
+	HostingPreviewsPerSite       = 8
+	HostingPreviewTTLDefault     = 24 * time.Hour
+	HostingPreviewTTLMin         = 5 * time.Minute
+	HostingPreviewTTLMax         = 72 * time.Hour
+	HostingPreviewRetry          = 30 * time.Second
+	HostingPreviewRepairInterval = 6 * time.Hour
+	HostingPreviewRemovalGrace   = 2*HostingRouteCacheTTL + HostingStorageTimeout
+	HostingPreviewPageSize       = 100
+)
+
+const HostingPreviewConcurrency = 2
+
+// Internal deployment provenance and bounded, paginated accepted-intent history.
+const (
+	HostingProvenanceRepositoryMaxBytes  = 256
+	HostingProvenanceBranchMaxBytes      = 128
+	HostingProvenanceDescriptionMaxBytes = 280
+	HostingProvenanceMaxBytes            = 4096
+	HostingHistoryPerSite                = 1000
+	HostingHistoryPageSize               = 50
+)
+
+const HostingReleaseRequestMaxBytes = HostingManifestMaxBytes + HostingProvenanceMaxBytes
+
+// Internal site-scoped automation; credentials and run identity ledgers are bounded.
+const (
+	HostingAutomationCredentialsPerSite = 16
+	HostingOIDCRepositoryMaxBytes       = 200
+	HostingOIDCRefMaxBytes              = 255
+	HostingOIDCWorkflowMaxBytes         = 512
+	HostingOIDCEnvironmentMaxBytes      = 255
+	HostingOIDCTrustsPerSite            = 8
+	HostingOIDCSessionsPerSite          = 32
+	HostingOIDCBearerTTL                = 5 * time.Minute
+	HostingOIDCAssertionMaxTTL          = 10 * time.Minute
+	HostingOIDCRefreshMargin            = 30 * time.Second
+	HostingOIDCRequestTimeout           = 15 * time.Second
+	HostingOIDCRequestMaxBytes          = 32 << 10
+	HostingAutomationLabelMaxBytes      = 64
+	HostingAutomationTTLDefault         = 24 * time.Hour
+	HostingAutomationTTLMin             = 5 * time.Minute
+	HostingAutomationTTLMax             = 30 * 24 * time.Hour
+	HostingCIRunsPerSite                = 1000
+	HostingCIWaitDefault                = 2 * time.Minute
+	HostingCIWaitMax                    = 10 * time.Minute
+)
+
+const HostingCIWorkflowTimeout = 20 * time.Minute
+
+// Read-only deployment activity never changes the retained CI-run quota.
+const (
+	HostingActivityPageSize       = 25
+	HostingActivityCursorMaxBytes = 128
+	HostingCancellationTimeout    = 15 * time.Second
+	HostingPreviewCapacityTimeout = 15 * time.Second
+	HostingActivityTimeout        = 15 * time.Second
+)
+
+const HostingDiagnosticsTimeout = 15 * time.Second
+
+const (
+	HostingCISetupCronMaxBytes      = 100
+	HostingCISetupTimeout           = 15 * time.Second
+	HostingCISetupRequestMaxBytes   = 128 << 10
+	HostingCISetupWorkflowMaxBytes  = 64 << 10
+	HostingCISetupPathMaxBytes      = 256
+	HostingCISetupCLIMaxBytes       = 256 << 20
+	HostingCISetupJobTimeoutMinutes = 30
+	HostingCISetupYAMLMaxNodes      = 4096
+	HostingCISetupYAMLMaxDepth      = 32
+)
+
+// Automatic retirement is an internal opt-in, separate from physical cleanup.
+const (
+	HostingRetentionAgeDefault   = 24 * time.Hour
+	HostingRetentionAgeMin       = time.Hour
+	HostingRetentionAgeMax       = 30 * 24 * time.Hour
+	HostingRetentionSitesPerPass = 100
+	HostingRetentionPassTimeout  = 30 * time.Second
+)
+
+// Local CLI preview limits; no server process or cloud resource is allocated.
+const (
+	HostingLocalPreviewPort            = 4173
+	HostingLocalPreviewHeaderTimeout   = 5 * time.Second
+	HostingLocalPreviewReadTimeout     = 10 * time.Second
+	HostingLocalPreviewWriteTimeout    = 30 * time.Second
+	HostingLocalPreviewIdleTimeout     = 30 * time.Second
+	HostingLocalPreviewShutdownTimeout = 5 * time.Second
+	HostingLocalPreviewHeaderMaxBytes  = 16 << 10
+)
+
 // Deferred event processing remains bounded independently of dispatch timeout.
 const (
 	EventAcknowledgmentLeaseMaxSeconds = 300

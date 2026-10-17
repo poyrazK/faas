@@ -5199,6 +5199,186 @@
     "kind": "operational"
   },
   {
+    "table": "hosting_automation_credentials",
+    "columns": [
+      "account_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "label",
+      "oidc_trust_id",
+      "operations",
+      "site_id",
+      "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "hosting_ci_runs",
+    "columns": [
+      "canceled",
+      "created_at",
+      "fingerprint",
+      "id",
+      "preview_created",
+      "preview_expires_at",
+      "preview_id",
+      "preview_reserved",
+      "release_id",
+      "site_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosting_domain_claims",
+    "columns": [
+      "created_at",
+      "domain_id",
+      "hostname"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "hosting_domains",
+    "columns": [
+      "account_id",
+      "attempts",
+      "challenge",
+      "created_at",
+      "details",
+      "generation",
+      "hostname",
+      "id",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "provider_origin_id",
+      "published_at",
+      "published_generation",
+      "revision",
+      "site_id",
+      "state"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "hosting_oidc_trusts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment",
+      "event_name",
+      "id",
+      "ref",
+      "repository",
+      "repository_id",
+      "repository_owner_id",
+      "site_id",
+      "workflow_ref"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "hosting_previews",
+    "columns": [
+      "account_id",
+      "created_at",
+      "expires_at",
+      "generation",
+      "hostname",
+      "id",
+      "last_error_code",
+      "next_attempt_at",
+      "origin_id",
+      "published_at",
+      "published_generation",
+      "release_id",
+      "revoked",
+      "site_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosting_promotion_events",
+    "columns": [
+      "accepted_at",
+      "actor_account_id",
+      "actor_key_id",
+      "previous_release_id",
+      "previous_revision",
+      "provenance",
+      "release_id",
+      "revision",
+      "site_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosting_releases",
+    "columns": [
+      "artifact_bytes",
+      "created_at",
+      "first_promoted_at",
+      "id",
+      "last_activity_at",
+      "manifest",
+      "provenance",
+      "retired_at",
+      "retirement_generation",
+      "retirement_published_at",
+      "site_id",
+      "state"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "hosting_retention_policies",
+    "columns": [
+      "enabled",
+      "pending_age_seconds",
+      "revision",
+      "site_id",
+      "staged_age_seconds",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "hosting_route_publications",
+    "columns": [
+      "generation",
+      "last_attempt_at",
+      "last_error_code",
+      "next_attempt_at",
+      "pending_since",
+      "published_at",
+      "published_generation",
+      "retry_count",
+      "site_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosting_sites",
+    "columns": [
+      "account_id",
+      "active_release_id",
+      "created_at",
+      "durable_routing",
+      "environment",
+      "hostname",
+      "id",
+      "name",
+      "origin_id",
+      "project_id",
+      "revision",
+      "status",
+      "suspended"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "idempotency_keys",
     "columns": [
       "account_id",
