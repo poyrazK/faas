@@ -14378,7 +14378,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|releases|rollback-plan|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|releases|rollback-plan|rollback-pr|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -14549,6 +14549,26 @@ Examples:
 
 ```sh
 gregale projects environments gitops rollback-plan shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA
+```
+
+##### projects environments gitops rollback-pr
+
+Open a draft recovery PR or MR for an explicitly selected served release
+
+`gregale projects environments gitops rollback-pr --to-release <UUID> --target-commit <SHA> --expected-plan-hash <HASH> [--yes] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to-release <UUID>` | Explicit retained serving release in this environment | required |
+| `--target-commit <SHA>` | Reviewed current target branch commit | required |
+| `--expected-plan-hash <HASH>` | Reviewed rollback observation hash | required |
+| `--yes` | Create the draft recovery proposal; default is a read-only preview |  |
+| `--json` | Emit the recovery proposal receipt as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops rollback-pr shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes
 ```
 
 ##### projects environments gitops approve

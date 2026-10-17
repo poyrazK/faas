@@ -436,8 +436,8 @@ after a race; it is not deleted automatically.
 
 Creating the draft does not merge, approve or deploy it, pin artifacts, or extend
 retention. Normal Git review/approval, current artifact trust and fresh target
-qualification, activation and serving evidence remain required. This command
-currently supports promotion; rollback continues to use reviewed plan exports.
+qualification, activation and serving evidence remain required. Use `rollback-pr`
+below for retained-release recovery with its own reviewed rollback plan.
 Native acceptance and production execution gates remain unchanged. See
 [ADR-1352](adr/1352-gitops-promotion-review-requests.md).
 
@@ -532,6 +532,54 @@ trust before boot and before releasing the held command. Unscheduled Jobs and
 sidecars remain excluded. Native VM/leak acceptance and production gates remain
 unchanged. See [ADR-1347](adr/1347-gitops-reviewed-rollback-proposals.md) and
 [ADR-1350](adr/1350-gitops-scheduled-job-artifact-promotion-and-rollback.md).
+
+### Open a recovery pull or merge request
+
+Choose an eligible release from `gitops releases`, then review its fresh
+`rollback-plan`. Preview the recovery draft with that plan's hash:
+
+```sh
+gregale projects environments gitops rollback-pr shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_ROLLBACK_HASH"
+```
+
+Add `--yes` to create the draft PR/MR, and `--json` for a receipt that includes
+the selected `release_set_id`:
+
+```sh
+gregale projects environments gitops rollback-pr shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_ROLLBACK_HASH" --yes --json
+```
+
+The release UUID is required; the command never chooses a release automatically.
+Use an authenticated `gh` or `glab` session as described for `promotion-pr`.
+Repository, manifest and branch come from the active target binding, and the
+target commit must still be the branch's exact head. Promotion hashes cannot
+authorize a recovery proposal. A fresh rollback observation checks the selected
+historical release, current release, artifact eligibility and current target
+intent before each write. A changed observation requires a fresh reviewed plan.
+
+The draft identifies the historical serving time/graph, code provenance and
+current target base. It changes only compatible workload source contracts while
+preserving current configuration, secret references, routes, policies, schedules,
+commands and bindings. Normal Git review/approval, current artifact trust and
+fresh target qualification, activation and serving evidence remain required.
+Creating the draft does not pin artifacts or extend their retention.
+
+Retries use `gregale-rollback-<plan hash>` and recover a matching open request or
+valid branch left by an interrupted attempt. Closed/merged, edited, foreign or
+ambiguous requests and changed branches are rejected. No branch is overwritten,
+request reopened or uncertain write retried automatically. A race can leave a
+branch or draft; inspect it and retry the same command only while its reviewed
+plan and base remain current.
+
+Recovery does not restore data or undo database migrations. Completed Jobs are
+never replayed; scheduled Jobs require fresh qualification and a successful
+post-activation occurrence for future runs. Production execution gates and
+exclusive native acceptance requirements remain unchanged. See
+[ADR-1353](adr/1353-gitops-rollback-review-requests.md).
 
 ## Receive drift and source notifications
 

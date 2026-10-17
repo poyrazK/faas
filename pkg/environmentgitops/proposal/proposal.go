@@ -69,6 +69,7 @@ type Result struct {
 	Number                      int64  `json:"number,omitempty"`
 	URL                         string `json:"url,omitempty"`
 	Head                        string `json:"head_commit,omitempty"`
+	ReleaseSetID                string `json:"release_set_id,omitempty"`
 	RequiresTargetQualification bool   `json:"requires_target_qualification"`
 }
 
@@ -140,14 +141,31 @@ func validHex(s string, n int) bool {
 // Run previews by default. apply requires an explicit fresh observation callback;
 // a proposal cannot turn the preview hash into approval or execution authority.
 func Run(ctx context.Context, r Request, provider Provider, apply bool, recheck func(context.Context) error) (Result, error) {
-	var out Result
 	if err := r.validate(); err != nil {
-		return out, err
+		return Result{}, err
 	}
-	p, source := r.Plan, r.Source
-	out = Result{Status: "preview", Provider: p.Origin.Provider, Repository: source.Spec.Repository,
-		Branch: "gregale-promote-" + p.PlanHash, Base: strings.TrimPrefix(source.Spec.Ref, "refs/heads/"),
-		BaseCommit: p.Target.CommitSHA, PlanHash: p.PlanHash, ManifestPath: p.Target.ManifestPath, RequiresTargetQualification: true}
+	title, body := describe(r.Plan)
+	return run(ctx, preparedRequest{source: r.Source, target: r.Plan.Target, kind: "promotion", provider: r.Plan.Origin.Provider,
+		hash: r.Plan.PlanHash, branchPrefix: "gregale-promote-", title: title, body: body,
+		export: func(raw []byte) ([]byte, error) { return exportManifest(r.Plan, raw) }}, provider, apply, recheck)
+}
+
+// Only operation-specific validators construct this private write intent.
+// In particular, rollback is never recast or rehashed as a promotion plan.
+type preparedRequest struct {
+	source                                      api.EnvironmentGitSource
+	target                                      api.EnvironmentGitPromotionTarget
+	kind, provider, hash, branchPrefix, release string
+	title, body                                 string
+	export                                      func([]byte) ([]byte, error)
+}
+
+func run(ctx context.Context, request preparedRequest, provider Provider, apply bool, recheck func(context.Context) error) (Result, error) {
+	source := request.source
+	out := Result{Status: "preview", Provider: request.provider, Repository: source.Spec.Repository,
+		Branch: request.branchPrefix + request.hash, Base: strings.TrimPrefix(source.Spec.Ref, "refs/heads/"),
+		BaseCommit: request.target.CommitSHA, PlanHash: request.hash, ManifestPath: request.target.ManifestPath,
+		ReleaseSetID: request.release, RequiresTargetQualification: true}
 	if provider == nil {
 		return out, fmt.Errorf("provider is unavailable")
 	}
@@ -164,7 +182,7 @@ func Run(ctx context.Context, r Request, provider Provider, apply bool, recheck 
 			return err
 		}
 		if head != out.BaseCommit {
-			return fmt.Errorf("target branch moved; request and review a fresh promotion plan")
+			return fmt.Errorf("target branch moved; request and review a fresh %s plan", request.kind)
 		}
 		return nil
 	}
@@ -178,20 +196,20 @@ func Run(ctx context.Context, r Request, provider Provider, apply bool, recheck 
 	if base.Mode != "100644" {
 		return out, fmt.Errorf("target manifest must be a regular non-executable file")
 	}
-	content, err := exportManifest(p, base.Content)
+	content, err := request.export(base.Content)
 	if err != nil {
 		return out, err
 	}
 	file := base
 	file.Content = content
-	title, body := describe(p)
+	title, body := request.title, request.body
 	// Read all states so a closed proposal is never silently reopened or duplicated.
 	reviews, err := provider.Reviews(ctx, out.Branch, out.Base)
 	if err != nil {
 		return out, err
 	}
 	if len(reviews) > 1 {
-		return out, fmt.Errorf("ambiguous existing promotion proposals")
+		return out, fmt.Errorf("ambiguous existing %s proposals", request.kind)
 	}
 	head, err := provider.Head(ctx, out.Branch)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -233,7 +251,7 @@ func Run(ctx context.Context, r Request, provider Provider, apply bool, recheck 
 		return out, nil
 	}
 	if recheck == nil {
-		return out, fmt.Errorf("a fresh promotion observation is required before writing")
+		return out, fmt.Errorf("a fresh %s observation is required before writing", request.kind)
 	}
 	if err := recheck(ctx); err != nil {
 		return out, err
@@ -291,15 +309,24 @@ func verifyReview(r Review, out Result, repositoryID int64, head, body string) e
 }
 
 func exportManifest(plan api.PreviewEnvironmentGitPromotionResponse, raw []byte) ([]byte, error) {
+	return exportSources(raw, plan.Changes, plan.Target.ProposedDigest, func(definition api.EnvironmentDefinition) ([]byte, error) {
+		return promotion.ExportManifest(plan, definition)
+	})
+}
+
+func exportSources(raw []byte, changes []api.EnvironmentGitPromotionChange, digest string, export func(api.EnvironmentDefinition) ([]byte, error)) ([]byte, error) {
 	definition, err := gregalemanifest.ParseEnvironment(raw)
 	if err != nil {
 		return nil, fmt.Errorf("provider target manifest is invalid")
 	}
-	canonical, err := promotion.ExportManifest(plan, definition)
+	canonical, err := export(definition)
 	if err != nil {
 		return nil, err
 	}
 	if json.Valid(raw) {
+		if len(canonical) > api.EnvironmentGitOpsMaxDefinitionBytes {
+			return nil, fmt.Errorf("proposed manifest exceeds the definition size bound")
+		}
 		return canonical, nil
 	}
 	// Retain YAML comments and all target configuration nodes. The existing
@@ -309,7 +336,7 @@ func exportManifest(plan api.PreviewEnvironmentGitPromotionResponse, raw []byte)
 		return nil, fmt.Errorf("invalid target YAML")
 	}
 	workloads := mappingValue(root.Content[0], "workloads")
-	for _, change := range plan.Changes {
+	for _, change := range changes {
 		workload := mappingValue(workloads, strings.TrimPrefix(change.Resource, "workload/"))
 		source := mappingValue(workload, "source")
 		if source == nil {
@@ -341,7 +368,7 @@ func exportManifest(plan api.PreviewEnvironmentGitPromotionResponse, raw []byte)
 		return nil, fmt.Errorf("proposed YAML exceeds the manifest contract")
 	}
 	compiled, err := environmentsync.Compile(checked)
-	if err != nil || compiled.Digest != plan.Target.ProposedDigest {
+	if err != nil || compiled.Digest != digest {
 		return nil, fmt.Errorf("proposed YAML digest mismatch")
 	}
 	return out.Bytes(), nil
