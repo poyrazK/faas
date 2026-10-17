@@ -204,6 +204,15 @@ func (l *Loop) WithSecurityLeaseChannel(ch <-chan time.Time) *Loop {
 // mode the LISTEN subscriber is skipped and the loop is purely ticker
 // driven.
 func (l *Loop) Run(ctx context.Context) error {
+	if l.handler != nil && l.handler.postCaptureMetrics != nil {
+		m := l.handler.postCaptureMetrics
+		observeCtx, stopObservation := context.WithCancel(ctx)
+		defer stopObservation()
+		m.start(ctx)
+		defer m.stop()
+		reader, _ := l.store.(state.PostCaptureObservationStore)
+		go m.run(observeCtx, reader, l.log)
+	}
 	if l.handler != nil && l.handler.preparationMetrics != nil {
 		m := l.handler.preparationMetrics
 		observeCtx, stopObservation := context.WithCancel(ctx)

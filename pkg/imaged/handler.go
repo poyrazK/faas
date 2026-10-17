@@ -187,6 +187,7 @@ type Handler struct {
 	ops                *wire.OpsMetrics
 	handoffMetrics     *buildImageHandoffMetrics
 	preparationMetrics *imagePreparationProgressMetrics
+	postCaptureMetrics *postCaptureMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -663,12 +664,17 @@ func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 	if h.preparationMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
 		h.ops.Registry().Unregister(h.preparationMetrics)
 	}
+	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.postCaptureMetrics)
+	}
 	h.ops = ops
 	h.handoffMetrics = nil
 	h.preparationMetrics = nil
+	h.postCaptureMetrics = nil
 	if ops != nil && ops.Registry() != nil {
 		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
 		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
+		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
 	}
 	return h
 }
@@ -3222,7 +3228,12 @@ func (h *Handler) rejectEphemeralSnapshot(ctx context.Context, candidate snapsho
 // handleDeploymentActivation is the common post-readiness deployment gate.
 // snapshot is populated for request/service flows; ready is populated for the
 // non-snapshot worker/job flows. Exactly one input must be present.
-func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) error {
+func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) (err error) {
+	input, phase := "snapshot", "evidence"
+	if ready != nil {
+		input = "ready"
+	}
+	defer func() { h.postCaptureMetrics.observeAttempt(ctx, input, phase, err) }()
 	deploymentID := snapshot.DeploymentID
 	if ready != nil {
 		deploymentID = ready.DeploymentID
@@ -3508,9 +3519,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	phase = "dependency"
 	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
 		return gateErr
 	}
+	phase = "verification"
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3586,6 +3599,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	phase = "promotion"
 	checkedRollback := false
 	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
 		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
@@ -3679,6 +3693,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
+	phase = "finalize"
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {
 		previous, previousErr := h.store.DeploymentByID(ctx, previousLiveID)

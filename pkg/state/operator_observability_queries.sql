@@ -555,3 +555,74 @@ SELECT class,count(*)::bigint AS pending,
  count(*) FILTER (WHERE class='unknown' OR since IS NULL)::bigint AS unknown_age,
  min(CASE WHEN class<>'unknown' THEN since END)::timestamptz AS oldest_at
 FROM classified GROUP BY class;
+
+-- name: OperatorPostCaptureSnapshot :many
+WITH scoped AS MATERIALIZED (
+ SELECT d.id,d.app_id,d.scope,d.rootfs_key,d.stage_state FROM deployments d JOIN apps a ON a.id=d.app_id
+ WHERE d.status='snapshotting' AND a.status<>'deleted' AND NOT d.environment_workload_held
+ AND coalesce(d.stage_state->>'current','')<>'readiness'
+ AND NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.app_id=d.app_id AND s.scope=d.scope AND s.secret_class='ephemeral')
+), timed AS MATERIALIZED (
+ SELECT d.*,CASE WHEN (d.stage_state->>'current_started_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(d.stage_state->>'current_started_at','timestamp with time zone') THEN (d.stage_state->>'current_started_at')::timestamptz END AS stage_at,
+  CASE WHEN (d.stage_state->'hosting_verification'->>'started_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(d.stage_state->'hosting_verification'->>'started_at','timestamp with time zone') THEN (d.stage_state->'hosting_verification'->>'started_at')::timestamptz END AS hosting_started,CASE WHEN (d.stage_state->'hosting_verification'->>'deadline_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(d.stage_state->'hosting_verification'->>'deadline_at','timestamp with time zone') THEN (d.stage_state->'hosting_verification'->>'deadline_at')::timestamptz END AS hosting_deadline,
+  CASE WHEN (d.stage_state->'hosting_verification'->>'completed_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(d.stage_state->'hosting_verification'->>'completed_at','timestamp with time zone') THEN (d.stage_state->'hosting_verification'->>'completed_at')::timestamptz END AS hosting_completed,CASE WHEN (d.stage_state->'hosting_verification'->>'retry_not_before') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$' AND pg_input_is_valid(d.stage_state->'hosting_verification'->>'retry_not_before','timestamp with time zone') THEN (d.stage_state->'hosting_verification'->>'retry_not_before')::timestamptz END AS hosting_retry,
+  CASE WHEN pg_input_is_valid(d.stage_state->'hosting_verification'->>'attempts','integer') THEN (d.stage_state->'hosting_verification'->>'attempts')::integer END AS hosting_attempts
+ FROM scoped d
+), facts AS (
+ SELECT d.*,sn.created_at AS published_at,h.first_held_at AS held_at,h.observed_at AS hold_observed,g.started_at AS gate_started,g.deadline_at AS gate_deadline,g.status AS gate_status,
+  park.present AS parked,park.bad AS bad_park,park.missing AS missing_park,park.oldest AS parked_at
+ FROM timed d
+ LEFT JOIN LATERAL (SELECT created_at FROM snapshots WHERE deployment_id=d.id AND tier='init' AND NOT stale ORDER BY created_at DESC LIMIT 1) sn ON true
+ LEFT JOIN deployment_mcp_task_holds h ON h.deployment_id=d.id AND (h.first_held_at>=d.stage_at OR h.observed_at>=d.stage_at)
+ LEFT JOIN deployment_dependency_gates g ON g.deployment_id=d.id AND g.started_at>=d.stage_at
+ LEFT JOIN LATERAL (SELECT max(b.changed_at) AS changed_at FROM (
+  SELECT changed_at FROM app_runtime_config_changes WHERE app_id=d.app_id
+  UNION ALL SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id=d.app_id AND scope IN ('default',d.scope)
+ ) b) boundary ON true
+ LEFT JOIN LATERAL (
+  SELECT count(*)>0 AS present,
+   bool_or(i.started_at IS NULL OR NOT isfinite(i.started_at) OR i.started_at>statement_timestamp() OR i.parked_at>statement_timestamp() OR boundary.changed_at>statement_timestamp()) AS bad,
+   bool_or(i.parked_at IS NULL OR i.parked_at<='epoch'::timestamptz OR i.parked_at<i.started_at) AS missing,
+   min(i.parked_at) AS oldest
+  FROM (SELECT * FROM instances WHERE app_id=d.app_id ORDER BY started_at DESC LIMIT sqlc.arg(instance_lookback)::integer) i
+  LEFT JOIN instance_runtime_config_receipts r ON r.instance_id=i.id AND r.wake_id=i.wake_id
+  WHERE i.deployment_id=d.id AND (i.started_at>d.stage_at OR i.started_at IS NULL) AND i.state='parked' AND i.mode NOT IN ('worker','job')
+   AND (i.started_at IS NULL OR i.started_at>statement_timestamp() OR i.parked_at>statement_timestamp() OR boundary.changed_at>statement_timestamp() OR CASE WHEN r.instance_id IS NOT NULL THEN r.scope=d.scope AND r.boundary_at>=coalesce(boundary.changed_at,'epoch'::timestamptz)
+    AND environment_runtime_inputs_fresh(d.app_id,r.scope,r.boundary_at,r.variables,r.secret_versions,r.all_secrets,r.secret_refs,r.sidecar_secret_versions)
+   ELSE NOT environment_runtime_receipt_required(d.app_id,d.scope)
+    AND least(i.started_at,CASE WHEN substr(i.wake_id::text,15,1)='7' THEN
+     to_timestamp(('x'||substr(replace(i.wake_id::text,'-',''),1,12))::bit(48)::bigint::double precision/1000) ELSE i.started_at END)>coalesce(boundary.changed_at,'epoch'::timestamptz) END)
+ ) park ON NOT coalesce(sn.created_at>d.stage_at,false)
+), classified AS (
+ SELECT CASE
+  WHEN coalesce(stage_state->>'current','')<>'snapshot_prepare' OR stage_at IS NULL OR stage_at<='epoch'::timestamptz OR stage_at>statement_timestamp() OR rootfs_key='' THEN 'unknown'
+  WHEN published_at>statement_timestamp() THEN 'unknown'
+  WHEN published_at>stage_at THEN CASE
+   WHEN held_at IS NOT NULL THEN CASE WHEN NOT isfinite(held_at) OR held_at>statement_timestamp() OR NOT isfinite(hold_observed) OR hold_observed>statement_timestamp() THEN 'unknown' ELSE 'compatibility_held' END
+   WHEN gate_started IS NOT NULL AND (NOT isfinite(gate_started) OR gate_started>statement_timestamp() OR gate_deadline IS NULL OR NOT isfinite(gate_deadline) OR gate_deadline<=gate_started) THEN 'unknown'
+   WHEN gate_status IN ('waiting','failed') THEN CASE WHEN gate_status='failed' OR gate_deadline<=statement_timestamp() THEN 'gate_overdue' ELSE 'dependency_held' END
+   WHEN stage_state->'hosting_verification' IS NOT NULL AND stage_state->'hosting_verification'<>'null'::jsonb AND (hosting_started IS NULL OR hosting_started<='epoch'::timestamptz OR hosting_started>=stage_at) THEN CASE
+    WHEN hosting_started IS NULL OR hosting_started<='epoch'::timestamptz OR hosting_started>statement_timestamp() OR hosting_deadline IS NULL OR hosting_deadline<=hosting_started OR coalesce(hosting_attempts,0)<=0
+     OR (stage_state->'hosting_verification'->>'completed_at' IS NOT NULL AND (hosting_completed IS NULL OR hosting_completed<hosting_started OR hosting_completed>statement_timestamp() OR coalesce(stage_state->'hosting_verification'->>'last_error_code','')<>'' OR stage_state->'hosting_verification'->>'retry_not_before' IS NOT NULL)) THEN 'unknown'
+    WHEN hosting_completed IS NOT NULL THEN 'activation_pending'
+    WHEN coalesce(stage_state->'hosting_verification'->>'last_error_code','') IN ('smoke_authorization_unavailable','smoke_gateway_unavailable','smoke_transport_unavailable','smoke_deployment_mismatch','smoke_response_unproven','smoke_contract_unavailable') THEN CASE
+     WHEN stage_state->'hosting_verification'->>'retry_not_before' IS NOT NULL AND (hosting_retry IS NULL OR hosting_retry<hosting_started OR hosting_retry>hosting_deadline) THEN 'unknown'
+     WHEN hosting_deadline<=statement_timestamp() THEN 'gate_overdue' ELSE 'hosting_retry' END
+    WHEN coalesce(stage_state->'hosting_verification'->>'last_error_code','')<>'' THEN 'unknown'
+    ELSE 'hosting_verifying' END
+   ELSE 'activation_pending' END
+  WHEN coalesce(parked,false) THEN CASE WHEN bad_park THEN 'unknown' ELSE 'publication_pending' END
+  ELSE NULL END::text AS class,* FROM facts
+), aged AS (
+ SELECT class,CASE class
+  WHEN 'publication_pending' THEN CASE WHEN NOT missing_park THEN parked_at END
+  WHEN 'activation_pending' THEN published_at
+  WHEN 'compatibility_held' THEN CASE WHEN held_at>=stage_at THEN greatest(published_at,held_at) END
+  WHEN 'dependency_held' THEN greatest(published_at,gate_started)
+  WHEN 'hosting_verifying' THEN greatest(published_at,hosting_started)
+  WHEN 'hosting_retry' THEN greatest(published_at,hosting_started)
+  WHEN 'gate_overdue' THEN greatest(published_at,CASE WHEN gate_status='failed' THEN gate_started WHEN gate_status='waiting' THEN gate_deadline ELSE hosting_deadline END)
+ END AS since FROM classified WHERE class IS NOT NULL
+)
+SELECT class,count(*)::bigint AS pending,count(*) FILTER (WHERE since IS NULL)::bigint AS unknown_age,min(since)::timestamptz AS oldest_at
+FROM aged GROUP BY class;

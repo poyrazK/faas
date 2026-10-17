@@ -87,3 +87,6 @@ Candidate gates, active captures and caller cancellations cannot trigger it.
 See [image preparation](FaasImagePreparation.md),
 [build handoffs](FaasBuildImageHandoff.md) and the existing stale-deployment,
 work-pool and init-capture diagnostics for adjacent boundaries.
+
+For fresh parked captures or recorded snapshots that still await activation, see
+[post-capture publication and activation diagnostics](FaasPostCapture.md).

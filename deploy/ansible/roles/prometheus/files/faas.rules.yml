@@ -4089,6 +4089,143 @@ groups:
             listings succeed. Candidate gates and active captures are separate decisions.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
 
+      - record: imaged_post_capture_class_observation_healthy
+        expr: |
+          ((imaged_post_capture_pending{job="imaged",class=~"publication_pending|activation_pending|dependency_held|compatibility_held|hosting_verifying|hosting_retry|gate_overdue|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, class) (imaged_post_capture_pending{job="imaged"} < +Inf)
+          and on (job, instance, class) (imaged_post_capture_pending{job="imaged"} == floor(imaged_post_capture_pending{job="imaged"}))
+          and on (job, instance, class) (imaged_post_capture_age_unknown{job="imaged"} >= 0)
+          and on (job, instance, class) (imaged_post_capture_age_unknown{job="imaged"} == floor(imaged_post_capture_age_unknown{job="imaged"}))
+          and on (job, instance, class) (imaged_post_capture_age_unknown{job="imaged"} <= imaged_post_capture_pending{job="imaged"})
+          and on (job, instance, class) (imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance, class)
+            (((imaged_post_capture_pending{job="imaged"} > imaged_post_capture_age_unknown{job="imaged"})
+              and on (job, instance, class) (imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"} > 0))
+             or ((imaged_post_capture_pending{job="imaged"} == imaged_post_capture_age_unknown{job="imaged"})
+                 and on (job, instance, class) (imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"} == 0)))
+          and on (job, instance) (up{job="imaged"} == 1)
+          and on (job, instance) (imaged_post_capture_collection_success{job="imaged"} == 1)
+          and on (job, instance) (imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged"} > 0)
+          and on (job, instance) (time() - imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (time() - imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged"} <= 120)
+          and on (job, instance) ((imaged_post_capture_observation_enabled{job="imaged"} == 0) or (imaged_post_capture_observation_enabled{job="imaged"} == 1))
+          unless on (job, instance, class) (imaged_post_capture_pending{job="imaged",class="unknown"} != imaged_post_capture_age_unknown{job="imaged",class="unknown"})
+      - record: imaged_post_capture_observation_healthy
+        expr: |
+          (count by (job, instance) (imaged_post_capture_class_observation_healthy == 1) == 8) / 8
+          and on (job, instance) (count by (job, instance) (imaged_deployment_activation_attempts_total{job="imaged",input=~"snapshot|ready",phase=~"evidence|dependency|verification|promotion|finalize",outcome=~"success|error|deferred|held|canceled"} >= 0) == 50)
+      - record: imaged_post_capture_oldest_known_boundary_age_seconds
+        expr: |
+          (((time() - imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"})
+             and on (job, instance, class) (imaged_post_capture_pending{job="imaged"} > imaged_post_capture_age_unknown{job="imaged"}))
+           or ((imaged_post_capture_pending{job="imaged"} == 0) * 0))
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+      - alert: FaasPostCaptureTelemetryUnavailable
+        expr: |
+          (up{job="imaged"} == 1)
+          unless on (job, instance) ((imaged_post_capture_observation_healthy == 1)
+           or (imaged_post_capture_observation_enabled{job="imaged"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture_telemetry
+          public_status: internal
+        annotations:
+          summary: Post-capture diagnostics are unavailable
+          description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than two minutes,
+            or has incomplete activation counters. Counts and ages are unknown. Check the observer, database, clocks and binary;
+            intentional shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasSnapshotPublicationPending
+        expr: |
+          (imaged_post_capture_oldest_known_boundary_age_seconds{class="publication_pending"} > 300)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: A fresh parked capture still lacks init publication
+          description: A currently unpublished capture has a known parked boundary older than five minutes, held five minutes.
+            Inspect snapshot_written delivery, publication outcomes, runtime receipts and imaged storage/database errors. Parking
+            is evidence of capture, not artifact acceptance or readiness.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasDeploymentActivationPending
+        expr: |
+          (imaged_post_capture_oldest_known_boundary_age_seconds{class=~"activation_pending|hosting_verifying|hosting_retry"} > 300)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: A published init snapshot still awaits activation
+          description: A currently {{ $labels.class }} candidate has a known publication or verification boundary older than
+            five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion errors. Age
+            is not continuous class residence; dependency and compatibility holds are separate.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasDeploymentActivationGateUnfinalized
+        expr: |
+          (imaged_post_capture_pending{job="imaged",class="gate_overdue"} > 0)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: A failed or expired activation gate remains nonterminal
+          description: A snapshotting candidate retains a failed dependency gate or an expired dependency/hosting retry deadline
+            for five minutes. Inspect imaged replay and terminal-evidence writes. Do not bypass the gate or move the serving
+            pointer manually.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasPostCaptureEvidenceUnknown
+        expr: |
+          ((imaged_post_capture_pending{job="imaged",class="unknown"} > 0)
+           or (imaged_post_capture_age_unknown{job="imaged"} > 0))
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture_telemetry
+          public_status: internal
+        annotations:
+          summary: Post-capture classification or timing evidence is incomplete
+          description: Fresh observations have contained incomplete {{ $labels.class }} evidence for 15 minutes. Missing, invalid
+            or future times cannot establish a publication or activation wait. Inspect durable capture, stage, gate and verification
+            evidence without inventing timestamps.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasSnapshotPublicationErrors
+        expr: |
+          (sum by (job, instance) (rate(imaged_snapshot_publication_total{job="imaged",outcome=~"write_error|policy_error"}[5m]))
+           / sum by (job, instance) (rate(imaged_snapshot_publication_total{job="imaged",outcome=~"published|duplicate|write_error|policy_error"}[5m])) > 0.1)
+          and on (job, instance) (sum by (job, instance) (increase(imaged_snapshot_publication_total{job="imaged",outcome=~"write_error|policy_error"}[5m])) >= 3)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: Snapshot publication writes or policy reads repeatedly fail
+          description: Publication write_error or policy_error outcomes exceed 10% of publication decisions with at least three
+            errors per rolling five minutes, held five minutes. Inspect database, runtime-policy reads and replay. Stale captures,
+            RAM/policy rejections and customer verification verdicts are excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+
       # Recovery is observed separately from queue wait. Fleet gauges are
       # coherent per apid; never sum replicas. Timing uses effective config
       # from every discovered builder. Age warnings measure overdue work;
