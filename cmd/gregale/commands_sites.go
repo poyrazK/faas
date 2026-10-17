@@ -134,6 +134,7 @@ func cmdSitesDeploy(args []string) int {
 	branch := flags.String("source-branch", "", "caller-provided source branch (unverified)")
 	description := flags.String("description", "", "caller-provided deployment description")
 	noPromote := flags.Bool("no-promote", false, "verify and stage the release without making it routable")
+	plan := flags.String("plan", "", "reviewed saved plan JSON; requires --no-promote and independent planned-staging opt-in")
 	wait := flags.Bool("wait", false, "wait for durable publication after promotion")
 	timeout := flags.Duration("wait-timeout", api.HostingPublicationWaitDefault, "bounded publication wait")
 	if err := flags.Parse(args); err != nil || rejectUnexpectedFlagArgs(flags) {
@@ -154,6 +155,11 @@ func cmdSitesDeploy(args []string) int {
 		if err := hosting.ValidateProvenance(provenance); err != nil {
 			return printErr("Invalid release provenance", err)
 		}
+	}
+	planSupplied := false
+	flags.Visit(func(f *flag.Flag) { planSupplied = planSupplied || f.Name == "plan" })
+	if planSupplied {
+		return cmdSitesPlannedStage(*plan, *siteID, *dir, *spa, *noPromote, provenance)
 	}
 	manifest, err := staticHostingManifest(*dir, *spa)
 	if err != nil {

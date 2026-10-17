@@ -201,12 +201,16 @@ func runHostingCI(ctx context.Context, client *api.Client, site, runID, dir stri
 	}
 }
 func validateCIUploadGrants(grants api.HostingUploadResponse, run api.HostingCIRun, manifest api.HostingManifest, base string) error {
+	return validateHostingUploadGrants(grants, run.SiteID, run.ReleaseID, manifest, base)
+}
+
+func validateHostingUploadGrants(grants api.HostingUploadResponse, siteID, releaseID string, manifest api.HostingManifest, base string) error {
 	destination, err := url.Parse(base)
 	if err != nil || destination.Scheme != "https" || destination.Host == "" || destination.User != nil || destination.RawQuery != "" || destination.Fragment != "" {
 		return errors.New("invalid configured upload origin")
 	}
-	if grants.Release.ID != run.ReleaseID || grants.Release.SiteID != run.SiteID || grants.Release.State != "pending" || len(grants.Uploads) != len(manifest.Files) {
-		return errors.New("upload grants do not match the CI release")
+	if grants.Release.ID != releaseID || grants.Release.SiteID != siteID || grants.Release.State != "pending" || len(grants.Uploads) != len(manifest.Files) {
+		return errors.New("upload grants do not match the hosting release")
 	}
 	files := map[string]api.HostingFile{}
 	for _, f := range manifest.Files {
@@ -219,9 +223,9 @@ func validateCIUploadGrants(grants api.HostingUploadResponse, run api.HostingCIR
 		}
 		delete(files, grant.Path)
 		u, err := url.Parse(grant.URL)
-		expected := strings.TrimSuffix(destination.Path, "/") + "/hosting/staging/" + run.SiteID + "/" + run.ReleaseID + "/" + grant.Path
+		expected := strings.TrimSuffix(destination.Path, "/") + "/hosting/staging/" + siteID + "/" + releaseID + "/" + grant.Path
 		if err != nil || u.Scheme != "https" || u.Host != destination.Host || u.User != nil || u.Fragment != "" || u.Path != expected {
-			return errors.New("upload grant is outside the CI release")
+			return errors.New("upload grant is outside the hosting release")
 		}
 		for key, values := range grant.Headers {
 			if len(values) != 1 {

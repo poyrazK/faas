@@ -36,7 +36,11 @@ func cmdSitesPlan(args []string) int {
 	if err != nil || int64(len(data)) > api.HostingManifestMaxBytes {
 		return printErr("Invalid prebuilt output; no API requests were sent", errors.New("serialized manifest exceeds the byte limit"))
 	}
-	client, err := hostingDiagnosticClient(*site, "")
+	origin, err := hosting.HostingAPIOrigin(apiBase())
+	if err != nil {
+		return printErr("Invalid deployment plan target", err)
+	}
+	client, err := hostingDeploymentPlanClient(origin)
 	if err != nil {
 		return printErr("Operator connection unavailable", err)
 	}
@@ -53,6 +57,7 @@ func cmdSitesPlan(args []string) int {
 	if err != nil {
 		return printErr("Deployment plan unavailable; no deployment was sent", err)
 	}
+	plan.APIOrigin = origin
 	if code := jsonOut(writeJSON(plan)); code != 0 {
 		return code
 	}
@@ -60,6 +65,16 @@ func cmdSitesPlan(args []string) int {
 		return 2
 	}
 	return 0
+}
+
+func hostingDeploymentPlanClient(origin string) (*api.Client, error) {
+	// Capture the checked origin once. A profile change during local validation
+	// must not move this deployment to a different API.
+	token := loadToken()
+	if token == "" {
+		return nil, errors.New("use an existing operator credential for deployment planning and staging")
+	}
+	return api.NewHostingAutomationClient(origin, token), nil
 }
 
 func readHostingPlanEvidence(ctx context.Context, client *api.Client, site string) (hosting.DeploymentPlanEvidence, error) {

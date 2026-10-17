@@ -450,3 +450,6 @@ See [local frontend serving preview](internal-frontend-hosting-local-preview.md)
 
 See [deployment planning](internal-frontend-hosting-planning.md) for a default-off,
 read-only comparison of local output and prospective capacity before upload.
+
+See [staging from a saved plan](internal-frontend-hosting-planned-staging.md) for
+the independent default-off connection from a reviewed report to frozen uploads.

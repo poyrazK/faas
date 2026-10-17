@@ -32,6 +32,8 @@ requirements; this feature adds no new credential scope or permissions.
 
 ## Read the JSON report
 
+- `version`, `api_origin`: saved format version and normalized API target. These
+  bind the report to the operator's configured API for optional planned staging.
 - `site_id`, `base_release_id`, `expected_revision`: the production intent used
   for comparison. The CLI reads the site again and refuses a changed observation.
 - `changes`: sorted added/changed/removed files, before/after sizes and metadata,
@@ -90,7 +92,10 @@ gregale sites promote --site SITE_UUID --release RELEASE_UUID --expected-revisio
 ```
 
 The uploaded immutable release review must supply the promotion revision. The
-local plan cannot be applied as a deployment token, and the deploy command does
-not automatically consume it. Use [local serving preview](internal-frontend-hosting-local-preview.md)
+local plan is not a deployment authorization token. The independently gated
+[saved-plan staging workflow](internal-frontend-hosting-planned-staging.md) can
+explicitly consume it through `sites deploy --plan FILE --no-promote`, checking
+the reviewed build and target while refreshing capacity. Ordinary deployment
+does not automatically consume saved reports. Use [local serving preview](internal-frontend-hosting-local-preview.md)
 to inspect build behavior before upload. Neither local preview nor planning
 establishes live serving health, DNS/TLS/Access behavior or CDN propagation.

@@ -5,6 +5,8 @@ import "time"
 // HostingDeploymentPlan is advisory evidence for one prospective new release.
 // It is not an admission reservation, deployment token or serving-health check.
 type HostingDeploymentPlan struct {
+	Version                 int                 `json:"version"`
+	APIOrigin               string              `json:"api_origin"`
 	SiteID                  string              `json:"site_id"`
 	ExpectedRevision        int64               `json:"expected_revision"`
 	BaseReleaseID           string              `json:"base_release_id"`

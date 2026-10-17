@@ -35,7 +35,7 @@ func PlanDeployment(e DeploymentPlanEvidence, local api.HostingManifest, started
 	if err != nil {
 		return out, err
 	}
-	out = api.HostingDeploymentPlan{SiteID: e.Site.ID, ExpectedRevision: e.Site.Revision, BaseReleaseID: e.Site.ActiveReleaseID,
+	out = api.HostingDeploymentPlan{Version: api.HostingDeploymentPlanVersion, SiteID: e.Site.ID, ExpectedRevision: e.Site.Revision, BaseReleaseID: e.Site.ActiveReleaseID,
 		ManifestFingerprint: HostingManifestFingerprint(local), StartedAt: started, ObservedAt: now, UsageObservedAt: e.Usage.ObservedAt,
 		Advisory: true, State: "within_observed_limits", FileCount: len(local.Files), PayloadBytes: diff.AfterBytes, ManifestBytes: int64(len(data)),
 		AdditionalReservedBytes: api.HostingStorageCopies*diff.AfterBytes + api.HostingManifestMaxBytes, Changes: diff,

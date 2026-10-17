@@ -11252,6 +11252,10 @@ const (
 const (
 	HostingFilesMax                            = 1000
 	HostingDeploymentPlanTimeout               = 15 * time.Second
+	HostingDeploymentPlanVersion               = 1
+	HostingDeploymentPlanMaxBytes              = 4 << 20
+	HostingDeploymentPlanJSONDepth             = 16
+	HostingPlannedStageTimeout                 = 10 * time.Minute
 	HostingPublicationWaitDefault              = 2 * time.Minute
 	HostingPublicationWaitMax                  = 10 * time.Minute
 	HostingPublicationPollInterval             = time.Second

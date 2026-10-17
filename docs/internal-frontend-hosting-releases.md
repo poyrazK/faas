@@ -7,6 +7,8 @@ serving service. See [ADR-202610161920](adr/202610161920-staged-internal-hosting
 Before allocating a release, use the independently gated
 [local deployment planner](internal-frontend-hosting-planning.md) to compare built
 output with production and inspect prospective quota usage without uploading.
+The separate [saved-plan staging opt-in](internal-frontend-hosting-planned-staging.md)
+adds build/target/revision checks when staging the output you reviewed.
 
 ## Stage a verified release
 

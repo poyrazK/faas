@@ -89,7 +89,7 @@ func TestSitesPlanReadOnlyJSONAndQuotaExit(t *testing.T) {
 				t.Fatalf("exit=%d requests=%v", code, calls)
 			}
 			var plan api.HostingDeploymentPlan
-			if err := json.Unmarshal(out.Bytes(), &plan); err != nil || !plan.Advisory || plan.ExpectedRevision != 7 || plan.Changes.Added != 1 || !plan.Changes.AfterSettings.SPAFallback || plan.FileCount != 1 || plan.PayloadBytes != 5 || plan.AdditionalReservedBytes != 10+api.HostingManifestMaxBytes || len(plan.ManifestFingerprint) != 64 || plan.StartedAt.IsZero() || plan.ObservedAt.Before(plan.StartedAt) || !plan.UsageObservedAt.Equal(usage.ObservedAt) {
+			if err := json.Unmarshal(out.Bytes(), &plan); err != nil || plan.Version != api.HostingDeploymentPlanVersion || plan.APIOrigin != apiBase() || !plan.Advisory || plan.ExpectedRevision != 7 || plan.Changes.Added != 1 || !plan.Changes.AfterSettings.SPAFallback || plan.FileCount != 1 || plan.PayloadBytes != 5 || plan.AdditionalReservedBytes != 10+api.HostingManifestMaxBytes || len(plan.ManifestFingerprint) != 64 || plan.StartedAt.IsZero() || plan.ObservedAt.Before(plan.StartedAt) || !plan.UsageObservedAt.Equal(usage.ObservedAt) {
 				t.Fatalf("plan %+v: %v", plan, err)
 			}
 			for _, secret := range []string{"operator-token", site.AccountID, "upload_url", "release_id\":\"" + reviewReleaseID} {
