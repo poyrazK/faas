@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -50,10 +53,11 @@ func importDumpArgs(major int, conn string) []string {
 // script lands on databaseImportRole, a member of the owner and nothing
 // more), and pg_restore's \restrict key, which the dump never sees, makes
 // psql refuse every meta-command in the script. The prologue opens the
-// transaction the script's own COMMIT ends and records the import's
-// lineage in it, so a finished copy cannot exist without its operation ID
-// and a failure anywhere (a script that stops short never reaches its
-// COMMIT) leaves the target as it was.
+// transaction the script's own COMMIT ends, and gateCommit writes the
+// epilogue (the source's PUBLIC privileges and the import's lineage) just
+// before that COMMIT, so a finished copy cannot exist without its
+// operation ID, and a failure anywhere (including a script cut short,
+// whose COMMIT is withheld) leaves the target as it was.
 
 // databaseImportRole is the role an import's restore runs as: LOGIN, no
 // attributes, and a member of the target's owner. Only the postgres OS
@@ -99,11 +103,192 @@ func importApplyArgs(major int, target string) []string {
 	}
 }
 
-// importScriptPrologue opens the restore's transaction, makes owner own
-// what the script creates, and records operationID on target. The script's
-// own BEGIN only warns inside it.
-func importScriptPrologue(target, owner, operationID string) string {
-	return fmt.Sprintf("BEGIN;\nSET ROLE %s;\nCOMMENT ON DATABASE %s IS '%s%s';\n", owner, target, importLineagePrefix, operationID)
+// importScriptPrologue opens the restore's transaction and makes owner own
+// what the script creates. The script's own BEGIN only warns inside it.
+func importScriptPrologue(owner string) string {
+	return fmt.Sprintf("BEGIN;\nSET ROLE %s;\n", owner)
+}
+
+// importScriptEpilogue runs just before the script's COMMIT (gateCommit):
+// the source's PUBLIC privileges, then the import's lineage on target, so
+// both commit with the copy and only with it.
+func importScriptEpilogue(target, operationID string, publicACL []string) string {
+	var b strings.Builder
+	for _, statement := range publicACL {
+		b.WriteString(statement)
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "COMMENT ON DATABASE %s IS '%s%s';\n", target, importLineagePrefix, operationID)
+	return b.String()
+}
+
+// errScriptUnfinished is a script that ended before pg_restore's end
+// marker: it was cut short, so its COMMIT is withheld.
+var errScriptUnfinished = errors.New("the restore script ended before its end marker")
+
+// gateCommit copies pg_restore's script from src to dst, holding back its
+// final COMMIT until the end marker (\unrestrict with this run's key,
+// which no dump can contain) arrives, and writing epilogue just before
+// that COMMIT. pg_restore --single-transaction ends its script with
+// "COMMIT;", comment or blank lines, and the marker. A "COMMIT;" line
+// followed by anything else (a COPY row, say) is passed on unchanged. A
+// script that ends without the marker never gets its COMMIT, so psql's
+// transaction rolls back.
+func gateCommit(dst io.Writer, src io.Reader, key, epilogue string) error {
+	marker := []byte(`\unrestrict ` + key)
+	in := bufio.NewReaderSize(src, 64<<10)
+	var held [][]byte
+	flush := func() error {
+		for _, line := range held {
+			if _, err := dst.Write(line); err != nil {
+				return err
+			}
+		}
+		held = held[:0]
+		return nil
+	}
+	for {
+		line, err := in.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			// A long line is never COMMIT, a comment we hold, or the
+			// marker: pass it on in pieces.
+			if ferr := flush(); ferr != nil {
+				return ferr
+			}
+			for errors.Is(err, bufio.ErrBufferFull) {
+				if _, werr := dst.Write(line); werr != nil {
+					return werr
+				}
+				line, err = in.ReadSlice('\n')
+			}
+			if _, werr := dst.Write(line); werr != nil {
+				return werr
+			}
+			if err != nil {
+				return scriptEnd(err)
+			}
+			continue
+		}
+		if len(line) > 0 {
+			text := bytes.TrimRight(line, "\r\n")
+			switch {
+			case bytes.Equal(text, []byte("COMMIT;")):
+				if ferr := flush(); ferr != nil {
+					return ferr
+				}
+				held = append(held, slices.Clone(line))
+			case len(held) > 0 && (len(text) == 0 || bytes.HasPrefix(text, []byte("--"))):
+				held = append(held, slices.Clone(line))
+			case len(held) > 0 && bytes.Equal(text, marker):
+				if _, werr := io.WriteString(dst, epilogue); werr != nil {
+					return werr
+				}
+				if ferr := flush(); ferr != nil {
+					return ferr
+				}
+				if _, werr := dst.Write(line); werr != nil {
+					return werr
+				}
+				_, cerr := io.Copy(dst, in)
+				return cerr
+			default:
+				if ferr := flush(); ferr != nil {
+					return ferr
+				}
+				if _, werr := dst.Write(line); werr != nil {
+					return werr
+				}
+			}
+		}
+		if err != nil {
+			return scriptEnd(err)
+		}
+	}
+}
+
+func scriptEnd(err error) error {
+	if errors.Is(err, io.EOF) {
+		return errScriptUnfinished
+	}
+	return err
+}
+
+// The source's PUBLIC privileges. pg_dump runs with --no-privileges,
+// because its grants name the source's roles, which the target does not
+// have. Grants to PUBLIC are portable, and on Gregale they are how an app
+// reaches anything its runtime credential is not granted, such as a
+// function (both drivers revoke EXECUTE on new functions from PUBLIC). So
+// the import carries them over: for every user object with explicit
+// privileges, and every routine (whose default on the target differs from
+// PostgreSQL's), PUBLIC ends with exactly the source's privileges.
+//
+// Only privileges that read, write or run are carried; never CREATE, nor
+// TRIGGER or MAINTAIN, so PUBLIC (every runtime credential) still cannot
+// create objects. Extension members are left to their extension. The
+// statements come from the source, at the dump's trust: they run as the
+// owner, in psql's restricted mode, inside the restore's transaction.
+const importPublicACLQuery = `SET search_path = '';
+WITH obj AS (
+  SELECT CASE c.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind, c.oid::regclass::text AS ident,
+         coalesce(c.relacl, acldefault(CASE c.relkind WHEN 'S' THEN 's' ELSE 'r' END::"char", c.relowner)) AS acl,
+         c.relacl IS NOT NULL AS explicit, 'pg_catalog.pg_class'::regclass AS cls, c.oid
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S') AND n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+  UNION ALL
+  SELECT 'ROUTINE', p.oid::regprocedure::text, coalesce(p.proacl, acldefault('f', p.proowner)), true, 'pg_catalog.pg_proc'::regclass, p.oid
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+  UNION ALL
+  SELECT 'SCHEMA', pg_catalog.quote_ident(n.nspname), coalesce(n.nspacl, acldefault('n', n.nspowner)), n.nspacl IS NOT NULL,
+         'pg_catalog.pg_namespace'::regclass, n.oid
+    FROM pg_catalog.pg_namespace n
+   WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+  UNION ALL
+  SELECT 'TYPE', pg_catalog.format_type(t.oid, NULL), coalesce(t.typacl, acldefault('T', t.typowner)), t.typacl IS NOT NULL,
+         'pg_catalog.pg_type'::regclass, t.oid
+    FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+   WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+     AND (t.typrelid = 0 OR (SELECT r.relkind FROM pg_catalog.pg_class r WHERE r.oid = t.typrelid) = 'c')
+     AND NOT EXISTS (SELECT FROM pg_catalog.pg_type e WHERE e.typarray = t.oid)
+), keep AS (
+  SELECT o.kind, o.ident,
+         (SELECT pg_catalog.string_agg(DISTINCT a.privilege_type, ', ' ORDER BY a.privilege_type) FROM pg_catalog.aclexplode(o.acl) a
+           WHERE a.grantee = 0 AND a.privilege_type = ANY (CASE o.kind
+             WHEN 'TABLE' THEN ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES']
+             WHEN 'SEQUENCE' THEN ARRAY['USAGE', 'SELECT', 'UPDATE']
+             WHEN 'ROUTINE' THEN ARRAY['EXECUTE']
+             ELSE ARRAY['USAGE'] END)) AS privs
+    FROM obj o
+   WHERE o.explicit
+     AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend d WHERE d.classid = o.cls AND d.objid = o.oid AND d.deptype = 'e')
+)
+SELECT v.statement FROM keep k, LATERAL (VALUES
+  (1, 'REVOKE ALL ON ' || k.kind || ' ' || k.ident || ' FROM PUBLIC;'),
+  (2, CASE WHEN k.privs IS NOT NULL THEN 'GRANT ' || k.privs || ' ON ' || k.kind || ' ' || k.ident || ' TO PUBLIC;' END)) AS v(step, statement)
+WHERE v.statement IS NOT NULL
+ORDER BY k.kind, k.ident, v.step`
+
+// publicACLStatement is one statement importPublicACLQuery produces.
+var publicACLStatement = regexp.MustCompile(`(?s)^(?:REVOKE ALL ON (?:TABLE|SEQUENCE|ROUTINE|SCHEMA|TYPE) .+ FROM PUBLIC|GRANT (?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|USAGE|EXECUTE)(?:, (?:SELECT|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|USAGE|EXECUTE))* ON (?:TABLE|SEQUENCE|ROUTINE|SCHEMA|TYPE) .+ TO PUBLIC);$`)
+
+// maxPublicACLBytes bounds what the source may return for its privileges.
+const maxPublicACLBytes = 64 << 20
+
+// publicACLStatements splits importPublicACLQuery's NUL-separated output
+// and refuses anything that is not one of its statements.
+func publicACLStatements(out []byte) ([]string, error) {
+	var statements []string
+	for _, record := range bytes.Split(out, []byte{0}) {
+		statement := strings.TrimRight(string(record), "\n")
+		if statement == "" {
+			continue
+		}
+		if !publicACLStatement.MatchString(statement) {
+			return nil, fmt.Errorf("source privileges: unexpected statement %.80q", statement)
+		}
+		statements = append(statements, statement)
+	}
+	return statements, nil
 }
 
 // importLineagePrefix starts the target database's comment that records a

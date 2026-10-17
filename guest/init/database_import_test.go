@@ -63,16 +63,79 @@ func TestImportRoleStatement(t *testing.T) {
 }
 
 // The lineage opens the restore's transaction, so it commits with the copy
-// and only with it.
-func TestImportScriptPrologueRecordsTheLineageInTheTransaction(t *testing.T) {
+// The prologue opens the transaction as the owner; the epilogue carries the
+// source's PUBLIC privileges and the lineage, just before the COMMIT.
+func TestImportScriptPrologueAndEpilogue(t *testing.T) {
 	const id = "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"
-	got := importScriptPrologue("gregale", "gregale_schema_owner", id)
-	want := "BEGIN;\nSET ROLE gregale_schema_owner;\nCOMMENT ON DATABASE gregale IS 'gregale:import:v1:" + id + "';\n"
+	if got := importScriptPrologue("gregale_schema_owner"); got != "BEGIN;\nSET ROLE gregale_schema_owner;\n" {
+		t.Fatalf("prologue = %q", got)
+	}
+	got := importScriptEpilogue("gregale", id, []string{"REVOKE ALL ON ROUTINE public.f() FROM PUBLIC;"})
+	want := "REVOKE ALL ON ROUTINE public.f() FROM PUBLIC;\nCOMMENT ON DATABASE gregale IS 'gregale:import:v1:" + id + "';\n"
 	if got != want {
-		t.Fatalf("prologue = %q, want %q", got, want)
+		t.Fatalf("epilogue = %q, want %q", got, want)
 	}
 	if lineage, ok := importLineage("gregale:import:v1:" + id); !ok || lineage != id {
 		t.Fatalf("lineage of the recorded comment = %q, %v", lineage, ok)
+	}
+}
+
+// The epilogue lands before the script's last COMMIT, and only once the
+// end marker proves the script complete; COPY rows that read "COMMIT;"
+// pass through, and a script cut short never gets its COMMIT.
+func TestGateCommit(t *testing.T) {
+	const key = "0123abcd"
+	long := strings.Repeat("y", 200<<10)
+	complete := "\\restrict " + key + "\nBEGIN;\nCOPY public.t (a) FROM stdin;\nCOMMIT;\n" + long + "\nCOMMIT;\n-- a row\n\\.\n\nCOMMIT;\n\n--\n-- PostgreSQL database dump complete\n--\n\n\\unrestrict " + key + "\n\n"
+	var out strings.Builder
+	if err := gateCommit(&out, strings.NewReader(complete), key, "EPILOGUE;\n"); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(complete, "\\.\n\nCOMMIT;\n", "\\.\n\nEPILOGUE;\nCOMMIT;\n", 1)
+	if out.String() != want {
+		t.Fatalf("gated script differs (%d vs %d bytes)", out.Len(), len(want))
+	}
+	if strings.Count(out.String(), "EPILOGUE;") != 1 {
+		t.Fatal("epilogue written more than once")
+	}
+
+	for name, script := range map[string]string{
+		"cut before the end":        "BEGIN;\nCOPY public.t (a) FROM stdin;\nCOMMIT;\n",
+		"cut before the marker":     "BEGIN;\nCREATE TABLE t ();\nCOMMIT;\n\n--\n",
+		"another key":               "BEGIN;\nCOMMIT;\n\\unrestrict ffff\n",
+		"marker without its commit": "BEGIN;\nCREATE TABLE t ();\n\\unrestrict " + key + "\n",
+	} {
+		var cut strings.Builder
+		if err := gateCommit(&cut, strings.NewReader(script), key, "EPILOGUE;\n"); !errors.Is(err, errScriptUnfinished) {
+			t.Errorf("%s: err = %v, want errScriptUnfinished", name, err)
+		}
+		if strings.HasSuffix(strings.TrimRight(cut.String(), "\n-"), "COMMIT;") || strings.Contains(cut.String(), "EPILOGUE") {
+			t.Errorf("%s: the commit or epilogue got through: %q", name, cut.String())
+		}
+	}
+}
+
+// Only the query's own statement shapes are accepted from the source.
+func TestPublicACLStatements(t *testing.T) {
+	out := []byte("REVOKE ALL ON ROUTINE public.add_one(integer) FROM PUBLIC;\x00GRANT EXECUTE ON ROUTINE public.add_one(integer) TO PUBLIC;\x00" +
+		"GRANT SELECT, UPDATE ON TABLE billing.\"in\nvoices\" TO PUBLIC;\x00GRANT USAGE ON SCHEMA billing TO PUBLIC;\x00\n")
+	got, err := publicACLStatements(out)
+	if err != nil || len(got) != 4 {
+		t.Fatalf("statements = %q, %v", got, err)
+	}
+	for _, bad := range []string{
+		"GRANT CREATE ON SCHEMA public TO PUBLIC;",
+		"GRANT TRIGGER ON TABLE public.t TO PUBLIC;",
+		"GRANT SELECT ON TABLE public.t TO gregale_rt_abc;",
+		"ALTER ROLE gregale_import SUPERUSER;",
+		"GRANT ALL ON TABLE public.t TO PUBLIC;",
+	} {
+		if _, err := publicACLStatements([]byte(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	if got, err := publicACLStatements(nil); err != nil || len(got) != 0 {
+		t.Fatalf("no privileges = %q, %v", got, err)
 	}
 }
 

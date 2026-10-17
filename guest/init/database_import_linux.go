@@ -298,24 +298,33 @@ func (g *databaseGuest) importCopy(ctx context.Context, src dbguest.ImportSource
 	if err := os.Chown(databaseImportList, g.uid, g.gid); err != nil {
 		return err
 	}
+	out, err := g.sourceRecords(ctx, src, importPublicACLQuery, maxPublicACLBytes)
+	if err != nil {
+		return fmt.Errorf("source privileges: %w", err)
+	}
+	publicACL, err := publicACLStatements(out)
+	if err != nil {
+		return err
+	}
 	if _, err := g.queryIn(ctx, "postgres", importRoleStatement(src.Owner)); err != nil {
 		return fmt.Errorf("import role: %w", err)
 	}
-	if err := g.importApply(ctx, src); err != nil {
+	if err := g.importApply(ctx, src, publicACL); err != nil {
 		return fmt.Errorf("restore: %w", err)
 	}
 	return nil
 }
 
-// importApply pipes pg_restore's script into psql. Either one failing
-// fails the import; whether the copy committed is the target's recorded
-// lineage, which runImport reads afterwards.
-func (g *databaseGuest) importApply(ctx context.Context, src dbguest.ImportSource) error {
-	key := make([]byte, 16)
-	if _, err := rand.Read(key); err != nil {
+// importApply pipes pg_restore's script through gateCommit into psql.
+// Either one failing fails the import; whether the copy committed is the
+// target's recorded lineage, which runImport reads afterwards.
+func (g *databaseGuest) importApply(ctx context.Context, src dbguest.ImportSource, publicACL []string) error {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
-	script := importScriptArgs(g.major, hex.EncodeToString(key))
+	key := hex.EncodeToString(raw)
+	script := importScriptArgs(g.major, key)
 	restore := g.asDatabaseUser(exec.CommandContext(ctx, script[0], script[1:]...))
 	var restoreErr bytes.Buffer
 	restore.Stderr = &limitedWriter{w: &restoreErr, n: 4096}
@@ -326,24 +335,65 @@ func (g *databaseGuest) importApply(ctx context.Context, src dbguest.ImportSourc
 	if err := restore.Start(); err != nil {
 		return fmt.Errorf("pg_restore: %w", err)
 	}
+	gated, gate := io.Pipe()
+	gateErr := make(chan error, 1)
+	go func() {
+		err := gateCommit(gate, out, key, importScriptEpilogue(src.TargetDatabase, src.OperationID, publicACL))
+		gateErr <- err
+		// psql reads to the end either way; a script cut short ends
+		// without its COMMIT, so the transaction rolls back.
+		_ = gate.Close()
+	}()
 	apply := importApplyArgs(g.major, src.TargetDatabase)
 	psql := g.asDatabaseUser(exec.CommandContext(ctx, apply[0], apply[1:]...))
-	psql.Stdin = io.MultiReader(strings.NewReader(importScriptPrologue(src.TargetDatabase, src.Owner, src.OperationID)), out)
+	psql.Stdin = io.MultiReader(strings.NewReader(importScriptPrologue(src.Owner)), gated)
 	psql.Stdout = io.Discard
 	var psqlErr bytes.Buffer
 	psql.Stderr = &limitedWriter{w: &psqlErr, n: 4096}
 	applyErr := psql.Run()
-	// psql read to the end or stopped at an error: either way pg_restore
-	// has nothing left to write to.
+	// psql read to the end or stopped at an error: either way nothing is
+	// left to write to, and the gate and pg_restore stop.
+	_ = gated.Close()
 	_ = out.Close()
 	restoreWait := restore.Wait()
+	scriptErr := <-gateErr
 	if applyErr != nil {
 		return fmt.Errorf("psql: %w: %s", applyErr, strings.TrimSpace(psqlErr.String()))
 	}
 	if restoreWait != nil {
 		return fmt.Errorf("pg_restore: %w: %s", restoreWait, strings.TrimSpace(restoreErr.String()))
 	}
+	if scriptErr != nil {
+		return scriptErr
+	}
 	return nil
+}
+
+// sourceRecords runs one query on the source and returns its rows,
+// NUL-separated, refusing more than limit bytes.
+func (g *databaseGuest) sourceRecords(ctx context.Context, src dbguest.ImportSource, sql string, limit int64) ([]byte, error) {
+	args := []string{databaseBinDir(g.major) + "/psql", "-X", "-q", "-tA", "-0", "-v", "ON_ERROR_STOP=1", "-d", importConnString(src), "-c", sql}
+	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd.Env = append(cmd.Env, "PGPASSWORD="+src.Password)
+	var stderr bytes.Buffer
+	cmd.Stderr = &limitedWriter{w: &stderr, n: 4096}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, limit+1))
+	if int64(len(out)) > limit {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("source returned more than %d bytes", limit)
+	}
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return out, readErr
 }
 
 // recordedImport reads the operation ID target records, if any.

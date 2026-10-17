@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
@@ -155,6 +157,14 @@ CREATE VIEW recent AS SELECT * FROM accounts ORDER BY id DESC LIMIT 10;
 CREATE SCHEMA billing;
 CREATE TABLE billing.invoices (id int PRIMARY KEY, account bigint REFERENCES accounts(id));
 INSERT INTO billing.invoices SELECT g, g FROM generate_series(1, 100) g;
+-- PUBLIC privileges travel with the copy; grants to source roles do not.
+GRANT USAGE ON SCHEMA billing TO PUBLIC;
+GRANT SELECT ON billing.invoices TO PUBLIC;
+GRANT SELECT ON accounts TO src_mig;
+CREATE FUNCTION add_one(int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+GRANT EXECUTE ON FUNCTION add_one(int) TO PUBLIC;
+CREATE FUNCTION hidden() RETURNS int LANGUAGE sql AS 'SELECT 1';
+REVOKE EXECUTE ON FUNCTION hidden() FROM PUBLIC;
 -- pg_restore refreshes it, so it records the session the restore ran as.
 CREATE MATERIALIZED VIEW restored_by AS SELECT session_user::text AS session_role;`)
 
@@ -258,6 +268,25 @@ DROP TABLE bulk;`)
 	if count != 20000 || invoices != 100 || owner != "gregale_schema_owner" || comment != "customer accounts" || extOwner != "gregale_schema_owner" || statements {
 		t.Fatalf("imported: %d accounts, %d invoices, owner %s, comment %q, pgcrypto owner %s, pg_stat_statements %v",
 			count, invoices, owner, comment, extOwner, statements)
+	}
+	// A role with no membership sees exactly the source's PUBLIC privileges.
+	admin(ctx, t, rt, target, `CREATE ROLE outsider LOGIN PASSWORD 'outsider-password'; GRANT CONNECT ON DATABASE gregale TO outsider;`)
+	outCfg := cfg.Copy()
+	outCfg.User, outCfg.Password = "outsider", "outsider-password"
+	outsider, err := pgx.ConnectConfig(ctx, outCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = outsider.Close(ctx) }()
+	var two, seen int64
+	if err := outsider.QueryRow(ctx, `SELECT add_one(1), (SELECT count(*) FROM billing.invoices)`).Scan(&two, &seen); err != nil || two != 2 || seen != 100 {
+		t.Fatalf("granted to PUBLIC: add_one = %d, invoices = %d, %v", two, seen, err)
+	}
+	for _, denied := range []string{`SELECT hidden()`, `SELECT count(*) FROM accounts`} {
+		var pgErr *pgconn.PgError
+		if _, err := outsider.Exec(ctx, denied); !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Fatalf("%s as outsider = %v, want 42501", denied, err)
+		}
 	}
 	// The restore ran as the import role, never the superuser: no
 	// attribute, a member of the owner and of nothing else.

@@ -1436,10 +1436,11 @@ the control plane.
   5. Restore a TOC with plpgsql and the skipped extensions removed, then
      `ANALYZE`. `pg_restore --single-transaction --restrict-key=<random>
      --file=-` writes the dump as one transaction of SQL, which `psql -v
-     ON_ERROR_STOP=1` runs in the target as `gregale_import` after a
-     prologue: `BEGIN`, `SET ROLE <schema owner>`, and `COMMENT ON
-     DATABASE` recording the import's lineage (below). The script's own
-     `BEGIN` only warns, and its `COMMIT` ends the prologue's transaction.
+     ON_ERROR_STOP=1` runs in the target as `gregale_import`, after a
+     prologue (`BEGIN`, `SET ROLE <schema owner>`) and with an epilogue
+     before its final `COMMIT` (PUBLIC privileges and the import's
+     lineage, below). The script's own `BEGIN` only warns, and its
+     `COMMIT` ends the prologue's transaction.
 
   Everything restored belongs to the schema owner, so native credentials
   reach it like anything a migration created. `OpImportStatus` reports
@@ -1463,6 +1464,33 @@ the control plane.
   refused on a 1 GiB target with 1,378 MiB required, and the import
   succeeded once the source shrank. The watchdog is unit-tested only;
   the estimate kept metal from reaching it.
+- **PUBLIC privileges.** Both drivers revoke `EXECUTE` on new functions
+  from PUBLIC, and runtime credentials reach schema `public` only. So on
+  Gregale an app calls a function, or reads another schema, through
+  grants to PUBLIC. `--no-privileges` dropped them, so after a cutover
+  the app would get "permission denied". After the dump, the guest reads
+  the source's effective PUBLIC privileges from its catalogs: for every
+  user object with explicit privileges, and every routine (the target's
+  default for routines differs from PostgreSQL's), it emits `REVOKE ALL …
+  FROM PUBLIC` and `GRANT <privileges> … TO PUBLIC`. Only privileges that
+  read, write or run are kept (SELECT, INSERT, UPDATE, DELETE, TRUNCATE,
+  REFERENCES, USAGE, EXECUTE). CREATE, TRIGGER and MAINTAIN never are, so
+  PUBLIC, and with it every runtime credential, still cannot create
+  objects. Extension members are left to their extension. The statements
+  come from the source at the dump's trust, and are checked against the
+  query's own shapes.
+- **Commit gate.** The privileges and the lineage must commit with the
+  copy, so they run just before the script's final `COMMIT`. guest-init
+  holds back a `COMMIT;` line, and any comment or blank lines after it,
+  until the `\unrestrict <key>` end marker arrives. The key is random per
+  run, so a dump cannot contain it. The gate then writes the epilogue
+  before the COMMIT. A `COMMIT;` followed by anything else (a COPY row)
+  passes through unchanged. A script that ends without the marker never
+  gets its COMMIT, so a truncated restore always rolls back. On metal, a
+  role with no membership could call a function granted to PUBLIC and
+  read a schema and table granted to PUBLIC. A function whose PUBLIC
+  `EXECUTE` the source revoked, and a table granted only to a source
+  role, both answered `42501`.
 - **The source writes the script, so the restore is not the superuser.**
   The source is whatever server the customer names, and a hostile one
   controls the SQL in its dump (definitions are its own catalog output).
@@ -1482,7 +1510,7 @@ the control plane.
   script.
 - **Import lineage (ADR-1370 slice 15).** Every import carries an
   `OperationID` (a lowercase UUID; the activation's
-  `copy_operation_id`). The prologue records it as the target database's
+  `copy_operation_id`). The epilogue records it as the target database's
   comment, `gregale:import:v1:<id>`, inside the restore's transaction, so
   a finished copy cannot exist without it, and a restore that stops short
   never reaches its `COMMIT` and records nothing. pg_dump leaves database
@@ -1535,8 +1563,11 @@ Not yet done:
 - **Writes during the copy are not captured.** A consistent copy needs the
   app's writers drained first (the same cutover fence), or accepts the
   dump's snapshot. There is no logical-replication catch-up.
-- **Grants.** Objects outside schema `public` get no runtime grants, as for
-  any native schema.
+- **Grants to roles other than PUBLIC.** pg_dump runs with
+  `--no-privileges`, because the source's grants name its own roles, which
+  the target doesn't have. PUBLIC privileges are carried over (below); a
+  grant to a specific source role is not. Runtime credentials keep the
+  native model: schema `public` plus whatever PUBLIC holds.
 
 ### Environment-clone snapshots (ADR-590, step 1)
 
