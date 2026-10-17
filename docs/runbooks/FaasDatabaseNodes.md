@@ -177,9 +177,8 @@ idle. A security minor should not wait for that.
 1. `journalctl -u faas-schedd | grep 'stale'` lists the restarts schedd
    made. The databases still stale are the running ones that vmmd's
    status reports `stale` for.
-2. There is no in-place restart command yet. A database move restarts the
-   database on its target node, copying its volume (see "Moving one
-   database"). Otherwise the database restarts at its next idle moment.
+2. In a quiet window, restart each one in place (see "Restarting one
+   database").
 
 ### FaasDatabaseStorageReadOnly (warn)
 
@@ -261,6 +260,23 @@ the runbooks for those alerts. A database node is reached with the
 renewal workflow's deploy key and pinned through `COMPUTE_KNOWN_HOSTS`.
 Add both before declaring the node in the manifest, or the renewal run
 fails on it.
+
+## Restarting one database
+
+To put a running database onto its node's current base (a PostgreSQL
+minor, guest-init or launch change; `FaasDatabaseStaleVMs`), restart it in
+place:
+
+```sh
+gregalectl database-nodes restart --database <id> [--reason minor_update]
+```
+
+It needs an operator session. apid records a `database_restart` operator
+intent, and schedd's database scheduler parks the database (a standby
+stops after its primary) and wakes it again. That takes a few seconds,
+during which clients wait in pgproxyd and idle sessions drop. A parked
+database is left as it is: its next wake boots the current base. A
+database moving, waking, parking or failed is refused (`conflict`).
 
 ## Moving one database
 

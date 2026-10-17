@@ -1,8 +1,8 @@
 // commands_database_nodes.go — operator controls for native managed
 // PostgreSQL database nodes (ADR-1027). A node's lifecycle (draining,
-// unavailable) lives in the deployment manifest; moving one database is an
-// authenticated, durable operator intent that schedd's database scheduler
-// carries out.
+// unavailable) lives in the deployment manifest; moving or restarting one
+// database is an authenticated, durable operator intent that schedd's
+// database scheduler carries out.
 
 package main
 
@@ -22,14 +22,16 @@ const dispatchDatabaseNodes = "database-nodes"
 
 func cmdDatabaseNodes(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl database-nodes: missing subcommand; want move")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl database-nodes: missing subcommand; want move or restart")
 		return 2
 	}
 	switch args[0] {
 	case "move":
 		return cmdDatabaseNodesMove(args[1:])
+	case "restart":
+		return cmdDatabaseNodesRestart(args[1:])
 	default:
-		_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes: unknown subcommand %q; want move\n", args[0])
+		_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes: unknown subcommand %q; want move or restart\n", args[0])
 		return 2
 	}
 }
@@ -84,30 +86,100 @@ func moveDatabaseViaAPI(database, node, reason string, timeout time.Duration) in
 		_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes move: %v\n", err)
 		return 1
 	}
+	outcome, code := awaitDatabaseIntent(ctx, client, "move", accepted.IntentID, accepted.StatusURL, timeout)
+	if code != 0 {
+		return code
+	}
+	if jsonEnabled() {
+		return emitOperatorJSON(struct {
+			Operation api.ObsDatabaseMoveResponse `json:"operation"`
+			Outcome   api.OperatorIntentResponse  `json:"outcome"`
+		}{accepted, outcome})
+	}
+	_, _ = fmt.Fprintf(osStdout, "move of %s recorded; intent=%s. schedd copies it in the background: watch schedd_database_moves_total, or its last_error (move_failed)\n", database, accepted.IntentID)
+	return 0
+}
+
+// cmdDatabaseNodesRestart restarts one running native database in place
+// onto its node's current base (a new PostgreSQL minor, guest-init or
+// launch): schedd parks it and wakes it again, standby included. A parked
+// database is left for its next wake, which boots the current base.
+func cmdDatabaseNodesRestart(args []string) int {
+	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	database := fs.String("database", "", "the native database's id (its UUID in database_vms)")
+	reason := fs.String("reason", "", "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_restart)")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum wait for the restart")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *database == "" {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl database-nodes restart: --database required")
+		return 2
+	}
+	return restartDatabaseViaAPI(*database, *reason, *timeout)
+}
+
+func databaseRestartPath(database, reason string) string {
+	q := url.Values{"confirm": {"true"}}
+	if reason != "" {
+		q.Set("reason", reason)
+	}
+	return "/v1/admin/ops/databases/" + url.PathEscape(database) + "/restart?" + q.Encode()
+}
+
+func restartDatabaseViaAPI(database, reason string, timeout time.Duration) int {
+	if timeout <= 0 {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl database-nodes restart: --timeout must be positive")
+		return 2
+	}
+	sess, err := loadOperatorSession()
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes restart: %v\n", err)
+		return 1
+	}
+	client := newOperatorHTTPClient(&sess)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var accepted api.ObsDatabaseRestartResponse
+	if err := client.doJSON(ctx, http.MethodPost, databaseRestartPath(database, reason), nil, &accepted, true, nil); err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes restart: %v\n", err)
+		return 1
+	}
+	outcome, code := awaitDatabaseIntent(ctx, client, "restart", accepted.IntentID, accepted.StatusURL, timeout)
+	if code != 0 {
+		return code
+	}
+	if jsonEnabled() {
+		return emitOperatorJSON(struct {
+			Operation api.ObsDatabaseRestartResponse `json:"operation"`
+			Outcome   api.OperatorIntentResponse     `json:"outcome"`
+		}{accepted, outcome})
+	}
+	_, _ = fmt.Fprintf(osStdout, "restarted %s onto its node's current base (a parked database boots it at its next wake); intent=%s\n", database, accepted.IntentID)
+	return 0
+}
+
+// awaitDatabaseIntent polls an operator intent until it ends. It returns
+// the outcome and 0 once it succeeded, else the exit code, having said why.
+func awaitDatabaseIntent(ctx context.Context, client *operatorHTTPClient, verb, intentID, statusURL string, timeout time.Duration) (api.OperatorIntentResponse, int) {
 	var outcome api.OperatorIntentResponse
 	for {
-		if err := client.doJSON(ctx, http.MethodGet, accepted.StatusURL, nil, &outcome, false, nil); err != nil {
-			_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes move: poll intent %s: %v\n", accepted.IntentID, err)
-			return 1
+		if err := client.doJSON(ctx, http.MethodGet, statusURL, nil, &outcome, false, nil); err != nil {
+			_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes %s: poll intent %s: %v\n", verb, intentID, err)
+			return outcome, 1
 		}
 		switch state.OperatorIntentStatus(outcome.Status) {
 		case state.OperatorIntentSucceeded:
-			if jsonEnabled() {
-				return emitOperatorJSON(struct {
-					Operation api.ObsDatabaseMoveResponse `json:"operation"`
-					Outcome   api.OperatorIntentResponse  `json:"outcome"`
-				}{accepted, outcome})
-			}
-			_, _ = fmt.Fprintf(osStdout, "move of %s recorded; intent=%s. schedd copies it in the background: watch schedd_database_moves_total, or its last_error (move_failed)\n", database, accepted.IntentID)
-			return 0
+			return outcome, 0
 		case state.OperatorIntentFailed, state.OperatorIntentCancelled:
-			_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes move: intent %s %s: %s\n", accepted.IntentID, outcome.Status, outcome.Error)
-			return 1
+			_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes %s: intent %s %s: %s\n", verb, intentID, outcome.Status, outcome.Error)
+			return outcome, 1
 		}
 		select {
 		case <-ctx.Done():
-			_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes move: intent %s was not claimed before %s; schedd may not run the database scheduler\n", accepted.IntentID, timeout)
-			return 1
+			_, _ = fmt.Fprintf(osStderr, "gregalectl database-nodes %s: intent %s did not finish before %s; schedd may not run the database scheduler\n", verb, intentID, timeout)
+			return outcome, 1
 		case <-time.After(500 * time.Millisecond):
 		}
 	}

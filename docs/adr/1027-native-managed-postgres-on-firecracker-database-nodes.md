@@ -205,12 +205,17 @@ two always-on databases per sample, each idle for 2 minutes and not
 importing: a park, which stops a standby after its primary, then a wake
 on the current base. A scale-to-zero database picks the base up at its
 next idle park. `FaasDatabaseStaleVMs` warns when some stayed stale for a
-day because they never went idle. Today an operator restarts those only
-by moving them to another node. On metal, an adopted VM turned stale when its major's base
+day because they never went idle. An operator restarts those in place:
+`gregalectl database-nodes restart --database <id>` posts
+`POST /v1/admin/ops/databases/{id}/restart` (admin mutation auth,
+`confirm=true`). apid records a `database_restart` operator intent, and
+schedd's dispatcher calls `dbsched.Restart`: a running database is parked
+and woken, a parked one is left for its next wake, and any other state is
+`ErrConflict`. The stale sweep uses the same `Restart`. On metal, an adopted VM turned stale when its major's base
 changed and was current again after a restart.
 
-Not yet done: an operator restart in place, and a planned switchover
-that patches a busy production database without stopping it.
+Not yet done: a planned switchover that patches a busy production
+database without stopping it.
 
 ### schedd surface
 

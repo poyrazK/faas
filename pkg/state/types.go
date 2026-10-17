@@ -3306,6 +3306,13 @@ const (
 	// scheduler parks the database and records the move before stamping
 	// the intent; the copy finishes in the background.
 	OperatorIntentKindDatabaseMove OperatorIntentKind = "database_move"
+	// OperatorIntentKindDatabaseRestart restarts a running native managed
+	// database in place (ADR-1027), onto its node's current base. TargetID
+	// is the database id and AccountID is nil. schedd's database scheduler
+	// parks the database and wakes it again before stamping the intent; a
+	// parked database is left for its next wake, which boots the current
+	// base anyway.
+	OperatorIntentKindDatabaseRestart OperatorIntentKind = "database_restart"
 )
 
 // DatabaseMoveIntentMetadata is a database_move intent's metadata: the

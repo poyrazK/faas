@@ -454,6 +454,19 @@ type ObsNodeMutationResponse struct {
 	Preflight          ObsNodeOperationPreflight `json:"preflight"`
 }
 
+// ObsDatabaseRestartResponse acknowledges an operator's in-place restart
+// of a native managed database (ADR-1027), onto its node's current base.
+// Poll StatusURL for the intent.
+type ObsDatabaseRestartResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	Reason     string    `json:"reason"`
+}
+
 // ObsDatabaseMoveResponse acknowledges an operator's move of a native
 // managed database to another database node (ADR-1027). schedd parks the
 // database and records the move, then copies it in the background; poll

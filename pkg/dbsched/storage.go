@@ -2,6 +2,7 @@ package dbsched
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -87,6 +88,28 @@ func (s *Scheduler) standbyStale(ctx context.Context, vm VM) bool {
 	return ok && resp.Stale
 }
 
+// Restart restarts a running database in place, onto its node's current
+// base (ADR-1027): it parks it, which stops a standby after its primary,
+// and wakes it again. A parked database is left as it is, since its next
+// wake boots the current base anyway; any other state is ErrConflict.
+func (s *Scheduler) Restart(ctx context.Context, id string) (VM, error) {
+	vm, err := s.store.Get(ctx, id)
+	if err != nil {
+		return VM{}, err
+	}
+	switch vm.State {
+	case StateParked:
+		return vm, nil
+	case StateRunning:
+	default:
+		return VM{}, fmt.Errorf("%w: the database is %s", ErrConflict, vm.State)
+	}
+	if err := s.Park(ctx, id); err != nil {
+		return VM{}, err
+	}
+	return s.Wake(ctx, id)
+}
+
 // restartStale parks and wakes stale always-on databases that have been
 // idle for StaleIdle, at most StaleRestarts of them. A park stops a
 // replicated database's standby after its primary, so both boot the
@@ -102,10 +125,7 @@ func (s *Scheduler) restartStale(ctx context.Context, stale []VM) int {
 			continue
 		}
 		s.log.Info("dbsched: restarting a stale database onto the current base", "database_id", vm.DatabaseID)
-		err := s.Park(ctx, vm.DatabaseID)
-		if err == nil {
-			_, err = s.Wake(ctx, vm.DatabaseID)
-		}
+		_, err := s.Restart(ctx, vm.DatabaseID)
 		s.cfg.Metrics.restartedStale(err)
 		if err != nil {
 			// The keep-warm sweep wakes an always-on database left parked.

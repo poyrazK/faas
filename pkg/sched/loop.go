@@ -224,9 +224,11 @@ type Loop struct {
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
 
-	// databaseMover starts database_move operator intents (nil: the
-	// database scheduler is not enabled).
-	databaseMover DatabaseMover
+	// databaseMover starts database_move operator intents and
+	// databaseRestarter runs database_restart ones (nil: the database
+	// scheduler is not enabled).
+	databaseMover     DatabaseMover
+	databaseRestarter DatabaseRestarter
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -745,6 +747,14 @@ func (l *Loop) WithMigratingWatchdog(w *MigratingWatchdog) *Loop {
 // fail: the database scheduler is not enabled on this schedd.
 func (l *Loop) WithDatabaseMover(m DatabaseMover) *Loop {
 	l.databaseMover = m
+	return l
+}
+
+// WithDatabaseRestarter attaches the native database scheduler's in-place
+// restarts (ADR-1027) for database_restart operator intents. Without one
+// those intents fail.
+func (l *Loop) WithDatabaseRestarter(r DatabaseRestarter) *Loop {
+	l.databaseRestarter = r
 	return l
 }
 

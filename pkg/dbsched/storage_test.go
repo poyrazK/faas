@@ -4,6 +4,7 @@ package dbsched
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -116,4 +117,36 @@ func countCalls(calls []string, name string) int {
 		}
 	}
 	return n
+}
+
+// An operator's restart parks and wakes a running database, leaves a
+// parked one for its next wake and refuses one in any other state.
+func TestRestartParksAndWakesARunningDatabase(t *testing.T) {
+	s, store, vmm := newTestScheduler(t, 8192)
+	ctx := context.Background()
+	vm := provision(t, s)
+	if got, err := s.Restart(ctx, vm.DatabaseID); err != nil || got.State != StateParked {
+		t.Fatalf("restart of a parked database = %v, %v; want it left parked", got.State, err)
+	}
+	if _, err := s.Wake(ctx, vm.DatabaseID); err != nil {
+		t.Fatal(err)
+	}
+	vmm.mu.Lock()
+	stops, starts := countCalls(vmm.calls, "stop"), countCalls(vmm.calls, "start")
+	vmm.mu.Unlock()
+	if got, err := s.Restart(ctx, vm.DatabaseID); err != nil || got.State != StateRunning {
+		t.Fatalf("restart = %v, %v", got.State, err)
+	}
+	vmm.mu.Lock()
+	stopped, started := countCalls(vmm.calls, "stop")-stops, countCalls(vmm.calls, "start")-starts
+	vmm.mu.Unlock()
+	if stopped != 1 || started != 1 {
+		t.Fatalf("restart stopped %d and started %d VMs, want 1 and 1", stopped, started)
+	}
+	if err := store.Transition(ctx, vm.DatabaseID, []State{StateRunning}, StateFailed, TransitionOptions{LastError: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Restart(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("restart of a failed database = %v, want ErrConflict", err)
+	}
 }

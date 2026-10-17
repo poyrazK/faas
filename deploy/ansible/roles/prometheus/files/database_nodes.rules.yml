@@ -199,7 +199,7 @@ groups:
           family: database_nodes
         annotations:
           summary: "{{ $value }} native database(s) still on an outdated base after a day"
-          description: "Database VMs survive vmmd restarts, so a release's PostgreSQL minor, guest-init or launch changes reach a running database only when it restarts. schedd restarts idle always-on databases on its own; these stayed busy, or are scale-to-zero databases that never went idle. A move restarts one now (runbook)."
+          description: "Database VMs survive vmmd restarts, so a release's PostgreSQL minor, guest-init or launch changes reach a running database only when it restarts. schedd restarts idle always-on databases on its own; these stayed busy, or are scale-to-zero databases that never went idle. Restart them in place: gregalectl database-nodes restart (runbook)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
       - alert: FaasDatabaseMoveFailed

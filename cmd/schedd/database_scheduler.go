@@ -176,7 +176,8 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 }
 
 // databaseMover starts operators' database moves (database_move intents)
-// on the database scheduler.
+// and runs their in-place restarts (database_restart) on the database
+// scheduler.
 type databaseMover struct{ sched *dbsched.Scheduler }
 
 func (m databaseMover) StartDatabaseMove(ctx context.Context, databaseID, targetNode string) (sched.DatabaseMove, error) {
@@ -185,4 +186,9 @@ func (m databaseMover) StartDatabaseMove(ctx context.Context, databaseID, target
 		return sched.DatabaseMove{}, err
 	}
 	return sched.DatabaseMove{From: vm.NodeID, To: vm.MoveNode}, nil
+}
+
+func (m databaseMover) RestartDatabase(ctx context.Context, databaseID string) (string, error) {
+	vm, err := m.sched.Restart(ctx, databaseID)
+	return string(vm.State), err
 }

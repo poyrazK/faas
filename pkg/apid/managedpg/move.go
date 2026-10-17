@@ -69,25 +69,42 @@ func (m Move) Post(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "encode operator intent failed", err.Error()))
 		return
 	}
-	intentID, err := m.Intents.InsertOperatorIntent(r.Context(), state.OperatorIntentKindDatabaseMove, databaseID, nil, acct.ID, reason, metadata, middleware.TraceIDFrom(r))
-	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "insert operator intent failed", err.Error()))
+	intentID, ok := enqueue(w, r, m.Intents, m.Notifier, m.Audit, acct, state.OperatorIntentKindDatabaseMove, databaseID, reason, metadata,
+		map[string]any{"target_node": node})
+	if !ok {
 		return
-	}
-	payload, _ := json.Marshal(map[string]string{"intent_id": intentID, "kind": string(state.OperatorIntentKindDatabaseMove), "target_id": databaseID})
-	// The 30 s safety tick claims the intent if this notification is lost.
-	_ = m.Notifier.Notify(r.Context(), db.NotifyOperatorIntent, string(payload))
-	if m.Audit != nil {
-		subject := databaseID
-		m.Audit.Emit(r.Context(), "operator.action."+string(state.OperatorIntentKindDatabaseMove), &subject, map[string]any{
-			"actor": acct.ID, "intent_id": intentID, "database_id": databaseID, "target_node": node, "reason": reason, "result": "enqueued",
-		})
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, api.ObsDatabaseMoveResponse{
 		OK: true, IntentID: intentID, StatusURL: "/v1/admin/operator-intents/" + intentID,
 		ExpiresAt: time.Now().UTC().Add(operatorIntentPollHorizon), Kind: string(state.OperatorIntentKindDatabaseMove),
 		DatabaseID: databaseID, TargetNode: node, Reason: reason,
 	})
+}
+
+// enqueue records an operator intent on a database, nudges schedd and
+// audits it; it writes the problem itself when it fails.
+func enqueue(w http.ResponseWriter, r *http.Request, intents IntentWriter, notifier interface {
+	Notify(ctx context.Context, channel, payload string) error
+}, audit interface {
+	Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
+}, acct state.Account, kind state.OperatorIntentKind, databaseID, reason string, metadata json.RawMessage, extra map[string]any) (string, bool) {
+	intentID, err := intents.InsertOperatorIntent(r.Context(), kind, databaseID, nil, acct.ID, reason, metadata, middleware.TraceIDFrom(r))
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "insert operator intent failed", err.Error()))
+		return "", false
+	}
+	payload, _ := json.Marshal(map[string]string{"intent_id": intentID, "kind": string(kind), "target_id": databaseID})
+	// The 30 s safety tick claims the intent if this notification is lost.
+	_ = notifier.Notify(r.Context(), db.NotifyOperatorIntent, string(payload))
+	if audit != nil {
+		subject := databaseID
+		data := map[string]any{"actor": acct.ID, "intent_id": intentID, "database_id": databaseID, "reason": reason, "result": "enqueued"}
+		for k, v := range extra {
+			data[k] = v
+		}
+		audit.Emit(r.Context(), "operator.action."+string(kind), &subject, data)
+	}
+	return intentID, true
 }
 
 func parseMove(r *http.Request) (databaseID, node, reason string, prob *api.Problem) {

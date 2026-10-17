@@ -179,6 +179,9 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 		// returns; the copy, which can take hours, finishes in the
 		// background, past the intent's claim.
 		err = l.startDatabaseMove(ctx, intent)
+	case state.OperatorIntentKindDatabaseRestart:
+		// A park and a wake: seconds, well inside the intent's claim.
+		err = l.restartDatabase(ctx, intent)
 	default:
 		// Should be impossible — the schema CHECK rejects any
 		// unknown kind — but if we somehow receive one, stamp
@@ -280,6 +283,26 @@ type DatabaseMover interface {
 // DatabaseMove is a started move.
 type DatabaseMove struct {
 	From, To string
+}
+
+// DatabaseRestarter restarts a running native database in place, onto its
+// node's current base (ADR-1027); a parked one is left for its next wake.
+// It returns the database's state afterwards.
+type DatabaseRestarter interface {
+	RestartDatabase(ctx context.Context, databaseID string) (string, error)
+}
+
+func (l *Loop) restartDatabase(ctx context.Context, intent state.OperatorIntent) error {
+	if l.databaseRestarter == nil {
+		return errors.New("database_restart: the database scheduler is not enabled on this schedd")
+	}
+	after, err := l.databaseRestarter.RestartDatabase(ctx, intent.TargetID)
+	if err != nil {
+		return fmt.Errorf("database_restart: %w", err)
+	}
+	l.log.Info("sched: operator_intent: database restarted", "intent_id", intent.ID,
+		"database_id", intent.TargetID, "state", after)
+	return nil
 }
 
 func (l *Loop) startDatabaseMove(ctx context.Context, intent state.OperatorIntent) error {

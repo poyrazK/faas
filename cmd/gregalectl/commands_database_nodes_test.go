@@ -78,3 +78,50 @@ func TestDatabaseNodesMoveReportsARefusal(t *testing.T) {
 		t.Fatalf("move without --database exit = %d, want 2", code)
 	}
 }
+
+func databaseRestartServer(t *testing.T, status, errMsg string) *httptest.Server {
+	t.Helper()
+	const intentID = "33333333-3333-3333-3333-333333333333"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/ops/databases/"+testDatabaseID+"/restart":
+			q := r.URL.Query()
+			if q.Get("confirm") != "true" || q.Get("reason") != "minor_update" || r.Header.Get("Idempotency-Key") == "" {
+				t.Errorf("restart request %s, idempotency key %q", r.URL.RawQuery, r.Header.Get("Idempotency-Key"))
+			}
+			writeTestJSON(w, http.StatusAccepted, api.ObsDatabaseRestartResponse{OK: true, IntentID: intentID,
+				StatusURL: "/v1/admin/operator-intents/" + intentID, Kind: "database_restart", DatabaseID: testDatabaseID})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/operator-intents/"+intentID:
+			writeTestJSON(w, http.StatusOK, api.OperatorIntentResponse{IntentID: intentID, Status: status, Error: errMsg})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+// An operator restarts a native database in place through a durable
+// intent, and sees a refusal when schedd cannot.
+func TestDatabaseNodesRestart(t *testing.T) {
+	server := databaseRestartServer(t, "succeeded", "")
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+	if code := cmdDatabaseNodes([]string{"restart", "--database", testDatabaseID, "--reason", "minor_update", "--timeout", "5s"}); code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(out.String(), "restarted "+testDatabaseID) {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	if code := cmdDatabaseNodes([]string{"restart"}); code != 2 {
+		t.Fatalf("restart without --database exit = %d, want 2", code)
+	}
+
+	refused := databaseRestartServer(t, "failed", "database_restart: dbsched: conflict: the database is moving")
+	defer refused.Close()
+	installTestOperatorSession(t, refused.URL, "opaque-session")
+	stderr.Reset()
+	if code := restartDatabaseViaAPI(testDatabaseID, "minor_update", 5*time.Second); code != 1 || !strings.Contains(stderr.String(), "the database is moving") {
+		t.Fatalf("refused restart exit = %d, stderr = %q", code, stderr.String())
+	}
+}
