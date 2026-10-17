@@ -86,6 +86,29 @@ func VersionFromTarball(path string, fw Framework) string {
 	return VersionFromTarballAtRoot(path, fw, "")
 }
 
+// NodeVersionSpecAtRoot returns a Node source's version declaration as
+// written: the first line of .nvmrc, else engines.node from package.json.
+// Unlike VersionFromTarballAtRoot it keeps bare majors ("22"), ranges and
+// aliases ("lts/jod"), which callers that pick a runtime major must see.
+func NodeVersionSpecAtRoot(path, sourceRoot string) string {
+	if nvmrc := strings.TrimSpace(stripLines(readTarballFileAtRoot(path, ".nvmrc", sourceRoot))); nvmrc != "" {
+		return nvmrc
+	}
+	var pkg struct {
+		Engines struct {
+			Node json.RawMessage `json:"node"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal([]byte(readTarballFileAtRoot(path, "package.json", sourceRoot)), &pkg); err != nil || len(pkg.Engines.Node) == 0 {
+		return ""
+	}
+	var spec string
+	if err := json.Unmarshal(pkg.Engines.Node, &spec); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(spec)
+}
+
 // VersionFromTarballAtRoot is the workspace-aware mirror of
 // VersionFromTarball. sourceRoot is relative to the logical archive root;
 // empty means the legacy archive root.

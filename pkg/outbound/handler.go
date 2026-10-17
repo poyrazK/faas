@@ -41,6 +41,7 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	SimulationHandler         http.Handler
 	Resolver                  Resolver
 	Backend                   Backend
 	Client                    *http.Client
@@ -164,6 +165,14 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if principal, ok := relayPrincipalFromContext(r.Context()); ok && principal.rehearsalRunID != "" {
+		if h.SimulationHandler == nil {
+			writeProblem(w, http.StatusServiceUnavailable, "rehearsal_simulation_unavailable", "Rehearsal simulation unavailable", "")
+			return
+		}
+		h.SimulationHandler.ServeHTTP(w, r)
+		return
+	}
 	if r.URL.Path == "/readyz" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "Only GET and HEAD are supported for readiness", "")

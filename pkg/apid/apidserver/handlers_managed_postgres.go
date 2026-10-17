@@ -434,6 +434,11 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		s.notFound(w, "app not found")
 		return
 	}
+	// Application Auth is a dark launch: without it the mode is unknown.
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !api.ApplicationAuthEnabled(acct.ID) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
 	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
 	if err != nil {
 		managedPostgresProblem(w, err)
