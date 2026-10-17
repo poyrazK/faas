@@ -107,7 +107,7 @@ func TestManagedPostgresCapabilitiesPlanAndAvailabilityLimits(t *testing.T) {
 			limits, _ := api.ManagedPostgresLimitsFor(plan)
 			d := managedpostgres.CapabilityDiscovery{Region: "us-east-1", Capabilities: capabilityOnlyProvider{}.Capabilities(), DatabaseLimit: 2, ProvisioningEnabled: true}
 			out := apidserver.ManagedPostgresCapabilitiesView(d, limits)
-			if out.DatabaseLimit != min(2, limits.DatabasesMax) || (plan == api.PlanFree && (out.ProvisioningEnabled || len(out.CredentialAccess) != 0)) {
+			if out.DatabaseLimit != min(2, limits.DatabasesMax) || (limits.DatabasesMax == 0 && (out.ProvisioningEnabled || len(out.CredentialAccess) != 0)) {
 				t.Fatalf("plan capabilities=%+v", out)
 			}
 			for _, class := range out.ServiceClasses {

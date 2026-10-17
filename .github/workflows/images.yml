@@ -132,9 +132,15 @@ jobs:
             exit 0
           fi
 
+          # A pull request is compared from its merge base: the base SHA is
+          # the base branch tip, so a plain base..head diff of a branch that
+          # is behind main also lists main's own newer changes (pkg/api on
+          # most days) and rebuilt builder-base for nearly every PR.
+          range_sep=".."
           if [[ "$EVENT_NAME" == pull_request ]]; then
             base="$PR_BASE_SHA"
             head="$PR_HEAD_SHA"
+            range_sep="..."
           else
             base="$PUSH_BEFORE_SHA"
             head="$CURRENT_SHA"
@@ -149,7 +155,7 @@ jobs:
             exit 0
           fi
 
-          changed="$(git diff --name-only "$base" "$head")"
+          changed="$(git diff --name-only "${base}${range_sep}${head}")"
           printf '%s\n' "$changed"
           builder=false
           bases=false
@@ -176,7 +182,7 @@ jobs:
           echo "Image build decision: builder=$builder bases=$bases"
 
   builder-base:
-    name: builder-base (linux/amd64 + linux/arm64)
+    name: builder-base (${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64 + linux/arm64' }})
     needs: runtime-change
     if: needs.runtime-change.outputs.builder == 'true'
     runs-on: ubuntu-latest
@@ -196,6 +202,11 @@ jobs:
           - 5000:5000
     env:
       IMAGE_NAME: ghcr.io/poyrazk/builder-base
+      # Pull requests build and verify linux/amd64 only: the arm64 half runs
+      # under QEMU and was most of this job's 20 minutes. Every main push
+      # still builds, verifies and scans both before anything is promoted,
+      # and release.yml waits for that publisher run.
+      ARCHES: ${{ github.event_name == 'pull_request' && 'amd64' || 'amd64 arm64' }}
       BUILDKIT_VERSION: "0.32.2"
       BUILDKIT_REVISION: "991535e0973488b6a429096d21fa13f81f2d89d8"
       RAILPACK_VERSION: "0.38.0"
@@ -292,8 +303,9 @@ jobs:
           # compiled guest-init so each manifest carries the arch-
           # matching /usr/local/bin/faas-guest-init binary
           # (review finding #2 on PR #940).
+          platforms="$(printf 'linux/%s,' $ARCHES)"
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform "${platforms%,}" \
             --build-arg BUILDKIT_VERSION \
             --build-arg BUILDKIT_REVISION \
             --build-arg RAILPACK_VERSION \
@@ -337,11 +349,17 @@ jobs:
           MANIFEST_JSON=$(crane manifest "${REF}")
           VERIFY_ROOT=$(mktemp -d)
           trap 'rm -rf "${VERIFY_ROOT}"' EXIT
-          for ARCH in amd64 arm64; do
-            DIGEST=$(jq -er --arg arch "${ARCH}" '
-              [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] |
-              if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' \
-              <<<"${MANIFEST_JSON}")
+          for ARCH in $ARCHES; do
+            if jq -e 'has("manifests")' <<<"${MANIFEST_JSON}" >/dev/null; then
+              DIGEST=$(jq -er --arg arch "${ARCH}" '
+                [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] |
+                if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' \
+                <<<"${MANIFEST_JSON}")
+            else
+              # A single-platform pull request build can push a plain image
+              # manifest rather than an index.
+              DIGEST=$(crane digest "${REF}")
+            fi
             ROOTFS_TAR="${VERIFY_ROOT}/rootfs-${ARCH}.tar"
             ROOTFS_DIR="${VERIFY_ROOT}/rootfs-${ARCH}"
             mkdir -p "${ROOTFS_DIR}"
@@ -416,7 +434,7 @@ jobs:
           else
             ref="localhost:5000/pr-${GITHUB_SHA::12}"
           fi
-          for arch in amd64 arm64; do
+          for arch in $ARCHES; do
             bash scripts/ci/scan-oci-image.sh registry "${ref}" "linux/${arch}"
           done
 

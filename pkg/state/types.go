@@ -6060,7 +6060,7 @@ type StorageUsage struct {
 // returns this type — never expose the cross-account scan.
 //
 // Money is integer cents in the provider's currency; the financial
-// model distills to EUR at the API edge. Currency is preserved per
+// model distills to the billing currency at the API edge. Currency is preserved per
 // row so future multi-currency support can land without a backfill.
 //
 // HostedURL is intentionally NOT exposed on the read surface — the

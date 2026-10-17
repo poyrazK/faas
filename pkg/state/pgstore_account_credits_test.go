@@ -618,7 +618,7 @@ func TestPgStoreCurrentMonthOverageCents_NonUTC(t *testing.T) {
 	firstHour := thisMonthStart
 	secondHour := thisMonthStart.Add(time.Hour)
 	prevMonthLate := thisMonthStart.Add(-time.Hour)
-	if err := store.AppendUsage(ctx, acct.ID, appID, instID, firstHour, 50*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, appID, instID, firstHour, int64(api.MustLimitsFor(api.PlanHobby).IncludedGBHours)*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("append firstHour: %v", err)
 	}
 	if err := store.AppendUsage(ctx, acct.ID, appID, instID, secondHour, 2*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
@@ -629,7 +629,7 @@ func TestPgStoreCurrentMonthOverageCents_NonUTC(t *testing.T) {
 	}
 
 	// Both in-month rows must be summed, the previous-month row excluded,
-	// and the 50 GB-hour allowance applied once. The result is 2 cents.
+	// and the Hobby GB-hour allowance applied once. The result is 2 cents.
 	got, err := store.CurrentMonthOverageCents(ctx, acct.ID)
 	if err != nil {
 		t.Fatalf("CurrentMonthOverageCents: %v", err)

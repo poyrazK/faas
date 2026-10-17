@@ -35,9 +35,9 @@ func TestPlanMonthlyMillicents(t *testing.T) {
 		want int64
 	}{
 		{api.PlanFree, 0},          // Free has no recurring line item
-		{api.PlanHobby, 900_000},   // €9
-		{api.PlanPro, 2_900_000},   // €29
-		{api.PlanScale, 9_900_000}, // €99
+		{api.PlanHobby, 1_000_000}, // $10
+		{api.PlanPro, 3_000_000},   // $30
+		{api.PlanScale, 9_900_000}, // $99
 		{api.Plan("unknown"), 0},   // zero fallback, matches api.LimitsFor
 	}
 	for _, tc := range cases {

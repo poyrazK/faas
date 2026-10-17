@@ -2,12 +2,14 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -134,6 +136,49 @@ func TestMarkDeployFailedSecurityScanCode(t *testing.T) {
 	}
 	if got.ErrorCode != api.CodeSecurityScanBlocked {
 		t.Fatalf("ErrorCode = %q, want %q", got.ErrorCode, api.CodeSecurityScanBlocked)
+	}
+}
+
+// H10-107: a failure with no sentinel still gets a stable code, so the CLI,
+// dashboard and failure mail never see an empty error_code.
+func TestMarkDeployFailedCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"oci sentinel", fmt.Errorf("pull: %w", oci.ErrImageNotFound), api.CodeImageNotFound},
+		{"image abuse", fmt.Errorf("%w: miner", errImageAbuseDetected), api.CodeImageAbuseDetected},
+		{"unmapped platform error", errors.New("replicate app layer: peer unavailable"), api.CodeDeployFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			acct, err := store.CreateAccount(ctx, "codes@example.com", "hobby")
+			if err != nil {
+				t.Fatalf("CreateAccount: %v", err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "codes"})
+			if err != nil {
+				t.Fatalf("CreateApp: %v", err)
+			}
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:codes"})
+			if err != nil {
+				t.Fatalf("CreateDeployment: %v", err)
+			}
+			h := &Handler{store: store}
+			if err := h.markDeployFailed(ctx, dep.ID, tt.err, "stage"); err != nil {
+				t.Fatalf("markDeployFailed: %v", err)
+			}
+			got, err := store.DeploymentByID(ctx, dep.ID)
+			if err != nil {
+				t.Fatalf("DeploymentByID: %v", err)
+			}
+			if got.ErrorCode != tt.want {
+				t.Fatalf("ErrorCode = %q, want %q", got.ErrorCode, tt.want)
+			}
+		})
 	}
 }
 

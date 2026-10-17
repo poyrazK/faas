@@ -41,7 +41,7 @@ func putComputeGrant(t *testing.T, ctx context.Context, s *state.MemStore, acct 
 		PeriodStart: monthStart,
 		PeriodEnd:   monthStart.AddDate(0, 1, 0),
 		Price: financial.Price{
-			Version: "test-" + string(plan), Meter: "compute", Currency: "EUR", Unit: "mb_seconds",
+			Version: "test-" + string(plan), Meter: "compute", Currency: "USD", Unit: "mb_seconds",
 			UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour,
 			IncludedQuantity: api.IncludedMBSeconds(plan),
 		},
@@ -121,9 +121,9 @@ func TestPushPendingBillsUpToSpendCapAndNeverBackBills(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	usage(monthStart, 50)                 // the whole Hobby allowance
-	usage(monthStart.Add(time.Hour), 3)   // crosses a 1-cent (1 GB-h) cap
-	usage(monthStart.Add(2*time.Hour), 2) // entirely above the cap
+	usage(monthStart, int64(api.PlanHobby.PlanIncludedGBHours())) // the whole Hobby allowance
+	usage(monthStart.Add(time.Hour), 3)                           // crosses a 1-cent (1 GB-h) cap
+	usage(monthStart.Add(2*time.Hour), 2)                         // entirely above the cap
 	capCents := int64(1)
 	if err := store.UpdateAccountOverageCapCents(ctx, acct.ID, &capCents); err != nil {
 		t.Fatal(err)

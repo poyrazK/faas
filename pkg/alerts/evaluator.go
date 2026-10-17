@@ -852,10 +852,10 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricAccountSpendEUR:
 		// Postgres-backed MTD SUM. Issue #1233 / ADR-123.
-		// Threshold is EUR (not cents) per the catalog seed
+		// Threshold is whole billing-currency units (not cents) per the catalog seed
 		// (spend_eur_20 fires at gt 20). CLAUDE.md says "Floats
 		// near money fail review" — observed is int64 cents,
-		// compareCents rounds the EUR threshold to cents at the
+		// compareCents rounds the threshold to cents at the
 		// seam so the comparison is integer-aligned end-to-end.
 		cents, err := e.store.MTDSpendEurCents(ctx, rule.AccountID)
 		if err != nil {
@@ -1110,9 +1110,9 @@ func compareFloat(observed float64, op state.AlertComparison, threshold float64)
 // monetary metrics (issue #1233 / ADR-123, account_spend_eur).
 // CLAUDE.md mandates "Floats near money fail review" — the
 // AccountSpend path stores cents (int64) and the catalog's
-// spend_eur_20 preset ships a threshold in EUR (20.0), so we convert
+// spend_eur_20 preset ships a threshold in whole billing-currency units (20.0), so we convert
 // thresholdEUR to cents ONCE at the seam (rounded half-to-even
-// avoids the 19.995 EUR phantom-fire at the month edge) and
+// avoids the 19.995 phantom-fire at the month edge) and
 // compare two integers. No further float math touches the value.
 func compareCents(observedCents int64, op state.AlertComparison, thresholdEUR float64) bool {
 	// math.Round(threshold*100)/100 then *100 keeps the float out

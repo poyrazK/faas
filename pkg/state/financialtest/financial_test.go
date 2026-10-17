@@ -48,7 +48,7 @@ func financialIntervalPlanSuite(t *testing.T, store financialTestStore) {
 	first := start.Add(time.Hour)
 	for i, plan := range []api.Plan{api.PlanHobby, api.PlanPro, api.PlanHobby} {
 		for _, meter := range []struct{ name, unit string }{{"compute", "mb_seconds"}, {"egress", "interface_bytes"}} {
-			p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: plan, EffectiveFrom: first.Add(time.Duration(i) * 2 * time.Minute), DeliveryMode: "live", Price: financial.Price{Version: fmt.Sprintf("%s-%d", meter.name, i), Meter: meter.name, Currency: "EUR", Unit: meter.unit, UnitQuantity: 1, MillicentsPerUnit: 1}}
+			p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: plan, EffectiveFrom: first.Add(time.Duration(i) * 2 * time.Minute), DeliveryMode: "live", Price: financial.Price{Version: fmt.Sprintf("%s-%d", meter.name, i), Meter: meter.name, Currency: "USD", Unit: meter.unit, UnitQuantity: 1, MillicentsPerUnit: 1}}
 			if _, err := store.PutFinancialPriceSnapshot(t.Context(), p); err != nil {
 				t.Fatal(err)
 			}
@@ -216,7 +216,7 @@ func financialPriceSuite(t *testing.T, store financialTestStore) {
 	a := financialAccount(t, store)
 	other := financialAccount(t, store)
 	start, end := financialPeriod()
-	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "compute-hobby-v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: 1000, IncludedQuantity: 50 * api.SecondsPerGBHour}}
+	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "compute-hobby-v1", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: 1000, IncludedQuantity: 50 * api.SecondsPerGBHour}}
 	first, err := store.PutFinancialPriceSnapshot(t.Context(), p)
 	if err != nil || first.RecordedAt.IsZero() {
 		t.Fatalf("price put: %+v, %v", first, err)
@@ -288,7 +288,7 @@ func financialContractSuite(t *testing.T, store financialTestStore) {
 		}
 	}
 	appendUsage(minute, 5) // Missing prices must remain missing after later activation.
-	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: minute.Add(time.Minute), DeliveryMode: "live", Price: financial.Price{Version: "hobby-first", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: 1000, IncludedQuantity: 50 * api.SecondsPerGBHour}}
+	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: minute.Add(time.Minute), DeliveryMode: "live", Price: financial.Price{Version: "hobby-first", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: 1000, IncludedQuantity: 50 * api.SecondsPerGBHour}}
 	if _, err := store.PutFinancialPriceSnapshot(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}
