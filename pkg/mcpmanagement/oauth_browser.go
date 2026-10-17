@@ -20,6 +20,7 @@ var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <form method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
 {{if .Writes}}<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, and checked rollback. These actions can change traffic and incur costs.</label></p>{{end}}
 <fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>{{range .Apps}}<p><label><input type="checkbox" name="apps" value="{{.Slug}}"> {{.Slug}}</label></p>{{end}}</fieldset>
+<fieldset><legend>App diagnostics (optional)</legend><p>Allow retained request status, routes, timing, performance evidence, retained wake observations, sampled CPU profile function labels and collection/attribution summaries, and scheduler residency causes across all environments of each selected app. This may contain private application data. Future apps are excluded. Native plan and retention limits still apply. This does not grant environment, log or write access.</p>{{range .Apps}}<p><label><input type="checkbox" name="request_read_apps" value="{{.Slug}}"> Read app diagnostics for {{.Slug}}</label></p>{{end}}</fieldset>
 <fieldset><legend>Environment access</legend><p>Default app inspection is included. Named environments require separate consent for the selected apps.</p>{{if .Writes}}<p><label><input type="checkbox" name="default_write" value="yes"> Allow writes to the default environment</label></p>{{end}}{{range .Environments}}<p><label><input type="checkbox" name="environments" value="{{.Project}}/{{.Environment}}"> Read {{.Project}} / {{.Environment}}</label>{{if $.Writes}} <label><input type="checkbox" name="environment_writes" value="{{.Project}}/{{.Environment}}"> Write {{.Project}} / {{.Environment}}</label>{{end}}</p>{{end}}</fieldset>
 <p>Environment promotions affect every project workload and require consent for all of them. Protected targets still need a human-issued Gregale approval. The connection lasts at most eight hours. Revoke it through your client or revoke its credential in Gregale.</p>
 <button name="decision" value="approve" type="submit">Connect this account</button> <button name="decision" value="deny" type="submit" formnovalidate>Cancel</button></form>
@@ -168,13 +169,16 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 400, "invalid_request", "Choose account-wide access or one or more reviewed apps")
 		return
 	}
-	g.allowedApps = apps
 	environments, err := selectedEnvironments(req, g.availableEnvironments, apps, r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite))
 	if err != nil {
 		oauthError(w, 400, "invalid_request", "Choose reviewed environments and explicitly allow each write target")
 		return
 	}
-	g.environments = environments
+	environments.RequestReadApps, err = selectedRequestApps(req, g.availableApps, apps)
+	if err != nil {
+		oauthError(w, 400, "invalid_request", "Choose request diagnostics only for reviewed, accessible apps")
+		return
+	}
 	server, management, err := newManagementServer(g.client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite)})
 	if err != nil {
 		oauthError(w, 500, "server_error", "Could not prepare account tools")
@@ -190,6 +194,7 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		return
 	}
 	g.server, g.management = server, management
+	g.allowedApps, g.environments = apps, environments
 	g.expires = minTime(g.credentialExpires, time.Now().Add(oauthGrantTTL))
 	g.availableApps = nil
 	g.availableEnvironments = nil

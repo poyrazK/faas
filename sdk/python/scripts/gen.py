@@ -168,7 +168,6 @@ WRAPPER_MODULES = (
     "_binding_creation.py",
     "_binding_runner.py",
     "_binding_runner_diagnostics.py",
-
     "realtime_workers.py",
     "realtime_activity.py",
     "realtime_presence.py",
@@ -290,6 +289,9 @@ def _preserve_handwritten_sdk(output: Path):
         for relative in [
             *(Path("faas_sdk") / name for name in WRAPPER_MODULES),
             *(Path(name) for name in PROJECT_FILES),
+            # Tests are authored inputs too. Formatter/import rewrites must
+            # not replace their current bytes, including uncommitted edits.
+            *(path.relative_to(output) for path in (output / "tests").rglob("*.py")),
         ]:
             source = output / relative
             if source.exists():
