@@ -139,6 +139,7 @@ func Files(t *testing.T) map[string]string {
 
 // No application lifecycle endpoints: the generated adapter owns them.
 const Handler = `import pg from 'pg';
+import {setTimeout as delay} from 'node:timers/promises';
 import {createPostgresPool,postgresPoolConfig} from './runtime/postgres-pool-runtime.js';
 const make=()=>createPostgresPool(()=>new pg.Pool({...postgresPoolConfig(process.env.DATABASE_URL),max:1,application_name:'gregale-function-'+process.pid}),{
  timeoutMs:12000,readinessQuery:{text:'SELECT id FROM notes LIMIT 1'}
@@ -149,7 +150,14 @@ if(process.env.FUNCTION_SQL_CONTROL_URL){
  const bridge=globalThis[Symbol.for('gregale.function.postgres.lifecycle.v1')];
  if(!bridge)throw new Error('function resource bridge missing');
  const barrier=async(phase,signal)=>{
-   const response=await fetch(process.env.FUNCTION_SQL_CONTROL_URL+'/'+phase+'?pid='+process.pid,{
+   // Resource callbacks run concurrently. Observe both pool owners finishing
+   // before sampling generations; never invoke their callbacks a second time.
+   const wanted=phase==='checkpoint'?'checkpointed':'ready';
+   while(databases.some(db=>db.diagnostics.state!==wanted)){
+     if(databases.some(db=>['unavailable','closed'].includes(db.diagnostics.state)))throw new Error('pool witness failed');
+     await delay(5,undefined,{signal});
+   }
+   const response=await fetch(process.env.FUNCTION_SQL_CONTROL_URL+'/'+phase+'?pid='+process.pid+'&generations='+databases.map(db=>db.generation).join(','),{
      method:'POST',signal,headers:{authorization:'Bearer '+process.env.FUNCTION_SQL_CONTROL_TOKEN,connection:'close'}
    });
    await response.arrayBuffer();

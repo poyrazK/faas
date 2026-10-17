@@ -480,6 +480,12 @@ test-function-background-native: ## Strict Node execution lifetime/capture/thaw 
 	  -race -count=1 -v -run '^TestFunction(Background|ResourcesPostgres|MigrationAdmissionPostgres)Metal$$' -timeout 90m ./cmd/e2e
 	$(MAKE) leakcheck
 
+.PHONY: test-function-migration-native
+test-function-migration-native: ## Guarded successful Node22/24 migration on two prepared native KVM hosts (ADR-1352)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
+	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"
+
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
 	@test -c /dev/kvm || (echo "/dev/kvm missing; run on the native KVM acceptance host" >&2; exit 1)

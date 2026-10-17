@@ -17,8 +17,13 @@ on:
       - 'sqlc.yaml'
       - 'pkg/imaged/**'
       - 'pkg/e2etest/functionsql/**'
+      - 'pkg/e2etest/functionmigration/**'
       - 'cmd/e2e/function_resources_postgres_metal_test.go'
       - 'cmd/e2e/function_migration_admission_postgres_metal_test.go'
+      - 'cmd/e2e/function_migration_destination_*_metal_test.go'
+      - 'cmd/e2e/sec11_sweep_test.go'
+      - 'scripts/ci/function-migration-native*.py'
+      - 'scripts/ci/test_function_migration_native.py'
       - 'pkg/api/limits.go'
       - 'cmd/vmmd/**'
       - 'pkg/rootfs/**'
@@ -128,10 +133,14 @@ jobs:
           FAAS_TEST_FUNCTION_POSTGRES: '1'
         run: |
           umask 022
+          python3 -B -m unittest discover -s scripts/ci -p test_function_migration_native.py
+          go test -p 1 -race ./pkg/e2etest/functionmigration ./pkg/e2etest/functionsql -count=1 -timeout=2m
           go test -p 1 -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
           go test -p 1 -race ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc -run '^Test(Function(Migration|Destination|Resource|Execution)|PgStoreFunctionMigrationSource)' -count=1 -timeout=3m
           go test -p 1 -race -tags metal,function_background_native ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Destination|Resource|Execution)|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=3m
           go test -p 1 ./pkg/imaged -run '^TestApplyAppLifecycle' -count=1 -timeout=3m
-      - name: remove fixture private key
+      - name: compile the guarded two-host native suite (execution requires the native fixture)
+        run: go test -p 1 -race -tags metal,function_background_native -c -o "$RUNNER_TEMP/function-migration-native.test" ./cmd/e2e
+      - name: remove fixture private key and compiled test binary
         if: always()
-        run: rm -f "$RUNNER_TEMP/function-sql/server.key"
+        run: rm -f "$RUNNER_TEMP/function-sql/server.key" "$RUNNER_TEMP/function-migration-native.test"

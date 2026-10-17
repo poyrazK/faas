@@ -97,3 +97,13 @@ not replay a destination attempt, but does not promise globally exactly-once
 application effects across an aborted migration and later source recovery. Use
 application idempotency or durable jobs for that requirement. No automatic retry
 of the interrupted customer invocation is introduced.
+
+`make test-function-migration-native` implements the successful-migration slice
+against two prepared native hosts. It uses actual VM RPCs and the production
+scheduler migration coordinator, with independent PostgreSQL and physical host
+witnesses. It rejects skipped cases and incomplete cleanup, and always reports
+the failure matrix and production readiness as unqualified. The fixture and
+remaining gates are documented in the
+[native migration runbook](../ops/function-migration-native-acceptance.md).
+Portable guard tests and compilation of this harness do not establish native
+acceptance.

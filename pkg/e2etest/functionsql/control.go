@@ -4,7 +4,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,7 +25,12 @@ type Control struct {
 
 type controlPhase struct {
 	gate     chan struct{}
-	arrivals map[int]bool
+	arrivals map[int]WorkerWitness
+}
+
+type WorkerWitness struct {
+	PID         int   `json:"pid"`
+	Generations []int `json:"generations"`
 }
 
 func NewControl(t *testing.T, host string) *Control {
@@ -47,12 +54,27 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+	var generations []int
+	if raw := r.URL.Query().Get("generations"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			generation, err := strconv.Atoi(part)
+			if err != nil || generation < 0 || len(generations) == 2 {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			generations = append(generations, generation)
+		}
+		if len(generations) != 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+	}
 	c.mu.Lock()
 	phase := c.phases[r.URL.Path]
 	var gate chan struct{}
 	if phase != nil {
 		gate = phase.gate
-		phase.arrivals[pid] = true
+		phase.arrivals[pid] = WorkerWitness{PID: pid, Generations: generations}
 	}
 	c.mu.Unlock()
 	if gate != nil {
@@ -79,11 +101,28 @@ func (c *Control) arm(path string) {
 	if c.phases[path] != nil {
 		panic("lifecycle control already armed")
 	}
-	c.phases[path] = &controlPhase{gate: make(chan struct{}), arrivals: map[int]bool{}}
+	c.phases[path] = &controlPhase{gate: make(chan struct{}), arrivals: map[int]WorkerWitness{}}
 }
 
 func (c *Control) Arrivals() int         { return c.arrivals("/checkpoint") }
 func (c *Control) RecoveryArrivals() int { return c.arrivals("/recovery") }
+
+func (c *Control) CheckpointWorkers() []WorkerWitness { return c.workers("/checkpoint") }
+func (c *Control) RecoveryWorkers() []WorkerWitness   { return c.workers("/recovery") }
+
+func (c *Control) workers(path string) []WorkerWitness {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var result []WorkerWitness
+	if phase := c.phases[path]; phase != nil {
+		for _, worker := range phase.arrivals {
+			worker.Generations = slices.Clone(worker.Generations)
+			result = append(result, worker)
+		}
+	}
+	slices.SortFunc(result, func(a, b WorkerWitness) int { return a.PID - b.PID })
+	return result
+}
 
 func (c *Control) arrivals(path string) int {
 	c.mu.Lock()

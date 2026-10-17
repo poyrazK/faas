@@ -105,7 +105,7 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 	awaitBackground(t, func() bool { return host.count() == 0 && len(sql.Rows(t.Context(), t)) == 3 })
 	// Model repeated continuing-VM captures: the same four interpreters must
 	// drain and rebuild twice. Native snapshot bytes are a separate gate.
-	for range 2 {
+	for cycle := range 2 {
 		control.Arm()
 		control.ArmRecovery()
 		callback := make(chan int, 1)
@@ -114,6 +114,7 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 			callback <- resourceHook(f, functionlifetime.BeforeResourcePath, "before_checkpoint")
 		}()
 		awaitBackground(t, func() bool { all, _ := sql.Connections(t.Context(), t); return control.Arrivals() == 4 && all == 0 })
+		checkSQLWorkerGenerations(t, control.CheckpointWorkers(), pids, cycle)
 		select {
 		case <-callback:
 			t.Fatal("checkpoint acknowledged before control released")
@@ -138,6 +139,7 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 			all, _ := sql.Connections(t.Context(), t)
 			return control.RecoveryArrivals() == 4 && all == 8
 		})
+		checkSQLWorkerGenerations(t, control.RecoveryWorkers(), pids, cycle+1)
 		select {
 		case <-callback:
 			t.Fatal("recovery acknowledged before every worker completed")
@@ -171,5 +173,17 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 	}
 	if rows := sql.Rows(t.Context(), t); len(rows) != 3 || rows["interrupted"] != 0 {
 		t.Fatal("worker replacement replayed or committed interrupted SQL")
+	}
+}
+
+func checkSQLWorkerGenerations(t *testing.T, workers []functionsql.WorkerWitness, pids map[int]bool, generation int) {
+	t.Helper()
+	if len(workers) != len(pids) {
+		t.Fatal("resource witness missed a loaded interpreter")
+	}
+	for _, worker := range workers {
+		if !pids[worker.PID] || len(worker.Generations) != 2 || worker.Generations[0] != generation || worker.Generations[1] != generation {
+			t.Fatal("resource witness sampled an unfinished or repeated pool recovery")
+		}
 	}
 }

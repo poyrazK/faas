@@ -252,6 +252,13 @@ The existing strict native target qualifies source cancellation/recovery; it is
 not a two-host destination acceptance result. Do not count its source-only cases
 as completion of this matrix.
 
+The successful-migration portion now has a separate guarded entry point,
+`make test-function-migration-native`. Follow the
+[prepared two-host fixture procedure](function-migration-native-acceptance.md).
+Its verdict covers successful moves only; the failure/restart matrix below and
+production activation remain separate gates. Local compilation and portable
+witness tests supply no native verdict.
+
 Use two designated native x86_64 KVM hosts, their independently built qualified
 vmmd/guest/runners, shared disposable capture storage/catalog, current artifact
 approvals and a restricted TLS/SCRAM PostgreSQL fixture. Run Node 22 and Node 24
