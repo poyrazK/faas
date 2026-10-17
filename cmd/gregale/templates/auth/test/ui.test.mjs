@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, errorMessage, fragmentParams, handoffURL } from '../ui/app.js'
+import { allowedRedirect, consentView, errorMessage, fragmentParams, handoffURL, secondFactors, tokenAAL } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -108,4 +108,31 @@ test('a CAPTCHA token is required when the check is shown, and sent once', async
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, undefined), { email: 'a@example.test' })
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, 'tok'), { email: 'a@example.test', gotrue_meta_security: { captcha_token: 'tok' } })
   assert.throws(() => captchaBody({}, ''), /security check/)
+})
+
+test('a sign-in asks for a verified second factor until the session is aal2', () => {
+  const token = claims => `x.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.y`
+  assert.equal(tokenAAL(token({ aal: 'aal2' })), 'aal2')
+  assert.equal(tokenAAL(token({ aal: 'aal1' })), 'aal1')
+  assert.equal(tokenAAL(token({})), 'aal1')
+  assert.equal(tokenAAL('garbage'), 'aal1')
+  const user = { factors: [
+    { id: 'f1', factor_type: 'totp', status: 'verified' }, { id: 'f2', factor_type: 'phone', status: 'unverified' },
+    { id: 'f3', factor_type: 'phone', status: 'verified', phone: '447700900123' }, { id: 'f4', factor_type: 'recovery_code', status: 'verified' },
+    { id: 'f5', factor_type: 'webauthn', status: 'verified' },
+  ] }
+  assert.deepEqual(secondFactors(user).factors.map(f => f.id), ['f1', 'f3'])
+  assert.equal(secondFactors(user).recovery, true)
+  assert.deepEqual(secondFactors({}), { factors: [], recovery: false })
+  assert.equal(errorMessage({ error_code: 'mfa_verification_failed' }, 422), 'That code is wrong. Try again.')
+})
+
+test('the consent page names the client, its permissions, its resource and where it returns', () => {
+  const view = consentView({ client: { name: 'Claude' }, user: { email: 'ada@example.com' }, scope: 'openid email custom', redirect_uri: 'http://localhost:6274/oauth/callback', resource: 'https://mcp.shop.example.com/mcp' })
+  assert.deepEqual(view, { name: 'Claude', account: 'ada@example.com', abilities: ['Know who you are', 'See your email address', 'Use the custom permission'], resource: 'https://mcp.shop.example.com/mcp', destination: 'localhost:6274' })
+  assert.equal(consentView({ redirect_uri: 'cursor://anysphere.cursor-mcp/oauth/callback' }).destination, 'cursor app')
+  assert.equal(consentView({ redirect_uri: 'not a url' }).destination, 'an unknown address')
+  assert.equal(consentView({ client: { name: '' } }).name, 'An application')
+  assert.equal(consentView({ client: { name: 'x'.repeat(500) } }).name.length, 100)
+  assert.equal(allowedRedirect('https://shop-auth.gregale.app/ui/consent?authorization_id=a', 'https://shop.example.com', ['https://shop-auth.gregale.app/ui/consent']), 'https://shop-auth.gregale.app/ui/consent?authorization_id=a')
 })

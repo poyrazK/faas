@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { authzConfig, characterClasses, databaseURL, migrationEnv, runtimeConfig, signingKeys } from '../config.mjs'
+import { authzConfig, characterClasses, databaseURL, goMemoryLimit, migrationEnv, runtimeConfig, signingKeys } from '../config.mjs'
 
 // keySecret is one AUTH_JWT_KEY_<ID> secret as `gregale auth` writes it.
 function keySecret(id) {
@@ -46,6 +46,13 @@ test('builds the GoTrue environment from sealed settings', () => {
   // The child gets an explicit environment, never the whole process env.
   assert.equal(g.AUTH_JWT_SECRET, undefined)
   assert.equal(g.PATH, undefined)
+})
+
+test('GoTrue collects garbage within a third of the instance memory', () => {
+  assert.equal(goMemoryLimit(136 * 1048576), '45MiB')
+  assert.equal(goMemoryLimit(64 * 1048576), '32MiB')
+  assert.equal(goMemoryLimit(1032 * 1048576), '344MiB')
+  assert.match(goMemoryLimit(), /^\d+MiB$/)
 })
 
 test('passes provider settings through but rejects platform-owned GoTrue keys', () => {
@@ -117,9 +124,9 @@ test('enabled providers get this app\'s callback, and settings report only publi
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
     signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
-    mfa: { totp: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
+    mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
-    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, phone: { enabled: false, provider: null }, sso: { enabled: false, entity_id: null, acs_url: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
@@ -190,7 +197,9 @@ test('phone sign-in needs a known SMS provider and names the app in the message'
   assert.equal(config.gotrueEnv.GOTRUE_SMS_TEMPLATE, 'Your Shop  .Evil  code is {{ .Code }}')
   assert.equal(config.gotrueEnv.GOTRUE_SMS_OTP_EXP, '300')
   assert.equal(runtimeConfig(env({ ...twilio, GOTRUE_SMS_OTP_EXP: '120' })).gotrueEnv.GOTRUE_SMS_OTP_EXP, '120')
-  assert.deepEqual(config.settings.phone, { enabled: true, provider: 'twilio' })
+  assert.deepEqual(config.settings.phone, { enabled: true, provider: 'twilio', countries: null })
+  assert.deepEqual(runtimeConfig(env({ ...twilio, AUTH_SMS_COUNTRIES: '1,44' })).settings.phone.countries, ['1', '44'])
+  assert.throws(() => runtimeConfig(env({ ...twilio, AUTH_SMS_COUNTRIES: '+44' })), /AUTH_SMS_COUNTRIES/)
   assert.ok(!JSON.stringify(config.settings).includes('token-secret'))
   assert.equal(runtimeConfig(env({ ...twilio, GOTRUE_SMS_TEMPLATE: '{{ .Code }} is your code' })).gotrueEnv.GOTRUE_SMS_TEMPLATE, '{{ .Code }} is your code')
   assert.throws(() => runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'true', GOTRUE_SMS_PROVIDER: 'sinch' })), /GOTRUE_SMS_PROVIDER must be one of/)
@@ -198,6 +207,23 @@ test('phone sign-in needs a known SMS provider and names the app in the message'
   const off = runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'false', GOTRUE_SMS_PROVIDER: 'twilio' }))
   assert.equal(off.gotrueEnv.GOTRUE_SMS_TEMPLATE, undefined)
   assert.equal(off.gotrueEnv.GOTRUE_SMS_OTP_EXP, undefined)
-  assert.deepEqual(off.settings.phone, { enabled: false, provider: null })
+  assert.deepEqual(off.settings.phone, { enabled: false, provider: null, countries: null })
   assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_SMS_SENT: '1000' })), /managed by Gregale/)
+})
+
+test('SMS codes as a second factor need an SMS provider', () => {
+  const sms = { GOTRUE_SMS_PROVIDER: 'twilio', GOTRUE_SMS_TWILIO_ACCOUNT_SID: 'AC1', GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID: 'MG1', GOTRUE_SMS_TWILIO_AUTH_TOKEN: 't' }
+  const on = runtimeConfig(env({ ...sms, GOTRUE_MFA_PHONE_ENROLL_ENABLED: 'true', GOTRUE_MFA_PHONE_VERIFY_ENABLED: 'true', GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED: 'true', AUTH_UI_NAME: 'Shop' }))
+  assert.deepEqual(on.settings.mfa, { totp: true, phone: true, recovery_codes: true })
+  assert.equal(on.gotrueEnv.GOTRUE_MFA_PHONE_TEMPLATE, 'Your Shop verification code is {{ .Code }}')
+  const errors = []
+  const original = console.error
+  console.error = line => errors.push(line)
+  try {
+    const off = runtimeConfig(env({ GOTRUE_MFA_PHONE_ENROLL_ENABLED: 'true', GOTRUE_MFA_PHONE_VERIFY_ENABLED: 'true' }))
+    assert.equal(off.gotrueEnv.GOTRUE_MFA_PHONE_ENROLL_ENABLED, 'false')
+    assert.equal(off.gotrueEnv.GOTRUE_MFA_PHONE_VERIFY_ENABLED, 'true')
+    assert.equal(off.settings.mfa.phone, false)
+  } finally { console.error = original }
+  assert.deepEqual(errors.map(line => JSON.parse(line).event), ['phone_mfa_without_sms_provider'])
 })

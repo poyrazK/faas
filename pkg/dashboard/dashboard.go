@@ -1471,9 +1471,12 @@ type AppCostOverviewRow struct {
 type AppDetailData struct {
 	ProductControlURL  string
 	ProfilingAvailable bool
-	App                AppListItem
-	Manifest           ManifestView
-	AppCosts           *AppCostsView
+	// ApplicationAuth shows the application Auth screens' link, a dark
+	// launch (api.ApplicationAuthEnabled).
+	ApplicationAuth bool
+	App             AppListItem
+	Manifest        ManifestView
+	AppCosts        *AppCostsView
 	// RefreshQuery preserves the selected app-detail filters when an SSE
 	// event refreshes the page content.
 	RefreshQuery     string

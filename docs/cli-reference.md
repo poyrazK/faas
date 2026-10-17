@@ -86,7 +86,6 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`auth`](#auth) | Add sign-up, sessions and users to your application (application Auth, not your Gregale login) |
 | [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
@@ -1584,7 +1583,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `auth` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add bucket
@@ -8052,7 +8051,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` · `auth` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -9865,7 +9864,7 @@ gregale edge-rules trace --app my-api --url https://api.example.com/admin --add-
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-auth <AUTH_APP>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9900,7 +9899,6 @@ Add an edge rule
 | `--geo-deny <CC>` | kind=geo: deny ISO country code (repeat) |  |
 | `--jwt-issuer <ISSUER>` | kind=jwt: token issuer |  |
 | `--jwt-jwks-url <URL>` | kind=jwt: JWKS URL (https) |  |
-| `--jwt-auth <AUTH_APP>` | kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp) |  |
 | `--on-success-webhook <ID>` | success webhook subscription; repeat when updating async policy |  |
 | `--on-failure-webhook <ID>` | failure webhook subscription; repeat when updating async policy |  |
 | `--async-max-attempts <N>` | total attempts (0 = plan default; capped by plan) |  |
@@ -11194,7 +11192,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` · `auth` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -13902,321 +13900,6 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 `gregale plan`
 
 
-## auth
-
-Add sign-up, sessions and users to your application (application Auth, not your Gregale login)
-
-`gregale auth [<subcommand>]`
-
-### auth create
-
-Deploy a managed GoTrue Auth server bound to your database
-
-`gregale auth create --database <DATABASE> --site-url <URL> [--redirect-urls <URLS>] [--scope <SCOPE>] [--autoconfirm] [--disable-signup] [--authz <FILE>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--workflows] [--resume] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--database <DATABASE>` | ready managed database name or ID | required |
-| `--site-url <URL>` | application URL users return to after sign-in | required |
-| `--redirect-urls <URLS>` | comma-separated additional allowed redirect URLs |  |
-| `--scope <SCOPE>` | environment scope |  |
-| `--autoconfirm` | sign users in without email confirmation (development only) |  |
-| `--disable-signup` | allow only invited or administrator-created users |  |
-| `--authz <FILE>` | JSON file declaring custom roles and policies (applied on deploy) |  |
-| `--email-provider <PROVIDER>` | HTTPS email provider | one of `resend` · `postmark` |
-| `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
-| `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
-| `--workflows` | let authorized users start workflows (mints an events:publish key sealed in the app) |  |
-| `--resume` | resume configuration and deployment of an existing app |  |
-
-Examples:
-
-```sh
-gregale auth create shop-auth --database shop-db --site-url https://shop.example.com
-gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --authz authz.json
-```
-
-### auth status
-
-Show the issuer, JWKS URL and readiness of an Auth app
-
-`gregale auth status <name>`
-
-### auth config
-
-Show the running Auth settings, or change them and restart the app
-
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--sso <on|off>] [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--site-url <URL>` | application URL users return to after sign-in |  |
-| `--redirect-urls <URLS>` | comma-separated additional allowed redirect URLs; replaces the list (none clears it) |  |
-| `--signup <on|off>` | whether anyone may sign up | one of `on` · `off` |
-| `--autoconfirm <on|off>` | sign users in without email confirmation (development only) | one of `on` · `off` |
-| `--password-min-length <N>` | minimum password length (6-72) |  |
-| `--password-require <CLASSES>` | character classes every password needs: lower,upper,digit,symbol, or none |  |
-| `--leaked-password-check <on|off>` | refuse passwords found in known breaches (Have I Been Pwned) | one of `on` · `off` |
-| `--mfa <on|off>` | let users enrol an authenticator app (TOTP); enrolled users keep verifying when off | one of `on` · `off` |
-| `--email-provider <PROVIDER>` | HTTPS email provider, or none to remove it | one of `resend` · `postmark` · `none` |
-| `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
-| `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
-| `--authz <FILE>` | JSON file declaring custom roles and policies (applied on restart) |  |
-| `--events <on|off>` | publish user lifecycle events (auth.user.*) to Gregale&#39;s event bus | one of `on` · `off` |
-| `--passkeys <on|off>` | let users sign in with a passkey | one of `on` · `off` |
-| `--passkey-rp-id <DOMAIN>` | parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app&#39;s host |  |
-| `--brand-name <NAME>` | name shown on the hosted pages and in emails, or none for the site&#39;s host |  |
-| `--brand-color <#RRGGBB>` | #rrggbb accent colour for the hosted pages, or none |  |
-| `--brand-logo-url <URL>` | HTTPS URL of the logo on the hosted pages, or none |  |
-| `--captcha <PROVIDER>` | CAPTCHA on sign-up and sign-in: turnstile, hcaptcha or off | one of `turnstile` · `hcaptcha` · `off` |
-| `--captcha-site-key <KEY>` | the CAPTCHA provider&#39;s site key (public) |  |
-| `--captcha-secret-stdin` | read the CAPTCHA provider&#39;s secret key from stdin (prompted on a terminal) |  |
-| `--activity-retention <DAYS>` | days to keep sign-in activity, or forever |  |
-| `--sms <PROVIDER>` | phone sign-in by text message through your own SMS account, or off | one of `twilio` · `twilio_verify` · `messagebird` · `textlocal` · `vonage` · `off` |
-| `--sms-account <ID>` | Twilio account SID or Vonage API key |  |
-| `--sms-sender <SENDER>` | Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from |  |
-| `--sms-secret-stdin` | read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin |  |
-| `--sso <on|off>` | organization single sign-on (SAML); manage identity providers with gregale auth sso | one of `on` · `off` |
-| `--scope <SCOPE>` | environment scope |  |
-
-Examples:
-
-```sh
-gregale auth config shop-auth
-gregale auth config shop-auth --events on
-gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on
-```
-
-### auth providers
-
-Manage OAuth sign-in providers such as Google or GitHub
-
-#### auth providers list
-
-List the enabled providers
-
-`gregale auth providers list [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth providers enable
-
-Enable a provider, replacing its credentials
-
-`gregale auth providers enable --client-id <ID> [--client-secret-stdin] [--url <URL>] [--scope <SCOPE>] <name> <provider>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--client-id <ID>` | OAuth client ID from the provider | required |
-| `--client-secret-stdin` | read the OAuth client secret from stdin (prompted on a terminal) |  |
-| `--url <URL>` | provider server URL (Keycloak, or a self-hosted GitLab, Azure tenant or WorkOS) |  |
-| `--scope <SCOPE>` | environment scope |  |
-
-Examples:
-
-```sh
-gregale auth providers enable shop-auth google --client-id ID --client-secret-stdin
-```
-
-#### auth providers disable
-
-Disable a provider and remove its credentials
-
-`gregale auth providers disable [--scope <SCOPE>] <name> <provider>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-### auth keys
-
-Rotate the ES256 keys that sign the Auth app&#39;s tokens
-
-#### auth keys list
-
-List signing keys and their state
-
-`gregale auth keys list [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth keys rotate
-
-Add a key, wait until it is published, then make it sign
-
-`gregale auth keys rotate [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth keys create
-
-Add a standby key that verifies but does not sign yet
-
-`gregale auth keys create [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth keys activate
-
-Make a published key sign; the previous key keeps verifying
-
-`gregale auth keys activate [--scope <SCOPE>] <name> <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth keys revoke
-
-Remove a key that no longer signs; its tokens stop verifying
-
-`gregale auth keys revoke [--scope <SCOPE>] <name> <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-### auth admin-key
-
-Manage owner keys for the dashboard&#39;s users and organizations screens and imports
-
-#### auth admin-key create
-
-Create a key; it is shown once and only its hash is stored
-
-`gregale auth admin-key create [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth admin-key list
-
-List admin key IDs
-
-`gregale auth admin-key list [--scope <SCOPE>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-#### auth admin-key revoke
-
-Revoke an admin key
-
-`gregale auth admin-key revoke [--scope <SCOPE>] <name> <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scope <SCOPE>` | environment scope |  |
-
-### auth import
-
-Import users with their password hashes from a JSON or JSON Lines file
-
-`gregale auth import --file <FILE> [--dry-run] [--admin-key-stdin] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--file <FILE>` | JSON array or JSON Lines file of users | required |
-| `--dry-run` | validate the file without importing |  |
-| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
-
-Examples:
-
-```sh
-gregale auth import shop-auth --file users.jsonl --dry-run
-printf '%s' "$ADMIN_KEY" | gregale auth import shop-auth --file users.jsonl --admin-key-stdin
-```
-
-### auth activity
-
-List sign-ins, sign-ups and account changes, newest first
-
-`gregale auth activity [--user <ID>] [--search <TEXT>] [--limit <N>] [--admin-key-stdin] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--user <ID>` | only this user&#39;s activity (user ID) |  |
-| `--search <TEXT>` | an event such as login, or part of an email address |  |
-| `--limit <N>` | entries to show (1-100) |  |
-| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
-
-Examples:
-
-```sh
-printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
-```
-
-### auth sso
-
-Register SAML identity providers for organization single sign-on
-
-#### auth sso list
-
-List identity providers and the organizations their users join
-
-`gregale auth sso list [--admin-key-stdin] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
-
-#### auth sso add
-
-Register an identity provider for email domains, optionally joining its users to an organization
-
-`gregale auth sso add [--metadata-url <URL>] [--metadata-file <FILE>] --domains <DOMAINS> [--org <ORG>] [--role <ROLE>] [--admin-key-stdin] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--metadata-url <URL>` | the identity provider&#39;s HTTPS SAML metadata URL |  |
-| `--metadata-file <FILE>` | a file holding the identity provider&#39;s SAML metadata XML |  |
-| `--domains <DOMAINS>` | comma-separated email domains whose users sign in through this provider | required |
-| `--org <ORG>` | organization (ID or slug) its users join |  |
-| `--role <ROLE>` | role its users join the organization with (not owner) |  |
-| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
-
-Examples:
-
-```sh
-printf '%s' "$ADMIN_KEY" | gregale auth sso add shop-auth --metadata-url https://acme.okta.com/app/abc/sso/saml/metadata --domains acme.com --org acme --admin-key-stdin
-```
-
-#### auth sso update
-
-Change a provider&#39;s metadata, domains or organization
-
-`gregale auth sso update [--metadata-url <URL>] [--metadata-file <FILE>] [--domains <DOMAINS>] [--org <ORG>] [--role <ROLE>] [--admin-key-stdin] <name> <provider-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--metadata-url <URL>` | the identity provider&#39;s HTTPS SAML metadata URL |  |
-| `--metadata-file <FILE>` | a file holding the identity provider&#39;s SAML metadata XML |  |
-| `--domains <DOMAINS>` | comma-separated email domains; replaces the list |  |
-| `--org <ORG>` | organization (ID or slug) its users join, or none |  |
-| `--role <ROLE>` | role its users join the organization with (not owner) |  |
-| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
-
-#### auth sso remove
-
-Remove an identity provider; its users keep their memberships
-
-`gregale auth sso remove [--admin-key-stdin] <name> <provider-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
-
-
 ## data-api
 
 Create schema-generated PostgreSQL APIs and export application types
@@ -14461,14 +14144,13 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--auth <AUTH_APP>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--database <DATABASE>` | ready managed database name or ID | required |
 | `--schema <SCHEMA>` | exposed schema (api) |  |
 | `--scope <SCOPE>` | environment scope |  |
-| `--auth <AUTH_APP>` | Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience) |  |
 | `--issuer <HTTPS_URL>` | application JWT issuer |  |
 | `--jwks-url <HTTPS_URL>` | application JWKS URL |  |
 | `--audience <AUDIENCE>` | application JWT audience |  |
@@ -14926,7 +14608,7 @@ Show one endpoint and safe auth-rotation status
 
 Create a managed realtime endpoint
 
-`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth <AUTH_APP>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14941,7 +14623,6 @@ Create a managed realtime endpoint
 | `--auth-token <TOKEN>` | client static bearer token (prefer --auth-token-stdin) |  |
 | `--auth-issuer <URL>` | OIDC issuer URL |  |
 | `--auth-jwks-url <URL>` | OIDC JWKS URL |  |
-| `--auth <AUTH_APP>` | Auth app that verifies clients and authorizes channels; replaces the callback and auth flags |  |
 | `--auth-audience <AUDIENCE>` | OIDC audience (repeatable) |  |
 | `--auth-algorithm <ALG>` | OIDC signing algorithm (repeatable) |  |
 | `--auth-claim <KEY=VALUE>` | required OIDC claim as KEY=VALUE (repeatable) |  |

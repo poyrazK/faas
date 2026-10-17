@@ -34,9 +34,11 @@ test('SSO settings name the service provider and never the key', () => {
   }
   const key = samlKey()
   const config = runtimeConfig({ ...base, AUTH_SSO: '1', AUTH_SAML_PRIVATE_KEY: key })
-  assert.deepEqual(config.settings.sso, { enabled: true, entity_id: 'https://shop-auth.gregale.app/auth/v1/sso/saml/metadata', acs_url: 'https://shop-auth.gregale.app/auth/v1/sso/saml/acs' })
+  assert.deepEqual(config.settings.sso, { enabled: true, entity_id: 'https://shop-auth.gregale.app/auth/v1/sso/saml/metadata', acs_url: 'https://shop-auth.gregale.app/auth/v1/sso/saml/acs', self_service: false })
+  assert.equal(runtimeConfig({ ...base, AUTH_SSO: '1', AUTH_SAML_PRIVATE_KEY: key, AUTH_ORG_SSO: '1' }).settings.sso.self_service, true)
+  assert.equal(runtimeConfig({ ...base, AUTH_ORG_SSO: '1' }).orgSSO, false)
   assert.ok(!JSON.stringify(config.settings).includes(key.slice(0, 40)))
-  assert.deepEqual(runtimeConfig(base).settings.sso, { enabled: false, entity_id: null, acs_url: null })
+  assert.deepEqual(runtimeConfig(base).settings.sso, { enabled: false, entity_id: null, acs_url: null, self_service: false })
   assert.throws(() => runtimeConfig({ ...base, GOTRUE_SAML_ENABLED: 'true' }), /managed by Gregale/)
   assert.throws(() => runtimeConfig({ ...base, AUTH_SSO: 'yes' }), /Invalid AUTH_SSO/)
 })
@@ -64,7 +66,7 @@ test('provider input is checked before GoTrue sees it', () => {
 
 // fakes answer the GoTrue admin calls and gregale_auth queries ssoRoute makes.
 function fakes({ disabled = false } = {}) {
-  const providers = new Map(), linksTable = new Map(), calls = []
+  const providers = new Map(), linksTable = new Map(), calls = [], tokens = new Map()
   const goTrueError = ({ status, data }) => Object.assign(new Error(data?.error_code ?? 'x'), { status: status === 422 ? 409 : 400, code: data?.error_code ?? 'invalid_request' })
   const admin = async (method, path, body) => {
     calls.push([method, path, body])
@@ -91,9 +93,12 @@ function fakes({ disabled = false } = {}) {
       return [{ joined: args[1] === null ? 0 : 3 }]
     }
     if (sql.includes('FROM gregale_auth.sso_organizations')) return [...linksTable.values()]
+    if (sql.startsWith('SELECT id FROM auth.sso_providers')) return providers.has(args[0]) ? [{ id: args[0] }] : []
+    if (sql.startsWith('INSERT INTO gregale_auth.scim_tokens')) { tokens.set(args[0], args[1]); return [] }
+    if (sql.startsWith('DELETE FROM gregale_auth.scim_tokens')) { tokens.delete(args[0]); return [] }
     throw new Error('unexpected SQL ' + sql)
   }
-  return { deps: { query, admin, goTrueError }, providers, linksTable, calls }
+  return { deps: { query, admin, goTrueError, external: 'https://shop-auth.gregale.app' }, providers, linksTable, calls, tokens }
 }
 
 test('owners register identity providers and link them to an organization', async () => {
@@ -125,4 +130,20 @@ test('nothing changes when the organization, role or provider is wrong', async (
   await assert.rejects(route('DELETE', `/sso/${providerID}`), { code: 'sso_provider_not_found' })
   const off = fakes({ disabled: true })
   await assert.rejects(ssoRoute(off.deps, 'GET', ['sso']), { status: 409, code: 'sso_disabled' })
+})
+
+test('a SCIM token is issued per provider, shown once and stored hashed', async () => {
+  const { deps, tokens } = fakes()
+  const route = (method, path, body) => ssoRoute(deps, method, path.split('/').filter(Boolean), body)
+  await route('POST', '/sso', { metadata_url: 'https://idp.example.com/metadata', domains: ['acme.com'] })
+  const [status, issued] = await route('POST', `/sso/${providerID}/scim-token`)
+  assert.equal(status, 201)
+  assert.match(issued.token, /^gscim_[A-Za-z0-9_-]{43}$/)
+  assert.equal(issued.scim_url, 'https://shop-auth.gregale.app/scim/v2')
+  assert.equal(tokens.get(providerID).length, 32)
+  assert.notDeepEqual(tokens.get(providerID), Buffer.from(issued.token))
+  await assert.rejects(route('POST', '/sso/7b1b2c3d-0000-4000-8000-000000000009/scim-token'), { status: 404 })
+  await assert.rejects(route('POST', `/sso/${providerID}/other`), { status: 404 })
+  assert.deepEqual(await route('DELETE', `/sso/${providerID}/scim-token`), [200, { revoked: true }])
+  assert.equal(tokens.size, 0)
 })

@@ -6,6 +6,7 @@ import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
 import { routeTeam, TeamError } from './team.mjs'
 import { emailPath, emailConsent, resolveEmailRecipient, ProductEmailError } from './product-email.mjs'
+import { orgSSORoute } from './orgsso.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -17,8 +18,9 @@ const codes = new Map([
   ['28000', 401], ['42501', 403], ['P0002', 404], ['23505', 409], ['23514', 409], ['23503', 409], ['54000', 409], ['22023', 400], ['22P02', 400],
 ])
 // Messages raised by gregale_auth functions; anything else is never echoed.
-const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit',
-  'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner', 'team_limit'])
+const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
+  'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -39,7 +41,7 @@ function claimsFromToken(token, user) {
   let payload
   try { payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) } catch { throw new HTTPError(401, 'not_authenticated') }
   if (payload.sub !== user.id || typeof payload.session_id !== 'string') throw new HTTPError(401, 'not_authenticated')
-  return { sub: user.id, session_id: payload.session_id }
+  return { sub: user.id, session_id: payload.session_id, ...(payload.client_id ? { client_id: String(payload.client_id) } : {}) }
 }
 
 // authenticate asks GoTrue, on loopback, to verify the bearer token.
@@ -100,6 +102,8 @@ function requireString(body, name, max) {
 export async function route(pool, claims, method, path, body, services = {}) {
   const invitations = services.invitations ?? {}
   const parts = path.split('/').filter(Boolean)
+  // A third-party OAuth client may only check its user's permissions.
+  if (claims.client_id && !(path === '/authorize' && method === 'POST')) throw new HTTPError(403, 'oauth_client_token')
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
   if (parts.length === 1 && parts[0] === 'orgs') {
@@ -118,6 +122,10 @@ export async function route(pool, claims, method, path, body, services = {}) {
     if (parts[2] === 'team' || parts[2] === 'team-actions') {
       if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
       return routeTeam({ run, method, parts, body, invitations, query: services.query })
+    }
+    if (parts[2] === 'domains' || parts[2] === 'sso') {
+      if (!services.orgSSO) throw new HTTPError(403, 'org_sso_disabled')
+      return orgSSORoute({ rows, ...services.orgSSO }, org, method, parts.slice(2), body)
     }
     if (parts[2] === 'members' && parts.length === 3 && method === 'GET') {
       return [200, { members: await rows('SELECT user_id, email, role, created_at FROM gregale_auth.list_members($1)', [org]) }]
@@ -204,7 +212,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, teamEnabled = false, emailEnabled = false }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -230,7 +238,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, teamEnabled, emailEnabled, query: new URL(req.url, 'http://auth.local').searchParams })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

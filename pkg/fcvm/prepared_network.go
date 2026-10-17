@@ -22,6 +22,7 @@ import (
 const (
 	maxPreparedNetworks    = api.MaxPreparedNetworkCacheSize
 	preparedNetworkTTL     = api.PreparedNetworkCacheTTLSeconds * time.Second
+	preparedNetworkTick    = api.PreparedNetworkMaintenanceSeconds * time.Second
 	preparedNetworkTimeout = api.PreparedNetworkOperationTimeoutSeconds * time.Second
 	preparedNetworkRefill  = api.PreparedNetworkRefillDelayMillis * time.Millisecond
 )
@@ -211,7 +212,9 @@ func (p *preparedNetworkPool) run() {
 	// Refresh ahead of hard expiry. A partially consumed pool can retain an
 	// old spare while successful wakes replace only its younger entries.
 	// Waiting until hard expiry leaves that spare unusable between ticks.
-	ticker := time.NewTicker(preparedNetworkTTL / 4)
+	// The tick also retries failed teardowns, so it stays short while the
+	// refresh age is long.
+	ticker := time.NewTicker(preparedNetworkTick)
 	defer ticker.Stop()
 	defer func() {
 		p.mu.Lock()

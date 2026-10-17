@@ -16,7 +16,7 @@ delivery reference. The live customer middleware and an authenticated Auth
 self lookup establish that binding. Mutations require the portal's HTTPS Origin.
 
 The Auth runtime adds a default-off `AUTH_PRODUCT_CONTROL_EMAIL_ENABLED=1`
-protocol, migration `0007_product_email_recipients.sql` and two narrowly scoped
+protocol, migration `0011_product_email_recipients.sql` and two narrowly scoped
 operations. An authenticated, active, non-anonymous user with a verified address
 can consent for their own current organization. Auth issues an opaque random
 recipient capability bound to that organization, user, product and exact address
