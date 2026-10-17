@@ -55,17 +55,12 @@ func (t *memFinancialComputeTxn) accountReady() bool {
 	if owners == 0 {
 		return false
 	}
-	for _, j := range m.jobs {
-		if j.AccountID == t.account && j.Status != "deleted" {
-			return false
-		}
-	}
 	for run, tasks := range m.jobTasks {
 		if m.jobRuns[run].AccountID != t.account {
 			continue
 		}
 		for _, task := range tasks {
-			if task.Status == "queued" || task.Status == "claimed" {
+			if task.Status == "claimed" {
 				return false
 			}
 		}

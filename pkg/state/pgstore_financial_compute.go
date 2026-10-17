@@ -21,11 +21,22 @@ import (
 var _ FinancialComputeStore = (*PgStore)(nil)
 
 func (s *PgStore) CancelFinancialCompute(ctx context.Context, r financial.ComputeRequest) (out financial.ComputeLease, err error) {
-	app, err := s.AppByID(ctx, r.AppID)
-	if err != nil {
-		return out, err
+	reader := &pgFinancialComputeTxn{ctx: ctx, db: s.pool, q: sqlc.New()}
+	a, readErr := reader.jobAttempt(r.InstanceID)
+	if readErr == nil {
+		if a.NodeID != r.NodeID {
+			return out, financial.ErrComputeFence
+		}
+		r = a.request(r.Incarnation)
+	} else if r.AppID != "" && (errors.Is(readErr, ErrNotFound) || errors.Is(readErr, ErrInvalidArgument)) {
+		app, readErr := s.AppByID(ctx, r.AppID)
+		if readErr != nil {
+			return out, readErr
+		}
+		r.AccountID = app.AccountID
+	} else {
+		return out, errors.Join(financial.ErrComputeFence, readErr)
 	}
-	r.AccountID = app.AccountID
 	err = s.computeTransaction(ctx, r.AccountID, func(tx *pgFinancialComputeTxn) error { var err error; out, err = computeCancel(tx, r); return err })
 	return out, err
 }
@@ -40,6 +51,9 @@ type pgFinancialComputeTxn struct {
 
 func (t *pgFinancialComputeTxn) clock() time.Time { return t.now }
 func (t *pgFinancialComputeTxn) book(app string, month time.Time) (financial.ComputeBook, error) {
+	if job, ok := computeJobKey(app); ok {
+		return t.jobBook(job, month)
+	}
 	if app == "" {
 		return t.accountBook(month)
 	}
@@ -55,6 +69,9 @@ func (t *pgFinancialComputeTxn) book(app string, month time.Time) (financial.Com
 	return b, err
 }
 func (t *pgFinancialComputeTxn) putBook(b financial.ComputeBook) error {
+	if b.JobID != "" {
+		return t.putJobBook(b)
+	}
 	if b.AppID == "" {
 		return t.putAccountBook(b)
 	}
@@ -80,6 +97,9 @@ func (t *pgFinancialComputeTxn) lease(id string) (financial.ComputeLease, error)
 func (t *pgFinancialComputeTxn) putLease(l financial.ComputeLease) error {
 	id, _ := parsePgUUID(l.ID)
 	app, _ := parsePgUUID(l.AppID)
+	job, _ := parsePgUUID(l.JobID)
+	run, _ := parsePgUUID(l.JobRunID)
+	index := pgtype.Int4{Int32: int32(l.JobTaskIndex), Valid: l.JobID != ""}
 	node, _ := parsePgUUID(l.NodeID)
 	incarnation, _ := parsePgUUID(l.Incarnation)
 	raw, err := json.Marshal(l)
@@ -90,7 +110,7 @@ func (t *pgFinancialComputeTxn) putLease(l financial.ComputeLease) error {
 	if l.SettledAt != nil {
 		settled = pgTime(*l.SettledAt)
 	}
-	count, err := t.q.FinancialComputeLeasePut(t.ctx, t.db, sqlc.FinancialComputeLeasePutParams{ID: id, AccountID: t.account, AppID: app, InstanceID: l.InstanceID, NodeID: node, Incarnation: incarnation, PeriodStart: pgTime(l.PeriodStart), Strict: l.Strict, StartedAt: pgTime(l.StartedAt), FundedUntil: pgTime(l.FundedUntil), SettledAt: settled, Payload: raw})
+	count, err := t.q.FinancialComputeLeasePut(t.ctx, t.db, sqlc.FinancialComputeLeasePutParams{ID: id, AccountID: t.account, AppID: app, JobID: job, JobRunID: run, JobTaskIndex: index, InstanceID: l.InstanceID, NodeID: node, Incarnation: incarnation, PeriodStart: pgTime(l.PeriodStart), Strict: l.Strict, StartedAt: pgTime(l.StartedAt), FundedUntil: pgTime(l.FundedUntil), SettledAt: settled, Payload: raw})
 	if err != nil {
 		return err
 	}
@@ -117,6 +137,10 @@ func decodeComputeLeases(rows [][]byte, err error) ([]financial.ComputeLease, er
 	return out, nil
 }
 func (t *pgFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
+	if job, ok := computeJobKey(app); ok {
+		id, _ := parsePgUUID(job)
+		return decodeComputeLeases(t.q.FinancialComputeJobLeases(t.ctx, t.db, sqlc.FinancialComputeJobLeasesParams{AccountID: t.account, JobID: id}))
+	}
 	if app == "" {
 		return decodeComputeLeases(t.q.FinancialComputeAccountLeases(t.ctx, t.db, t.account))
 	}
@@ -134,7 +158,7 @@ func (t *pgFinancialComputeTxn) policies(app string) ([]FinancialBudget, error) 
 		if err != nil {
 			return nil, err
 		}
-		if p.Spec.Scope.Kind == "account" || p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app {
+		if computePolicyMatches(p, app) {
 			out = append(out, p)
 		}
 	}
@@ -194,24 +218,36 @@ func (s *PgStore) computeTransaction(ctx context.Context, account string, fn fun
 
 func (s *PgStore) AcquireFinancialCompute(ctx context.Context, r financial.ComputeRequest) (out financial.ComputeLease, err error) {
 	err = s.computeTransaction(ctx, r.AccountID, func(tx *pgFinancialComputeTxn) error {
-		app, _ := parsePgUUID(r.AppID)
-		owned, err := tx.q.FinancialComputeAppOwned(ctx, tx.db, sqlc.FinancialComputeAppOwnedParams{AccountID: tx.account, AppID: app})
+		if r.JobRunID != "" {
+			a, err := tx.jobAttempt(r.InstanceID)
+			if err != nil || !computeJobClaimMatches(a, r) {
+				return errors.Join(financial.ErrComputeFence, err)
+			}
+			r.JobID = a.JobID
+			valid, err := tx.jobCurrent(financial.ComputeLease{InstanceID: r.InstanceID})
+			if err != nil || !valid {
+				return errors.Join(financial.ErrComputeFence, err)
+			}
+		} else {
+			app, _ := parsePgUUID(r.AppID)
+			owned, err := tx.q.FinancialComputeAppOwned(ctx, tx.db, sqlc.FinancialComputeAppOwnedParams{AccountID: tx.account, AppID: app})
+			if err != nil {
+				return err
+			}
+			if !owned {
+				return ErrNotFound
+			}
+		}
+		policies, err := tx.policies(r.WorkloadKey())
 		if err != nil {
 			return err
 		}
-		if !owned {
-			return ErrNotFound
-		}
-		policies, err := tx.policies(r.AppID)
-		if err != nil {
-			return err
-		}
-		if len(strictComputePolicies(policies, r.AppID)) > 0 {
+		if len(strictComputePolicies(policies, r.WorkloadKey())) > 0 {
 			if err := tx.ensureAccount(policies); err != nil {
 				return err
 			}
-			if _, err = tx.book(r.AppID, financial.ComputeMonth(tx.now)); errors.Is(err, ErrNotFound) {
-				err = tx.initialize(r.AppID, false)
+			if _, err = tx.book(r.WorkloadKey(), financial.ComputeMonth(tx.now)); errors.Is(err, ErrNotFound) {
+				err = tx.initialize(r.WorkloadKey(), false)
 			}
 			if err != nil {
 				return err
@@ -236,7 +272,7 @@ func (s *PgStore) RegisterFinancialComputeOwner(ctx context.Context, node, incar
 	}
 	n, _ := parsePgUUID(node)
 	i, _ := parsePgUUID(incarnation)
-	return sqlc.New().FinancialComputeOwnerPut(ctx, s.pool, sqlc.FinancialComputeOwnerPutParams{NodeID: n, Incarnation: i, AccountComputeIncarnation: i})
+	return sqlc.New().FinancialComputeOwnerPut(ctx, s.pool, sqlc.FinancialComputeOwnerPutParams{NodeID: n, Incarnation: i, AccountComputeIncarnation: i, JobComputeIncarnation: i})
 }
 
 func (s *PgStore) FinancialComputeOwnerValid(ctx context.Context, node, incarnation string) (bool, error) {
@@ -273,8 +309,8 @@ func (s *PgStore) FinancialComputeLease(ctx context.Context, account, id string)
 
 func (s *PgStore) FinancialComputeInstanceLease(ctx context.Context, account, app, instance string) (financial.ComputeLease, bool, error) {
 	a, _ := parsePgUUID(account)
-	p, _ := parsePgUUID(app)
-	raw, err := sqlc.New().FinancialComputeLatestLease(ctx, s.pool, sqlc.FinancialComputeLatestLeaseParams{AccountID: a, AppID: p, InstanceID: instance})
+	p, job := computePgWorkloadIDs(app)
+	raw, err := sqlc.New().FinancialComputeLatestLease(ctx, s.pool, sqlc.FinancialComputeLatestLeaseParams{AccountID: a, AppID: p, JobID: job, InstanceID: instance})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return financial.ComputeLease{}, false, nil
 	}
@@ -287,8 +323,8 @@ func (s *PgStore) FinancialComputeInstanceLease(ctx context.Context, account, ap
 }
 func (s *PgStore) FinancialComputeAppManaged(ctx context.Context, account, app string) (bool, error) {
 	a, _ := parsePgUUID(account)
-	p, _ := parsePgUUID(app)
-	managed, err := sqlc.New().FinancialComputeAppManaged(ctx, s.pool, sqlc.FinancialComputeAppManagedParams{AccountID: a, AppID: p})
+	p, job := computePgWorkloadIDs(app)
+	managed, err := sqlc.New().FinancialComputeAppManaged(ctx, s.pool, sqlc.FinancialComputeAppManagedParams{AccountID: a, AppID: p, JobID: job})
 	return managed.Valid && managed.Bool, err
 }
 func (s *PgStore) FinancialComputeNodeLeases(ctx context.Context, node string) ([]financial.ComputeLease, error) {
@@ -322,8 +358,8 @@ func (s *PgStore) FinancialComputePolicies(ctx context.Context, account, app str
 }
 func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, app, instance string, start time.Time, seconds int64) (int64, error) {
 	a, _ := parsePgUUID(account)
-	p, _ := parsePgUUID(app)
-	rows, err := decodeComputeLeases(sqlc.New().FinancialComputeBillingLeases(ctx, s.pool, sqlc.FinancialComputeBillingLeasesParams{AccountID: a, AppID: p, InstanceID: instance, PeriodStart: pgTime(start), PeriodEnd: pgTime(start.Add(time.Minute))}))
+	p, job := computePgWorkloadIDs(app)
+	rows, err := decodeComputeLeases(sqlc.New().FinancialComputeBillingLeases(ctx, s.pool, sqlc.FinancialComputeBillingLeasesParams{AccountID: a, AppID: p, JobID: job, InstanceID: instance, PeriodStart: pgTime(start), PeriodEnd: pgTime(start.Add(time.Minute))}))
 	if err != nil {
 		return 0, err
 	}
@@ -374,6 +410,9 @@ func (s *PgStore) FinancialComputeReady(ctx context.Context, account, app string
 	return tx.ready(app, true)
 }
 func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
+	if job, ok := computeJobKey(app); ok {
+		return t.jobReady(job)
+	}
 	if app == "" {
 		return t.accountReady()
 	}
@@ -397,6 +436,9 @@ func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
 	return readySampling.Valid && readySampling.Bool, err
 }
 func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
+	if job, ok := computeJobKey(app); ok {
+		return t.initializeJob(job)
+	}
 	if app == "" {
 		return t.initializeAccount()
 	}

@@ -12,12 +12,11 @@ import (
 )
 
 const financialComputeAccountActivationSafe = `-- name: FinancialComputeAccountActivationSafe :one
-SELECT NOT EXISTS(SELECT 1 FROM jobs WHERE account_id=$1::uuid AND status!='deleted')
- AND NOT EXISTS(SELECT 1 FROM financial_compute_leases WHERE account_id=$1::uuid AND settled_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs r ON r.id=t.run_id WHERE r.account_id=$1::uuid AND t.status IN ('queued','claimed'))
+SELECT NOT EXISTS(SELECT 1 FROM financial_compute_leases WHERE account_id=$1::uuid AND settled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs r ON r.id=t.run_id WHERE r.account_id=$1::uuid AND t.status='claimed')
  AND NOT EXISTS(SELECT 1 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
  WHERE (a.account_id=$1::uuid OR j.account_id=$1::uuid)
- AND i.state NOT IN ('STOPPED','PARKED','FAILED'))
+ AND i.state NOT IN ('stopped','parked','failed'))
  AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id WHERE a.account_id=$1::uuid AND t.status IN ('restoring','running'))
  AND NOT EXISTS(SELECT 1 FROM instance_billing_intervals b JOIN instances i ON i.id=b.instance_id
  LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
@@ -170,7 +169,7 @@ func (q *Queries) FinancialComputeAccountStrictEnabled(ctx context.Context, db D
 const financialComputeActivationSafe = `-- name: FinancialComputeActivationSafe :one
 SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=$1::uuid AND a.account_id=$2::uuid
  AND a.status!='deleted'
- AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.app_id=a.id AND i.state NOT IN ('STOPPED','PARKED','FAILED'))
+ AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.app_id=a.id AND i.state NOT IN ('stopped','parked','failed'))
  AND NOT EXISTS(SELECT 1 FROM app_tasks t WHERE t.app_id=a.id AND t.status IN ('restoring','running'))
  AND NOT EXISTS(SELECT 1 FROM financial_compute_leases l WHERE l.app_id=a.id AND l.settled_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM instances i JOIN instance_billing_intervals b ON b.instance_id=i.id WHERE i.app_id=a.id AND (b.ended_at IS NULL OR b.ended_at > date_trunc('minute',clock_timestamp())-interval '1 minute')))
@@ -220,16 +219,18 @@ func (q *Queries) FinancialComputeAppLeases(ctx context.Context, db DBTX, arg Fi
 
 const financialComputeAppManaged = `-- name: FinancialComputeAppManaged :one
 SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=$1::uuid AND app_id=$2::uuid)
+ OR EXISTS(SELECT 1 FROM financial_compute_job_books WHERE account_id=$1::uuid AND job_id=$3::uuid)
  OR EXISTS(SELECT 1 FROM financial_compute_account_books WHERE account_id=$1::uuid) AS managed
 `
 
 type FinancialComputeAppManagedParams struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
+	JobID     pgtype.UUID
 }
 
 func (q *Queries) FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error) {
-	row := db.QueryRow(ctx, financialComputeAppManaged, arg.AccountID, arg.AppID)
+	row := db.QueryRow(ctx, financialComputeAppManaged, arg.AccountID, arg.AppID, arg.JobID)
 	var managed pgtype.Bool
 	err := row.Scan(&managed)
 	return managed, err
@@ -292,14 +293,14 @@ func (q *Queries) FinancialComputeBaseline(ctx context.Context, db DBTX, arg Fin
 const financialComputeBillingLeases = `-- name: FinancialComputeBillingLeases :many
 WITH relevant AS (
  SELECT payload FROM financial_compute_leases
- WHERE account_id=$1::uuid AND app_id=$2::uuid AND instance_id=$3::text
- AND started_at<$4::timestamptz
- AND (settled_at IS NULL OR settled_at>$5::timestamptz)
+ WHERE account_id=$1::uuid AND (app_id=$2::uuid OR job_id=$3::uuid) AND instance_id=$4::text
+ AND started_at<$5::timestamptz
+ AND (settled_at IS NULL OR settled_at>$6::timestamptz)
  LIMIT 10001
 ), previous AS (
  SELECT payload FROM financial_compute_leases
- WHERE account_id=$1::uuid AND app_id=$2::uuid AND instance_id=$3::text
- AND started_at<$5::timestamptz
+ WHERE account_id=$1::uuid AND (app_id=$2::uuid OR job_id=$3::uuid) AND instance_id=$4::text
+ AND started_at<$6::timestamptz
  ORDER BY started_at DESC,(payload->>'granted_at')::timestamptz DESC LIMIT 1
 )
 SELECT payload FROM relevant UNION SELECT payload FROM previous
@@ -308,6 +309,7 @@ SELECT payload FROM relevant UNION SELECT payload FROM previous
 type FinancialComputeBillingLeasesParams struct {
 	AccountID   pgtype.UUID
 	AppID       pgtype.UUID
+	JobID       pgtype.UUID
 	InstanceID  string
 	PeriodEnd   pgtype.Timestamptz
 	PeriodStart pgtype.Timestamptz
@@ -319,6 +321,7 @@ func (q *Queries) FinancialComputeBillingLeases(ctx context.Context, db DBTX, ar
 	rows, err := db.Query(ctx, financialComputeBillingLeases,
 		arg.AccountID,
 		arg.AppID,
+		arg.JobID,
 		arg.InstanceID,
 		arg.PeriodEnd,
 		arg.PeriodStart,
@@ -447,18 +450,24 @@ func (q *Queries) FinancialComputeHolds(ctx context.Context, db DBTX, accountID 
 
 const financialComputeLatestLease = `-- name: FinancialComputeLatestLease :one
 SELECT payload FROM financial_compute_leases
- WHERE account_id=$1::uuid AND app_id=$2::uuid AND instance_id=$3::text
+ WHERE account_id=$1::uuid AND (app_id=$2::uuid OR job_id=$3::uuid) AND instance_id=$4::text
  ORDER BY started_at DESC,(payload->>'granted_at')::timestamptz DESC LIMIT 1
 `
 
 type FinancialComputeLatestLeaseParams struct {
 	AccountID  pgtype.UUID
 	AppID      pgtype.UUID
+	JobID      pgtype.UUID
 	InstanceID string
 }
 
 func (q *Queries) FinancialComputeLatestLease(ctx context.Context, db DBTX, arg FinancialComputeLatestLeaseParams) ([]byte, error) {
-	row := db.QueryRow(ctx, financialComputeLatestLease, arg.AccountID, arg.AppID, arg.InstanceID)
+	row := db.QueryRow(ctx, financialComputeLatestLease,
+		arg.AccountID,
+		arg.AppID,
+		arg.JobID,
+		arg.InstanceID,
+	)
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
@@ -481,27 +490,33 @@ func (q *Queries) FinancialComputeLeaseGet(ctx context.Context, db DBTX, arg Fin
 }
 
 const financialComputeLeasePut = `-- name: FinancialComputeLeasePut :execrows
-INSERT INTO financial_compute_leases(id,account_id,app_id,instance_id,node_id,incarnation,period_start,strict,started_at,funded_until,settled_at,payload)
-VALUES($1::uuid,$2::uuid,$3::uuid,$4::text,$5::uuid,$6::uuid,$7::timestamptz,$8::boolean,$9::timestamptz,$10::timestamptz,$11::timestamptz,$12::jsonb)
+INSERT INTO financial_compute_leases(id,account_id,app_id,job_id,job_run_id,job_task_index,instance_id,node_id,incarnation,period_start,strict,started_at,funded_until,settled_at,payload)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::integer,$7::text,$8::uuid,$9::uuid,$10::timestamptz,$11::boolean,$12::timestamptz,$13::timestamptz,$14::timestamptz,$15::jsonb)
 ON CONFLICT(id) DO UPDATE SET funded_until=EXCLUDED.funded_until,settled_at=EXCLUDED.settled_at,payload=EXCLUDED.payload
-WHERE financial_compute_leases.account_id=EXCLUDED.account_id AND financial_compute_leases.app_id=EXCLUDED.app_id
+WHERE financial_compute_leases.account_id=EXCLUDED.account_id AND financial_compute_leases.app_id IS NOT DISTINCT FROM EXCLUDED.app_id
+ AND financial_compute_leases.job_id IS NOT DISTINCT FROM EXCLUDED.job_id
+ AND financial_compute_leases.job_run_id IS NOT DISTINCT FROM EXCLUDED.job_run_id
+ AND financial_compute_leases.job_task_index IS NOT DISTINCT FROM EXCLUDED.job_task_index
  AND financial_compute_leases.instance_id=EXCLUDED.instance_id AND financial_compute_leases.node_id=EXCLUDED.node_id
  AND financial_compute_leases.incarnation=EXCLUDED.incarnation AND financial_compute_leases.payload->>'fence'=EXCLUDED.payload->>'fence'
 `
 
 type FinancialComputeLeasePutParams struct {
-	ID          pgtype.UUID
-	AccountID   pgtype.UUID
-	AppID       pgtype.UUID
-	InstanceID  string
-	NodeID      pgtype.UUID
-	Incarnation pgtype.UUID
-	PeriodStart pgtype.Timestamptz
-	Strict      bool
-	StartedAt   pgtype.Timestamptz
-	FundedUntil pgtype.Timestamptz
-	SettledAt   pgtype.Timestamptz
-	Payload     []byte
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	JobID        pgtype.UUID
+	JobRunID     pgtype.UUID
+	JobTaskIndex pgtype.Int4
+	InstanceID   string
+	NodeID       pgtype.UUID
+	Incarnation  pgtype.UUID
+	PeriodStart  pgtype.Timestamptz
+	Strict       bool
+	StartedAt    pgtype.Timestamptz
+	FundedUntil  pgtype.Timestamptz
+	SettledAt    pgtype.Timestamptz
+	Payload      []byte
 }
 
 func (q *Queries) FinancialComputeLeasePut(ctx context.Context, db DBTX, arg FinancialComputeLeasePutParams) (int64, error) {
@@ -509,6 +524,9 @@ func (q *Queries) FinancialComputeLeasePut(ctx context.Context, db DBTX, arg Fin
 		arg.ID,
 		arg.AccountID,
 		arg.AppID,
+		arg.JobID,
+		arg.JobRunID,
+		arg.JobTaskIndex,
 		arg.InstanceID,
 		arg.NodeID,
 		arg.Incarnation,
@@ -550,26 +568,33 @@ func (q *Queries) FinancialComputeNodeLeases(ctx context.Context, db DBTX, nodeI
 }
 
 const financialComputeOwnerPut = `-- name: FinancialComputeOwnerPut :exec
-INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation)
-SELECT id,$1::uuid,1,$2::uuid FROM compute_nodes WHERE id=$3::uuid AND vmmd_incarnation=$1::uuid AND active
+INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation,job_compute_incarnation)
+SELECT id,$1::uuid,1,$2::uuid,$3::uuid FROM compute_nodes WHERE id=$4::uuid AND vmmd_incarnation=$1::uuid AND active
 ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp(),
- account_compute_incarnation=COALESCE(EXCLUDED.account_compute_incarnation,financial_compute_owners.account_compute_incarnation)
+ account_compute_incarnation=COALESCE(EXCLUDED.account_compute_incarnation,financial_compute_owners.account_compute_incarnation),
+ job_compute_incarnation=COALESCE(EXCLUDED.job_compute_incarnation,financial_compute_owners.job_compute_incarnation)
 `
 
 type FinancialComputeOwnerPutParams struct {
 	Incarnation               pgtype.UUID
 	AccountComputeIncarnation pgtype.UUID
+	JobComputeIncarnation     pgtype.UUID
 	NodeID                    pgtype.UUID
 }
 
 func (q *Queries) FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg FinancialComputeOwnerPutParams) error {
-	_, err := db.Exec(ctx, financialComputeOwnerPut, arg.Incarnation, arg.AccountComputeIncarnation, arg.NodeID)
+	_, err := db.Exec(ctx, financialComputeOwnerPut,
+		arg.Incarnation,
+		arg.AccountComputeIncarnation,
+		arg.JobComputeIncarnation,
+		arg.NodeID,
+	)
 	return err
 }
 
 const financialComputeOwnerValid = `-- name: FinancialComputeOwnerValid :one
 SELECT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
- WHERE o.node_id=$1::uuid AND o.incarnation=$2::uuid AND n.vmmd_incarnation=o.incarnation AND o.account_compute_incarnation=o.incarnation AND n.active) AS valid
+ WHERE o.node_id=$1::uuid AND o.incarnation=$2::uuid AND n.vmmd_incarnation=o.incarnation AND o.account_compute_incarnation=o.incarnation AND o.job_compute_incarnation=o.incarnation AND n.active) AS valid
 `
 
 type FinancialComputeOwnerValidParams struct {
@@ -587,7 +612,7 @@ func (q *Queries) FinancialComputeOwnerValid(ctx context.Context, db DBTX, arg F
 const financialComputeOwnersReady = `-- name: FinancialComputeOwnersReady :one
 SELECT EXISTS(SELECT 1 FROM compute_nodes WHERE active) AND NOT EXISTS (
  SELECT 1 FROM compute_nodes n LEFT JOIN financial_compute_owners o ON o.node_id=n.id
- WHERE n.active AND (o.node_id IS NULL OR o.incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.account_compute_incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.observed_at < clock_timestamp()-make_interval(secs=>$1::double precision))
+ WHERE n.active AND (o.node_id IS NULL OR o.incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.account_compute_incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.job_compute_incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.observed_at < clock_timestamp()-make_interval(secs=>$1::double precision))
 ) AS ready
 `
 

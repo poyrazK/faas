@@ -179,11 +179,11 @@ func memFinancialComputeActivation(t *memFinancialComputeTxn, spec financial.Bud
 		return ErrInvalidArgument
 	}
 	if !continuing {
-		if err := t.initialize(spec.Scope.ID, true); err != nil {
+		if err := t.initialize(financial.ComputeScopeKey(spec.Scope), true); err != nil {
 			return err
 		}
 	}
-	b, err := t.book(spec.Scope.ID, financial.ComputeMonth(t.now))
+	b, err := t.book(financial.ComputeScopeKey(spec.Scope), financial.ComputeMonth(t.now))
 	return validateComputePolicyFunding(b, err, continuing, spec.LimitMillicents)
 }
 

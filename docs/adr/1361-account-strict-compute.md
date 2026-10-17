@@ -65,7 +65,9 @@ hold survives the period boundary; `next_period` releases only in a new UTC mont
 An explicit revision edit releases that policy's hold, while other policies and
 account payment/security state remain independently enforced.
 
-Independent jobs do not yet use native compute authority. Account activation
+The following initial restriction is superseded by [ADR-1362](1362-job-strict-compute.md).
+
+Independent jobs did not yet use native compute authority in this milestone. Account activation
 therefore refuses any nondeleted job definition or queued/claimed job task, and
 job creation refuses active account strict policies under the same account lock.
 This includes image-run cache and environment-created jobs. A database trigger

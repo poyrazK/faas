@@ -66,7 +66,7 @@ func TestFinancialComputeAccountOwnerCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	var check *pgconn.PgError
-	if err := legacyRegister(); !errors.As(err, &check) || check.Code != "23514" || check.ConstraintName != "financial_compute_owner_account_incarnation_check" {
+	if err := legacyRegister(); !errors.As(err, &check) || check.Code != "23514" || (check.ConstraintName != "financial_compute_owner_account_incarnation_check" && check.ConstraintName != "financial_compute_job_owner_incarnation") {
 		t.Fatalf("legacy downgrade registration succeeded: %v", err)
 	}
 	r = f.request(1)

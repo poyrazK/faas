@@ -3994,19 +3994,43 @@ type FinancialComputeHold struct {
 	PeriodStart pgtype.Timestamptz
 }
 
-type FinancialComputeLease struct {
-	ID          pgtype.UUID
+type FinancialComputeJobAttempt struct {
+	InstanceID  pgtype.UUID
 	AccountID   pgtype.UUID
-	AppID       pgtype.UUID
-	InstanceID  string
+	JobID       pgtype.UUID
+	RunID       pgtype.UUID
+	TaskIndex   int32
+	LeaseToken  pgtype.UUID
 	NodeID      pgtype.UUID
 	Incarnation pgtype.UUID
+	RamMb       int32
+	ClaimedAt   pgtype.Timestamptz
+}
+
+type FinancialComputeJobBook struct {
+	AccountID   pgtype.UUID
+	JobID       pgtype.UUID
 	PeriodStart pgtype.Timestamptz
-	Strict      bool
-	StartedAt   pgtype.Timestamptz
-	FundedUntil pgtype.Timestamptz
-	SettledAt   pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
 	Payload     []byte
+}
+
+type FinancialComputeLease struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	InstanceID   string
+	NodeID       pgtype.UUID
+	Incarnation  pgtype.UUID
+	PeriodStart  pgtype.Timestamptz
+	Strict       bool
+	StartedAt    pgtype.Timestamptz
+	FundedUntil  pgtype.Timestamptz
+	SettledAt    pgtype.Timestamptz
+	Payload      []byte
+	JobID        pgtype.UUID
+	JobRunID     pgtype.UUID
+	JobTaskIndex pgtype.Int4
 }
 
 type FinancialComputeOwner struct {
@@ -4015,6 +4039,7 @@ type FinancialComputeOwner struct {
 	Protocol                  int16
 	ObservedAt                pgtype.Timestamptz
 	AccountComputeIncarnation pgtype.UUID
+	JobComputeIncarnation     pgtype.UUID
 }
 
 type FinancialEvidenceCoverage struct {

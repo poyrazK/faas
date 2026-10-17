@@ -10441,12 +10441,40 @@ $$;
 CREATE FUNCTION public.financial_compute_guard_job_task() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE target_account uuid;
+DECLARE target_account uuid; target_job uuid; target_node uuid; target_incarnation uuid; target_ram integer;
 BEGIN
  IF NEW.status NOT IN ('queued','claimed') THEN RETURN NEW; END IF;
- SELECT account_id INTO target_account FROM job_runs WHERE id=NEW.run_id;
- IF target_account IS NOT NULL THEN
-  PERFORM financial_compute_require_job_support(target_account);
+ SELECT account_id,job_id INTO target_account,target_job FROM job_runs WHERE id=NEW.run_id;
+ IF target_account IS NULL THEN RETURN NEW; END IF;
+ PERFORM financial_compute_require_job_support(target_account);
+ IF NEW.status!='claimed' THEN RETURN NEW; END IF;
+ SELECT i.node_id,n.vmmd_incarnation,i.ram_mb INTO target_node,target_incarnation,target_ram FROM instances i
+ LEFT JOIN compute_nodes n ON n.id=i.node_id
+ WHERE i.id=NEW.instance_id AND i.job_id=target_job AND i.kind='job_task';
+ IF EXISTS(SELECT 1 FROM financial_budget_policies p WHERE p.account_id=target_account
+  AND p.deleted_at IS NULL AND p.spec->>'enabled'='true' AND p.spec->>'mode'='strict'
+  AND (p.spec->'scope'->>'kind'='account' OR
+   (p.spec->'scope'->>'kind'='job' AND p.spec->'scope'->>'id'=target_job::text))) THEN
+  IF NOT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
+    WHERE n.id=target_node AND n.active AND o.incarnation=n.vmmd_incarnation
+    AND o.job_compute_incarnation=o.incarnation AND o.account_compute_incarnation=o.incarnation) THEN
+   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_job_owner_capable',
+    MESSAGE='strict job compute requires a current capable native owner';
+  END IF;
+ END IF;
+ IF target_node IS NULL OR target_ram IS NULL OR NEW.lease_token IS NULL THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_job_claim_identity',
+   MESSAGE='job claim requires a bound physical instance and lease';
+ END IF;
+ INSERT INTO financial_compute_job_attempts(instance_id,account_id,job_id,run_id,task_index,lease_token,node_id,incarnation,ram_mb)
+ VALUES(NEW.instance_id,target_account,target_job,NEW.run_id,NEW.task_index,NEW.lease_token,target_node,target_incarnation,target_ram)
+ ON CONFLICT(instance_id) DO NOTHING;
+ IF NOT EXISTS(SELECT 1 FROM financial_compute_job_attempts a WHERE a.instance_id=NEW.instance_id
+  AND a.account_id=target_account AND a.job_id=target_job AND a.run_id=NEW.run_id
+  AND a.task_index=NEW.task_index AND a.lease_token=NEW.lease_token
+  AND a.node_id=target_node AND a.incarnation IS NOT DISTINCT FROM target_incarnation AND a.ram_mb=target_ram) THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_job_claim_identity',
+   MESSAGE='job physical attempt identity cannot be reused';
  END IF;
  RETURN NEW;
 END
@@ -10462,12 +10490,6 @@ CREATE FUNCTION public.financial_compute_require_job_support(target_account uuid
     AS $$
 BEGIN
  PERFORM 1 FROM accounts WHERE id=target_account FOR UPDATE;
- IF EXISTS(SELECT 1 FROM financial_budget_policies p WHERE p.account_id=target_account
-   AND p.deleted_at IS NULL AND p.spec->>'enabled'='true' AND p.spec->>'mode'='strict'
-   AND p.spec->'scope'->>'kind'='account') THEN
-  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_account_job_supported',
-   MESSAGE='independent jobs do not support strict account compute';
- END IF;
 END
 $$;
 
@@ -27666,13 +27688,49 @@ CREATE TABLE public.financial_compute_holds (
 
 
 --
+-- Name: financial_compute_job_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_job_attempts (
+    instance_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    task_index integer NOT NULL,
+    lease_token uuid NOT NULL,
+    node_id uuid NOT NULL,
+    incarnation uuid,
+    ram_mb integer NOT NULL,
+    claimed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT financial_compute_job_attempts_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT financial_compute_job_attempts_task_index_check CHECK ((task_index >= 0))
+);
+
+
+--
+-- Name: financial_compute_job_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_job_books (
+    account_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_job_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_job_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_job_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::bigint >= 0) AND (((payload ->> 'reserved'::text))::bigint >= 0) AND ((((payload ->> 'committed'::text))::bigint + ((payload ->> 'reserved'::text))::bigint) <= '9007199254740991'::bigint)), false))
+);
+
+
+--
 -- Name: financial_compute_leases; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.financial_compute_leases (
     id uuid NOT NULL,
     account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
+    app_id uuid,
     instance_id text NOT NULL,
     node_id uuid NOT NULL,
     incarnation uuid NOT NULL,
@@ -27682,11 +27740,15 @@ CREATE TABLE public.financial_compute_leases (
     funded_until timestamp with time zone NOT NULL,
     settled_at timestamp with time zone,
     payload jsonb NOT NULL,
+    job_id uuid,
+    job_run_id uuid,
+    job_task_index integer,
     CONSTRAINT financial_compute_account_quantity_check CHECK (((COALESCE(((payload ->> 'account_funded'::text))::boolean, false) = false) OR (strict AND COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)))),
     CONSTRAINT financial_compute_leases_check CHECK ((funded_until >= started_at)),
     CONSTRAINT financial_compute_leases_check1 CHECK ((settled_at >= started_at)),
     CONSTRAINT financial_compute_leases_instance_id_check CHECK (((length(instance_id) >= 1) AND (length(instance_id) <= 128))),
-    CONSTRAINT financial_compute_leases_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text))
+    CONSTRAINT financial_compute_leases_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_workload_identity CHECK ((((app_id IS NOT NULL) AND (job_id IS NULL) AND (job_run_id IS NULL) AND (job_task_index IS NULL)) OR ((app_id IS NULL) AND (job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (job_task_index IS NOT NULL) AND (job_task_index >= 0))))
 );
 
 
@@ -27700,6 +27762,8 @@ CREATE TABLE public.financial_compute_owners (
     protocol smallint NOT NULL,
     observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     account_compute_incarnation uuid,
+    job_compute_incarnation uuid,
+    CONSTRAINT financial_compute_job_owner_incarnation CHECK (((job_compute_incarnation IS NULL) OR (job_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owner_account_incarnation_check CHECK (((account_compute_incarnation IS NULL) OR (account_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1))
 );
@@ -41936,6 +42000,30 @@ ALTER TABLE ONLY public.financial_compute_holds
 
 
 --
+-- Name: financial_compute_job_attempts financial_compute_job_attempt_run_id_task_index_lease_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_attempts
+    ADD CONSTRAINT financial_compute_job_attempt_run_id_task_index_lease_token_key UNIQUE (run_id, task_index, lease_token);
+
+
+--
+-- Name: financial_compute_job_attempts financial_compute_job_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_attempts
+    ADD CONSTRAINT financial_compute_job_attempts_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: financial_compute_job_books financial_compute_job_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_books
+    ADD CONSTRAINT financial_compute_job_books_pkey PRIMARY KEY (account_id, job_id, period_start);
+
+
+--
 -- Name: financial_compute_leases financial_compute_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50022,6 +50110,13 @@ CREATE INDEX financial_compute_instance_history ON public.financial_compute_leas
 
 
 --
+-- Name: financial_compute_job; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_job ON public.financial_compute_leases USING btree (account_id, job_id, period_start);
+
+
+--
 -- Name: financial_compute_one_live_instance; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -56717,7 +56812,7 @@ CREATE TRIGGER financial_compute_job_definition_guard BEFORE INSERT OR UPDATE OF
 -- Name: job_tasks financial_compute_job_task_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER financial_compute_job_task_guard BEFORE INSERT OR UPDATE OF status, run_id ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_task();
+CREATE TRIGGER financial_compute_job_task_guard BEFORE INSERT OR UPDATE OF status, run_id, instance_id, lease_token ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_task();
 
 
 --
@@ -63357,6 +63452,22 @@ ALTER TABLE ONLY public.financial_compute_holds
 
 ALTER TABLE ONLY public.financial_compute_holds
     ADD CONSTRAINT financial_compute_holds_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision);
+
+
+--
+-- Name: financial_compute_job_attempts financial_compute_job_attempts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_attempts
+    ADD CONSTRAINT financial_compute_job_attempts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_job_books financial_compute_job_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_books
+    ADD CONSTRAINT financial_compute_job_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

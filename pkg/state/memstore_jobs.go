@@ -23,7 +23,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
-	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -163,11 +162,6 @@ func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, li
 }
 
 func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (Job, error) {
-	for _, p := range m.financialBudgets {
-		if p.AccountID == accountID && p.DeletedAt == nil && p.Spec.Enabled && financial.StrictAccountCompute(p.Spec) {
-			return Job{}, financial.ErrComputeUnavailable
-		}
-	}
 	// Soft-tombstone invisibility — match pgstore's WHERE status<>'deleted'.
 	for _, j := range m.jobs {
 		if j.AccountID == accountID && j.Name == name && j.Status != "deleted" {
@@ -1641,6 +1635,19 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	if !m.exclusiveJobRunCurrentLocked(m.jobRuns[runID]) {
 		return ErrOperationStaleAttempt
 	}
+	run := m.jobRuns[runID]
+	if ins, ok := m.instances[instanceID]; ok {
+		if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: run.JobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: ins.NodeID, RAMMB: ins.RAMMB, LeaseToken: leaseToken}); err != nil {
+			return err
+		}
+	} else {
+		// Preserve projection-only claims used by legacy memory test adapters.
+		// Strict claims and all native funding require a real instance binding.
+		policies, _ := newMemComputeTxn(m, run.AccountID).policies("job:" + run.JobID)
+		if len(strictComputePolicies(policies, "job:"+run.JobID)) > 0 {
+			return ErrNotFound
+		}
+	}
 	t.Status = "claimed"
 	t.InstanceID = &instanceID
 	t.LeaseToken = &leaseToken
@@ -1722,6 +1729,9 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 		ins.WakeID = wakeID
 	} else {
 		ins.WakeID = newID()
+	}
+	if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: jobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: computeNodeID, RAMMB: ramMB, LeaseToken: leaseToken}); err != nil {
+		return Instance{}, err
 	}
 	task.Status = "claimed"
 	task.InstanceID = &instanceID

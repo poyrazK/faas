@@ -241,34 +241,34 @@ func TestFinancialComputeAccountReservations(t *testing.T) {
 					t.Fatalf("replacement reset usage: %+v", after)
 				}
 			})
-			t.Run("unsupported_jobs_fail_closed", func(t *testing.T) {
+			t.Run("job_definitions_and_queues_supported", func(t *testing.T) {
 				f := newAccountComputeFixture(t, store, 0, 1000)
-				_, err := store.JobCreate(t.Context(), f.account.ID, "unsupported", "batch", "example/image", []string{}, 128, 30, 1, 0, nil)
-				if !errors.Is(err, financial.ErrComputeUnavailable) {
+				_, err := store.JobCreate(t.Context(), f.account.ID, "supported", "batch", "example/image", []string{}, 128, 30, 1, 0, nil)
+				if err != nil {
 					t.Fatalf("job bypassed account cap: %v", err)
 				}
 
 				quota := store.(state.JobQuotaCreator)
-				if _, err := quota.JobCreateIfUnderQuota(t.Context(), f.account.ID, "quota-blocked", "batch", "example/image", []string{}, 128, 30, 1, 0, nil, 10); !errors.Is(err, financial.ErrComputeUnavailable) {
+				if _, err := quota.JobCreateIfUnderQuota(t.Context(), f.account.ID, "quota-blocked", "batch", "example/image", []string{}, 128, 30, 1, 0, nil, 10); err != nil {
 					t.Fatalf("quota job bypass: %v", err)
 				}
 				scheduled := store.(state.JobScheduleCreateStore)
-				if _, err := scheduled.JobCreateScheduledIfUnderQuota(t.Context(), state.Job{AccountID: f.account.ID, Name: "scheduled-blocked", Kind: "recurring", ImageRef: "example/image", Command: []string{}, RAMMB: 128, TaskTimeoutS: 30, MaxParallelism: 1, CronSchedule: "* * * * *", CronTimezone: "UTC"}, 10); !errors.Is(err, financial.ErrComputeUnavailable) {
+				if _, err := scheduled.JobCreateScheduledIfUnderQuota(t.Context(), state.Job{AccountID: f.account.ID, Name: "scheduled-blocked", Kind: "recurring", ImageRef: "example/image", Command: []string{}, RAMMB: 128, TaskTimeoutS: 30, MaxParallelism: 1, CronSchedule: "* * * * *", CronTimezone: "UTC"}, 10); err != nil {
 					t.Fatalf("scheduled job bypass: %v", err)
 				}
 				image := store.(state.ImageRunJobStore)
-				if _, err := image.JobEnsureImageRun(t.Context(), state.ImageRunEnsure{AccountID: f.account.ID, Name: "image-blocked", ImageRef: "example/image", RAMMB: 128, TaskTimeoutSec: 30, MaxCached: 10}); !errors.Is(err, financial.ErrComputeUnavailable) {
+				if _, err := image.JobEnsureImageRun(t.Context(), state.ImageRunEnsure{AccountID: f.account.ID, Name: "image-blocked", ImageRef: "example/image", RAMMB: 128, TaskTimeoutSec: 30, MaxCached: 10}); err != nil {
 					t.Fatalf("image job bypass: %v", err)
 				}
 				if _, err := store.DeleteFinancialBudget(t.Context(), f.account.ID, f.policy.ID, f.policy.Revision, "test"); err != nil {
 					t.Fatal(err)
 				}
-				_, err = store.JobCreate(t.Context(), f.account.ID, "unsupported", "batch", "example/image", []string{}, 128, 30, 1, 0, nil)
+				_, err = store.JobCreate(t.Context(), f.account.ID, "after-disable", "batch", "example/image", []string{}, 128, 30, 1, 0, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.CreateFinancialBudget(t.Context(), f.account.ID, uuid.NewString(), "test", f.policy.Spec); !errors.Is(err, financial.ErrComputeUnavailable) {
-					t.Fatalf("account activated over unsupported job: %v", err)
+				if _, err := store.CreateFinancialBudget(t.Context(), f.account.ID, uuid.NewString(), "test", f.policy.Spec); err != nil {
+					t.Fatalf("account cannot activate over quiet jobs: %v", err)
 				}
 			})
 			t.Run("historical_quantity_survives_deletion_and_corrections", func(t *testing.T) { accountComputeHistoricalQuantity(t, store) })
@@ -352,8 +352,8 @@ func accountComputeJobActivationRace(t *testing.T, store computeTestStore) {
 			t.Fatalf("race: %v", err)
 		}
 	}
-	if wins != 1 {
-		t.Fatalf("job and strict activation both passed: winners=%d", wins)
+	if wins != 2 {
+		t.Fatalf("quiet job definition and account activation should both pass: winners=%d", wins)
 	}
 }
 

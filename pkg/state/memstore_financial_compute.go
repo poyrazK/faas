@@ -13,11 +13,23 @@ import (
 var _ FinancialComputeStore = (*MemStore)(nil)
 
 func (m *MemStore) CancelFinancialCompute(ctx context.Context, r financial.ComputeRequest) (out financial.ComputeLease, err error) {
-	app, err := m.AppByID(ctx, r.AppID)
-	if err != nil {
-		return out, err
+	m.mu.Lock()
+	a, job := m.financialComputeJobAttempts[r.InstanceID]
+	m.mu.Unlock()
+	if job {
+		if a.NodeID != r.NodeID {
+			return out, financial.ErrComputeFence
+		}
+		r = a.request(r.Incarnation)
+	} else if r.AppID != "" {
+		app, readErr := m.AppByID(ctx, r.AppID)
+		if readErr != nil {
+			return out, readErr
+		}
+		r.AccountID = app.AccountID
+	} else {
+		return out, financial.ErrComputeFence
 	}
-	r.AccountID = app.AccountID
 	err = m.computeTransaction(ctx, r.AccountID, func(tx *memFinancialComputeTxn) error { var err error; out, err = computeCancel(tx, r); return err })
 	return out, err
 }
@@ -53,7 +65,7 @@ func (t *memFinancialComputeTxn) book(app string, month time.Time) (financial.Co
 	return b, nil
 }
 func (t *memFinancialComputeTxn) putBook(b financial.ComputeBook) error {
-	t.books[computeBookKey(b.AccountID, b.AppID, b.PeriodStart)] = b
+	t.books[computeBookKey(b.AccountID, b.WorkloadKey(), b.PeriodStart)] = b
 	return nil
 }
 func (t *memFinancialComputeTxn) lease(id string) (financial.ComputeLease, error) {
@@ -67,7 +79,7 @@ func (t *memFinancialComputeTxn) lease(id string) (financial.ComputeLease, error
 	return l, nil
 }
 func (t *memFinancialComputeTxn) putLease(l financial.ComputeLease) error {
-	if old, ok := t.m.financialComputeLeases[l.ID]; ok && (old.AccountID != l.AccountID || old.AppID != l.AppID || old.Fence != l.Fence || old.InstanceID != l.InstanceID || old.NodeID != l.NodeID || old.Incarnation != l.Incarnation) {
+	if old, ok := t.m.financialComputeLeases[l.ID]; ok && (old.AccountID != l.AccountID || old.AppID != l.AppID || old.JobID != l.JobID || old.JobRunID != l.JobRunID || old.JobTaskIndex != l.JobTaskIndex || old.Fence != l.Fence || old.InstanceID != l.InstanceID || old.NodeID != l.NodeID || old.Incarnation != l.Incarnation) {
 		return financial.ErrComputeFence
 	}
 	for _, old := range t.m.financialComputeLeases {
@@ -81,7 +93,7 @@ func (t *memFinancialComputeTxn) putLease(l financial.ComputeLease) error {
 func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
 	out := []financial.ComputeLease{}
 	for _, l := range t.m.financialComputeLeases {
-		if l.AccountID == t.account && (app == "" || l.AppID == app) && l.SettledAt == nil {
+		if l.AccountID == t.account && (app == "" || l.WorkloadKey() == app) && l.SettledAt == nil {
 			out = append(out, l)
 		}
 	}
@@ -93,7 +105,7 @@ func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, e
 func (t *memFinancialComputeTxn) policies(app string) ([]FinancialBudget, error) {
 	out := []FinancialBudget{}
 	for _, p := range t.m.financialBudgets {
-		if p.AccountID == t.account && (p.Spec.Scope.Kind == "account" || p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app) && p.DeletedAt == nil {
+		if p.AccountID == t.account && computePolicyMatches(p, app) && p.DeletedAt == nil {
 			out = append(out, cloneFinancialBudget(p))
 		}
 	}
@@ -163,17 +175,29 @@ func (t *memFinancialComputeTxn) commit() {
 }
 func (m *MemStore) AcquireFinancialCompute(ctx context.Context, r financial.ComputeRequest) (out financial.ComputeLease, err error) {
 	err = m.computeTransaction(ctx, r.AccountID, func(t *memFinancialComputeTxn) error {
-		app, ok := m.apps[r.AppID]
-		if !ok || app.AccountID != r.AccountID || app.Status == AppDeleted {
-			return ErrNotFound
+		if r.JobRunID != "" {
+			a, ok := m.financialComputeJobAttempts[r.InstanceID]
+			if !ok || !computeJobClaimMatches(a, r) {
+				return financial.ErrComputeFence
+			}
+			r.JobID = a.JobID
+			valid, err := t.jobCurrent(financial.ComputeLease{InstanceID: r.InstanceID})
+			if err != nil || !valid {
+				return errors.Join(financial.ErrComputeFence, err)
+			}
+		} else {
+			app, ok := m.apps[r.AppID]
+			if !ok || app.AccountID != r.AccountID || app.Status == AppDeleted {
+				return ErrNotFound
+			}
 		}
-		policies, _ := t.policies(r.AppID)
-		if len(strictComputePolicies(policies, r.AppID)) > 0 {
+		policies, _ := t.policies(r.WorkloadKey())
+		if len(strictComputePolicies(policies, r.WorkloadKey())) > 0 {
 			if err := t.ensureAccount(policies); err != nil {
 				return err
 			}
-			if _, err = t.book(r.AppID, financial.ComputeMonth(t.now)); errors.Is(err, ErrNotFound) {
-				err = t.initialize(r.AppID, false)
+			if _, err = t.book(r.WorkloadKey(), financial.ComputeMonth(t.now)); errors.Is(err, ErrNotFound) {
+				err = t.initialize(r.WorkloadKey(), false)
 			}
 			if err != nil {
 				return err
@@ -265,7 +289,7 @@ func (m *MemStore) FinancialComputeInstanceLease(ctx context.Context, account, a
 	defer m.mu.Unlock()
 	rows := []financial.ComputeLease{}
 	for _, l := range m.financialComputeLeases {
-		if l.AccountID == account && l.AppID == app && l.InstanceID == instance {
+		if l.AccountID == account && l.WorkloadKey() == app && l.InstanceID == instance {
 			rows = append(rows, l)
 		}
 	}
@@ -306,7 +330,7 @@ func (m *MemStore) FinancialComputeBillingSeconds(ctx context.Context, account, 
 	defer m.mu.Unlock()
 	rows := []financial.ComputeLease{}
 	for _, l := range m.financialComputeLeases {
-		if l.AccountID == account && l.AppID == app && l.InstanceID == instance {
+		if l.AccountID == account && l.WorkloadKey() == app && l.InstanceID == instance {
 			rows = append(rows, l)
 		}
 	}
@@ -322,7 +346,7 @@ func (m *MemStore) FinancialComputeAppManaged(ctx context.Context, account, app 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, b := range m.financialComputeBooks {
-		if b.AccountID == account && (b.AppID == app || b.AppID == "") {
+		if b.AccountID == account && (b.WorkloadKey() == app || b.WorkloadKey() == "") {
 			return true, nil
 		}
 	}
@@ -357,6 +381,9 @@ func (m *MemStore) FinancialComputeReady(ctx context.Context, account, app strin
 	return ready, err
 }
 func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
+	if job, ok := computeJobKey(app); ok {
+		return t.jobReady(job)
+	}
 	if app == "" {
 		return t.accountReady()
 	}
@@ -404,6 +431,9 @@ func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 	return err == nil && len(active) == 0
 }
 func (t *memFinancialComputeTxn) initialize(app string, quiet bool) error {
+	if job, ok := computeJobKey(app); ok {
+		return t.initializeJob(job)
+	}
 	if app == "" {
 		return t.initializeAccount()
 	}

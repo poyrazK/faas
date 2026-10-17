@@ -17,6 +17,8 @@ import (
 type FinancialComputeStore interface {
 	CancelFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
 	RegisterFinancialComputeOwner(context.Context, string, string) error
+	PrepareFinancialJobCompute(context.Context, string, string) error
+	DeferFinancialJobClaim(context.Context, string, int, string, string, time.Time) error
 	FinancialComputeOwnerValid(context.Context, string, string) (bool, error)
 	FinancialComputeRetired(context.Context, string, string) (bool, error)
 	FinancialComputeLease(context.Context, string, string) (financial.ComputeLease, bool, error)
@@ -52,24 +54,25 @@ type financialComputeTxn interface {
 	holds() ([]financialComputeHold, error)
 	putHold(financialComputeHold) error
 	owner(string, string) (bool, error)
+	jobCurrent(financial.ComputeLease) (bool, error)
 	allowance(time.Time) (int64, error)
 }
 
 func validateComputeRequest(r financial.ComputeRequest, mutate bool) bool {
-	if uuid.Validate(r.LeaseID) != nil || uuid.Validate(r.Fence) != nil || uuid.Validate(r.RequestID) != nil || uuid.Validate(r.AccountID) != nil || uuid.Validate(r.AppID) != nil || uuid.Validate(r.NodeID) != nil || uuid.Validate(r.Incarnation) != nil || r.InstanceID == "" || len(r.InstanceID) > api.FinancialComputeInstanceBytes {
+	if uuid.Validate(r.LeaseID) != nil || uuid.Validate(r.Fence) != nil || uuid.Validate(r.RequestID) != nil || uuid.Validate(r.AccountID) != nil || (r.JobID == "" && (uuid.Validate(r.WorkloadKey()) != nil || r.JobRunID != "")) || (r.JobID != "" && (r.AppID != "" || uuid.Validate(r.JobID) != nil || uuid.Validate(r.JobRunID) != nil || r.JobTaskIndex < 0)) || uuid.Validate(r.NodeID) != nil || uuid.Validate(r.Incarnation) != nil || r.InstanceID == "" || len(r.InstanceID) > api.FinancialComputeInstanceBytes {
 		return false
 	}
 	return !mutate || r.Revision > 0
 }
 
 func computeLeaseRequest(l financial.ComputeLease, r financial.ComputeRequest) bool {
-	return l.ID == r.LeaseID && l.Fence == r.Fence && l.AccountID == r.AccountID && l.AppID == r.AppID && l.InstanceID == r.InstanceID && l.NodeID == r.NodeID && l.Incarnation == r.Incarnation
+	return l.ID == r.LeaseID && l.Fence == r.Fence && l.AccountID == r.AccountID && l.AppID == r.AppID && l.JobID == r.JobID && l.JobRunID == r.JobRunID && l.JobTaskIndex == r.JobTaskIndex && l.InstanceID == r.InstanceID && l.NodeID == r.NodeID && l.Incarnation == r.Incarnation
 }
 
 func strictComputePolicies(rows []FinancialBudget, app string) []FinancialBudget {
 	out := []FinancialBudget{}
 	for _, p := range rows {
-		if p.DeletedAt == nil && p.Spec.Enabled && (financial.StrictAccountCompute(p.Spec) || p.Spec.Scope.ID == app && financial.StrictAppCompute(p.Spec)) {
+		if p.DeletedAt == nil && p.Spec.Enabled && (financial.StrictAccountCompute(p.Spec) || financial.ComputeScopeKey(p.Spec.Scope) == app && (financial.StrictAppCompute(p.Spec) || financial.StrictJobCompute(p.Spec))) {
 			out = append(out, p)
 		}
 	}
@@ -122,7 +125,7 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	if err != nil || !valid {
 		return financial.ComputeLease{}, errors.Join(financial.ErrComputeUnavailable, err)
 	}
-	active, err := tx.active(r.AppID)
+	active, err := tx.active(r.WorkloadKey())
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
@@ -131,11 +134,11 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 			return financial.ComputeLease{}, ErrConflict
 		}
 	}
-	policies, err := tx.policies(r.AppID)
+	policies, err := tx.policies(r.WorkloadKey())
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
-	policies = strictComputePolicies(policies, r.AppID)
+	policies = strictComputePolicies(policies, r.WorkloadKey())
 	if len(policies) > 0 {
 		for _, old := range active {
 			if old.InstanceID == r.InstanceID {
@@ -144,7 +147,7 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 		}
 	}
 	now := tx.clock().UTC().Truncate(time.Second)
-	l := financial.ComputeLease{ID: r.LeaseID, Fence: r.Fence, RequestID: r.RequestID, Revision: 1, RequestOperation: "acquire", RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour, AccountID: r.AccountID, AppID: r.AppID, InstanceID: r.InstanceID, NodeID: r.NodeID, Incarnation: r.Incarnation, BillableMB: r.BillableMB, PeriodStart: financial.ComputeMonth(now), StartedAt: now, GrantedAt: tx.clock(), RunUntil: now.Add(api.FinancialComputeLeaseDuration), FundedUntil: now.Add(api.FinancialComputeLeaseDuration + api.FinancialComputeTeardownReserve), Strict: len(policies) > 0}
+	l := financial.ComputeLease{ID: r.LeaseID, Fence: r.Fence, RequestID: r.RequestID, Revision: 1, RequestOperation: "acquire", RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour, AccountID: r.AccountID, AppID: r.AppID, JobID: r.JobID, JobRunID: r.JobRunID, JobTaskIndex: r.JobTaskIndex, InstanceID: r.InstanceID, NodeID: r.NodeID, Incarnation: r.Incarnation, BillableMB: r.BillableMB, PeriodStart: financial.ComputeMonth(now), StartedAt: now, GrantedAt: tx.clock(), RunUntil: now.Add(api.FinancialComputeLeaseDuration), FundedUntil: now.Add(api.FinancialComputeLeaseDuration + api.FinancialComputeTeardownReserve), Strict: len(policies) > 0}
 	l.AttemptID = r.AttemptID
 	l.Fenced = r.Fenced
 	if !r.Fenced {
@@ -168,7 +171,7 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 			return financial.ComputeLease{}, financial.ErrComputeUnavailable
 		}
 	}
-	b, err := tx.book(r.AppID, l.PeriodStart)
+	b, err := tx.book(r.WorkloadKey(), l.PeriodStart)
 	if err != nil {
 		return financial.ComputeLease{}, errors.Join(financial.ErrComputeUnavailable, err)
 	}
@@ -215,13 +218,13 @@ func computeCancel(tx financialComputeTxn, r financial.ComputeRequest) (financia
 	}
 	old, err := tx.lease(r.LeaseID)
 	if err == nil {
-		if old.NodeID != r.NodeID || old.AppID != r.AppID || old.InstanceID != r.InstanceID {
+		if old.NodeID != r.NodeID || old.AppID != r.AppID || old.JobID != r.JobID || old.JobRunID != r.JobRunID || old.JobTaskIndex != r.JobTaskIndex || old.InstanceID != r.InstanceID {
 			return financial.ComputeLease{}, financial.ErrComputeFence
 		}
 		if old.SettledAt != nil {
 			return old, nil
 		}
-		request := financial.ComputeRequest{LeaseID: old.ID, Fence: old.Fence, RequestID: uuid.NewString(), Revision: old.Revision, AccountID: old.AccountID, AppID: old.AppID, InstanceID: old.InstanceID, NodeID: old.NodeID, Incarnation: old.Incarnation}
+		request := financial.ComputeRequest{LeaseID: old.ID, Fence: old.Fence, RequestID: uuid.NewString(), Revision: old.Revision, AccountID: old.AccountID, AppID: old.AppID, JobID: old.JobID, JobRunID: old.JobRunID, JobTaskIndex: old.JobTaskIndex, InstanceID: old.InstanceID, NodeID: old.NodeID, Incarnation: old.Incarnation}
 		return computeMutate(tx, request, true)
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -232,7 +235,7 @@ func computeCancel(tx financialComputeTxn, r financial.ComputeRequest) (financia
 		return financial.ComputeLease{}, financial.ErrComputeFence
 	}
 	now := tx.clock().UTC()
-	l := financial.ComputeLease{ID: r.LeaseID, Fence: r.Fence, RequestID: r.RequestID, RequestOperation: "cancel", Revision: 1, AccountID: r.AccountID, AppID: r.AppID, InstanceID: r.InstanceID, NodeID: r.NodeID, Incarnation: r.Incarnation, AttemptID: r.AttemptID, Fenced: true, Strict: true, Denied: true, DenialReason: "cancelled_before_grant", BillableMB: 1, RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour, PeriodStart: financial.ComputeMonth(now), StartedAt: now, GrantedAt: now, RunUntil: now, FundedUntil: now, SettledAt: &now}
+	l := financial.ComputeLease{ID: r.LeaseID, Fence: r.Fence, RequestID: r.RequestID, RequestOperation: "cancel", Revision: 1, AccountID: r.AccountID, AppID: r.AppID, JobID: r.JobID, JobRunID: r.JobRunID, JobTaskIndex: r.JobTaskIndex, InstanceID: r.InstanceID, NodeID: r.NodeID, Incarnation: r.Incarnation, AttemptID: r.AttemptID, Fenced: true, Strict: true, Denied: true, DenialReason: "cancelled_before_grant", BillableMB: 1, RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour, PeriodStart: financial.ComputeMonth(now), StartedAt: now, GrantedAt: now, RunUntil: now, FundedUntil: now, SettledAt: &now}
 	return l, tx.putLease(l)
 }
 
@@ -296,6 +299,12 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		return financial.ComputeLease{}, financial.ErrComputeFence
 	}
 	now := tx.clock().UTC()
+	if !settle && l.JobID != "" {
+		valid, err := tx.jobCurrent(l)
+		if err != nil || !valid {
+			return financial.ComputeLease{}, errors.Join(financial.ErrComputeFence, err)
+		}
+	}
 	if !settle {
 		valid, err := tx.owner(r.NodeID, r.Incarnation)
 		if err != nil || !valid {
@@ -310,7 +319,7 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		if err != nil {
 			return l, err
 		}
-		b, err := tx.book(l.AppID, l.PeriodStart)
+		b, err := tx.book(l.WorkloadKey(), l.PeriodStart)
 		if err != nil {
 			return l, err
 		}
@@ -331,13 +340,13 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 			b.Reserved -= l.Reserved
 			l.Reserved = 0
 		} else {
-			policies, err := tx.policies(l.AppID)
+			policies, err := tx.policies(l.WorkloadKey())
 			if err != nil {
 				return l, err
 			}
 			l.RunUntil = now.Add(api.FinancialComputeLeaseDuration).Truncate(time.Second)
 			l.FundedUntil = l.RunUntil.Add(api.FinancialComputeTeardownReserve)
-			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.AppID)); err != nil {
+			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.WorkloadKey())); err != nil {
 				return financial.ComputeLease{}, err
 			}
 		}
@@ -350,11 +359,11 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 			}
 		}
 	} else if !settle {
-		policies, err := tx.policies(l.AppID)
+		policies, err := tx.policies(l.WorkloadKey())
 		if err != nil {
 			return l, err
 		}
-		if len(strictComputePolicies(policies, l.AppID)) > 0 {
+		if len(strictComputePolicies(policies, l.WorkloadKey())) > 0 {
 			return financial.ComputeLease{}, financial.ErrComputeUnavailable
 		}
 		l.RunUntil = now.Add(api.FinancialComputeLeaseDuration)
@@ -381,7 +390,11 @@ func minComputeTime(a, b time.Time) time.Time {
 func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (financial.ComputeBalance, error) {
 	month := financial.ComputeMonth(now)
 	out := financial.ComputeBalance{AccountID: p.AccountID, ScopeKind: p.Spec.Scope.Kind, Basis: p.Spec.Basis, AppID: p.Spec.Scope.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), ObservedAt: tx.clock()}
-	b, err := tx.book(out.AppID, month)
+	if p.Spec.Scope.Kind == "job" {
+		out.JobID, out.AppID = p.Spec.Scope.ID, ""
+	}
+	key := financial.ComputeScopeKey(p.Spec.Scope)
+	b, err := tx.book(key, month)
 	if errors.Is(err, ErrNotFound) {
 		out.RemainingMillicents = p.Spec.LimitMillicents
 	} else if err != nil {
@@ -397,7 +410,7 @@ func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (f
 		out.AllowanceRemaining = b.AllowanceGranted - out.AllowanceCommitted - out.AllowanceReserved
 	}
 	out.RemainingMillicents = max(int64(0), p.Spec.LimitMillicents-b.Committed-b.Reserved)
-	active, err := tx.active(out.AppID)
+	active, err := tx.active(key)
 	if err != nil {
 		return out, err
 	}

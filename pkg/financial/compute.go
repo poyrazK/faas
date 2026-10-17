@@ -25,13 +25,20 @@ func StrictAccountCompute(p BudgetSpec) bool {
 	return p.Mode == "strict" && p.Scope.Kind == "account" && p.Basis == "net_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
 }
 
-func StrictCompute(p BudgetSpec) bool { return StrictAppCompute(p) || StrictAccountCompute(p) }
+func StrictJobCompute(p BudgetSpec) bool {
+	return p.Mode == "strict" && p.Scope.Kind == "job" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
+}
+
+func StrictCompute(p BudgetSpec) bool {
+	return StrictAppCompute(p) || StrictAccountCompute(p) || StrictJobCompute(p)
+}
 
 // ComputeBalance is a conservative admission ledger, not an invoice. Committed
 // includes startup and rounds upwards; refunds/corrections never erase it.
 type ComputeBalance struct {
 	Initialized         bool      `json:"initialized"`
 	AppID               string    `json:"app_id,omitempty"`
+	JobID               string    `json:"job_id,omitempty"`
 	AccountID           string    `json:"account_id"`
 	ScopeKind           string    `json:"scope_kind"`
 	Basis               string    `json:"basis"`
@@ -52,6 +59,7 @@ type ComputeBalance struct {
 type ComputeBook struct {
 	AccountID   string    `json:"account_id"`
 	AppID       string    `json:"app_id"`
+	JobID       string    `json:"job_id,omitempty"`
 	PeriodStart time.Time `json:"period_start"`
 	PeriodEnd   time.Time `json:"period_end"`
 	Committed   int64     `json:"committed"`
@@ -74,6 +82,9 @@ type ComputeLease struct {
 	Revision          int64      `json:"revision"`
 	AccountID         string     `json:"account_id"`
 	AppID             string     `json:"app_id"`
+	JobID             string     `json:"job_id,omitempty"`
+	JobRunID          string     `json:"job_run_id,omitempty"`
+	JobTaskIndex      int        `json:"job_task_index,omitempty"`
 	InstanceID        string     `json:"instance_id"`
 	NodeID            string     `json:"node_id"`
 	Incarnation       string     `json:"incarnation"`
@@ -105,6 +116,8 @@ type ComputeRequest struct {
 	AccountID, AppID, InstanceID, NodeID, Incarnation string
 	BillableMB                                        int
 	Revision                                          int64
+	JobID, JobRunID                                   string
+	JobTaskIndex                                      int
 }
 
 // BindComputeRequest derives one stable financial identity from the scheduler's
@@ -114,7 +127,11 @@ func BindComputeRequest(r ComputeRequest) (ComputeRequest, error) {
 	if uuid.Validate(r.AttemptID) != nil {
 		return r, ErrComputeUnavailable
 	}
-	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("financial-compute-attempt\n"+r.AccountID+"\n"+r.AppID+"\n"+r.InstanceID+"\n"+r.AttemptID))
+	resource := r.AppID
+	if r.JobRunID != "" {
+		resource = "job:" + ComputeJobAttemptID(r.JobRunID, r.JobTaskIndex, "")
+	}
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("financial-compute-attempt\n"+r.AccountID+"\n"+resource+"\n"+r.InstanceID+"\n"+r.AttemptID))
 	r.LeaseID = id.String()
 	r.Fence = uuid.NewSHA1(id, []byte("fence")).String()
 	r.RequestID = uuid.NewSHA1(id, []byte("acquire")).String()

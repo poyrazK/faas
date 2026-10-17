@@ -16,7 +16,7 @@ func computeCheckPolicies(tx financialComputeTxn, b financial.ComputeBook, polic
 	}
 	denied := false
 	for _, p := range policies {
-		if b.AppID == "" && !financial.StrictAccountCompute(p.Spec) || b.AppID != "" && !financial.StrictAppCompute(p.Spec) {
+		if b.WorkloadKey() == "" && !financial.StrictAccountCompute(p.Spec) || b.AppID != "" && !financial.StrictAppCompute(p.Spec) || b.JobID != "" && !financial.StrictJobCompute(p.Spec) {
 			continue
 		}
 		held := false
