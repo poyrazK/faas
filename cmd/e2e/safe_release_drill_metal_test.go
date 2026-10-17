@@ -300,13 +300,14 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 	// ADR-1391: a variable that makes every new instance answer 500 is
 	// restored by the config guard without a person, and the app serves again.
 	t.Run("config change that breaks the app is restored by the config guard", func(t *testing.T) {
-		d.createApp(t, "sr-config")
-		d.deployLive(t, "sr-config", api.CreateDeploymentRequest{Image: v1})
-		d.waitServing(t, "sr-config", 2*time.Minute)
+		// Reuses the first case's live app: the drill account is on the
+		// Hobby plan and the fallback case still needs an app slot.
+		const app = "sr-default"
+		d.waitServing(t, app, 2*time.Minute)
 		for range 25 { // the old config's sample
-			d.get("sr-config", "/")
+			d.get(app, "/")
 		}
-		raw, status := doReq(t, d.h, d.key, http.MethodPut, "/v1/apps/sr-config/env/FIXTURE_FAIL_REQUESTS", api.PutAppEnvRequest{Value: "1"})
+		raw, status := doReq(t, d.h, d.key, http.MethodPut, "/v1/apps/"+app+"/env/FIXTURE_FAIL_REQUESTS", api.PutAppEnvRequest{Value: "1"})
 		var put struct {
 			ConfigChange *api.ConfigChangeReceipt `json:"config_change"`
 		}
@@ -316,10 +317,10 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		changed := time.Now()
 		// Parking stops the instance running the old config; the next
 		// request cold-boots with the new one (its snapshots are stale).
-		if raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-config/park", nil); status != http.StatusNoContent {
+		if raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/"+app+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park: status=%d body=%s", status, raw)
 		}
-		stop := d.sendTraffic("sr-config", "/", 500*time.Millisecond)
+		stop := d.sendTraffic(app, "/", 500*time.Millisecond)
 		var guard api.ConfigGuard
 		deadline := time.Now().Add(4 * time.Minute)
 		for guard.Status == "" || guard.Status == state.ConfigGuardWatching {
@@ -328,7 +329,7 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 				t.Fatalf("config guard still %q after 4m: %+v", guard.Status, guard)
 			}
 			time.Sleep(5 * time.Second)
-			raw, status := doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/sr-config/config/guard", nil)
+			raw, status := doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/"+app+"/config/guard", nil)
 			if status != http.StatusOK || json.Unmarshal(raw, &guard) != nil {
 				t.Fatalf("read config guard: status=%d body=%s", status, raw)
 			}
@@ -340,11 +341,11 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		t.Logf("DRILL config_guard seconds=%.0f rule=%s new=%d/%d old=%d/%d summary=%q", time.Since(changed).Seconds(),
 			guard.Decision.Rule, guard.Decision.NewServerErrors, guard.Decision.NewRequests,
 			guard.Decision.OldServerErrors, guard.Decision.OldRequests, guard.Decision.Summary)
-		raw, status = doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/sr-config/env", nil)
+		raw, status = doReq(t, d.h, d.key, http.MethodGet, "/v1/apps/"+app+"/env", nil)
 		if status != http.StatusOK || strings.Contains(string(raw), "FIXTURE_FAIL_REQUESTS") {
 			t.Fatalf("env after restore: status=%d body=%s, want the breaking variable gone", status, raw)
 		}
-		d.waitServing(t, "sr-config", 3*time.Minute)
+		d.waitServing(t, app, 3*time.Minute)
 		t.Logf("DRILL config_guard_recovered seconds=%.0f", time.Since(changed).Seconds())
 	})
 
