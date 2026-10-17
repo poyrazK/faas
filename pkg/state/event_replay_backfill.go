@@ -101,7 +101,7 @@ func (s *PgStore) CreateEventReplayBackfill(ctx context.Context, accountID strin
 	if err != nil {
 		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("read event replay target: %w", err)
 	}
-	sub := EventSubscription{SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
+	sub := EventSubscription{AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
 	if !sub.Enabled {
 		return api.EventReplayBackfillJobResponse{}, ErrEventReplayBackfillDisabled
 	}
@@ -127,7 +127,7 @@ func (s *PgStore) CreateEventReplayBackfill(ctx context.Context, accountID strin
 		earliest = earliestRow
 	}
 	cutoff := eventReplayBackfillCutoff(query.Until, now)
-	recipient, err := json.Marshal(PublishedEventRecipient{SchemaVersions: append([]string(nil), sub.SchemaVersions...), ID: sub.ID, AccountID: sub.AccountID, AppID: sub.AppID, Source: sub.Source, Type: sub.Type, Filter: sub.Filter, DeliveryAgeOverride: query.AllowExpired, WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(sub.RoutingRetryPolicy)})
+	recipient, err := json.Marshal(PublishedEventRecipient{AcknowledgmentLeaseSeconds: sub.AcknowledgmentLeaseSeconds, SchemaVersions: append([]string(nil), sub.SchemaVersions...), ID: sub.ID, AccountID: sub.AccountID, AppID: sub.AppID, Source: sub.Source, Type: sub.Type, Filter: sub.Filter, DeliveryAgeOverride: query.AllowExpired, WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(sub.RoutingRetryPolicy)})
 	if err != nil {
 		return api.EventReplayBackfillJobResponse{}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -44,6 +45,20 @@ func TestAuthTemplateSettingsContract(t *testing.T) {
 	if !reflect.DeepEqual(captchaNames, authsettings.CaptchaProviders) {
 		t.Fatalf("template CAPTCHA providers %v, Go %v", captchaNames, authsettings.CaptchaProviders)
 	}
+	sms := regexp.MustCompile(`export const smsProviders = Object\.freeze\(\[([^\]]*)\]\)`).FindSubmatch(config)
+	if sms == nil {
+		t.Fatal("smsProviders not found in config.mjs")
+	}
+	var smsNames []string
+	for _, quoted := range regexp.MustCompile(`'([a-z_]+)'`).FindAllSubmatch(sms[1], -1) {
+		smsNames = append(smsNames, string(quoted[1]))
+	}
+	if !reflect.DeepEqual(smsNames, authsettings.SMSProviders) {
+		t.Fatalf("template SMS providers %v, Go %v", smsNames, authsettings.SMSProviders)
+	}
+	if !strings.Contains(string(config), "/"+authsettings.EmailFromPattern+"/.test(from)") {
+		t.Error("the email sender rule differs from the template's AUTH_EMAIL_FROM check")
+	}
 	for _, class := range authsettings.ClassOrder {
 		// The template writes the symbol class's single quote escaped.
 		literal := strings.ReplaceAll(authsettings.CharacterClasses[class], `'`, `\'`)
@@ -75,9 +90,10 @@ func authSettingsWorld(t *testing.T, existing []string, running map[string]any) 
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, prefix+"/"):
 			name := strings.TrimPrefix(r.URL.Path, prefix+"/")
 			removed = append(removed, name)
-			if name == "AUTH_EMAIL_FROM" {
-				w.WriteHeader(http.StatusNotFound)
-				writeJSONTest(w, map[string]any{"status": 404, "code": "not_found"})
+			// apid answers a removal of a secret the app lacks with 400.
+			if !slices.Contains(existing, name) {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSONTest(w, map[string]any{"status": 400, "code": "secret_not_found"})
 				return true
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -311,6 +327,36 @@ func TestAuthConfigBrandingCaptchaAndRetention(t *testing.T) {
 		{"config", "shop-auth", "--activity-retention", "90d"},
 		{"config", "shop-auth", "--brand-color", "blue"},
 	} {
+		if code := cmdAuth(bad); code == 0 {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}
+
+func TestAuthConfigPhoneSignIn(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, removed, restarts := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	oldIn := osStdin
+	osStdin = strings.NewReader("vonage-api-secret\n")
+	t.Cleanup(func() { osStdin = oldIn })
+	if code := cmdAuth([]string{"config", "shop-auth", "--sms", "vonage", "--sms-account", "vonage-key", "--sms-sender", "Shop", "--sms-secret-stdin"}); code != 0 {
+		t.Fatalf("config = %d", code)
+	}
+	want := map[string]string{"GOTRUE_EXTERNAL_PHONE_ENABLED": "true", "GOTRUE_SMS_PROVIDER": "vonage", "GOTRUE_SMS_VONAGE_API_KEY": "vonage-key", "GOTRUE_SMS_VONAGE_FROM": "Shop", "GOTRUE_SMS_VONAGE_API_SECRET": "vonage-api-secret"}
+	if !reflect.DeepEqual(sealed, want) || *restarts != 1 || !slices.Contains(*removed, "GOTRUE_SMS_TWILIO_AUTH_TOKEN") || slices.Contains(*removed, "GOTRUE_SMS_VONAGE_API_SECRET") {
+		t.Fatalf("sealed = %v, removed = %v", sealed, *removed)
+	}
+	*removed = nil
+	if code := cmdAuth([]string{"config", "shop-auth", "--sms", "off"}); code != 0 || sealed["GOTRUE_EXTERNAL_PHONE_ENABLED"] != "false" || !slices.Contains(*removed, "GOTRUE_SMS_VONAGE_API_SECRET") || !slices.Contains(*removed, "GOTRUE_SMS_PROVIDER") {
+		t.Fatalf("off = %d, removed %v", code, *removed)
+	}
+	for _, bad := range [][]string{
+		{"config", "shop-auth", "--sms", "off", "--sms-sender", "Shop"},
+		{"config", "shop-auth", "--sms-sender", "Shop"},
+		{"config", "shop-auth", "--sms", "sinch", "--sms-sender", "Shop", "--sms-secret-stdin"},
+	} {
+		osStdin = strings.NewReader("secret-value\n")
 		if code := cmdAuth(bad); code == 0 {
 			t.Errorf("%v accepted", bad)
 		}

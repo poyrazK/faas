@@ -31,6 +31,14 @@ type operationMemory struct {
 	milestones             map[string]map[string]operationMilestoneReceipt
 	workflowStates         map[string]operationWorkflowStateRecord
 	workflowStateReports   map[string]operationWorkflowStateReceipt
+	webhooks               *operationWebhookMemory
+	attemptInstances       map[operationAttemptKey]string
+}
+
+// operationAttemptKey names one HTTP attempt of one execution generation.
+type operationAttemptKey struct {
+	operation           string
+	generation, attempt int
 }
 
 func (m *MemStore) operationMemoryLocked() *operationMemory {
@@ -132,21 +140,33 @@ func (m *MemStore) OperationDefinitionForDeployment(_ context.Context, accountID
 }
 
 func (m *MemStore) AdmitOperation(ctx context.Context, admission OperationAdmission) (Operation, bool, error) {
-
-	var releaseErr error
-	if admission.ReleaseID != "" {
-		hint, err := m.OperationDefinitionByID(ctx, admission.AccountID, admission.DefinitionID)
-		if err != nil {
-			return Operation{}, false, err
-		}
-		_, deployment, err := m.ResolveProjectRelease(ctx, hint.AppID, hint.Scope, admission.ReleaseID)
-		releaseErr = err
-		if err == nil && (deployment != hint.DeploymentID || (hint.ReleaseID != "" && admission.ReleaseID != hint.ReleaseID)) {
-			releaseErr = ErrConflict
-		}
+	releaseErr, err := m.operationReleaseAdmission(ctx, admission)
+	if err != nil {
+		return Operation{}, false, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.admitOperationLocked(admission, releaseErr)
+}
+
+// operationReleaseAdmission resolves a requested project release before the
+// store lock; the locked admission reports its error only for new work.
+func (m *MemStore) operationReleaseAdmission(ctx context.Context, admission OperationAdmission) (error, error) {
+	if admission.ReleaseID == "" {
+		return nil, nil
+	}
+	hint, err := m.OperationDefinitionByID(ctx, admission.AccountID, admission.DefinitionID)
+	if err != nil {
+		return nil, err
+	}
+	_, deployment, err := m.ResolveProjectRelease(ctx, hint.AppID, hint.Scope, admission.ReleaseID)
+	if err == nil && (deployment != hint.DeploymentID || (hint.ReleaseID != "" && admission.ReleaseID != hint.ReleaseID)) {
+		err = ErrConflict
+	}
+	return err, nil
+}
+
+func (m *MemStore) admitOperationLocked(admission OperationAdmission, releaseErr error) (Operation, bool, error) {
 	data := m.operationMemoryLocked()
 	def, ok := data.definitions[admission.DefinitionID]
 	if !ok || def.AccountID != admission.AccountID {

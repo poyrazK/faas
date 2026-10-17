@@ -182,6 +182,8 @@ func dashboardOperationState(value api.OperationState) (string, string) {
 		return "Accepted", "pending"
 	case api.OperationRunning:
 		return "Running", "pending"
+	case api.OperationWaiting:
+		return "Waiting", "pending"
 	case api.OperationSucceeded:
 		return "Succeeded", "good"
 	case api.OperationFailed:

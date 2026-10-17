@@ -55,7 +55,13 @@ test('request logs correlate success, auth and rejection without recording calle
     assert.equal(record.code, item.code)
     assert.ok(Number.isFinite(record.duration_ms) && record.duration_ms >= 0)
     assert.ok(Number.isFinite(Date.parse(record.time)))
-    assert.deepEqual(Object.keys(record).sort(), ['code', 'duration_ms', 'event', 'level', 'method', 'outcome', 'request_id', 'route', 'status', 'time'])
+    const fields = ['code', 'duration_ms', 'event', 'level', 'method', 'outcome', 'request_id', 'route', 'status', 'time']
+    if (item.headers.Authorization && item.route !== 'unknown') {
+      fields.push('admission', 'timings')
+      assert.equal(record.admission.outcome, 'admitted')
+      assert.ok(record.admission.wait_ms >= 0)
+    }
+    assert.deepEqual(Object.keys(record).sort(), fields.sort())
   }
   assert.doesNotMatch(JSON.stringify(logs), /sentinel|postgres:|Bearer/)
 })

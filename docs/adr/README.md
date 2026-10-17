@@ -6,6 +6,13 @@ separate files here. This directory holds ADRs made *after* the spec.
 
 Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
+The default-off internal static-hosting lifecycle, quotas, and Cloudflare/R2
+delivery boundary are recorded in
+[ADR-20261015](20261015-internal-static-hosting.md).
+
+Durable internal static routing, conditional publication, and acknowledgement-based
+retirement are specified by [ADR-202610151515](202610151515-durable-static-hosting.md).
+
 ## Picking a number
 
 ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one
@@ -56,7 +63,34 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1289 | [Reusable automation test cases](1289-reusable-automation-test-cases.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1290 | [Guided automation test case editor](1290-guided-automation-test-editor.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1291 | [Single-case live automation verification](1291-single-case-live-automation-verification.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1292 | [Guided live automation assertions](1292-guided-live-automation-assertions.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1293 | [Automatic live verification results](1293-automatic-live-verification-results.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1294 | [CLI live automation verification](1294-cli-live-automation-verification.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1295 | [Resumable CLI live automation verification suites](1295-cli-live-automation-verification-suites.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1296 | [Shared live automation suite history](1296-shared-live-automation-suite-history.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1297 | [Durable dashboard live automation suites](1297-dashboard-live-automation-suite-execution.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1298 | [Read-only live automation suite comparisons](1298-live-automation-suite-comparisons.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1299 | [Read-only CI gates for live automation suites](1299-live-automation-ci-gate.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1300 | [Required coverage for the read-only live automation gate](1300-live-automation-required-coverage-policy.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1301 | [Candidate evidence age in live automation gates](1301-live-automation-evidence-age-policy.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1302 | [Named automation live baselines and attributed promotion](1302-named-automation-live-baselines.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1303 | [Manage named automation baselines in the dashboard](1303-dashboard-automation-baselines.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1304 | [Discover automation baselines and observe retained evidence health](1304-automation-baseline-discovery-health.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1305 | [Audited retirement of named automation baselines](1305-automation-baseline-retirement.md) | accepted | Automation authoring, verification and trust lifecycle |
+| 1387 | [Guided webhook automation setup](1387-guided-webhook-automation-setup.md) | accepted | Event starter fields, confirmed scoped ingress binding and safe receipt/run inspection |
+| 1287 | [Guided scheduled-report configuration](1287-guided-scheduled-report-configuration.md) | accepted | Report fields, distinct edited/published schedule previews and observed setup checks |
+| 1286 | [Dashboard workflow diagnosis and recovery](1286-dashboard-workflow-diagnosis-and-recovery.md) | accepted | Scoped diagnostics and attempt inspection, recovery previews, confirmed idempotent continuation and cancellation |
+| 1285 | [Guided automation dashboard](1285-guided-automation-dashboard.md) | accepted | App-owner starter, validation, simulation, checked publishing, and run inspection flow |
+| 1540 | [Function cancellation completion and trusted lifecycle context](1540-function-cancellation-cleanup-and-lifecycle-context.md) | accepted | Shared slots remain occupied through cleanup; Node abort signals, Python cancellation events and socket-derived function lifecycle context support bounded database work |
 | 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
+| 1385 | [Refresh authorization for retained WebSocket channels](1385-retained-channel-authorization-refresh.md) | accepted for implementation; deployed qualification pending | Share SSE's bounded channel grants with WebSocket history and buffered delivery; remove denied subscriptions and reconnect after callback outages |
+| 1332 | [Bind retained realtime to the verified login session](1332-session-bound-retained-realtime.md) | accepted for implementation; deployed qualification pending | Verified session/expiry handoff, periodic WebSocket JWT checks and session-aware Auth channel callbacks |
+| 1333 | [Durable managed PostgreSQL activation preflight](1333-managed-postgres-activation-preflight.md) | accepted for catalog inspection; customer activation disabled | Recoverable preflight revisions check restored targets, staged SQL verification and source bindings without publishing credentials |
+| 1334 | [Durable cutover source SQL connection fences](1334-managed-postgres-cutover-source-fences.md) | accepted for internal controller plumbing; customer activation disabled | Owned SQL fences share maintenance authority, survive lost replies and retain pins until confirmed cancellation cleanup |
+| 1335 | [Source writer inventory and provider isolation evidence](1335-managed-postgres-source-writer-isolation.md) | accepted for internal recovery plumbing; customer activation disabled | Immutable catalog baselines, writer diagnostics and expiring provider evidence fail closed on drift or unsupported guarantees |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
@@ -112,6 +146,25 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1120 | [AI gateway throughput: pipelined admission and settlement, keyed settlement retries](1120-ai-gateway-throughput-pipelined-admission-keyed-settlement.md) | accepted | Admission and settlement pipeline their statements, admission reports the breaker and cooldown, unchanged breaker outcomes take no lock, and settlements keyed by the lease are retried; a call drops from 30 to 11 Postgres round trips |
 | 989 | [App access to managed outbound integrations through a guest relay](989-app-outbound-relay.md) | accepted | guest-init loopback `GREGALE_OUTBOUND_URL` relays bytes over vsock to vmmd, which adds a relay assertion and splices to an mTLS `outboundd` listener; only outboundd parses HTTP; Anthropic credentials use `x-api-key` |
 | 988 | [AI gateway on managed outbound integrations](988-ai-gateway-outbound-integrations.md) | accepted (phase 1) | `ai_provider` integrations stream event-stream responses, extract OpenAI-compatible and Anthropic token usage, keep UTC-day usage per caller and model, and enforce a daily token limit at admission |
+| 1300 | [Export usage statements to the customer's own Stripe](1502-stripe-statement-invoice-exports.md) | accepted | Sealed per-account Stripe key; finalized statements become resumable draft invoices with one item per price and a rounding item; export records the handoff |
+| 1301 | [Month-end billing runs](1503-month-end-billing-runs.md) | accepted | One request or a monthly schedule drafts, completeness-checks, finalizes and optionally exports every customer's statement for an ended month; leased, resumable worker; tenant-attributed usage bills on the tenant statement |
+| 1302 | [Stripe payment status for exported statements, and billing notifications](1504-statement-invoice-payment-status.md) | accepted | Worker polls each non-final exported invoice; unpaid and overdue lists; email when a run needs attention, after scheduled runs, and a daily overdue digest |
+| 1303 | [Usage is durable before a monetized response completes](1505-usage-durable-before-response-completes.md) | accepted | The gateway fsyncs a consumer or tenant request's usage before the bytes that complete its response; fails closed when the outbox cannot take it |
+| 1304 | [Consumer billing self-service](1506-consumer-billing-self-service.md) | accepted | Consumer keys with the new billing scope read their own month-to-date spend, daily usage and finalized statements with invoice status; billing grants no app access |
+| 1305 | [Paddle and Lago statement exports](1507-paddle-and-lago-statement-exports.md) | accepted | Statement exports, billing runs and payment sync target Paddle (draft manual transactions) and Lago (issued one-off invoices) through one provider interface; routes name the provider |
+| 1306 | [Consumer prepaid credit and spend caps](1306-consumer-prepaid-credit-and-spend-caps.md) | accepted | Credit grants per consumer are drawn down when statements finalize and exported as a credit line; monthly spend caps after credit are checked each minute and enforced by the gateway with a 402 |
+| 1307 | [Platform tenant route weights and plans](1307-platform-tenant-route-weights-and-plans.md) | accepted | Tenant rate cards weight consumer routes and are month-priced with raw-unit coverage; tenant plans bundle card terms and a request budget that assignment applies from the next minute |
+| 1308 | [Consumer compute and response-size pricing](1308-consumer-compute-and-response-size-pricing.md) | accepted | Usage minutes sum billable requests' compute time and response bytes; app cards with unit compute_second or response_megabyte price them rounded per consumer minute |
+| 1309 | [Volume rate card tiers](1309-volume-rate-card-tiers.md) | accepted | App and tenant ladders take tier_mode volume, pricing every unit of a month at the step its total reaches; adjustments that would lower a finalized month return 409 |
+| 1310 | [Platform tenant compute pricing and surface route weights](1310-platform-tenant-resource-pricing-and-source-routes.md) | accepted | Tenant cards and plans price compute seconds or response megabytes per subject minute; surface and JWT-rule requests carry billing routes that tenant route weights price |
+| 1311 | [Provider collection for exported statement invoices](1311-statement-invoice-collection.md) | accepted | Billing connections opt into collection none, send (Stripe) or charge (Stripe, Lago): Stripe finalizes with auto_advance after the last item, Lago creates the invoice without skip_psp |
+| 1312 | [Finalized volume months keep their step](1312-locked-volume-steps.md) | accepted | Late usage that would move a finalized volume month into a cheaper step is billed at the step finalized revisions billed instead of returning 409 |
+| 1313 | [Stripe automatic tax on exported invoices](1313-stripe-automatic-tax-on-exports.md) | accepted | A Stripe billing connection can set automatic_tax, and exports then ask Stripe Tax to add tax; statement totals stay net of tax |
+| 1314 | [Free trials for API consumers](1314-api-consumer-trials.md) | accepted | A consumer gets one trial starting at the next minute; trial minutes are priced at zero and consume no included units, and trials never move into the past |
+| 1315 | [Block consumers with overdue invoices](1315-block-consumers-with-overdue-invoices.md) | accepted | An app policy blocks consumers whose exported invoice is unpaid N days after its due date; apid recomputes holds every 5 minutes and the gateway answers 402 |
+| 1316 | [Monthly base fee and minimum spend](1316-monthly-base-fee-and-minimum-spend.md) | accepted | App cards charge a base fee and a minimum per consumer month; statements carry fee lines and billing runs include idle consumers |
+| 1317 | [Several units priced at once](1317-parallel-unit-price-streams.md) | accepted | App cards of different units are parallel price histories; statement buckets and coverage are keyed by minute and unit |
+| 1318 | [App-reported usage units](1318-app-reported-usage-units.md) | accepted | Apps report units in a Gregale-Usage header or trailer; apid keeps them per consumer, meter and minute, and app:<meter> cards price them |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
@@ -542,6 +595,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1184 | [Receipt-budget warning recovery hysteresis](1184-receipt-budget-warning-recovery-hysteresis.md) | accepted | Separate recovery boundaries and sustained fresh recovery with versioned checkpoints |
 | 1185 | [Receipt-budget watcher confirmation progress](1185-receipt-budget-watcher-confirmation-progress.md) | accepted | Local fresh-sample and duration diagnostics separate from checkpoint evidence |
 | 1186 | [Application event delivery-attempt context](1186-application-event-delivery-attempt-context.md) | accepted | Authoritative transient attempt counters and replay lineage with validated SDK context |
+| 1195 | [Unified operation timeline](1195-unified-operation-timeline.md) | accepted | `GET /v1/apps/{slug}/operations/{id}/timeline` merges events, HTTP and workflow step attempts and completion deliveries with per-source cursors; `customer_operation_attempt_instances` points each HTTP attempt at an instance log window; account-only |
 | 1161 | [Image runs (`gregale run --image`)](1161-image-runs.md) | accepted for an operator-gated preview | One-task Job runs against a cached per-image `image_run` runner job; Docker ENTRYPOINT/CMD rules; `api.ImageRunCachedImages`; gate `FAAS_IMAGE_RUNS` |
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
@@ -550,9 +604,12 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
+| 1430 | [USD pricing and plan entitlements from the October 2026 COGS report](1430-plan-entitlements-from-october-2026-cogs-report.md) | accepted | Billing in USD only at $0/$10/$30/$99 with $0.01/GB-h overage; RAM per app 256/512/1024/2048 MB and 20/200/1,000/3,000 included GB-h; 1/10/50/200 GiB included object storage with a Free hard stop (write/read split deferred); managed PostgreSQL 1/1/3/10 databases, pooled 0.5/1/5/20 GiB and 5/25/75/200 CU-h ceilings, Free gains one development database |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
 | 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
+| 1343 | [App edge on compute nodes behind Cloudflare Tunnel](1343-app-edge-on-compute-nodes.md) | proposed | Every compute node runs a `cloudflared` connector and a gatewayd-public that routes to its own gatewayd-internal socket; `*.<apps domain>` moves to the tunnel, platform hosts and custom domains stay on the control plane; credential-bound app paths are forwarded to the control plane; CPU/RAM hold-back, per-node monitoring and connector withdrawal before drain; off by default, on per manifest |
 | 1344 | [Availability architecture: regional cells, three-zone Postgres HA, fenced compute](1344-availability-architecture-cells-zones-fencing.md) | proposed | Makes the regional branch's cells and directory highly available: 3 zones per cell, self-run Patroni + etcd with a synchronous standby, every-edge global ingress, node leases with self-fencing (quota still released only by signed stop proof), static stability and a zero-downtime contract; phases P0–P6 plus landing the regional branch |
+| 1342 | [Per-function settings in gregale.yaml and concurrent requests per function worker](1342-function-settings-and-concurrent-workers.md) | accepted | A functions manifest entry sets ram_mb, request_timeout_s, min_instances, concurrency, env (prune_env), secrets_from_env, routes, queue_bindings and event_triggers; `function_concurrency` lets one Node or Python worker serve several requests at once, multiplexed by `__faas_id` with acknowledged cancels |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -869,6 +926,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-906: Frozen instances](906-frozen-instances.md)
 - [ADR-1151: Pause tiers — quiet pause between requests, frozen after idle](1151-pause-tiers.md)
+- [ADR-1346: Runtime binding audiences and explicit queue release requirements](1346-binding-runtime-audiences-and-queue-release-requirements.md)
+- [ADR-1347: Unified binding-policy verification](1347-unified-binding-policy-verification.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -1076,6 +1135,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-1197 · Operation event waits and signals](1197-operation-event-waits-and-signals.md)
+- [ADR-1196 · Operation deadlines and budgets](1196-operation-deadlines-and-budgets.md)
+- [ADR-1194 · Operation waits and approvals](1194-operation-waits-and-approvals.md)
+- [ADR-1193 · Webhook-submitted customer Operations](1193-webhook-submitted-customer-operations.md)
+
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 
@@ -1107,8 +1171,175 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
 
+- [ADR-1456: Deployment-bound Issues source-map artifacts](1456-deployment-issue-source-map-artifacts.md)
+
+- [ADR-1457: Labeled Issues grouping evaluation](1457-issue-grouping-evaluation-corpus.md)
+- [1458: Bounded operational context for Issues](1458-bounded-issue-operational-context.md)
+
+- [ADR-1459: Observed release comparison and atomic bulk issue triage](1459-issue-release-comparison-and-bulk-triage.md)
+
+- [ADR-1460: Shared issue views and source/tag ownership routing](1460-shared-issue-views-and-source-routing.md)
+- [ADR-1348: Checked project binding release graphs](1348-checked-project-binding-release-graphs.md)
+
+- [ADR-1352: Push queue binding handler completion canaries](1352-push-queue-binding-completion-canaries.md)
+
+- [ADR-1353: Bounded parallel binding verification](1353-bounded-parallel-binding-verification.md)
+
+- [ADR-1354: Ledger-backed canary dispatch authority](1354-ledger-backed-canary-dispatch-authority.md)
+
+- [ADR-1355: Durable single-app binding verification runs](1355-durable-single-app-binding-verification-runs.md)
+
+- [ADR-1356: Durable project binding verification runs](1356-durable-project-binding-verification-runs.md)
+
+- [ADR-1357: Server-generated binding verification reviews](1357-server-generated-binding-verification-reviews.md)
+
+- [ADR-1358: Reusable binding verification runners](1358-reusable-binding-verification-runners.md)
+
+- [ADR-1359: Binding verification run diagnostics](1359-binding-verification-run-diagnostics.md)
+
+- [ADR-1360: Shared verification admission budgets](1360-shared-verification-admission-budgets.md)
+
+- [ADR-1361: Automatic verification recovery diagnostics](1361-automatic-verification-recovery-diagnostics.md)
+
+- [ADR-1365: Verification qualification waiting](1365-verification-qualification-waiting.md)
+
+- [ADR-1366: Verification write reconciliation](1366-verification-write-reconciliation.md)
+
+- [ADR-1367: Binding CLI progress and recovery summaries](1367-binding-cli-progress.md)
+
+- [ADR-1368: Verification creation reconciliation](1368-verification-creation-reconciliation.md)
+
+- [ADR-1369: PostgreSQL pool runtime bindings](1369-postgres-pool-runtime-bindings.md)
+
+- [ADR-1370: Canonical PostgreSQL starter bindings](1370-canonical-postgres-starter-bindings.md)
+
+- [ADR-1371: Async Python PostgreSQL bindings](1371-async-python-postgres-bindings.md)
+
+- [ADR-1372: Python PostgreSQL starter recovery](1372-python-postgres-starter-recovery.md)
+
+- [ADR-1373: Async Python object-storage bindings](1373-async-python-object-storage-bindings.md)
+
+- [ADR-1374: Python object-storage starter recovery](1374-python-object-storage-starter-recovery.md)
+
+- [ADR-1375: Node object-storage starter recovery](1375-node-object-storage-starter-recovery.md)
+
+- [ADR-1376: Native object-storage starter acceptance](1376-native-object-storage-starter-acceptance.md)
+
+- [ADR-1377: Python storage explicit TLS trust](1377-python-storage-explicit-tls-trust.md)
+
+- [ADR-1378: Native storage starter runtime matrix](1378-native-storage-starter-runtime-matrix.md)
+
+- [ADR-1379: PostgreSQL native acceptance repair](1379-postgres-native-acceptance-repair.md)
+- [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
+- [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
+
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
 
+[ADR-202610171028: Site hosting GitHub OIDC](202610171028-site-hosting-github-oidc.md) specifies explicit immutable trust and short-lived preview credentials.
+
+[ADR-202610171059: Read-only hosting diagnostics](202610171059-read-only-hosting-diagnostics.md) defines bounded evidence and advisory recovery without provider probes or mutations.
+- [ADR-1133: Undelivered service calls re-route outside the retry budget](1133-undelivered-service-calls-reroute.md)
+- [ADR-1131: Customer service map from unsampled service-proxy edges](1131-customer-service-map.md)
+
+- [ADR-1134: Wake-ahead learns private TCP edges](1134-wake-ahead-learns-private-tcp.md)
+- [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
+
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+
+- [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
+- [ADR-1523: Durable operator cold-boot recovery](1523-durable-operator-cold-boot-recovery.md)
+- [ADR-1524: Durable operator recovery submissions](1524-durable-operator-recovery-submissions.md)
+
+- [ADR-1525: Recoverable operator park execution](1525-recoverable-operator-park-execution.md) — generation-bound capture/stop, durable cleanup receipts and atomic verified completion; native qualification pending.
+
+- [ADR-1526: Atomic operator node maintenance](1526-atomic-operator-node-maintenance.md) — claim-fenced lifecycle transitions, immutable outcomes and transactional audit handoff.
+
+- [ADR-1527: Generation-fenced node lifecycle completion](1527-generation-fenced-node-completion.md) — captured maintenance cycles, atomic work checks, immutable receipts and completion audit handoff.
+
+- [ADR-1528: Node admission generation fencing](1528-node-admission-generation-fencing.md) — transactional lifecycle/generation checks, fresh placement retries and migration destination validation.
+
+- [ADR-1529: Durable inbound migration reservations](1529-durable-inbound-migration-reservations.md) — persistent destination capacity, one adoption dispatch, original-generation cleanup and atomic ownership conversion.
+
+- [ADR-1530: Durable migration source retirement](1530-durable-migration-source-retirement.md) — original physical source receipts, atomic retirement accounting and maintenance fencing after ownership moves.
+
+- [ADR 1461: App-scoped issue teams and explicit CODEOWNERS import](1461-issue-teams-and-codeowners.md)
+
+- [ADR 1462: Slack alerts through verified Issues webhook receivers](1462-issue-slack-webhook-bridge.md)
+
+- [ADR 1463: Native issue tracker references](1463-issue-tracker-links.md)
+
+- [ADR 1464: Explicit provider ticket creation with durable CLI recovery](1464-issue-ticket-creation-journal.md)
+
+- [ADR 1465: Explicit tracker lifecycle synchronization](1465-explicit-tracker-lifecycle-sync.md)
+
+- [ADR 1466: Native GitHub connections for issue status](1466-native-github-issue-status.md)
+
+- [ADR-1467: Native GitHub ticket creation receipts](1467-native-github-ticket-creation.md)
+
+- [ADR-1468: Opt-in automatic native GitHub lifecycle reconciliation](1468-automatic-native-github-lifecycle.md)
+
+- [ADR-1469: Verified Linear credential boundary](1469-linear-connection-credential-boundary.md)
+
+- [ADR-1470: Durable Linear Issues connections](1470-durable-linear-issue-connections.md)
+
+- [ADR-1471: Native Linear ticket creation and UUID recovery](1471-native-linear-ticket-creation.md)
+
+- [ADR-1472: Explicit native Linear lifecycle sync](1472-native-linear-lifecycle-sync.md)
+
+- [ADR-1473: Automatic native Linear lifecycle sync](1473-automatic-native-linear-lifecycle.md)
+
+- [ADR-1474: Dashboard tracker sync controls](1474-dashboard-tracker-sync-controls.md)
+
+- [ADR-1475: Named Linear workflow picker](1475-named-linear-workflow-picker.md)
+
+- [ADR-1476: Provider issue callbacks as durable refresh hints](1476-provider-issue-callback-hints.md)
+
+- [ADR-1477: Callback rejection diagnostics and setup evidence](1477-callback-rejection-diagnostics-and-setup-evidence.md)
+
+- [ADR-1478: Linear Issue tracker OAuth](1478-linear-issue-tracker-oauth.md)
+
+- [ADR-1479: Read-only inbound tracker lifecycle assessment](1479-issue-tracker-inbound-preview.md)
+
+- [ADR-1480: Explicit inbound tracker lifecycle application](1480-explicit-inbound-tracker-lifecycle.md)
+
+- [ADR-1481: Opt-in directional tracker sync and automatic reopenings](1481-directional-issue-tracker-reopenings.md)
+
+- [ADR-1482: Tracker closure review queue and deployment evidence](1482-tracker-closure-review-queue.md)
+
+- [ADR-1483: Durable sync health and read-only recovery inspections](1483-tracker-sync-health-and-inspections.md)
+
+- [ADR-1484: Opt-in tracker sync notifications and ownership routing](1484-tracker-sync-notifications-and-team-routing.md)
+
+- [ADR-1485: Tracker notification acknowledgment and claims](1485-tracker-notification-acknowledgment-and-claims.md)
+
+- [ADR-1486: Tracker incident snoozing and automatic resurfacing](1486-tracker-incident-snoozing-and-resurfacing.md)
+
+- [ADR-1487: Bounded reminders for unacknowledged tracker incidents](1487-unacknowledged-tracker-incident-reminders.md)
+
+- [ADR-1488: One-step backup team escalation for tracker incidents](1488-backup-team-tracker-incident-escalation.md)
+
+- [ADR-1489: Team Slack destinations for tracker incidents](1489-team-slack-incident-destinations.md)
+
+- [ADR-1490: Application issue event-frequency alert rules](1490-issue-frequency-alert-rules.md)
+
+- [ADR-1491: Native Slack delivery for application issue alerts](1491-native-application-issue-slack.md)
+
+- [ADR-1492: Native application issue acknowledgment and snoozing](1492-native-application-issue-response.md)
+
+- [ADR-1493: Reminders for unacknowledged native application issues](1493-native-application-issue-reminders.md)
+
+- [ADR-1494: Backup-team escalation for native application issues](1494-native-application-issue-escalation.md)
+
+- [ADR-1495: Native application issue response inbox](1495-native-application-issue-response-inbox.md)
+
+- [ADR-1496: Native Slack response actions and account links](1496-native-slack-response-actions.md)
+
+- [ADR-1497: Native Slack OAuth installation](1497-native-slack-oauth-installation.md)
+
+- [ADR-1498: Native Slack channel routing rules](1498-native-slack-channel-routing.md)
+
+- [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
+- [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
+- [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)

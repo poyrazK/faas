@@ -21,6 +21,7 @@ for the Makefile and CI invocations.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,14 @@ def pre_normalize_spec(spec: Path) -> Path:
         if schema is not None:
             for keyword in ("oneOf", "anyOf", "not"):
                 schema.pop(keyword, None)
+    # 0.29 rejects boolean enums and otherwise drops the entire preflight DTO.
+    # Preserve its boolean wire type; the canonical spec and server still
+    # require false while customer activation is disabled (ADR-1333).
+    preflight = fixed["components"]["schemas"]["ManagedPostgresCutoverPreflight"]
+    activation = preflight["properties"]["activation_allowed"]
+    if activation.get("enum") != [False]:
+        raise ValueError("Preflight activation gate generator adaptation needs review")
+    activation.pop("enum")
     # The pinned generator discards object properties when a oneOf contains
     # only required-field constraints, producing body: Any instead of the
     # existing typed request model. Keep its wire shape in generated clients;
@@ -155,6 +164,11 @@ def pre_normalize_spec(spec: Path) -> Path:
 
 
 WRAPPER_MODULES = (
+    "_binding_qualification.py",
+    "_binding_creation.py",
+    "_binding_runner.py",
+    "_binding_runner_diagnostics.py",
+
     "realtime_workers.py",
     "realtime_activity.py",
     "realtime_presence.py",
@@ -191,6 +205,7 @@ WRAPPER_MODULES = (
     "release_context.py",
     "dev_bridge.py",
     "webhook.py",
+    "auth.py",
     "pre_auth_target.py",
     "ai_gateway.py",
     "issues.py",
@@ -199,11 +214,21 @@ WRAPPER_MODULES = (
     "operations_runtime.py",
     "job_operations_runtime.py",
     "object_storage_runtime.py",
+    "_binding_client_runtime.py",
+    "postgres_pool_runtime.py",
+    "async_postgres_pool_runtime.py",
+    "_async_binding_client_runtime.py",
+    "async_object_storage_runtime.py",
+    "async_secret_reload_runtime.py",
     "secret_reload_runtime.py",
     "queue_consumer.py",
     "operations.py",
     "event_consumer_transactions.py",
     "event_consumer_delivery_context.py",
+    "_event_deadline_policy.py",
+    "event_deadline_checkpoint.py",
+    "event_deadline_watch.py",
+    "event_deadline_investigation.py",
     "commit_subscriber_wait.py",
     "commit_delivery_report.py",
     "commit_recovery_plan.py",
@@ -1283,9 +1308,62 @@ from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recov
 __all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
 from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
 __all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
+
+from ._binding_runner import (
+    BindingVerificationRecoveryError, BindingVerificationProgress,
+    run_binding_verification, run_project_binding_verification,
+    arun_binding_verification, arun_project_binding_verification,
+)
+__all__ += (
+    "BindingVerificationRecoveryError", "BindingVerificationProgress",
+    "run_binding_verification", "run_project_binding_verification",
+    "arun_binding_verification", "arun_project_binding_verification",
+)
+from ._binding_creation import (
+    BindingVerificationCreationError,
+    create_binding_verification_from_review,
+    reconcile_binding_verification_creation,
+    create_project_binding_verification_from_review,
+    reconcile_project_binding_verification_creation,
+    acreate_binding_verification_from_review,
+    areconcile_binding_verification_creation,
+    acreate_project_binding_verification_from_review,
+    areconcile_project_binding_verification_creation,
+)
+__all__ += ('BindingVerificationCreationError', 'create_binding_verification_from_review', 'reconcile_binding_verification_creation', 'create_project_binding_verification_from_review', 'reconcile_project_binding_verification_creation', 'acreate_binding_verification_from_review', 'areconcile_binding_verification_creation', 'acreate_project_binding_verification_from_review', 'areconcile_project_binding_verification_creation')
+
 from .event_consumer_delivery_context import (EventConsumerDeliveryContext, EventConsumerDeliveryContextUnavailableError,
                                               event_consumer_delivery_context_from_headers)
 __all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
+
+from ._event_deadline_policy import EVENT_DEADLINE_REASONS, EventDeadlinePolicyOptions, EventDeadlineTarget
+from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
+from .event_deadline_watch import (
+    EventDeadlineWatchCallbackError,
+    EventDeadlineWatchCancelled,
+    EventDeadlineWatchOptions,
+    awatch_event_subscription_deadlines,
+)
+
+__all__ += (
+    "EVENT_DEADLINE_REASONS", "EventDeadlinePolicyOptions", "EventDeadlineTarget",
+    "EventDeadlineWatchOptions", "EventDeadlineWatchCallbackError", "EventDeadlineWatchCancelled",
+    "awatch_event_subscription_deadlines", "validate_event_deadline_checkpoint", "acknowledge_event_deadline_alerts",
+)
+
+from ._event_deadline_policy import EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, EventDeadlineRatioOptions
+
+__all__ += ("EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX", "EventDeadlineRatioOptions")
+
+from .event_deadline_investigation import (
+    EventDeadlineInvestigationOptions,
+    EventDeadlineInvestigationReadError,
+    ainvestigate_event_deadline_alert,
+)
+
+__all__ += (
+    "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)
 '''
 
 
@@ -1297,6 +1375,39 @@ def _rewrite_init_py(init_path: Path) -> None:
     release context, runtime flags, and webhook verification.
     """
     init_path.write_text(_INIT_PY_TEMPLATE)
+
+
+def _git_blob_hashes(paths: list[Path], repo_root: Path) -> list[str]:
+    """Hash raw files in one Git invocation, including Git's blob header.
+
+    --no-filters preserves the old --stdin byte semantics. Git's stdin path
+    protocol accepts C-quoted bytes, so spaces, controls and Unicode paths
+    remain unambiguous without launching a process for every generated file.
+    """
+    if not paths:
+        return []
+    quoted = []
+    for path in paths:
+        pieces = []
+        for value in os.fsencode(path):
+            if value in (34, 92):
+                pieces.append(b"\\" + bytes([value]))
+            elif value < 32 or value >= 127:
+                pieces.append(f"\\{value:03o}".encode("ascii"))
+            else:
+                pieces.append(bytes([value]))
+        quoted.append(b'"' + b"".join(pieces) + b'"')
+    proc = subprocess.run(
+        ["git", "hash-object", "--no-filters", "--stdin-paths"],
+        cwd=repo_root,
+        input=b"\n".join(quoted) + b"\n",
+        check=True,
+        capture_output=True,
+    )
+    hashes = proc.stdout.decode("ascii").splitlines()
+    if len(hashes) != len(paths):
+        raise RuntimeError("git returned an incomplete generated-file hash batch")
+    return hashes
 
 
 def _canonicalise_to_head(
@@ -1366,22 +1477,16 @@ def _canonicalise_to_head(
     #    NOT apply that header and would never match — we use git's
     #    hashing primitives so the comparison is apples-to-apples.
     mismatches: list[tuple[Path, bytes, str]] = []
+    candidates = []
     for regen_path in sdk_root.rglob("*.py"):
         rel = regen_path.relative_to(repo_root).as_posix()
         head_sha = head_blobs.get(rel)
-        if head_sha is None:
-            continue  # untracked (e.g. wrapper) — leave alone
-        regen_bytes = regen_path.read_bytes()
-        regen_sha_proc = subprocess.run(
-            ["git", "hash-object", "--stdin"],
-            cwd=repo_root,
-            input=regen_bytes,
-            check=True,
-            capture_output=True,
-        )
-        if regen_sha_proc.stdout.decode("ascii").strip() == head_sha:
-            continue  # regen equals HEAD — no reconciliation needed
-        mismatches.append((regen_path, regen_bytes, head_sha))
+        if head_sha is not None:
+            candidates.append((regen_path, head_sha))
+    hashes = _git_blob_hashes([path for path, _ in candidates], repo_root)
+    for (regen_path, head_sha), regen_sha in zip(candidates, hashes, strict=True):
+        if regen_sha != head_sha:
+            mismatches.append((regen_path, regen_path.read_bytes(), head_sha))
 
     # 3. Pass B — batch-fetch HEAD bytes for all mismatched SHAs in
     #    one `git cat-file --batch` invocation. The output format

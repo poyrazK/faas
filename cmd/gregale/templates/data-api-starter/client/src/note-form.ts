@@ -1,4 +1,4 @@
-import { classifyDataError, dataRequest, validatedRpc } from '@gregale/data'
+import { classifyDataError, dataRequest, validatedRpc, type DataErrorCategory } from '@gregale/data'
 import type { Database } from './database.types.js'
 import { noteInputFeedback, type notesClient } from './notes.js'
 
@@ -62,7 +62,7 @@ export function createNoteForm(client: ReturnType<typeof notesClient>, options: 
       const result = outcome.result
       if (!result.error && result.data?.length === 1) { pending = null; return { outcome: 'saved', note: result.data[0] } }
       const category = classifyDataError(result.error, { status: result.status })?.category ?? 'unknown'
-      const messages = {
+      const messages: Record<DataErrorCategory, string> = {
         unique_violation: 'That value already exists. Review the note and tags.',
         foreign_key_violation: 'A related item is unavailable. Review the note and tags.',
         authentication: 'Session expired or invalid. Sign in again before saving.',
@@ -72,9 +72,11 @@ export function createNoteForm(client: ReturnType<typeof notesClient>, options: 
         cancelled: 'The save was canceled. Its outcome is uncertain.',
         unavailable: 'The service is unavailable. The save outcome is uncertain.',
         no_response: 'No response was received. The save may have completed.',
+        response_too_large: 'The save response was too large. Its outcome is uncertain.',
+        rate_limited: 'Too many requests. Wait before checking the save outcome.',
         unknown: 'The save could not be confirmed.',
       }
-      const uncertain = ['timeout', 'cancelled', 'unavailable', 'no_response', 'unknown'].includes(category)
+      const uncertain = ['timeout', 'cancelled', 'unavailable', 'no_response', 'response_too_large', 'rate_limited', 'unknown'].includes(category)
       if (!uncertain) pending = null
       return { outcome: 'failed', message: messages[category], uncertain }
     } catch {

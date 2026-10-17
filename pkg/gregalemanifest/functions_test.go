@@ -1,6 +1,7 @@
 package gregalemanifest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -83,6 +84,28 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"combined with scaling", "scaling:\n  min_instances: 1\nfunctions:\n  - name: a\n    root: f\n", api.PlanPro, "cannot be combined with scaling:"},
 		{"non-cron trigger", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: queue\n    app: a\n    config:\n      mode: queue\n", api.PlanPro, "cron triggers only"},
 		{"trigger for unknown function", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: cron\n    app: b\n    schedule: \"* * * * *\"\n    path: /\n", api.PlanPro, "must name one of the functions"},
+		// ADR-1342 per-function settings.
+		// The bound comes from limits.go, which plan revisions change (ADR-1430).
+		{"ram above plan", "functions:\n  - name: a\n    root: f\n    ram_mb: 4096\n", api.PlanHobby, fmt.Sprintf("ram_mb 4096 must be between 1 and %d", api.MustLimitsFor(api.PlanHobby).RAMMB)},
+		{"timeout above plan", "functions:\n  - name: a\n    root: f\n    request_timeout_s: 100000\n", api.PlanPro, "request_timeout_s 100000"},
+		{"negative min instances", "functions:\n  - name: a\n    root: f\n    min_instances: -1\n", api.PlanPro, "min_instances -1"},
+		{"concurrency above per-VM bound", "functions:\n  - name: a\n    root: f\n    concurrency: 6\n", api.PlanHobby, "concurrency 6 must be between 1 and 5"},
+		{"bad env key", "functions:\n  - name: a\n    root: f\n    env:\n      lower: x\n", api.PlanPro, "env \"lower\""},
+		{"bad secret name", "functions:\n  - name: a\n    root: f\n    secrets_from_env: [\"api-key\"]\n", api.PlanPro, "secrets_from_env[0]"},
+		{"secret listed twice", "functions:\n  - name: a\n    root: f\n    secrets_from_env: [K, K]\n", api.PlanPro, "listed twice"},
+		{"env and secret", "functions:\n  - name: a\n    root: f\n    env:\n      K: v\n    secrets_from_env: [K]\n", api.PlanPro, "both a plain env value and a secret"},
+		{"relative route", "functions:\n  - name: w\n    root: f0\n    entry: true\n  - name: a\n    root: f\n    routes: [api/*]\n", api.PlanPro, "must start with /"},
+		{"templated route", "functions:\n  - name: w\n    root: f0\n    entry: true\n  - name: a\n    root: f\n    routes: [\"/users/{id}\"]\n", api.PlanPro, "not {param} templates"},
+		{"bad route glob", "functions:\n  - name: w\n    root: f0\n    entry: true\n  - name: a\n    root: f\n    routes: [\"/a/[\"]\n", api.PlanPro, "not a path glob"},
+		{"duplicate route", "functions:\n  - name: w\n    root: f0\n    entry: true\n  - name: a\n    root: f1\n    routes: [/x/*]\n  - name: b\n    root: f2\n    routes: [/x/*]\n", api.PlanPro, "already a route of function \"a\""},
+		{"routes without entry", "functions:\n  - name: a\n    root: f\n    routes: [/a/*]\n", api.PlanPro, "set entry: true"},
+		{"two entries", "functions:\n  - name: a\n    root: f1\n    entry: true\n  - name: b\n    root: f2\n    entry: true\n", api.PlanPro, "only one function can be the entry"},
+		{"entry with routes", "functions:\n  - name: a\n    root: f\n    entry: true\n    routes: [/a/*]\n", api.PlanPro, "remove its routes"},
+		{"pull queue binding", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: jobs\n        mode: pull\n", api.PlanPro, "consumes queues by push"},
+		{"duplicate queue binding", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: jobs\n      - name: jobs\n        queue_name: other\n", api.PlanPro, "duplicate queue binding name"},
+		{"bad queue name", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: Jobs\n", api.PlanPro, "queue_name must match"},
+		{"event trigger names an app", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - app: other\n        source: billing.*\n        type: invoice.paid\n", api.PlanPro, "remove app; a function"},
+		{"event trigger without source", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - type: invoice.paid\n", api.PlanPro, "functions[0]: triggers.event[0].source"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,5 +172,40 @@ func TestFunctionBucketRuleID(t *testing.T) {
 	}
 	if !strings.HasPrefix(FunctionBucketRuleID("shop-thumbs", 0, FunctionBucketEvent{}), FunctionBucketRulePrefix("shop-thumbs")) {
 		t.Fatal("rule id must carry the function prefix")
+	}
+}
+
+// ADR-1342: per-function app settings and routes parse and validate.
+func TestFunctionsManifestSettings(t *testing.T) {
+	m, err := ParseBytes([]byte(`
+functions:
+  - name: web
+    root: functions/web
+    entry: true
+  - name: users
+    root: functions/users
+    runtime: node24
+    ram_mb: 512
+    request_timeout_s: 120
+    min_instances: 0
+    concurrency: 16
+    env:
+      LOG_LEVEL: debug
+    secrets_from_env: [DATABASE_URL]
+    routes: ["/users/*", "/users"]
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.ValidateForPlan(api.PlanPro); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	users := m.Functions[1]
+	if users.RAMMB != 512 || users.RequestTimeoutS != 120 || users.MinInstances == nil || *users.MinInstances != 0 ||
+		users.Concurrency != 16 || users.Env["LOG_LEVEL"] != "debug" || len(users.SecretsFromEnv) != 1 || len(users.Routes) != 2 {
+		t.Fatalf("users = %+v", users)
+	}
+	if !m.Functions[0].Entry || m.Functions[0].HasPreDeploySettings() || !users.HasPreDeploySettings() {
+		t.Fatalf("entry/pre-deploy flags wrong: %+v", m.Functions)
 	}
 }

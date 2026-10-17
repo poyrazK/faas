@@ -128,6 +128,77 @@ and its failure tests verify ordering and cleanup locally; real PostgreSQL tests
 verify fixture migrations, grants, generated RPC types and replacement roles.
 Neither portable result counts as live staging or native provider qualification.
 
+## Hosted load and recovery
+
+The canary now finishes with seven bounded load/recovery scenarios against its
+acknowledged Data API app. The shared runner records a separate `load` report
+with scope `hosted-data-api-load` and qualification `isolated_staging_only`.
+Before mutation, the adapter requires the parent's created app/database journal,
+verified staging-account check, native builder identity, serving contract and
+deployment source digest. It accepts no arbitrary target URL or owner DSN.
+
+The existing migration release adds a tenant/subject-isolated `load_notes` table,
+receipt-preserving write RPC, RLS read RPC, identity probe and a fixed three-second
+pause RPC. PUBLIC execution is revoked; the canonical permission release grants
+only approved RPCs to the serving role, including after rotation. These functions
+belong only to the disposable canary fixture. Original CRUD/rollout fixtures
+remain independent.
+
+The adapter sets two requests/second and burst eight on its owned app, then
+requires a completed fresh managed restart and matching serving fingerprint.
+Scenarios cover mixed REST/RPC with multiple subjects and tenant isolation,
+observed admission rejection under fixed RPC pressure, per-subject rate rejection
+and refill, a discarded write reply reconciled without replay, another completed
+managed restart preserving receipts, observed parking followed by an authenticated
+wake, and mixed traffic after recovery. Every request disables automatic SDK
+retry. Write receipts retain an invocation count; accepted rows must match exactly,
+rejected writes must be absent, and lost-reply receipts must have one invocation.
+Insufficient pressure to observe a stable rejection fails its scenario.
+
+Optional manifest configuration uses the local verifier's bounds:
+
+```json
+"load": { "requests": 120, "concurrency": 8, "users": 4 }
+```
+
+Each mixed phase allows up to 1,000 requests, 32 workers and 16 users (minimum
+two users and four requests per user). RLS seed/audit probes and fixed pressure
+are additional bounded traffic. The hosted run is limited to 30 minutes, ordinary
+phases to 60 seconds, managed restart to five minutes plus verification, and
+parking to 15 minutes plus one minute for wake. Client bodies are capped at 1 MiB;
+this guard is separate from the deployed runtime's 16 MiB response policy.
+
+The report retains client p50/p95/p99, completed/successful throughput, HTTP/code
+counts, recovery elapsed time, controller Node version, installed SDK/harness
+digests and build/deployment/contract identities. `load_lifecycle` records the
+completed restart wake ID and observed parked/running instance IDs. Latencies
+cover scenario SDK requests through the public edge; control/audit requests are
+excluded from samples, while phase elapsed time includes audits and deliberate
+waits. These observations do not establish capacity or the native restore SLO.
+
+`coverage.unsupported` explicitly lists owner-controlled deadline/disconnect
+faults, oversized-response fixture faults, private engine killing, serving SQL
+connection peaks and SQL execution/pool-wait instrumentation. They are never
+counted as passing hosted checks. The hosted path does not claim an independently
+verified executable hash or native host qualification from HTTP success.
+
+Load checkpoints are bounded to 64 KiB and enter the existing atomic mode-0600
+canary evidence without subjects, row keys/values, JWTs, DSNs or raw errors.
+`load.cleanup` describes cancellation/drain of client requests only. Actual app,
+binding and database cleanup remains the parent journal's responsibility and is
+reported in top-level `cleanup`; a passing load report cannot override failed
+parent cleanup. Failure or interruption stops subsequent scenarios, saves partial
+evidence and returns through the existing cleanup flow. The fixture's rate
+settings disappear with its deleted app.
+
+`make data-api-staging-check` runs portable success/failure contracts with real
+SDK serialization and simulated provider responses. `make data-api-acceptance`
+also exercises this adapter against real local PostgreSQL, JWT verification and
+the pinned engine; its management restart and park observations are simulated.
+Neither result is hosted qualification. The existing manual staging command and
+workflow run the real controls only with the configured isolated target and
+provider/native prerequisites above.
+
 ## Hosted contract rollout qualification
 
 The canary now snapshots the contracts before and after its additive migration,

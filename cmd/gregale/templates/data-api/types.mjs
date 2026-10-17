@@ -507,16 +507,17 @@ export function enrichOpenAPI(document, snapshot, schema) {
       else response.schema = contractSchema(fn.returns)
     }
   }
-  document.definitions.GregaleProblem = { type: 'object', properties: { type: { type: 'string' }, title: { type: 'string' }, status: { type: 'integer' }, code: { type: 'string' }, request_id: { type: 'string', format: 'uuid' } }, required: ['type', 'title', 'status', 'code', 'request_id'] }
+  document.definitions.GregaleProblem = { type: 'object', properties: { type: { type: 'string' }, title: { type: 'string' }, status: { type: 'integer' }, code: { type: 'string' }, request_id: { type: 'string', format: 'uuid' }, retry_after_seconds: { type: 'integer', minimum: 1 } }, required: ['type', 'title', 'status', 'code', 'request_id'] }
   for (const path of Object.values(document.paths ?? {})) for (const method of ['get', 'post', 'patch', 'delete']) {
     const operation = path[method]
     if (!operation) continue
     operation.responses ??= {}
-    for (const status of ['401', '413', '503', '504']) operation.responses[status] ??= { description: 'Gateway authentication, body limit, availability or timeout failure (application/problem+json). Database failures use the PostgREST error shape.', schema: ref('GregaleProblem') }
+    for (const status of ['401', '413', '429', '503', '504']) operation.responses[status] ??= { description: 'Gateway authentication, body limit, user rate limit, availability or timeout failure (application/problem+json). Database failures use the PostgREST error shape.', schema: ref('GregaleProblem') }
     for (const response of Object.values(operation.responses)) {
       response.headers ??= {}
       response.headers['X-Request-Id'] = { type: 'string', description: 'Server-generated UUID; correlate with data_api_request runtime logs.' }
     }
+    operation.responses['429'].headers['Retry-After'] = { type: 'integer', description: 'Gateway rate-limit retry delay in seconds; does not trigger automatic replay.' }
   }
   return document
 }

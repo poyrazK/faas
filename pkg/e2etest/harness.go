@@ -1048,6 +1048,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(h.TmpDir, "consumer-usage"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(h.TmpDir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
@@ -1140,6 +1141,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
 		"FAAS_CONSUMER_USAGE_OUTBOX_ROOT="+filepath.Join(dir, "consumer-usage"),
+		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(dir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
 	)
@@ -1583,6 +1585,7 @@ func (h *Harness) stop() {
 		}
 	}
 	h.stopProcs(draining)
+	h.destroyLiveVMs(remaining)
 	h.stopProcs(remaining)
 }
 
@@ -2740,7 +2743,28 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 	// starts imaged failed, deployments sat at status=pending, and wakes
 	// returned 503. First seen on the 2026-09-13 native e2e run; invisible in
 	// CI because only the metal-tagged tests start imaged.
-	return append(env, functionRunnerEnv(t, tmp)...)
+	env = append(env, functionRunnerEnv(t, tmp)...)
+	// Runtime bases built on the Debian parent (node, python) are staged in a
+	// tree vmmd fills, and vmmd writes only under the tmpfs staging root
+	// faas-imaged.service names. The default TMPDIR is outside it, so every
+	// such base failed with "target_dir outside staging root".
+	return append(env, "FAAS_BASE_STAGING_ROOT="+imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT"))
+}
+
+// imagedUnitEnv returns the value faas-imaged.service sets for key.
+func imagedUnitEnv(t *testing.T, key string) string {
+	t.Helper()
+	unit, err := daemonunitspec.UnitByName("imaged")
+	if err != nil {
+		t.Fatalf("e2etest: look up imaged unit spec: %v", err)
+	}
+	for _, kv := range unit.Environment {
+		if kv.Key == key {
+			return kv.Value
+		}
+	}
+	t.Fatalf("e2etest: the imaged unit spec does not set %s", key)
+	return ""
 }
 
 // boundingSetPrefix returns an argv prefix that runs a daemon with the same
@@ -2935,6 +2959,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// sig_invalid.
 	if h.SignKeyPath != "" {
 		env = append(env, "FAAS_SIGN_KEY="+h.SignKeyPath)
+	}
+	// imaged asks vmmd to materialize the parent base. Without this it dials
+	// /run/faas/vmmd.sock, which the harness's vmmd does not listen on.
+	if h.VMMDSock != "" {
+		env = append(env, "FAAS_VMM_SOCK=unix://"+h.VMMDSock)
 	}
 	// Optional builder-base override (Lima / CI without ghcr creds). When
 	// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there

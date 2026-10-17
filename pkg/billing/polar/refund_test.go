@@ -78,7 +78,7 @@ func (f *refundServer) handler(t *testing.T) http.HandlerFunc {
 			}
 			body2 := f.postBody
 			if body2 == "" {
-				body2 = `{"id":"refund-new","amount":500,"currency":"eur","status":"succeeded"}`
+				body2 = `{"id":"refund-new","amount":500,"currency":"usd","status":"succeeded"}`
 			}
 			_, _ = io.WriteString(w, body2)
 		default:
@@ -93,7 +93,7 @@ func (f *refundServer) counts() (posts, gets int) {
 	return f.posts, f.gets
 }
 
-const existingRefundItem = `[{"id":"refund-existing","amount":500,"currency":"eur","status":"succeeded","order_id":"order-1","metadata":{"faas_idempotency_key":"operator-refund-42"}}]`
+const existingRefundItem = `[{"id":"refund-existing","amount":500,"currency":"usd","status":"succeeded","order_id":"order-1","metadata":{"faas_idempotency_key":"operator-refund-42"}}]`
 
 func newRefundProvider(t *testing.T, f *refundServer) (*Provider, func()) {
 	t.Helper()

@@ -92,7 +92,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("preflight qualification service listener: %w", err)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
 	if err != nil {
 		return fmt.Errorf("admit qualification instance: %w", err)

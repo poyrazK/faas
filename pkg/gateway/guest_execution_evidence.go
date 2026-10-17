@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const maxGuestExecutionDurationMS = 24 * 60 * 60 * 1000
@@ -24,9 +27,12 @@ type guestExecutionEvidence struct {
 	PeakRSSMB              int
 	ResourceUsageAvailable bool
 	FlagEvidenceJSON       string
-	cpuUsageSeen           bool
-	peakRSSSeen            bool
-	seen                   bool
+	// MeterUnits are the units the app reported in Gregale-Usage
+	// (ADR-1318), summed per meter.
+	MeterUnits   map[string]int64
+	cpuUsageSeen bool
+	peakRSSSeen  bool
+	seen         bool
 }
 
 type guestExecutionEvidenceSnapshot struct {
@@ -44,6 +50,53 @@ type guestExecutionEvidenceContextKey struct{}
 
 func withGuestExecutionEvidence(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), guestExecutionEvidenceContextKey{}, &guestExecutionEvidence{}))
+}
+
+// guestExecutionEvidenceOf is the request's evidence collector, or nil.
+func guestExecutionEvidenceOf(r *http.Request) *guestExecutionEvidence {
+	evidence, _ := r.Context().Value(guestExecutionEvidenceContextKey{}).(*guestExecutionEvidence)
+	return evidence
+}
+
+// meterUnits are the units the app reported, or nil.
+func (e *guestExecutionEvidence) meterUnits() map[string]int64 {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return maps.Clone(e.MeterUnits)
+}
+
+// addUsageHeader adds one Gregale-Usage value: comma-separated meter=units
+// pairs. Malformed pairs are ignored, and at most
+// state.MaxAppMetersPerRequest meters are kept.
+func (e *guestExecutionEvidence) addUsageHeader(value string) {
+	for _, pair := range strings.Split(value, ",") {
+		meter, raw, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		meter = strings.TrimSpace(meter)
+		units, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if !ok || err != nil || !state.ValidAppMeter(meter) || units < 0 || units > state.MaxAppMeterUnitsPerRequest {
+			continue
+		}
+		if e.MeterUnits == nil {
+			e.MeterUnits = map[string]int64{}
+		}
+		if _, known := e.MeterUnits[meter]; !known && len(e.MeterUnits) >= state.MaxAppMetersPerRequest {
+			continue
+		}
+		e.MeterUnits[meter] = min(e.MeterUnits[meter]+units, state.MaxAppMeterUnitsPerRequest)
+	}
+}
+
+// durationMS is the execution time the runtime reported, or 0.
+func (e *guestExecutionEvidence) durationMS() int {
+	if e == nil {
+		return 0
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.DurationMS
 }
 
 func guestExecutionEvidenceFromContext(ctx context.Context) (guestExecutionEvidenceSnapshot, bool) {
@@ -75,6 +128,9 @@ func recordGuestExecutionEvidence(ctx context.Context, name, value string) bool 
 	evidence.mu.Lock()
 	defer evidence.mu.Unlock()
 	switch name {
+	case api.UsageHeader:
+		evidence.addUsageHeader(value)
+		return true
 	case api.FlagEvidenceHeader:
 		raw, err := flags.DecodeEvidenceHeader(value)
 		if err == nil {
@@ -227,7 +283,7 @@ func isGuestEvidenceHeader(name string) bool {
 	switch http.CanonicalHeaderKey(strings.TrimSpace(name)) {
 	case api.FlagEvidenceHeader, api.GuestEvidenceDurationHeader, api.GuestEvidenceRuntimeHeader,
 		api.GuestEvidenceOutcomeHeader, api.GuestEvidenceErrorClassHeader,
-		api.GuestEvidenceCPUTimeHeader, api.GuestEvidencePeakRSSHeader:
+		api.GuestEvidenceCPUTimeHeader, api.GuestEvidencePeakRSSHeader, api.UsageHeader:
 		return true
 	default:
 		return false
@@ -254,10 +310,35 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 		api.GuestEvidenceErrorClassHeader,
 		api.GuestEvidenceCPUTimeHeader,
 		api.GuestEvidencePeakRSSHeader,
+		api.UsageHeader,
 	} {
 		for _, value := range resp.Header.Values(name) {
 			recordGuestExecutionEvidence(ctx, name, value)
 		}
 		resp.Header.Del(name)
 	}
+	if resp.Body != nil {
+		resp.Body = &usageTrailerReader{ReadCloser: resp.Body, resp: resp, ctx: ctx}
+	}
+}
+
+// usageTrailerReader records a Gregale-Usage trailer (ADR-1318) once the
+// body is read, before the reverse proxy copies trailers to the client.
+type usageTrailerReader struct {
+	io.ReadCloser
+	resp *http.Response
+	ctx  context.Context
+	done bool
+}
+
+func (r *usageTrailerReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if err == io.EOF && !r.done && r.resp.Trailer != nil {
+		r.done = true
+		for _, value := range r.resp.Trailer.Values(api.UsageHeader) {
+			recordGuestExecutionEvidence(r.ctx, api.UsageHeader, value)
+		}
+		r.resp.Trailer.Del(api.UsageHeader)
+	}
+	return n, err
 }

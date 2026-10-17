@@ -8,6 +8,7 @@ package authsettings
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -105,6 +106,14 @@ type Change struct {
 	Captcha *Captcha
 	// ActivityRetentionDays prunes older activity; 0 keeps it forever.
 	ActivityRetentionDays *int
+	// Email sets the HTTPS email provider, or removes it (empty Provider).
+	Email *Email
+	// SMS turns phone sign-in by text message on with a provider, or off
+	// (empty Provider).
+	SMS *SMS
+	// SSO turns organization single sign-on (SAML) on or off. Turning it on
+	// also needs SAMLKeySecret, which the caller creates once.
+	SSO *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -185,6 +194,28 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 		default:
 			set[secretAuditRetention] = strconv.Itoa(days)
 		}
+	}
+	if c.Email != nil {
+		if c.Email.Provider == "" {
+			unset = append(unset, EmailSecrets...)
+		} else {
+			email, err := c.Email.secrets()
+			if err != nil {
+				return nil, nil, err
+			}
+			maps.Copy(set, email)
+		}
+	}
+	if c.SSO != nil {
+		set["AUTH_SSO"] = flag(*c.SSO)
+	}
+	if c.SMS != nil {
+		sms, removed, err := c.SMS.secrets()
+		if err != nil {
+			return nil, nil, err
+		}
+		maps.Copy(set, sms)
+		unset = append(unset, removed...)
 	}
 	if c.PasskeyRPID != nil {
 		switch {

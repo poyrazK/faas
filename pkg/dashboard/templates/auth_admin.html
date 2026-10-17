@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <title>{{.Title}} — Gregale</title>
-<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}</style></head>
+<style nonce="{{.Nonce}}">[hidden]{display:none!important}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form,#email-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label,#email-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}</style></head>
 <body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
 <main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Application Auth</h1>
 <p>Settings, users and organizations of the Auth app <code>{{.Data.Slug}}</code>; these are your application's users, not your Gregale team.</p>
@@ -33,7 +33,15 @@
 <label>Site key<input name="captcha_site_key" autocomplete="off" spellcheck="false" maxlength="100"></label>
 <label>Secret key (required whenever you change CAPTCHA)<input name="captcha_secret" type="password" autocomplete="off" maxlength="4096"></label>
 </fieldset>
+<fieldset><legend>Phone sign-in by text message, through your own SMS account</legend>
+<label>Provider<select name="sms_provider"><option value="">Off</option>{{range .Data.SMSProviders}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Account (Twilio account SID or Vonage API key)<input name="sms_account" autocomplete="off" spellcheck="false" maxlength="256"></label>
+<label>Sender (Twilio messaging or Verify service SID, MessageBird originator, Textlocal sender or Vonage from)<input name="sms_sender" autocomplete="off" spellcheck="false" maxlength="256"></label>
+<label>Secret (auth token, access key, API key or API secret; required whenever you change SMS)<input name="sms_secret" type="password" autocomplete="off" maxlength="4096"></label>
+</fieldset>
 <label>Keep sign-in activity for this many days (empty keeps it forever)<input name="activity_retention_days" type="number" min="1" max="3650"></label>
+<label>Organization single sign-on (SAML)<select name="sso"><option value="off">Off</option><option value="on">On (register identity providers with gregale auth sso add)</option></select></label>
+<p id="sso-status" class="muted"></p>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -48,11 +56,24 @@
 <button type="submit">Enable provider</button>
 <p class="muted">Register <code>{{.Data.AuthOrigin}}/auth/v1/callback</code> as the callback URL with the provider.</p>
 </form>
-<h3>Email, events and signing keys</h3>
+<h3>Email delivery</h3>
 <p id="email-status"></p>
+<form id="email-form" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/settings" hidden>
+<input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+<label>Provider<select name="email_provider"><option value="">None</option>{{range .Data.EmailProviders}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Sender (an address, or Name &lt;address&gt;)<input name="email_from" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Shop &lt;auth@shop.example.com&gt;"></label>
+<label>API key (required whenever you change email delivery)<input name="email_api_key" type="password" autocomplete="off" maxlength="512"></label>
+<button type="submit">Save and restart</button>
+</form>
+<h3>Signing keys</h3>
+<p id="keys-status" role="status" aria-live="polite"></p>
+<ul id="sealed-keys" hidden>{{range .Data.Keys}}<li data-id="{{.ID}}" data-created="{{.CreatedAt}}" data-signer="{{.Signer}}"></li>{{end}}</ul>
+<table id="keys" hidden><thead><tr><th>Key</th><th>State</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
+<form id="key-create" method="post" action="/dashboard/apps/{{.Data.Slug}}/auth/keys" data-max="{{.Data.MaxKeys}}" hidden><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Add a standby key</button></form>
+<p class="muted">To rotate without signing anyone out: add a standby key and wait until it shows as verifying, so every verifier can learn it; make it sign; ten minutes later, once the tokens it signed have expired, revoke the previous key. To cut off a leaked key, revoke it at once: its tokens stop verifying, and signed-in users keep their sessions.</p>
+<h3>Lifecycle events</h3>
 <p id="events-status"></p>
-<p id="keys-status"></p>
-<p class="muted">Change email delivery with <code>gregale auth config {{.Data.Slug}} --email-provider …</code>, lifecycle events with <code>gregale auth config {{.Data.Slug}} --events on</code>, and rotate signing keys with <code>gregale auth keys rotate {{.Data.Slug}}</code>.</p>
+<p class="muted">Turn them on or off with <code>gregale auth config {{.Data.Slug}} --events on</code>.</p>
 </section>
 <h2>Users and organizations</h2>
 <section id="key-section"><h2>Admin key</h2>
@@ -379,12 +400,15 @@
       brand_name: settings.branding?.name ?? '', brand_color: settings.branding?.color ?? '', brand_logo_url: settings.branding?.logo_url ?? '',
       captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',
       activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
+      sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
+      sso: settings.sso?.enabled ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
     for (const [name, value] of Object.entries(values)) { control(name).value = value; control(name).dataset.initial = value }
     const custom = settings.password.required.includes('custom')
     $('settings-status').textContent = custom ? 'Passwords also need characters from a custom set; saving password classes replaces it.' : ''
+    $('sso-status').textContent = settings.sso?.enabled ? 'Identity providers trust entity ID ' + settings.sso.entity_id + ' with ACS URL ' + settings.sso.acs_url + '.' : ''
     form.hidden = false
     $('provider-form').hidden = false
     const known = [...$('provider-form').elements.namedItem('provider').options].map(option => option.value)
@@ -397,17 +421,66 @@
       item.append(disable)
       return item
     }))
-    $('email-status').textContent = settings.email.configured ? 'Email delivery is configured.' : 'Email delivery is not configured: confirmation, magic-link, recovery and invitation emails fail.'
+    $('email-status').textContent = !settings.email.configured ? 'Email delivery is not configured: confirmation, magic-link, recovery and invitation emails fail.'
+      : settings.email.provider ? 'Sending through ' + settings.email.provider + ' as ' + settings.email.from + '.' : 'Email delivery is configured.'
+    const emailForm = $('email-form')
+    emailForm.elements.namedItem('email_provider').value = settings.email.provider ?? ''
+    emailForm.elements.namedItem('email_from').value = settings.email.from ?? ''
+    emailForm.hidden = false
     $('events-status').textContent = settings.events?.lifecycle ? 'Lifecycle events (auth.user.created, signed_in, confirmed, banned, unbanned, deleted) are published to your event bus.' : 'Lifecycle events are off.'
-    const verifying = settings.keys.verifying.length
-    $('keys-status').textContent = 'Key ' + settings.keys.signing + ' signs tokens' + (verifying ? '; ' + verifying + ' previous or standby key(s) only verify.' : '.')
+    renderKeys(settings.keys)
+  }
+
+  // Key states join the sealed keys (secret names, rendered by apid) with
+  // the keys the running app publishes, as `gregale auth keys list` does.
+  const sealed = [...document.querySelectorAll('#sealed-keys li')].map(li => ({ id: li.dataset.id, created: li.dataset.created, signer: li.dataset.signer === 'true' }))
+  const keyAction = (id, action, label, attrs = {}) => {
+    const post = el('form', null, { method: 'post', action: '/dashboard/apps/' + encodeURIComponent(root.dataset.slug) + '/auth/keys/' + encodeURIComponent(id) + '/' + action })
+    post.append(el('input', null, { type: 'hidden', name: 'csrf_token', value: control('csrf_token').value }), el('button', label, { type: 'submit', ...attrs }))
+    return post
+  }
+  const keyNotes = { signing: 'Signs new tokens', pending: 'Waiting for the restart to publish it', activating: 'Waiting for the restart to make it sign', removing: 'Waiting for the restart to remove it' }
+  let keyPolls = 0
+  function renderKeys(running) {
+    const ids = [...new Set([...sealed.map(key => key.id), running.signing, ...running.verifying])]
+    const rows = ids.map(id => {
+      const key = sealed.find(k => k.id === id)
+      const state = !key ? 'removing' : running.signing === id ? 'signing' : !running.verifying.includes(id) ? 'pending' : key.signer ? 'activating' : 'verifying'
+      return { id, state, created: key?.created ?? '' }
+    }).sort((a, b) => (a.created + a.id).localeCompare(b.created + b.id))
+    $('keys').tBodies[0].replaceChildren(...rows.map(row => {
+      const tr = el('tr')
+      const actions = el('td', row.state === 'verifying' ? null : keyNotes[row.state])
+      if (row.state === 'verifying') {
+        const confirmRevoke = keyAction(row.id, 'revoke', 'Confirm: revoke ' + row.id + '; tokens it signed stop verifying', { class: 'danger' })
+        confirmRevoke.hidden = true
+        actions.append(keyAction(row.id, 'activate', 'Make it sign'), button('Revoke', () => { confirmRevoke.hidden = false; confirmRevoke.querySelector('button').focus() }, { class: 'danger' }), confirmRevoke)
+      }
+      tr.append(el('td', row.id), el('td', row.state), el('td', row.created), actions)
+      return tr
+    }))
+    $('keys').hidden = false
+    $('key-create').hidden = sealed.length >= Number($('key-create').dataset.max)
+    const waiting = rows.some(row => !['signing', 'verifying'].includes(row.state))
+    $('keys-status').textContent = waiting ? 'The app is restarting; this list updates when it finishes.' : sealed.length >= Number($('key-create').dataset.max) ? 'This app has the most signing keys allowed; revoke one to add another.' : ''
+    // Follow a restart for up to five minutes, then leave reloading to the owner.
+    if (waiting && keyPolls++ < 60) setTimeout(refreshKeys, 5000)
+  }
+  async function refreshKeys() {
+    try {
+      const response = await fetch(origin + '/settings/v1', { mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' })
+      if (response.ok) return renderKeys((await response.json()).keys)
+    } catch { /* still restarting */ }
+    if (keyPolls++ < 60) setTimeout(refreshKeys, 5000)
   }
   form.addEventListener('submit', event => {
     control('password_require').value = requireValue()
     const changed = [...form.elements].filter(field => field.name && field.dataset.initial !== undefined && field.value !== field.dataset.initial)
     if (!changed.length) { event.preventDefault(); $('settings-status').textContent = 'Nothing changed.'; return }
-    // The CAPTCHA provider, site key and secret are saved together.
-    if (changed.some(field => field.name.startsWith('captcha_'))) for (const name of ['captcha_provider', 'captcha_site_key', 'captcha_secret']) if (!changed.includes(control(name))) changed.push(control(name))
+    // The CAPTCHA and SMS settings are each saved together.
+    for (const group of [['captcha_provider', 'captcha_site_key', 'captcha_secret'], ['sms_provider', 'sms_account', 'sms_sender', 'sms_secret']]) {
+      if (changed.some(field => group.includes(field.name))) for (const name of group) if (!changed.includes(control(name))) changed.push(control(name))
+    }
     for (const field of form.elements) if (field.dataset.initial !== undefined && !changed.includes(field)) field.disabled = true
   })
   loadSettings()

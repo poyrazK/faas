@@ -52,6 +52,8 @@ type objectStorageBindingCLIRevokeResult struct {
 func cmdBindings(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "service":
+			return cmdBindingsService(args[1:])
 		case "release-policy":
 			return cmdBindingsReleasePolicy(args[1:])
 		case "check":
@@ -60,6 +62,8 @@ func cmdBindings(args []string) int {
 			return cmdBindingsObjectStorage(args[1:])
 		case "probe-policy":
 			return cmdBindingsProbePolicy(args[1:])
+		case "verification-runs":
+			return cmdBindingsVerificationRuns(args[1:])
 		case "verify":
 			return cmdBindingsVerify(args[1:])
 		case "smoke":

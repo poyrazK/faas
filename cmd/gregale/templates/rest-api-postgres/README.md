@@ -12,12 +12,49 @@ rejects snapshot restoration so Gregale can cold-boot the deployment. Cold boot
 uses `/healthz`; an empty notes table is valid, a missing schema is not. Existing
 apps must deploy the new source and lifecycle configuration to adopt this hook.
 
+It also declares a two-second `before_checkpoint` hook. Before each capture, the
+callback closes admission, cancels unfinished work and waits until every SQL
+session has closed, so no snapshot holds a connection or open transaction.
+Repeated calls report the completed drain; only a restore reopens the pool. The
+platform turns off warm captures for apps that declare this hook; remove it if
+you prefer warm captures, and `after_restore` still replaces captured pools.
+
 Requests have a five-second SQL deadline and bounded pool admission. HTTP
 disconnects cancel unfinished transactions; idle and active connection errors
 discard the failed session. Writes are never automatically replayed. Cancellation observed
 before COMMIT rolls back; a connection failure during COMMIT may leave an
 uncertain result, so applications needing retry-safe writes must add their own
 idempotency keys. The example does not promise exactly-once writes.
+
+## Credential rotation and application adoption
+
+The Dockerfile opts into SIGHUP delivery and required reload readiness. The
+vendored canonical coordinator reads `FAAS_SECRETS_SNAPSHOT_FILE` and validates
+a new pool by reading the notes schema before publication and an applied ACK.
+All driver connections use the existing certificate/hostname verification
+policy. Serving refuses migration credentials in either environment or snapshot.
+
+Hold a pool lease through each transaction and driver connection release.
+Rotation and revocation block new acquisitions while admitted writes can finish;
+old pools close after their last lease releases. Failed validation never keeps
+using old credentials for new work. Neither writes nor uncertain COMMITs are
+replayed automatically. Cancellation retains a lease until a late driver
+connection is returned and destroyed.
+
+The existing restore hook aborts captured work, fences pending candidates and
+reloads the latest atomic snapshot even if its revision has not changed. It
+validates the schema and drains captured resources within its 1.5-second budget.
+A timeout cancels queued/active adoption, prevents late publication or applied
+ACKs from that attempt, and keeps readiness closed. A successful later restore
+can recover; the platform can otherwise fall back to cold boot.
+
+The complete atomic snapshot/readiness/ACK/generation contract is required in a
+managed guest. Missing fields or legacy-only projections fail closed. For local
+`npm start`, `DATABASE_URL` is used when no guest reload contract is advertised;
+the URI must explicitly contain user, password, host, port and database. Do not
+set guest protocol variables locally unless providing a complete test contract.
+HTTP serving starts only after initial SQL validation and, for a managed guest,
+accepted adoption. Redeploy existing apps to obtain the updated image and helper.
 
 ## Deploy with Gregale managed PostgreSQL
 
@@ -55,10 +92,10 @@ only the runtime connection:
 
 ```sh
 # Create this 0600 file outside the source directory.
-# File contents: DATABASE_URL=postgres://runtime:password@host/db?sslmode=require
+# File contents: DATABASE_URL=postgres://runtime:password@host:5432/db?sslmode=require
 gregale deploy --secrets-file ../rest-api-postgres.secrets
 # After app creation, update it with:
-gregale secrets set --app <slug> DATABASE_URL='postgres://runtime:password@host/db?sslmode=require'
+gregale secrets set --app <slug> DATABASE_URL='postgres://runtime:password@host:5432/db?sslmode=require'
 ```
 
 For an already reserved app, use `gregale deploy --name <slug> --secrets-file ...`.
@@ -89,7 +126,8 @@ set `GREGALE_POSTGRES_STARTER_TEST_DISPOSABLE=1` and
 `GREGALE_POSTGRES_STARTER_TEST_URL` to an empty disposable database administrator
 URL, trust its TLS certificate, then run `npm run test:postgres`. It creates and
 removes only its notes workload and two temporary logins, and tests HTTP writes,
-session termination, restore readiness, cancellation and credential retirement.
+session termination, restore readiness, cancellation, credential rotation during
+an open write, revocation and concurrent restore/reload fencing.
 Missing fixture inputs fail the suite. The repository's Go wrapper materializes
 this exact starter into a private directory and gives it a private database;
 both PR CI and full CI run it against TLS/SCRAM PostgreSQL.
@@ -104,3 +142,8 @@ curl https://<slug>.gregale.dev/notes
 ```
 
 After edits, deploy from this directory with `gregale deploy --name <slug>`.
+
+Canonical runtime modules and the shared database adapter are synchronized with
+`npm --prefix sdk/node run build && npm --prefix sdk/node run starter:sync` in the
+Gregale repository. `database.js` here is the adapter source for both PostgreSQL
+starters. The synchronization gate validates their full runtime import closure.

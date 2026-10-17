@@ -27,7 +27,8 @@ var ErrNotFound = errors.New("state: not found")
 var ErrRequestTelemetryRowNotFound = errors.New("state: request telemetry row not found for trace")
 
 // ErrSnapshotRuntimeStale means the captured guest predates the app's most
-// recent runtime configuration change. The notification is safe to discard.
+// recent runtime configuration change or operator recovery generation. The
+// notification is safe to discard.
 var ErrSnapshotRuntimeStale = errors.New("state: snapshot runtime config stale")
 
 const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
@@ -4051,7 +4052,7 @@ type Store interface {
 
 	// DailyCostCents returns the estimated raw usage cost for the UTC day that
 	// contains day, derived from usage_daily.mb_seconds. An empty appID scopes
-	// the sum to the account. The result is in integer EUR cents before any
+	// the sum to the account. The result is in integer billing-currency cents before any
 	// monthly included allowance is applied.
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 
@@ -4974,12 +4975,14 @@ type Store interface {
 	// means the handler must surface RFC 7807 `node_draining_refused`
 	// instead.
 	NodeListDrainable(ctx context.Context) ([]ComputeNode, error)
-	// NodeMarkDrainCompleted stamps drain_completed_at + holds the
+	// Deprecated: NodeMarkDrainCompleted refuses unfenced completion; use
+	// NodeLifecycleCompletionStore. Historical contract: stamps drain_completed_at + holds the
 	// lifecycle in 'maintenance' (CAS on a draining state). The recovery
 	// arbiter calls this once the migrate-or-recreate sweep
 	// confirms zero live instances remain.
 	NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error
-	// NodeMarkRecovered stamps last_recovery_outcome='succeeded' +
+	// Deprecated: NodeMarkRecovered refuses unfenced completion; use
+	// NodeLifecycleCompletionStore. Historical contract: stamps last_recovery_outcome='succeeded' +
 	// flips lifecycle to 'active' (CAS on 'recovering'). Called
 	// after the recovery sweep clears stranded instances.
 	NodeMarkRecovered(ctx context.Context, id string) error
@@ -5612,7 +5615,7 @@ type Store interface {
 	// CurrentMonthOverageCents returns the account's derived compute overage
 	// in integer cents for the current UTC month. The account plan's
 	// included calendar-month allowance is subtracted before the
-	// €0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
+	// $0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
 	// meterd consults this on every quota tick to decide whether the
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts

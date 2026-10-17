@@ -52,7 +52,7 @@ func TestBudgetScopeUUIDRepresentations(t *testing.T) {
 func TestBudgetAmountAndScope(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	price := Price{Version: "v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}
+	price := Price{Version: "v1", Meter: "compute", Currency: BillingCurrency, Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}
 	a := Attribution{AppID: "deleted-app", ProjectID: "project", EnvironmentID: "preview"}
 	b := Attribution{AppID: "other-app"}
 	cost, err := CostContracts("account", start, end, []Price{price}, []VersionedEvidence{
@@ -62,7 +62,7 @@ func TestBudgetAmountAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := BudgetSpec{Name: "preview costs", Scope: BudgetScope{Kind: "app", ID: a.AppID}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, Mode: "monitored", Action: "stop_previews", ResumeRule: "manual"}
+	p := BudgetSpec{Name: "preview costs", Scope: BudgetScope{Kind: "app", ID: a.AppID}, Currency: BillingCurrency, Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100, Mode: "monitored", Action: "stop_previews", ResumeRule: "manual"}
 	for _, kind := range []string{"app", "project", "environment"} {
 		p.Scope = BudgetScope{Kind: kind, ID: map[string]string{"app": a.AppID, "project": a.ProjectID, "environment": a.EnvironmentID}[kind]}
 		amount, err := BudgetAmount(p, []ContractCosts{cost})
@@ -86,7 +86,7 @@ func TestBudgetAmountAndScope(t *testing.T) {
 
 // adr: 566 — strict guarantees cannot be inferred from a monitored threshold.
 func TestBudgetValidation(t *testing.T) {
-	valid := BudgetSpec{Name: "batch", Scope: BudgetScope{Kind: "job", ID: "job"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{500, 800}, Mode: "strict", Action: "suspend_background", DrainSeconds: 30, ResumeRule: "next_period"}
+	valid := BudgetSpec{Name: "batch", Scope: BudgetScope{Kind: "job", ID: "job"}, Currency: BillingCurrency, Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 1000, NotifyMillicents: []int64{500, 800}, Mode: "strict", Action: "suspend_background", DrainSeconds: 30, ResumeRule: "next_period"}
 	if err := ValidateBudget(valid); err != nil {
 		t.Fatal(err)
 	}

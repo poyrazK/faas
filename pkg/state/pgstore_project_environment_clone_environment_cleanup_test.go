@@ -21,7 +21,7 @@ import (
 const cloneEnvironmentCleanupMigration = "20261011232006408_clone_environment_metadata_cleanups.sql"
 
 func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "domain", "route_budget", "scope", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {
+	for _, fault := range []string{"none", "write", "domain", "route_budget", "scope", "binding_verification", "project_binding_verification", "release_stage", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {
 		t.Run(fault, func(t *testing.T) {
 			phase := "materialized"
 			if fault == "deployed" {
@@ -51,6 +51,12 @@ func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
 				_, err = pool.Exec(t.Context(), "INSERT INTO app_environment_route_budgets(account_id,app_id,scope,project_id,environment_id,inherit,enabled,revision,routes) VALUES($1,$2,$3,$4,$5,false,false,1,'[]')", l.Operation.AccountID, appID, l.Operation.TargetEnvironment, l.Operation.ProjectID, envID)
 			case "scope":
 				_, err = pool.Exec(t.Context(), "INSERT INTO github_deploy_branches(project_id,branch,scope) VALUES($1,'borrowed',$2)", l.Operation.ProjectID, l.Operation.TargetEnvironment)
+			case "binding_verification":
+				_, err = pool.Exec(t.Context(), "INSERT INTO binding_verification_runs(id,account_id,app_id,deployment_id,scope,status,snapshot,created_at,expires_at) VALUES(gen_random_uuid(),$1,$2,$3,$4,'passed','{}',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '55 minutes')", l.Operation.AccountID, appID, original.Plan.Workloads[0].SourceDeploymentID, l.Operation.TargetEnvironment)
+			case "project_binding_verification":
+				_, err = pool.Exec(t.Context(), "INSERT INTO project_binding_verification_runs(id,account_id,project_id,environment_slug,status,snapshot,created_at,expires_at) VALUES(gen_random_uuid(),$1,$2,$3,'passed','{}',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '55 minutes')", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment)
+			case "release_stage":
+				_, err = pool.Exec(t.Context(), "INSERT INTO project_release_stages(id,account_id,project_id,environment_slug,manifest,targets,created_at,expires_at,cancelled) VALUES(gen_random_uuid(),$1,$2,$3,'{}','{\"retained\":true}',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '55 minutes',true)", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment)
 			case "foreign_deployment":
 				_, err = pool.Exec(t.Context(), `INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('id',$1::text,'scope',$2::text,'reason','foreign','revision',d.revision+1))).* FROM deployments d WHERE d.id=$3`, uuid.NewString(), l.Operation.TargetEnvironment, original.Plan.Workloads[0].SourceDeploymentID)
 			case "non_fk_uuid":
@@ -266,8 +272,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_tasks.deployment_scope",
 		"app_webhooks.scope",
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
+		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
 		"custom_domains.environment_id",
 		"customer_operation_definitions.scope",
+		"customer_operation_webhook_bindings.scope",
 		"customer_operation_workflow_states.scope",
 		"customer_workflow_readiness_subscriptions.scope",
 		"data_upstreams.deployment_scope",
@@ -304,7 +312,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",
 		"pg_ratelimit_counters.scope",
-		"production_lifecycle_reviews.scope", // Retained historical deployment review evidence.
+		"production_lifecycle_reviews.scope",                 // Retained historical deployment review evidence.
+		"project_binding_verification_runs.environment_slug", // Scope-only verification receipts block metadata cleanup.
 		"project_environment_approvals.environment_slug",
 		"project_environment_cleanup_jobs.environment_slug",
 		"project_environment_clone_configuration_ownership.environment_id",
@@ -330,6 +339,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_workload_heads.environment_id",
 		"project_environment_workload_specs.environment_id",
 		"project_release_sets.environment_slug",
+		"project_release_stages.environment_slug", // Retained stages reference the environment through a composite foreign key.
 		"queue_bindings.deployment_scope",
 		"queue_bindings.environment_id",
 		"runtime_config_entries.scope",
@@ -400,7 +410,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness"} {
+	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -415,6 +425,12 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, "LOCK TABLE customer_workflow_readiness_subscriptions IN ROW EXCLUSIVE MODE")
 		} else if borrower == "workflow_state" {
 			_, err = tx.Exec(ctx, "LOCK TABLE customer_operation_workflow_states IN ROW EXCLUSIVE MODE")
+		} else if borrower == "binding_verification" {
+			_, err = tx.Exec(ctx, "LOCK TABLE binding_verification_runs IN ROW EXCLUSIVE MODE")
+		} else if borrower == "project_binding_verification" {
+			_, err = tx.Exec(ctx, "LOCK TABLE project_binding_verification_runs IN ROW EXCLUSIVE MODE")
+		} else if borrower == "release_stage" {
+			_, err = tx.Exec(ctx, "LOCK TABLE project_release_stages IN ROW EXCLUSIVE MODE")
 		} else {
 			_, err = tx.Exec(ctx, "INSERT INTO github_deploy_branches(project_id,branch,scope) VALUES($1,'racing',$2)", l.Operation.ProjectID, l.Operation.TargetEnvironment)
 		}

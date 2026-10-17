@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -52,6 +53,10 @@ func (s *server) getAppBindingInventory(w http.ResponseWriter, r *http.Request, 
 		query.Set("deployment_id", deployment.ID)
 		r.URL.RawQuery = query.Encode()
 	}
+	if problem := s.validateBindingServiceTargets(r, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	inventory := s.collectBindingInventory(r.Context(), r, acct, app, scope)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, inventory)
@@ -89,7 +94,7 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 			return s.objectStorageBindingInventory(ctx, acct.ID, app.ID, scope)
 		}},
 		{api.BindingTypeQueue, api.ScopesReadSurface, func(ctx context.Context) bindingInventorySection {
-			return s.queueBindingInventory(ctx, acct.ID, app.ID, inventory.GeneratedAt)
+			return s.queueBindingInventory(ctx, acct.ID, app.ID, scope, inventory.GeneratedAt)
 		}},
 		{api.BindingTypeOutbound, api.ScopesReadSurface, func(ctx context.Context) bindingInventorySection {
 			return s.outboundBindingInventory(ctx, acct.ID, app.ID)
@@ -133,6 +138,7 @@ func (s *server) collectBindingInventory(parent context.Context, r *http.Request
 	}
 	s.applyBindingRuntimeInventory(parent, r, acct, app, &inventory, refreshWakeIDs)
 	s.applyBindingVerification(parent, r, acct, app, &inventory, revisions, privateBindingIDs)
+	bindings.ApplyQueueCanaryInventory(parent, s.store, acct.ID, app.ID, &inventory)
 	s.applyBindingApplicationAdoption(parent, acct, app, &inventory, adoptionSelectors)
 	inventory.Complete = len(inventory.Issues) == 0
 	sort.Slice(inventory.Bindings, func(i, j int) bool {
