@@ -21,7 +21,7 @@ push:
 
 | Tier | Workflow | Runs on | Contents |
 |---|---|---|---|
-| Light | `ci-light.yml` | every pull request push, every merge to `main` | about 10 minutes per job: golangci-lint (govet included) and `-race` tests for changed packages (`scripts/ci/affected_packages.py`), the §6.2 invariant property tests when anything in their import tree changes, for `cmd/gregale`, `pkg/state` and `pkg/apid/apidserver` only the tests related to the change, capped and without `-race` (`scripts/ci/select_package_tests.py`), boot-contract, generated-code drift, policy gates, migration ID hygiene plus apply/replay when migrations change |
+| Light | `ci-light.yml` | every pull request push, every merge to `main` | about 10 minutes per job: golangci-lint (govet included) and `-race` tests for changed packages (`scripts/ci/affected_packages.py`), the §6.2 invariant property tests when anything in their import tree changes, for `cmd/gregale`, `pkg/state` and `pkg/apid/apidserver` only the tests related to the change, capped and without `-race` (`scripts/ci/select_package_tests.py`), boot-contract, generated-code drift, policy gates, version-skew checks against the previous release and the migration expand/contract lint ([release-compatibility.md](release-compatibility.md)), migration ID hygiene plus apply/replay when migrations change |
 | Mega | `ci.yml` | nightly on `main`, `workflow_dispatch`, and from `release.yml` | the complete suite: every unit shard, e2e, migration history, container/UDP contracts, flags, load, SDK acceptance, ops/infra gates |
 
 `release.yml` calls `ci.yml` (`full-ci`) and every build/publish job depends
@@ -43,7 +43,7 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 | Job name (exact) | Protects | Where |
 |---|---|---|
 | `light: lint, vet, build` | golangci-lint (govet included) on changed packages, `go vet` of the unchanged importers that use a changed exported name, gofmt, PR-4a fix-has-test | `ci-light.yml:lint` |
-| `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
+| `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, version skew (protos and guest protocol vs the previous release), migration expand/contract lint, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
 | `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants; when `cmd/gregale` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
 | `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/state` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
 | `light: tests (shard 3)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/apid/apidserver` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |

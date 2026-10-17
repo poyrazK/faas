@@ -123,6 +123,12 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - Logs: `slog` JSON. Metrics: Prometheus, names as specced in §12 — dashboards depend
   on exact names (`gateway_wake_latency_seconds`, `snapshot_fleet_avg_mb`, …).
 - Never log secret values; env secrets are sealed at rest (gap G2 lean, §17).
+- Units release independently, so release N runs beside N-1 (docs/release-compatibility.md).
+  Remove a proto RPC/field only after a release that deprecated it; new pkg/api guest JSON
+  keys are `omitempty`; new migrations are expand/contract and start with
+  `SET LOCAL lock_timeout = '5s';` before touching an existing table. CI enforces these
+  (`make version-skew-check`, `make migration-lint`). Deploy order: data → control plane →
+  edge/node → runtime.
 
 ## Security rules (ship-blocking, §11)
 
