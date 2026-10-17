@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -63,7 +65,12 @@ func runQueueConsumer() {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	select {}
+	// Idle until stopped. A bare select{} dies with "all goroutines are
+	// asleep" once the client's keep-alive connection closes, and the
+	// restart would mint another token.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	<-stop
 }
 
 func workloadIdentityURL(audience string) (string, error) {

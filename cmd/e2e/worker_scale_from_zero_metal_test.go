@@ -256,6 +256,11 @@ func measureWorkerScaleFromZero(t *testing.T, h *e2etest.Harness, key, slug, app
 		t.Fatalf("leased %d of %d messages within %s; workers=%d tokens=%d",
 			len(leases), messages, deadline.Sub(sent).Round(time.Second), len(workers), len(tokens))
 	}
+	if len(tokens) != len(workers) {
+		// Mints are attributed to workers in admission order, which holds
+		// only while each worker asks once.
+		t.Logf("vmmd minted %d queue tokens for %d workers; token times may be misattributed", len(tokens), len(workers))
+	}
 	out := make([]workerColdStart, 0, len(workers))
 	for i, w := range workers {
 		if i < len(tokens) {
