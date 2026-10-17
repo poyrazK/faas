@@ -137,8 +137,14 @@ class SelectTest(unittest.TestCase):
 
     def test_deleted_file_selects_every_importer_using_it(self):
         paths = self.commit({}, deletes=["pkg/api/api.go"])
-        self.assertEqual(self.select(paths)[0], ["cmd/biller", "cmd/billing", "cmd/edited", "cmd/invoices",
-                                                 "cmd/refunds", "cmd/report"])
+        self.assertEqual(sorted(self.select(paths)[0]), ["cmd/biller", "cmd/billing", "cmd/edited", "cmd/invoices",
+                                                         "cmd/refunds", "cmd/report"])
+
+    def test_importers_using_rarer_names_come_first(self):
+        # Charge is used by two importers, Refund by one: cmd/refunds leads.
+        paths = self.commit({"pkg/api/api.go": API.replace("Charge(id string)", "Charge(id string, cents int64)")
+                             .replace("\tid string,\n) error {", "\tid string,\n\treason string,\n) error {")})
+        self.assertEqual(self.select(paths)[0], ["cmd/refunds", "cmd/billing", "cmd/edited"])
 
     def test_added_field_and_gofmt_realignment_select_nothing(self):
         grown = API.replace("\tID     string\n\tAmount int64\n",

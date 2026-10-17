@@ -131,7 +131,10 @@ def normal(row):
 
 
 def select(paths, pkgs, base, head="HEAD", root="."):
-    """Return (selected importer dirs, {changed package: names}, direct importer count)."""
+    """Return (selected importer dirs, most specific first; {changed package:
+    names}; direct importer count). An importer scores 1/n for each changed
+    name it uses that n importers use, so the light tier's time budget
+    reaches the likeliest breakages first."""
     _, changed, _, _ = affected_packages.select(paths, pkgs)
     changed = set(changed)
     names_by_pkg = {}
@@ -147,7 +150,7 @@ def select(paths, pkgs, base, head="HEAD", root="."):
         if names:
             names_by_pkg.setdefault(d, set()).update(names)
 
-    selected, importers, selectors = set(), set(), {}
+    uses, importers, selectors = {}, set(), {}
     for d, names in names_by_pkg.items():
         for imp, info in pkgs.items():
             if imp in changed or pkgs[d]["path"] not in info["imports"]:
@@ -155,9 +158,15 @@ def select(paths, pkgs, base, head="HEAD", root="."):
             importers.add(imp)
             if imp not in selectors:
                 selectors[imp] = selector_names(os.path.join(root, imp))
-            if selectors[imp] & names:
-                selected.add(imp)
-    return sorted(selected), names_by_pkg, len(importers)
+            hits = selectors[imp] & names
+            if hits:
+                uses.setdefault(imp, set()).update((d, n) for n in hits)
+    users = {}
+    for refs in uses.values():
+        for ref in refs:
+            users[ref] = users.get(ref, 0) + 1
+    score = {imp: sum(1.0 / users[ref] for ref in refs) for imp, refs in uses.items()}
+    return sorted(uses, key=lambda imp: (-score[imp], imp)), names_by_pkg, len(importers)
 
 
 def selector_names(pkgdir):
