@@ -1424,3 +1424,7 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
 }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
+}
