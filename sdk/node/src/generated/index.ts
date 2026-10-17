@@ -1115,6 +1115,8 @@ export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.j
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
+export type { ManagedPostgresLiveKey } from './models/ManagedPostgresLiveKey.js';
+export type { ManagedPostgresLiveQueries } from './models/ManagedPostgresLiveQueries.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';
@@ -2255,6 +2257,7 @@ export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSe
 export type { RotateDeployTokenRequest } from './models/RotateDeployTokenRequest.js';
 export type { RotateDeployTokenResponse } from './models/RotateDeployTokenResponse.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
+export type { RotateManagedPostgresLiveSecretRequest } from './models/RotateManagedPostgresLiveSecretRequest.js';
 export type { RotateManagedRealtimeAuthRequest } from './models/RotateManagedRealtimeAuthRequest.js';
 export type { RotateManagedRealtimeAuthResponse } from './models/RotateManagedRealtimeAuthResponse.js';
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';

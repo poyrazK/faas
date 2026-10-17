@@ -11601,7 +11601,9 @@ const (
 	LiveQuerySealPayloadMaxBytes   = 48 << 10
 	LiveQueryDatabaseIDMaxBytes    = 128
 	LiveQuerySecretRotationOverlap = 24 * time.Hour
-	LiveQuerySubscriptionIDMax     = 64
+	// A rotation may keep the previous secret for at most this long.
+	LiveQuerySecretRotationOverlapMax = 7 * 24 * time.Hour
+	LiveQuerySubscriptionIDMax        = 64
 	LiveQueryClientFrameMaxBytes   = 80 << 10
 	LiveQueryServerFrameMaxBytes   = 256 << 10
 	LiveQueryResultRowsMax         = 10000

@@ -2351,6 +2351,8 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_live_key import ManagedPostgresLiveKey
+from .managed_postgres_live_queries import ManagedPostgresLiveQueries
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -4376,6 +4378,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_response import RotateKeyResponse
+from .rotate_managed_postgres_live_secret_request import RotateManagedPostgresLiveSecretRequest
 from .rotate_managed_realtime_auth_request import RotateManagedRealtimeAuthRequest
 from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResponse
 from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
@@ -7662,6 +7665,8 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresLiveKey",
+    "ManagedPostgresLiveQueries",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
@@ -9495,6 +9500,7 @@ __all__ = (
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
     "RotateKeyResponse",
+    "RotateManagedPostgresLiveSecretRequest",
     "RotateManagedRealtimeAuthRequest",
     "RotateManagedRealtimeAuthResponse",
     "RotateManagedRealtimeAuthResponseAuthMode",

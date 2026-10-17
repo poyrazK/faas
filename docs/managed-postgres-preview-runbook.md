@@ -431,6 +431,53 @@ generations. Existing connections may disconnect and reconnect using their
 existing credentials. Rollback of the additive migration is blocked once any
 policy history exists so completed receipts cannot silently disappear.
 
+## Live queries (ADR-1384)
+
+Live queries keep a SQL result current in browsers. A customer enables them
+per database; enabling issues the database's live secret, which backends
+seal queries with. They are an operator preview and run only on native
+databases.
+
+### Operator setup
+
+1. Generate an age identity for livequeryd on each database node. Give apid
+   only its recipient (public key) file, and point
+   `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` at it. The file's mode must not grant
+   group or other write. Without it, the live routes answer
+   `live_queries_unavailable`.
+2. Set `live_hub_url` on each backend whose databases run live queries, for
+   example `"wss://live.fsn-1.internal:9480/{database_id}/live"`. apid
+   substitutes the database ID, and realtimed connects there.
+   - Backends without `live_hub_url` answer `live_queries_unsupported`.
+   - Configuration refuses `live_hub_url` on `neon` backends, because a
+     replication consumer would keep their computes awake.
+   - The fingerprint excludes `live_hub_url`, so adding it moves no
+     database.
+3. Apply migration `20261017121336518_managed_postgres_live_keys` before
+   deploying the apid that serves the routes.
+
+### Customer commands
+
+```sh
+gregale postgres live enable orders --app web    # stores GREGALE_LIVE_SECRET on web
+gregale postgres live status orders
+gregale postgres live rotate orders --overlap 24h --app web
+gregale postgres live disable orders             # revokes every live secret
+```
+
+- **Enable and rotate** return the secret once.
+  - With `--app`, the CLI stores the secret as an ordinary app secret.
+  - Otherwise, it prints the secret and the customer stores it.
+  - apid seals the secret to livequeryd's recipient and cannot read it
+    back, so a lost secret must be rotated, not recovered.
+- **Rotate** keeps the previous secret until `--overlap`: 24 hours by
+  default, at most 7 days. `--overlap 0` revokes it at once. Any older
+  secret is removed, so a database holds at most two.
+- **Disable** removes every key, and livequeryd stops opening their seals.
+- A deleting or deleted database serves no keys.
+- Each change is audited as `managed_postgres.live.enabled`, `.rotated` or
+  `.disabled`, with the key ID. Secrets are never logged.
+
 ## Failed creation custody and compensation
 
 Apply `20261007112111335_managed_postgres_creation_receipts.sql` before deploying

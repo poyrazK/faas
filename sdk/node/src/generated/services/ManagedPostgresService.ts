@@ -16,12 +16,14 @@ import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js
 import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresLiveQueries } from '../models/ManagedPostgresLiveQueries.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
+import type { RotateManagedPostgresLiveSecretRequest } from '../models/RotateManagedPostgresLiveSecretRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -347,6 +349,101 @@ export class ManagedPostgresService {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/account/managed-postgres-usage',
+    });
+  }
+  /**
+   * Get managed PostgreSQL live-query state
+   * Reports whether live queries (ADR-1384) are enabled and lists the database's live secrets by key ID. Secrets themselves are never returned here.
+   * @returns ManagedPostgresLiveQueries Live-query state
+   * @returns Problem Database lookup failure
+   * @throws ApiError
+   */
+  public static getManagedPostgresLiveQueries({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresLiveQueries | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/live',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Enable managed PostgreSQL live queries
+   * Enables live queries on a native database and issues its live secret, which backends seal queries with. The secret is returned once, in this response; it is stored sealed to the live-query service and cannot be read again. A database that already has live queries conflicts; rotate its secret instead. Operator preview.
+   * @returns Problem Unsupported backend, database not ready, already enabled, or live queries unavailable
+   * @returns ManagedPostgresLiveQueries Live queries enabled; the response carries the new secret
+   * @throws ApiError
+   */
+  public static enableManagedPostgresLiveQueries({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<Problem | ManagedPostgresLiveQueries> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/live',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Disable managed PostgreSQL live queries
+   * Removes every live secret of the database, revoking outstanding sealed queries, and turns live queries off. Idempotent.
+   * @returns Problem Database lookup or live-secret store failure
+   * @throws ApiError
+   */
+  public static disableManagedPostgresLiveQueries({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}/live',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Rotate a managed PostgreSQL live secret
+   * Issues a new live secret, returned once in this response. The previous secret keeps opening seals for overlap_seconds (default 24 hours, at most 7 days); 0 revokes it at once. Any older secret is removed, so a database holds at most two.
+   * @returns ManagedPostgresLiveQueries Secret rotated; the response carries the new secret
+   * @returns Problem Invalid overlap, live queries not enabled, or live queries unavailable
+   * @throws ApiError
+   */
+  public static rotateManagedPostgresLiveSecret({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody?: RotateManagedPostgresLiveSecretRequest,
+  }): CancelablePromise<ManagedPostgresLiveQueries | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/live/rotate',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

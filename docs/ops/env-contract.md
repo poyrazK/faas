@@ -38,6 +38,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
+| `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `default` |  |  | `` | operator-only live-query preview (ADR-1384): livequeryd's age recipient file; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |

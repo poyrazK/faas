@@ -117,6 +117,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_GITHUBD_BRIDGE_SOCK", Owners: []string{"apid", "githubd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_INTERNAL_BASE_URL", Owners: []string{"meterd"}, Source: EnvSourceDefault, Default: "http://127.0.0.1:9101", Note: "Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin"},
 	{Name: "FAAS_APID_LISTEN", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_APID_LIVE_KEY_RECIPIENT_FILE", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "", Note: "operator-only live-query preview (ADR-1384): livequeryd's age recipient file; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable"},
 	{Name: "FAAS_APID_LOOPBACK", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_METRICS_ADDR", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_OTEL_SPANS_WRITER_SOCKET", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public", "outboundd", "vmmd"}, Source: EnvSourceDefault},

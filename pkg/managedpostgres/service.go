@@ -653,6 +653,16 @@ func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Databa
 	return rows[0], nil
 }
 
+// LiveHub returns the livequeryd hub serving database's live queries
+// (ADR-1384), or "" when its backend runs none.
+func (s *Service) LiveHub(database Database) (string, error) {
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return "", err
+	}
+	return backend.LiveHub(database.ID), nil
+}
+
 // FindByName locates an account-owned durable reservation. Clone workers use
 // their operation-specific name to recover after a crash before checkpointing
 // the target ID, including after a completed restore's PITR window has expired.

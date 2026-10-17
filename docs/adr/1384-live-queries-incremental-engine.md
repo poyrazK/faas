@@ -100,8 +100,16 @@ const q = data.from('messages').select('*, author(*)').eq('channel_id', id)
 ```
 
 - A database is enabled with `gregale postgres live enable <database>` (API
-  `POST /v1/databases/{id}/live`). Enabling issues the per-database live secret
-  and injects `GREGALE_LIVE_SECRET` into apps bound to the database.
+  `POST /v1/postgres/databases/{id}/live`). Enabling issues the per-database
+  live secret.
+  - *As built (2026-10-17):* the secret is returned once and apid cannot read
+    it back. `--app` stores it as the app's `GREGALE_LIVE_SECRET`; otherwise
+    the CLI prints it.
+  - Automatic injection into bound apps was dropped. It would have made the
+    secret a managed app secret, a third managed owner in `app_secrets`
+    beside Postgres bindings and object storage, threaded through clone and
+    promotion fences. It would also have required apid to keep a readable
+    copy.
 - Subscriptions travel over an app's realtime endpoint as new v2 frame types.
   The endpoint's app must hold a binding to the target database.
   - Client frames: `live.subscribe`, `live.renew`, `live.unsubscribe`.
@@ -771,10 +779,27 @@ Phase 0 did not cover:
     - a full-path test: a real `realtime.Manager` v2 connection carries a
       sealed query through the proxy and hub to PostgreSQL and back, checked
       by the reference client.
+  - **Not yet:** see "apid enablement" below.
+- **apid enablement** (2026-10-17).
+  - **API.** `GET`, `POST` and `DELETE /v1/postgres/databases/{id}/live`, and
+    `POST .../live/rotate`, in the OpenAPI spec and the Go, Node and Python
+    SDKs. The CLI is `gregale postgres live status|enable|rotate|disable`.
+  - **Storage.** `managed_postgres_live_keys` holds at most one active and
+    one retiring key per database. Each secret is sealed with age to
+    livequeryd's recipient (`FAAS_APID_LIVE_KEY_RECIPIENT_FILE`). apid holds
+    only the public half, so it cannot read a stored secret.
+  - **Rotation.** Rotation keeps the previous key for an overlap: 24 hours
+    by default, at most 7 days (`LiveQuerySecretRotationOverlapMax`).
+    Overlap 0 and disable revoke at once.
+  - **Eligibility.** A backend runs live queries only when its configuration
+    names a hub (`live_hub_url`, with `{database_id}` substituted).
+    Configuration refuses one on Neon backends, so on main today no
+    production database can enable them. The native provider (ADR-1027) will
+    set it.
   - **Not yet:**
-    - apid enablement (`gregale postgres live enable`), live secrets and
-      their delivery to livequeryd, and route distribution to realtimed;
-    - the endpoint-must-be-bound-to-the-database check;
+    - livequeryd reading its database's sealed keys;
+    - route distribution to realtimed with endpoint registrations, and the
+      endpoint-must-be-bound-to-the-database check;
     - ADR-1323 budget accounting for live bytes.
 
 ## Consequences
