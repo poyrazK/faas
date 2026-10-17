@@ -2,7 +2,8 @@
 
 This guide covers shared-worker cancellation and PostgreSQL integration
 (ADR-1345), the Node background-completion foundation (ADR-1346), and the
-acknowledged VM execution lifetime/checkpoint barrier (ADR-1347).
+acknowledged VM execution lifetime/checkpoint barrier (ADR-1347) and automatic
+Node PostgreSQL ownership (ADR-1348).
 Shared-worker concurrency is opt-in and takes effect after redeployment.
 The new background-completion contract is disabled in production runners.
 This guide does not enable production traffic or certify Vercel performance parity.
@@ -156,10 +157,32 @@ and thaw callbacks in all four interpreters, a forced terminal capture and a
 real restore with every loaded interpreter visited. File witnesses are not
 PostgreSQL pool-draining evidence.
 
+`TestFunctionResourcesPostgresMetal` adds an actual deployed Node 22 SQL function
+using two SDK pools per interpreter and no application lifecycle endpoints. The
+same strict target requires this phase too. Prepare the disposable TLS/SCRAM SQL
+service as in the [native SQL procedure](managed-postgres-native-acceptance.md),
+then set `GREGALE_POSTGRES_NATIVE_SQL_IP` to its isolated acceptance proxy IPv4
+address and `GREGALE_POSTGRES_NATIVE_CA_PATH` to its public CA file. Its certificate
+must include that IP in the SAN. Never use production database credentials.
+The test binds a SQL proxy at port 5432 and an authenticated test-only HTTP peer
+on a dynamically allocated port on that interface; both are explicit app egress
+ports. The control token is sealed as a disposable app secret.
+
+The SQL phase requires three blocked post-response writes in distinct workers,
+eight TLS sessions across four workers, refusal of active freeze/park, and no
+early checkpoint acknowledgement. A test-only registered resource holds the
+callback while independent SQL and proxy observers require zero sessions; pool
+drainage must therefore precede capture and VM destruction. After release, a real
+snapshot restore must rebuild all eight sessions and retain exactly the committed
+rows. In-place thaw after proxy disconnection must replace the pools. Real worker
+and runner exits must fence ownership and recover without replaying interrupted
+SQL. No skipped phase qualifies. Node 24 native coverage remains outstanding.
+
 Before production activation, additionally qualify lost acknowledgements and
 duplicate/late events over real vsock, runner/worker death, watchdog deadlines,
-vmmd restart/recovery and uncertain cleanup on the native host, plus real SQL
-pool draining across interpreters. Portable fault injection covers these
+vmmd restart/recovery and uncertain cleanup on the native host. Execute the
+new SQL phase above to qualify pool draining and worker/runner death; its source
+and compilation are not execution evidence. Portable fault injection covers these
 accounting cases but cannot replace native evidence. Private environment
 qualification restores do not yet expose the new lifetime port. Normal builds
 remain disabled; the special build is an acceptance instrument, not a rollout

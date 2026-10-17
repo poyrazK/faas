@@ -7,6 +7,25 @@ export class PostgresPoolError extends Error {
         this.name = 'PostgresPoolError';
     }
 }
+// Installed before application imports only by a qualified generated adapter.
+// Standalone HTTP applications keep their existing explicit lifecycle wiring.
+function registerFunctionPool(resource) {
+    const bridge = Reflect.get(globalThis, Symbol.for('gregale.function.postgres.lifecycle.v1'));
+    if (bridge === undefined)
+        return undefined;
+    if (!bridge || typeof bridge !== 'object' || !('version' in bridge) || bridge.version !== 1 ||
+        !('register' in bridge) || typeof bridge.register !== 'function')
+        throw new PostgresPoolError();
+    try {
+        const unregister = bridge.register(resource);
+        if (typeof unregister !== 'function')
+            throw new PostgresPoolError();
+        return unregister;
+    }
+    catch {
+        throw new PostgresPoolError();
+    }
+}
 /** Keep pg's URL parser from overriding certificate and hostname verification.
  * A private CA belongs in NODE_EXTRA_CA_CERTS. Only explicit sslmode=disable
  * disables TLS (for local development). */
@@ -78,6 +97,7 @@ export class RestoreAwarePostgresPool {
     #generation = 0;
     #operation;
     #closing;
+    #unregister;
     constructor(factory, options = {}) {
         this.#factory = factory;
         this.#timeout = positiveInteger(options.timeoutMs ?? 5_000);
@@ -88,7 +108,14 @@ export class RestoreAwarePostgresPool {
             throw new PostgresPoolError();
         this.#probe = { text: probe.text, values: [...(probe.values ?? [])] };
         this.#onEvent = options.onEvent;
-        this.#pool = this.#open();
+        this.#unregister = registerFunctionPool(this);
+        try {
+            this.#pool = this.#open();
+        }
+        catch (error) {
+            void this.close().catch(() => { });
+            throw error;
+        }
     }
     get generation() { return this.#generation; }
     get diagnostics() {
@@ -120,7 +147,7 @@ export class RestoreAwarePostgresPool {
     #end(pool) {
         let pending = this.#ends.get(pool);
         if (!pending) {
-            pending = Promise.resolve().then(() => pool.end()).then(() => { this.#pools.delete(pool); }, () => {
+            pending = Promise.resolve().then(() => pool.end()).then(() => { this.#pools.delete(pool); this.#unregisterClosed(); }, () => {
                 this.#emit('pool_close_failed');
                 throw new PostgresPoolError();
             });
@@ -130,7 +157,13 @@ export class RestoreAwarePostgresPool {
     }
     #drain() {
         this.#pool = undefined;
-        return Promise.all([...this.#pools].map(pool => this.#end(pool))).then(() => undefined);
+        return Promise.all([...this.#pools].map(pool => this.#end(pool))).then(() => { this.#unregisterClosed(); });
+    }
+    #unregisterClosed() {
+        if (this.#state === 'closed' && this.#pools.size === 0) {
+            this.#unregister?.();
+            this.#unregister = undefined;
+        }
     }
     #cancelRequests() { for (const request of this.#active)
         request.controller.abort(); }

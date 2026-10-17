@@ -127,6 +127,26 @@ interpreters remain required before activation. Private environment-qualificatio
 restores, Python background execution, durable work and performance parity are
 not qualified by these portable checks. No deployment was performed.
 
+## Automatic Node function PostgreSQL lifecycle — 2026-10-17
+
+[ADR-1348](adr/1348-function-postgres-resource-lifecycle.md) adds automatic SDK
+pool registration before driver creation in qualified generated adapters. It
+supplies default lifecycle endpoints, preserves custom hooks, consumes their
+response cleanup before drainage and waits for every registered pool in every
+loaded interpreter. Restore/thaw rebuilds pools and probes readiness before
+customer hooks or admission. Timed-out close retains ownership until actual
+drainage. Registration is bounded to 16 pool owners per interpreter; connection
+budgets remain per driver/worker/VM. Qualified warm and migration captures fail
+closed pending a continuing-VM recovery protocol.
+
+The portable and native SQL acceptance sources independently witness session
+closure while checkpoint acknowledgement is held. The native phase additionally
+requires deployed snapshot restore, thaw and worker/runner failure recovery.
+The [evidence report](ops/evidence/20261017-function-postgres-lifecycle/REPORT.md)
+records executed checks and outstanding gates. Production activation remains
+off. Native KVM execution, native faults and leak checks remain unqualified in
+this workspace. The prior PR remains closed and unmerged; no deployment occurred.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)

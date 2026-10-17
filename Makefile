@@ -475,7 +475,7 @@ test-function-background-native: ## Strict Node execution lifetime/capture/thaw 
 	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node22-runner" ./guest/runners/node22; \
 	  FAAS_GUEST_INIT="$$helper_dir/guest-init" FAAS_E2E_FUNCTION_RUNNER_NODE22="$$helper_dir/node22-runner" \
 	  FAAS_REQUIRE_FUNCTION_BACKGROUND_METAL=1 $(GO) test -tags metal,function_background_native \
-	  -race -count=1 -v -run '^TestFunctionBackgroundMetal$$' -timeout 45m ./cmd/e2e
+	  -race -count=1 -v -run '^TestFunction(Background|ResourcesPostgres)Metal$$' -timeout 45m ./cmd/e2e
 	$(MAKE) leakcheck
 
 .PHONY: test-metal-builder

@@ -11,6 +11,38 @@ function deferred<T>() {
   return {promise, resolve, reject};
 }
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+
+test('generated function registration precedes pool creation and survives a timed-out close until actual drainage', async t => {
+  const key = Symbol.for('gregale.function.postgres.lifecycle.v1');
+  const held = new Set<unknown>();
+  Object.defineProperty(globalThis, key, {configurable: true, value: {version: 1, register(resource: unknown) {
+    held.add(resource); return () => held.delete(resource);
+  }}});
+  t.after(() => { Reflect.deleteProperty(globalThis, key); });
+  const drained = deferred<void>();
+  const db = createPostgresPool(() => {
+    assert.equal(held.size, 1);
+    const pool = new Pool(); pool.finish = () => drained.promise; return pool;
+  }, {lifecycleTimeoutMs: 25});
+  assert.ok(held.has(db));
+  await assert.rejects(db.close(), /database_unavailable/);
+  assert.ok(held.has(db));
+  drained.resolve(); await tick();
+  assert.equal(held.size, 0);
+  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
+});
+
+test('invalid or full function registries refuse before driver side effects and sanitize bridge failures', async t => {
+  const key = Symbol.for('gregale.function.postgres.lifecycle.v1');
+  t.after(() => { Reflect.deleteProperty(globalThis, key); });
+  let opened = 0;
+  for (const bridge of [{version: 9}, {version: 1, register() { throw new Error('private-fixture-value'); }}]) {
+    Object.defineProperty(globalThis, key, {configurable: true, value: bridge});
+    assert.throws(() => createPostgresPool(() => { opened++; return new Pool(); }), error =>
+      error instanceof PostgresPoolError && error.message === 'database_unavailable');
+  }
+  assert.equal(opened, 0);
+});
 class Client extends EventEmitter {
   readonly queries: {text: string; values: unknown[]}[] = [];
   readonly releases: boolean[] = [];

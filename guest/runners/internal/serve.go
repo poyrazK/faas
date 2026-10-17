@@ -46,9 +46,10 @@ type Envelope struct {
 	TailPipePath string `json:"tail_pipe_path,omitempty"`
 	// LifecycleHook is derived from the socket peer and guest-init's marker,
 	// never from the request body or a forwarded client address.
-	LifecycleHook    string            `json:"lifecycle_hook,omitempty"`
-	Background       *BackgroundPolicy `json:"background,omitempty"`
-	ForbidBackground bool              `json:"forbid_background,omitempty"`
+	LifecycleHook     string            `json:"lifecycle_hook,omitempty"`
+	Background        *BackgroundPolicy `json:"background,omitempty"`
+	ForbidBackground  bool              `json:"forbid_background,omitempty"`
+	ResourceLifecycle bool              `json:"resource_lifecycle,omitempty"`
 }
 
 // RequiresCompletion participates in the worker-pool capability negotiation.

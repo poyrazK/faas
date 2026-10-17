@@ -14,6 +14,7 @@ import (
 func serveFunctionLifecycle(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
 	env := requestEnvelope(r, cfg)
 	env.Background, env.ForbidBackground = nil, true
+	env.ResourceLifecycle = true
 	ctx, cancel := context.WithTimeout(r.Context(), invocationTimeout(r.Header))
 	defer cancel()
 	batch, err := workerpool.OpenAllIfSupported(ctx, cfg.Spec, env)

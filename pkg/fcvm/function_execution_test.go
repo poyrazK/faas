@@ -1,3 +1,4 @@
+// adr: 1348
 package fcvm
 
 import (
@@ -31,6 +32,43 @@ func executionRequest(kind string, sequence uint64) functionlifetime.Request {
 		r.BudgetMS = 30_000
 	}
 	return r
+}
+
+func TestFunctionResourceCaptureAndThawGate(t *testing.T) {
+	m, _, _ := functionExecutionManager(t)
+	if functionlifetime.NativeNode("node22") {
+		for _, keepAlive := range []bool{false, true} {
+			for _, before := range []bool{false, true} {
+				if before && !keepAlive {
+					continue
+				}
+				_, _, _, _, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: before}, keepAlive)
+				if !errors.Is(err, ErrInstanceBusy) {
+					t.Fatalf("capture before=%v keepAlive=%v: %v", before, keepAlive, err)
+				}
+			}
+		}
+	}
+	_, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.finishInstanceFlight("f", flight)
+	v := m.vmm.(*freezingVMM)
+	if _, err := m.Freeze(t.Context(), "f", FreezeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	hooks := len(v.resumeHookCalls)
+	if err := m.Thaw(t.Context(), "f"); err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	if functionlifetime.NativeNode("node22") {
+		want = 1
+	}
+	if got := len(v.resumeHookCalls) - hooks; got != want {
+		t.Fatalf("automatic resource thaw hooks=%d want=%d", got, want)
+	}
 }
 
 func TestFunctionExecutionAcknowledgementsAndLateFrames(t *testing.T) {
@@ -109,7 +147,7 @@ func TestFunctionExecutionBlocksEveryPausePath(t *testing.T) {
 	}
 	// Capture can resume a qualified pre-frozen function only while its
 	// original flight keeps ordinary execution registration closed.
-	ctx, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{})
+	ctx, _, _, flight, err := m.beginSnapshotFlight(t.Context(), "f", SnapshotSpec{BeforeCheckpoint: true})
 	if err != nil {
 		t.Fatal(err)
 	}

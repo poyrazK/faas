@@ -305,9 +305,22 @@ derives it from guest-init's loopback socket and marker; event headers and
 request bodies cannot set it. Match both this context and your configured
 hook path before calling a resource hook. Production function hooks run in one
 worker, so they cannot prove that pools in every worker have drained. The
-single HTTP-process PostgreSQL starter remains the reference for checkpoint
-pool ownership. A dedicated native acceptance build now broadcasts callbacks
-to every loaded Node interpreter; its VM/SQL qualification remains pending.
+single HTTP-process PostgreSQL starter remains the reference for production
+checkpoint pool ownership.
+
+In the dedicated native acceptance build, SDK pools automatically register with
+the generated Node adapter before their driver factory runs. Default lifecycle
+endpoints drain and rebuild pools across every loaded interpreter. Custom hooks
+are preserved: before-checkpoint runs, including its response body cleanup,
+before pools drain; after-restore runs after fresh pools pass their read probes.
+The registry allows 16 pool owners per interpreter, independently of connection
+and plan limits. A timed-out close retains registration until actual drainage.
+Qualified warm/migration captures are refused until continuing the original VM
+after drainage has a recovery protocol. Automatic registration is off in normal
+production adapters; native VM/SQL qualification remains pending.
+Automatic ownership requires the updated SDK runtime or regenerated bundled
+helper. Direct `pg.Pool` instances and older helper versions are not registered
+automatically.
 
 The production completion fence covers the handler and its response stream.
 Await work that must finish with the invocation. A negotiated Node background
@@ -322,5 +335,6 @@ VM replacement; bounded post-response work does not provide durable execution.
 
 See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md),
 [ADR-1346](adr/1346-function-background-completion-protocol.md),
-[ADR-1347](adr/1347-function-vm-execution-lifetime.md)
+[ADR-1347](adr/1347-function-vm-execution-lifetime.md),
+[ADR-1348](adr/1348-function-postgres-resource-lifecycle.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

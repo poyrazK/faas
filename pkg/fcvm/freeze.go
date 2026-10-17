@@ -36,6 +36,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -304,7 +306,8 @@ type ThawOptions struct {
 	RunResumeHook bool
 }
 
-// Thaw resumes a frozen instance in place without the optional work.
+// Thaw resumes a frozen instance in place. Qualified automatic resources
+// always run their restore hook before the VM becomes available again.
 func (m *Manager) Thaw(ctx context.Context, instance string) error {
 	return m.ThawWith(ctx, instance, ThawOptions{})
 }
@@ -329,6 +332,9 @@ func (m *Manager) ThawWith(ctx context.Context, instance string, opts ThawOption
 		return err
 	}
 	// The guest runs again: its memory stays resident from here on.
+	if m.functionActivity != nil && functionlifetime.NativeNode(inst.Runtime) {
+		opts.RunResumeHook = true
+	}
 	m.setFrozenSwap(inst.Lease, false)
 	if err := m.resumeAndProbe(operationCtx, "thaw", inst, opts.RunResumeHook); err != nil {
 		return err

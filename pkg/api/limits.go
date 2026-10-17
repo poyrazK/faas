@@ -9351,6 +9351,10 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
+// FunctionPostgresMaxPools bounds registered pool owners per interpreter.
+// It is a structural runtime bound, not a database connection entitlement.
+const FunctionPostgresMaxPools = 16
+
 // FunctionCancellationGrace is the cleanup acknowledgement budget shared by
 // the runner and the host's execution-ownership watchdog (ADR-1347).
 const FunctionCancellationGrace = 5 * time.Second

@@ -5559,7 +5559,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
 func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
+	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, true)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
 	}
@@ -5659,7 +5659,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
-	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
+	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, true)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
 	}

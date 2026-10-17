@@ -45,11 +45,16 @@ func main() {
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("node22 runner: handler not found at %s: %v", *handlerPath, err)
 	}
+	execution := internal.QualifiedExecutionRuntime()
 	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
-	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, workerpool.Spec{
+	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, execution.WorkerSpec(workerpool.Spec{
 		Executable: nodeBinary(), Args: []string{*handlerPath},
 		Env: append(os.Environ(), "FAAS_RUNTIME=node22"), HandlerPath: *handlerPath,
-	}); err != nil {
+	})); err != nil {
+		if execution != nil {
+			cancelPrewarm()
+			log.Fatalf("node22 runner: qualified handler prewarm failed: %v", err)
+		}
 		log.Printf("node22 runner: handler prewarm unavailable: %v", err)
 	}
 	cancelPrewarm()
@@ -72,7 +77,6 @@ func main() {
 	// and the signal is fired from inside the request handler
 	// after the handler's response envelope is parsed.
 	signal := internal.NewRunnerSignal("node22", time.Now())
-	execution := internal.QualifiedExecutionRuntime()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, *handlerPath, signal, tailWaitSec, tailPipePath, execution)
 	})

@@ -56,6 +56,25 @@ export interface PostgresQueryOptions {
   readonly write?: boolean;
 }
 
+interface FunctionPoolResource {
+  beforeCheckpoint(options: {signal?: AbortSignal}): Promise<void>;
+  afterRestore(options: {signal?: AbortSignal}): Promise<void>;
+}
+
+// Installed before application imports only by a qualified generated adapter.
+// Standalone HTTP applications keep their existing explicit lifecycle wiring.
+function registerFunctionPool(resource: FunctionPoolResource): (() => void) | undefined {
+  const bridge: unknown = Reflect.get(globalThis, Symbol.for('gregale.function.postgres.lifecycle.v1'));
+  if (bridge === undefined) return undefined;
+  if (!bridge || typeof bridge !== 'object' || !('version' in bridge) || bridge.version !== 1 ||
+      !('register' in bridge) || typeof bridge.register !== 'function') throw new PostgresPoolError();
+  try {
+    const unregister: unknown = bridge.register(resource);
+    if (typeof unregister !== 'function') throw new PostgresPoolError();
+    return unregister as () => void;
+  } catch { throw new PostgresPoolError(); }
+}
+
 /** Keep pg's URL parser from overriding certificate and hostname verification.
  * A private CA belongs in NODE_EXTRA_CA_CERTS. Only explicit sslmode=disable
  * disables TLS (for local development). */
@@ -121,6 +140,7 @@ export class RestoreAwarePostgresPool {
   #generation = 0;
   #operation: {kind: 'checkpoint' | 'restore'; request: ReturnType<typeof scope>; promise: Promise<void>} | undefined;
   #closing: Promise<void> | undefined;
+  #unregister: (() => void) | undefined;
 
   constructor(factory: () => PostgresDriverPool, options: PostgresPoolOptions = {}) {
     this.#factory = factory;
@@ -131,7 +151,9 @@ export class RestoreAwarePostgresPool {
     if (typeof probe.text !== 'string' || !probe.text.trim()) throw new PostgresPoolError();
     this.#probe = {text: probe.text, values: [...(probe.values ?? [])]};
     this.#onEvent = options.onEvent;
-    this.#pool = this.#open();
+    this.#unregister = registerFunctionPool(this);
+    try { this.#pool = this.#open(); }
+    catch (error) { void this.close().catch(() => {}); throw error; }
   }
 
   get generation(): number { return this.#generation; }
@@ -159,7 +181,7 @@ export class RestoreAwarePostgresPool {
   #end(pool: PostgresDriverPool): Promise<void> {
     let pending = this.#ends.get(pool);
     if (!pending) {
-      pending = Promise.resolve().then(() => pool.end()).then(() => { this.#pools.delete(pool); }, () => {
+      pending = Promise.resolve().then(() => pool.end()).then(() => { this.#pools.delete(pool); this.#unregisterClosed(); }, () => {
         this.#emit('pool_close_failed'); throw new PostgresPoolError();
       });
       this.#ends.set(pool, pending);
@@ -168,7 +190,12 @@ export class RestoreAwarePostgresPool {
   }
   #drain(): Promise<void> {
     this.#pool = undefined;
-    return Promise.all([...this.#pools].map(pool => this.#end(pool))).then(() => undefined);
+    return Promise.all([...this.#pools].map(pool => this.#end(pool))).then(() => { this.#unregisterClosed(); });
+  }
+  #unregisterClosed(): void {
+    if (this.#state === 'closed' && this.#pools.size === 0) {
+      this.#unregister?.(); this.#unregister = undefined;
+    }
   }
   #cancelRequests(): void { for (const request of this.#active) request.controller.abort(); }
 

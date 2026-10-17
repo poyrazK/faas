@@ -36,6 +36,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 	slots, _ := strconv.Atoi(os.Getenv("HELPER_CONCURRENCY"))
 	ackDelay, _ := strconv.Atoi(os.Getenv("HELPER_CANCEL_ACK_DELAY_MS"))
 	completionVersion, _ := strconv.Atoi(os.Getenv("HELPER_COMPLETION_VERSION"))
+	resourceVersion, _ := strconv.Atoi(os.Getenv("HELPER_RESOURCE_VERSION"))
 	var mu sync.Mutex
 	write := func(v any) {
 		body, _ := json.Marshal(v)
@@ -43,7 +44,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.Write(append(body, '\n'))
 		mu.Unlock()
 	}
-	write(map[string]any{"__faas_ready": true, "concurrency": slots, "completion_version": completionVersion})
+	write(map[string]any{"__faas_ready": true, "concurrency": slots, "completion_version": completionVersion, "resource_lifecycle_version": resourceVersion})
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		line, err := reader.ReadBytes('\n')

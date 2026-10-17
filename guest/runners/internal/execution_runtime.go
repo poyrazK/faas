@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 
+	"github.com/onebox-faas/faas/guest/runners/internal/workerpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 )
@@ -37,8 +39,22 @@ func QualifiedExecutionRuntime() *ExecutionRuntime {
 	})
 }
 
+// WorkerSpec keeps prewarm and request dispatch in the same qualified pool.
+// A nil runtime leaves ordinary production runner wiring unchanged.
+func (e *ExecutionRuntime) WorkerSpec(spec workerpool.Spec) workerpool.Spec {
+	if e == nil {
+		return spec
+	}
+	if !slices.Contains(spec.Args, functionlifetime.NodeResourceArgument) {
+		spec.Args = append(slices.Clone(spec.Args), functionlifetime.NodeResourceArgument)
+	}
+	spec.RequireResourceLifecycle = true
+	return spec
+}
+
 func (e *ExecutionRuntime) serve(w http.ResponseWriter, r *http.Request, cfg ServeConfig) {
 	cfg.Execution = nil
+	cfg.Spec = e.WorkerSpec(cfg.Spec)
 	hook := lifecycleHook(r)
 	if hook == "after_restore" {
 		// Restore hooks run within vmmd's boot/resume flight, before public

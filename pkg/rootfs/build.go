@@ -1080,7 +1080,7 @@ func isPythonFunctionSource(source string) bool {
 // ({ fetch }) contracts to the runner's protocol envelope. It lives in the app
 // layer so the runner can remain a deliberately tiny, protocol-only binary
 // shared by all Node apps.
-const nodeFunctionAdapter = `// FAAS_PERSISTENT_PROTOCOL_V1
+var nodeFunctionAdapter = `// FAAS_PERSISTENT_PROTOCOL_V1
 (async () => {
 const pathModule = await import("node:path");
 const urlModule = await import("node:url");
@@ -1091,6 +1091,8 @@ const path = pathModule.default || pathModule;
 // response envelopes consumed by faas-runner.
 console.log = console.error;
 console.info = console.error;
+` + nodeFunctionResources + `
+const postgresResources = installPostgresLifecycle();
 const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");
 const mod = await import(urlModule.pathToFileURL(handlerFile).href);
 const defaultExport = mod.default;
@@ -1108,7 +1110,8 @@ const concurrency = process.env.FAAS_PERSISTENT_WORKER === "1"
   ? Math.min(Math.max(Number.parseInt(process.env.FAAS_FUNCTION_CONCURRENCY || "1", 10) || 1, 1), 256)
   : 1;
 if (process.env.FAAS_PERSISTENT_WORKER === "1") {
-  process.stdout.write(JSON.stringify({ __faas_ready: true, concurrency, completion_version: 1 }) + "\n");
+  process.stdout.write(JSON.stringify({ __faas_ready: true, concurrency, completion_version: 1,
+    resource_lifecycle_version: postgresResources ? 1 : 0 }) + "\n");
 }
 
 // Response frames (ADR-999): one line is a complete response; a "head" line
@@ -1229,6 +1232,7 @@ async function handleOne(input, out) {
     log,
     waitUntil(promise) { registerBackground(out, promise); },
   };
+  const invoke = async () => {
   let value;
   if (typeof fetchHandler === "function") {
     const method = env.method || "POST";
@@ -1252,6 +1256,16 @@ async function handleOne(input, out) {
     };
     value = await eventHandler(event, ctx);
   }
+  return value;
+  };
+  if (env.resource_lifecycle === true) {
+    if (!postgresResources) throw new Error("postgres_lifecycle_unavailable");
+    await postgresResources.handle(env, ctx, invoke);
+    emitWhole(out, 204, {}, Buffer.alloc(0));
+    return;
+  }
+  postgresResources?.assertReady();
+  const value = await invoke();
   if (value && typeof value === "object" && typeof value.arrayBuffer === "function" &&
       typeof value.status === "number" && value.headers) {
     // Every Set-Cookie line survives (ADR-999); other repeated headers are

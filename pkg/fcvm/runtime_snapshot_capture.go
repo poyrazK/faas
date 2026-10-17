@@ -11,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -27,13 +28,15 @@ type nativeSnapshotFlight struct {
 
 // Pin the live identity for teardown and bind capture authority before the VMM
 // can pause or publish it. Both admission checks use the cancellable flight.
-func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
+func (m *Manager) beginSnapshotFlight(ctx context.Context, instance string, spec SnapshotSpec, keepAlive ...bool) (context.Context, *Instance, SnapshotSpec, *instanceFlight, error) {
 	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
 	if err != nil {
 		return nil, nil, SnapshotSpec{}, nil, err
 	}
 	m.mu.Lock()
-	busy := functionExecutionBusy(inst)
+	resources := m.functionActivity != nil && functionlifetime.NativeNode(inst.Runtime)
+	// This acceptance build supports automatic pool drainage for terminal capture.
+	busy := functionExecutionBusy(inst) || resources && (!spec.BeforeCheckpoint || slices.Contains(keepAlive, true))
 	if !busy {
 		flight.functionHookAdmission = spec.BeforeCheckpoint
 	}

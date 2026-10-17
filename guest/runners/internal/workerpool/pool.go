@@ -38,6 +38,9 @@ type Spec struct {
 	// Compiled handlers (Go) carry it in their data section rather than on a
 	// leading comment line, so the 4 KiB source prefix check cannot see it.
 	MarkerAnywhere bool
+	// RequireResourceLifecycle is trusted runner wiring. An old adapter must
+	// not acknowledge checkpoint without owning registered resources.
+	RequireResourceLifecycle bool
 }
 
 var (
@@ -49,6 +52,9 @@ var (
 // worker. handled=false asks the caller to retain the legacy one-shot path.
 func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (handled bool, err error) {
 	if !supportsPersistentProtocol(spec) {
+		if spec.RequireResourceLifecycle {
+			return true, errors.New("workerpool: generated resource lifecycle adapter required")
+		}
 		return false, nil
 	}
 	return true, poolFor(spec).invoke(ctx, request, response)
@@ -62,6 +68,9 @@ func InvokeIfSupported(ctx context.Context, spec Spec, request, response any) (h
 // remaining frames to the next request. handled=false retains the one-shot path.
 func OpenIfSupported(ctx context.Context, spec Spec, request any) (lines *Lines, handled bool, err error) {
 	if !supportsPersistentProtocol(spec) {
+		if spec.RequireResourceLifecycle {
+			return nil, true, errors.New("workerpool: generated resource lifecycle adapter required")
+		}
 		return nil, false, nil
 	}
 	lines, err = poolFor(spec).open(ctx, request)
@@ -163,6 +172,9 @@ func (l *Lines) Close(healthy bool) {
 // startup on its first request.
 func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error) {
 	if !supportsPersistentProtocol(spec) {
+		if spec.RequireResourceLifecycle {
+			return true, errors.New("workerpool: generated resource lifecycle adapter required")
+		}
 		return false, nil
 	}
 	p := poolFor(spec)
@@ -175,7 +187,7 @@ func PrewarmIfSupported(ctx context.Context, spec Spec) (handled bool, err error
 }
 
 func poolFor(spec Spec) *pool {
-	key := strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00")
+	key := fmt.Sprintf("%t\x00%s", spec.RequireResourceLifecycle, strings.Join(append([]string{spec.Executable}, spec.Args...), "\x00"))
 	value, _ := pools.LoadOrStore(key, newPool(spec))
 	return value.(*pool)
 }
@@ -547,9 +559,10 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			return
 		}
 		var handshake struct {
-			Ready             bool `json:"__faas_ready"`
-			Concurrency       int  `json:"concurrency"`
-			CompletionVersion int  `json:"completion_version"`
+			Ready                    bool `json:"__faas_ready"`
+			Concurrency              int  `json:"concurrency"`
+			CompletionVersion        int  `json:"completion_version"`
+			ResourceLifecycleVersion int  `json:"resource_lifecycle_version"`
 		}
 		if err := json.Unmarshal(line, &handshake); err != nil {
 			ready <- fmt.Errorf("decode ready handshake: %w", err)
@@ -557,6 +570,10 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 		}
 		if !handshake.Ready {
 			ready <- errors.New("missing ready handshake")
+			return
+		}
+		if spec.RequireResourceLifecycle && (handshake.CompletionVersion != 1 || handshake.ResourceLifecycleVersion != 1) {
+			ready <- errors.New("adapter does not support resource lifecycle; rebuild required")
 			return
 		}
 		w.slots = min(max(handshake.Concurrency, 1), maxWorkerSlots)

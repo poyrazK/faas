@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -316,6 +317,18 @@ func TestApplyAppLifecycle(t *testing.T) {
 	}
 	if app.Manifest.BeforeCheckpoint.Path != "/internal/checkpoint" {
 		t.Fatal("before_checkpoint overlay retained the state pointer")
+	}
+}
+
+func TestApplyAppLifecycleFunctionResources(t *testing.T) {
+	for _, kind := range []state.AppType{state.AppTypeFunction, state.AppTypeApp} {
+		for _, runtime := range []string{"node22", "node24", "python312"} {
+			got := applyAppLifecycle(api.AppManifest{}, state.App{Type: kind, Runtime: runtime})
+			want := kind == state.AppTypeFunction && functionlifetime.NativeNode(runtime)
+			if (got.BeforeCheckpoint != nil) != want || (got.AfterRestore != nil) != want {
+				t.Fatalf("automatic resources kind=%s runtime=%s before=%v after=%v", kind, runtime, got.BeforeCheckpoint, got.AfterRestore)
+			}
+		}
 	}
 }
 

@@ -8,6 +8,9 @@ on:
       - 'pkg/functionlifetime/**'
       - 'pkg/fcvm/**'
       - 'pkg/sched/**'
+      - 'pkg/imaged/**'
+      - 'pkg/e2etest/functionsql/**'
+      - 'cmd/e2e/function_resources_postgres_metal_test.go'
       - 'pkg/api/limits.go'
       - 'cmd/vmmd/**'
       - 'pkg/rootfs/**'
@@ -97,7 +100,9 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
+          npm run test:build
           node scripts/sync-postgres-starter.mjs --check
+          node --test dist-test/test/postgres-pool-runtime.test.js
           node --test test/postgres-pool-package.test.mjs
       - name: runner, adapter and real SQL race checks
         env:
@@ -106,7 +111,7 @@ jobs:
           FAAS_TEST_FUNCTION_POSTGRES: '1'
         run: |
           umask 022
-          go test -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
+          go test -p 1 -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
       - name: execution ownership and checkpoint admission race checks
         env:
           DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
@@ -114,8 +119,9 @@ jobs:
           FAAS_TEST_FUNCTION_POSTGRES: '1'
         run: |
           umask 022
-          go test -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
-          go test -race ./pkg/fcvm ./pkg/sched -run '^TestFunctionExecution' -count=1 -timeout=3m
+          go test -p 1 -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
+          go test -p 1 -race ./pkg/fcvm ./pkg/sched -run '^TestFunction(Resource|Execution)' -count=1 -timeout=3m
+          go test -p 1 ./pkg/imaged -run '^TestApplyAppLifecycle' -count=1 -timeout=3m
       - name: remove fixture private key
         if: always()
         run: rm -f "$RUNNER_TEMP/function-sql/server.key"
