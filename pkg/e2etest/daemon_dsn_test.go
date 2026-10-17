@@ -41,7 +41,11 @@ func TestDaemonDSN_FollowsPgtestIsolation(t *testing.T) {
 	t.Run("schema", func(t *testing.T) {
 		pool := pgtest.Open(t)
 		dsn := daemonDSN(base, pool)
-		if !strings.Contains(dsn, "search_path="+pgtest.SchemaOf(pool)) {
+		parsed, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parsed.ConnConfig.RuntimeParams["search_path"] != pgtest.SchemaOf(pool) {
 			t.Fatalf("schema mode: dsn %q lacks search_path for %q", dsn, pgtest.SchemaOf(pool))
 		}
 		var gotSchema string
