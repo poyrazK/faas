@@ -16,15 +16,15 @@ func (m *MemStore) validRetainedRevisionLocked(deploymentID string) bool {
 	return m.deploymentRevisionRetainedLocked(deploymentID)
 }
 
-func (m *MemStore) PublishProjectReleaseSet(_ context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	return m.publishProjectReleaseSet(accountID, projectID, environment, nil, nil, ttlSeconds, members)
+func (m *MemStore) PublishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return m.publishProjectReleaseSet(ctx, accountID, projectID, environment, nil, nil, ttlSeconds, members)
 }
 
-func (m *MemStore) PublishProjectReleaseSetIfActive(_ context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	return m.publishProjectReleaseSet(accountID, projectID, environment, &expectedActiveID, expectedFallback, ttlSeconds, members)
+func (m *MemStore) PublishProjectReleaseSetIfActive(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	return m.publishProjectReleaseSet(ctx, accountID, projectID, environment, &expectedActiveID, expectedFallback, ttlSeconds, members)
 }
 
-func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment string, expectedActiveID *string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) publishProjectReleaseSet(ctx context.Context, accountID, projectID, environment string, expectedActiveID *string, expectedFallback []ProjectReleaseMember, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	if !validReleaseTTL(ttlSeconds) || len(members) == 0 || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
@@ -77,7 +77,11 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	if count != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
-	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
+	if _, checked := ctx.Value(checkedReleaseGraphKey{}).(string); checked {
+		if err := m.checkCheckedReleaseGraphLocked(ctx, byApp, environment); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	} else if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	key := releaseKey(projectID, environment)
@@ -92,6 +96,22 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	}
 	if err := m.validateGitOpsReleaseMembersLocked(previousID, byApp); err != nil {
 		return ProjectReleaseSet{}, err
+	}
+	if _, checked := ctx.Value(checkedReleaseGraphKey{}).(string); checked {
+		for _, fence := range bindingReleaseFences(ctx) {
+			if !fence.ValidUntil.IsZero() && !time.Now().Before(fence.ValidUntil) {
+				return ProjectReleaseSet{}, ErrBindingPromotionExpired
+			}
+		}
+	}
+	rollback, recovering := ctx.Value(checkedReleaseRollbackKey{}).(checkedReleaseRollback)
+	if recovering {
+		if _, checked := ctx.Value(checkedReleaseGraphKey{}).(string); !checked {
+			return ProjectReleaseSet{}, ErrBindingReleaseRequired
+		}
+		if err := validateCheckedRollbackSource(m.projectReleaseSets[rollback.source], accountID, projectID, environment, byApp, time.Now()); err != nil {
+			return ProjectReleaseSet{}, err
+		}
 	}
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
@@ -111,42 +131,58 @@ func (m *MemStore) publishProjectReleaseSet(accountID, projectID, environment st
 	now := time.Now().UTC()
 	release := ProjectReleaseSet{ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true,
 		TTLSeconds: ttlSeconds, CreatedAt: now, Members: append([]ProjectReleaseMember(nil), members...)}
+	if recovering {
+		release.RollbackSourceReleaseID, release.RollbackPreviousReleaseID = rollback.source, rollback.previous
+	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
 	return release, nil
 }
 
-func (m *MemStore) DeactivateProjectReleaseSetIfActive(_ context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember) error {
+func (m *MemStore) DeactivateProjectReleaseSetIfActive(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember) error {
+	_, err := m.deactivateProjectReleaseSet(ctx, accountID, projectID, environment, expectedActiveID, expectedFallback)
+	return err
+}
+
+func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, projectID, environment, expectedActiveID string, expectedFallback []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	if expectedActiveID == "" {
-		return ErrInvalidArgument
+		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.ownsReleaseEnvironmentLocked(accountID, projectID, environment) {
-		return ErrNotFound
+		return ProjectReleaseSet{}, ErrNotFound
 	}
 	key := releaseKey(projectID, environment)
 	activeID := m.activeProjectReleaseSets[key]
 	if activeID != expectedActiveID {
-		return ErrConflict
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	release, ok := m.projectReleaseSets[activeID]
 	if !ok || !release.Active {
-		return ErrConflict
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	if m.releaseSetHasManagedMembersLocked(release) {
-		return ErrConflict
+		return ProjectReleaseSet{}, ErrConflict
 	}
 	if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
-		return err
+		return ProjectReleaseSet{}, err
 	}
-	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
-		return err
+	checked, _ := ctx.Value(checkedReleaseDeactivationKey{}).(bool)
+	if checked {
+		if err := m.checkCheckedDeactivationLocked(ctx, accountID, projectID, environment, expectedFallback); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	} else if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	now := time.Now().UTC()
 	expires := now.Add(time.Duration(release.TTLSeconds) * time.Second)
 	release.Active = false
 	release.ExpiresAt = &expires
+	if checked {
+		release.Deactivation = projectDeactivationReceipt(ctx, release.ID, expectedFallback, now)
+	}
 	for _, member := range release.Members {
 		dep := m.deployments[member.DeploymentID]
 		if dep.Status == DeployLive && dep.TrafficPercent == 0 {
@@ -157,7 +193,7 @@ func (m *MemStore) DeactivateProjectReleaseSetIfActive(_ context.Context, accoun
 	}
 	m.projectReleaseSets[activeID] = release
 	delete(m.activeProjectReleaseSets, key)
-	return nil
+	return cloneProjectReleaseSet(release), nil
 }
 
 func (m *MemStore) validateProjectReleaseFallbackLocked(projectID, environment string, expected []ProjectReleaseMember) error {
