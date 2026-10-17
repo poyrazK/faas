@@ -179,6 +179,9 @@ func stampSourceBuildRootfs(ctx context.Context, tx pgx.Tx, in SourceBuildRootfs
 	if count != 1 {
 		return ErrApplicationStandardRuntimeStale
 	}
+	if err := q.StampDeploymentRuntimeBase(ctx, tx, sqlc.StampDeploymentRuntimeBaseParams{DeploymentID: mustPgUUID(in.DeploymentID), RuntimeBase: sourceBuildRootfsRuntimeBase(in)}); err != nil {
+		return buildExportError(err)
+	}
 	return buildExportError(q.SelectSourceBuildRootfs(ctx, tx, sqlc.SelectSourceBuildRootfsParams{DeploymentID: mustPgUUID(in.DeploymentID), ID: mustPgUUID(in.ID)}))
 }
 

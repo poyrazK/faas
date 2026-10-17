@@ -73,7 +73,7 @@ func prepareSourceBuildRootfs(in SourceBuildRootfsInput) (SourceBuildRootfsInput
 func checkSourceBuildRootfsKind(in SourceBuildRootfsInput) error {
 	switch in.Kind {
 	case "source-app-layer":
-		if in.Runtime != "" || in.RunnerDigest != "" {
+		if in.RunnerDigest != "" || in.Runtime != "" && !SharedSourceAppRuntime(in.Runtime) {
 			return ErrInvalidArgument
 		}
 	case "function-layer":
@@ -117,7 +117,7 @@ func checkSourceBuildRootfsOwner(in SourceBuildRootfsInput, parent BuildExportPu
 	if status != DeployPending && status != DeployBuilding && status != DeployImaging && status != DeploySnapshotting {
 		return ErrApplicationStandardRuntimeStale
 	}
-	kind, runtime := SourceBuildRootfsKind(App{Type: intent.Type, Runtime: intent.Runtime}, Deployment{Handler: intent.Handler})
+	kind, runtime := SourceBuildRootfsKindForClaim(App{Type: intent.Type, Runtime: intent.Runtime}, Deployment{Handler: intent.Handler}, c.Runtime)
 	intentHash, err := hashSourceBuildRootfsIntent(intent)
 	if err != nil {
 		return err
@@ -126,6 +126,33 @@ func checkSourceBuildRootfsOwner(in SourceBuildRootfsInput, parent BuildExportPu
 		return ErrApplicationStandardRuntimeStale
 	}
 	return nil
+}
+
+// sharedSourceAppRuntimes are the runner bases a source-built container app
+// may run on instead of the minimal base, holding only /app in its layer
+// (docs/adr/1500-shared-runtime-source-apps.md, H10-140).
+var sharedSourceAppRuntimes = map[string]bool{"node22": true, "node24": true}
+
+// SharedSourceAppRuntime reports whether runtime is a runner base a
+// source-built container app may claim.
+func SharedSourceAppRuntime(runtime string) bool { return sharedSourceAppRuntimes[runtime] }
+
+// SourceRuntimeClaimAllowed reports whether a signed build export may claim
+// runtime for app: the app's own runtime, or a shared runner base for a
+// container app that declares none.
+func SourceRuntimeClaimAllowed(app App, claimed string) bool {
+	return claimed == app.Runtime || app.Type != AppTypeFunction && app.Runtime == "" && SharedSourceAppRuntime(claimed)
+}
+
+// SourceBuildRootfsKindForClaim is SourceBuildRootfsKind for a build whose
+// signed export claims claimedRuntime: a container app's layer then records
+// the shared runner base it was built for.
+func SourceBuildRootfsKindForClaim(app App, dep Deployment, claimedRuntime string) (string, string) {
+	kind, runtime := SourceBuildRootfsKind(app, dep)
+	if kind == "source-app-layer" && claimedRuntime != app.Runtime && SourceRuntimeClaimAllowed(app, claimedRuntime) {
+		return kind, claimedRuntime
+	}
+	return kind, runtime
 }
 
 func SourceBuildRootfsKind(app App, dep Deployment) (string, string) {
@@ -153,5 +180,16 @@ func checkSourceBuildRootfsBase(in SourceBuildRootfsInput, base BaseImageProduce
 
 func sourceBuildRootfsMetadataMatches(value SourceBuildRootfs, dep Deployment) bool {
 	in := value.Input
-	return in.Scope == dep.Scope && in.RootfsPath == dep.RootfsPath && in.StorageKey == dep.RootfsKey && in.ContentBytes == dep.RootfsBytes
+	return in.Scope == dep.Scope && in.RootfsPath == dep.RootfsPath && in.StorageKey == dep.RootfsKey && in.ContentBytes == dep.RootfsBytes &&
+		dep.RuntimeBase == sourceBuildRootfsRuntimeBase(in)
+}
+
+// sourceBuildRootfsRuntimeBase is the deployment runtime_base a source rootfs
+// stamps: its shared runner base, or "" for function layers and app layers on
+// the app's own base.
+func sourceBuildRootfsRuntimeBase(in SourceBuildRootfsInput) string {
+	if in.Kind == "source-app-layer" {
+		return in.Runtime
+	}
+	return ""
 }

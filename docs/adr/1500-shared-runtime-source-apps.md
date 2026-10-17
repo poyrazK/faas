@@ -4,6 +4,8 @@ Date: 2026-10-17
 Status: Accepted (owner chose option A for H10-140; rollout gated by a node flag)
 Related: spec §4.6 (two-drive rootfs), ADR-595 (application standards; its source-rootfs intent SQL derives the layer kind from `app.runtime` and needs a migration for slice 2), H10-139, H10-140
 
+Historical filename: merged migration comments retain `20261017-shared-runtime-source-apps.md`; this decision is now ADR-1500.
+
 ## Context
 
 Spec §4.6 puts the shared read-only runtime on drive0 and only the per-app
@@ -60,10 +62,15 @@ today's full-layer path unchanged.
    what npm executes. `PATH` drops `/mise` entries and uses the base's Node.
 4. **Layer (imaged).** For an eligible deployment, drive1 holds the export's
    `/app` tree plus `/etc/faas/app.json`, the same shape as a function layer
-   without the runner binary. The source rootfs record carries the runtime,
-   so ADR-595's base-producer validation and vmmd's drive0 selection use the
-   runner base. A new rootfs kind `source-app-runtime-layer` keeps existing
-   `source-app-layer` rows untouched.
+   without the runner binary. The signed export claim names the runtime, and
+   the `source-app-layer` record carries it, so ADR-595's base-producer
+   validation uses the runner base (the owner chose this narrow variant over a
+   new rootfs kind). drive0 is not taken from the record: schedd picks it
+   (`artifactBaseKey`: a runtime release, else the app's runtime base). The
+   deployment therefore records the runner base in `deployments.runtime_base`,
+   stamped in the same transaction as the record, and schedd's wake, prime and
+   app-task boots use it. Job-mode boots and environment qualification still
+   assume the minimal base, so they stay ineligible until they read it.
 5. **Rollout.** Nodes enable the path with
    `FAAS_SOURCE_APP_SHARED_RUNTIME=1`; the default is off until a
    native-metal acceptance run (cold boot, snapshot restore, rollback across
@@ -79,11 +86,14 @@ with `PYTHONPATH`, as functions use) in a later slice.
 1. `pkg/sharedruntime` classifier; guest-init records the verdict in
    `build-done.json` and builderd logs it. No behavior change; it measures
    eligibility on real builds.
-2. ADR-595 source-rootfs records gain `source-app-runtime-layer` with a
-   runtime (Go validation, migration of the CHECK and of the SQL intent
-   function that derives the kind from `app.runtime`).
-3. builderd runtime selection and imaged `/app` layer assembly behind
-   `FAAS_SOURCE_APP_SHARED_RUNTIME`, default off.
+2. `source-app-layer` records may carry a shared runner base named by the
+   signed claim (Go validation; migration of the CHECK, the publication lock
+   and the runtime-producer SQL).
+3. a. `deployments.runtime_base`, stamped with the record; schedd boots it;
+      environment clones carry it.
+   b. builderd runtime selection and claim, guest-init `aptPackages` cleared,
+      imaged `/app` layer assembly, behind `FAAS_SOURCE_APP_SHARED_RUNTIME`,
+      default off; job mode excluded.
 4. Native-metal acceptance, then default on. Python.
 
 ## Consequences

@@ -4439,6 +4439,7 @@ type Querier interface {
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
+	StampDeploymentRuntimeBase(ctx context.Context, db DBTX, arg StampDeploymentRuntimeBaseParams) error
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error
