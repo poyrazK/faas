@@ -641,3 +641,7 @@ export { EventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION
   type EventAcknowledgmentPreparationMetricsSnapshot, type EventAcknowledgmentPreparationHistogram } from './event-acknowledgment-preparation-metrics.js';
 export { formatEventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
   type EventAcknowledgmentPreparationPrometheusOptions } from './event-acknowledgment-preparation-prometheus.js';
+
+export { recoverEventAcknowledgmentIntents, EventAcknowledgmentIntentRecoveryPassError,
+  EventAcknowledgmentIntentRecoveryPassCommitUnknownError, EventAcknowledgmentIntentRecoveryPassCancelled,
+  type EventAcknowledgmentIntentRecoveryPassOptions, type EventAcknowledgmentIntentRecoveryPassResult } from './event-acknowledgment-intent-recovery-pass.js';

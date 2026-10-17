@@ -100,6 +100,11 @@ replace newer rows. Confirmed history remains confirmed.
 
 ## Recover one callback
 
+For finite catch-up with controlled concurrency, use the separate
+[bounded recovery pass](event-acknowledgment-node-recovery-pass.md). It composes
+this same primitive, joins admitted work and exposes frozen aggregate progress;
+the host still decides when another pass runs.
+
 ```js
 import {
   recoverNextEventAcknowledgmentIntent, EventAcknowledgmentIntentError,

@@ -3675,3 +3675,11 @@ The application-owned [shared Node/Python monitoring pack](../../examples/event-
 includes opt-in Prometheus recording/alert rules, a Grafana dashboard and recovery
 runbook. Tune sample guards and thresholds for your worker workload and install
 it through your own monitoring deployment process.
+
+`recoverEventAcknowledgmentIntents(pool, accountId, appId, { maxAttempts?,
+concurrency?, signal?, claimDurationMs?, backoffMs?, callbackOptions? })` runs one
+finite saved-callback recovery pass. Admissions/concurrency are bounded, existing
+transaction fences remain authoritative and all worker promises join. Frozen
+`.result` progress accompanies ordinary failure, AbortError and uncertain-COMMIT
+exceptions. The host schedules later passes and owns pool/client lifetime. See
+[budgets, pool release and recovery progress](../../docs/event-acknowledgment-node-recovery-pass.md).

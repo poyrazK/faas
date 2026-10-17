@@ -403,3 +403,51 @@ The [shared Node/Python monitoring pack](../event-acknowledgment-monitoring/READ
 recording rules, warning alerts, a Grafana dashboard and recovery guidance for
 these observations. Install it explicitly in your application monitoring stack
 and tune its workload thresholds and notification routing before enabling it.
+
+## Recover a bounded callback pass
+
+`consumer.mjs` exports `recoverAcknowledgmentsPass(scope, pool, signal)`, using
+the trusted owner scope, up to 100 admitted iterations and concurrency 4. It
+recovers existing saved callbacks independently of ingestion-job processing.
+
+```js
+import { recoverAcknowledgmentsPass } from './consumer.mjs';
+import {
+  EventAcknowledgmentIntentRecoveryPassCancelled,
+  EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+  EventAcknowledgmentIntentRecoveryPassError,
+} from '@gregale/sdk-node';
+
+try {
+  const progress = await recoverAcknowledgmentsPass(scope, pool, shutdown.signal);
+  recordRecoveryProgress(progress); // Fixed aggregate metadata, outside processing callbacks.
+} catch (error) {
+  if (error instanceof EventAcknowledgmentIntentRecoveryPassCommitUnknownError
+    || error instanceof EventAcknowledgmentIntentRecoveryPassCancelled
+    || error instanceof EventAcknowledgmentIntentRecoveryPassError) {
+    recordRecoveryProgress(error.result);
+  }
+  throw error; // Preserve uncertainty/abort; the host chooses recovery and future scheduling.
+}
+```
+
+Use the existing dedicated-client pool contract with promise-returning queries
+and synchronous `release(discard?)`. The host bounds acquisition/query calls,
+owns pool/client availability and waits for the pass before closing resources.
+The primitive leases short transactions separately and releases before HTTP.
+The pass guards release exceptions, preserving known settlements and unknown
+COMMIT, and reports cleanup failures without retrying an ambiguous release.
+
+An empty probe stops admission without proving the backlog drained; other hosts
+can hold claims and work can become due later. Unconfirmed callbacks retain the
+existing persisted backoff and can become due again within a pass. Admissions
+count iterations, including empty probes/acquisition failures, rather than unique
+rows or HTTP requests. The host explicitly schedules another pass as needed.
+
+Frozen progress contains no job IDs, tokens, payloads, saved results or raw
+diagnostics. Caller abort reasons are replaced with a fixed internal reason.
+Unknown COMMIT precedes AbortError, then ordinary failure. A selected generation
+above Node's safe-integer range stops with the existing compatibility code when
+ordinary failure is primary; use a compatible recovery host. The example never
+acks ingestion jobs or reruns business work. See the
+[bounded Node pass contract](../../docs/event-acknowledgment-node-recovery-pass.md).

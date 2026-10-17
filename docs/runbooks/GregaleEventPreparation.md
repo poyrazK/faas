@@ -31,6 +31,14 @@ Use the SDK and original protected-job mode that produced the retained job.
 The shared monitoring contract grants no permission to convert job records,
 acknowledge jobs, run business code or choose a negative acknowledgment.
 
+For explicitly scheduled recovery of saved callbacks, use the bounded
+[Node pass](../event-acknowledgment-node-recovery-pass.md) or
+[Python pass](../event-acknowledgment-python-recovery-pass.md). Inspect their
+aggregate progress after owned work joins. Empty probes do not establish a drained
+backlog, and uncertainty takes precedence over cancellation. No alert starts a
+pass or authorizes job mutation. Node's unsupported-generation code requires a
+compatible recovery host, preserving the retained row's full lineage.
+
 | Operation | Node | Python |
 | --- | --- | --- |
 | Read receipt/claim metadata | [`inspectEventConsumerProcessing`](../event-consumer-processing-inspection.md) | [`ainspect_event_consumer_processing`](../event-consumer-processing-inspection.md#python-inspection) |

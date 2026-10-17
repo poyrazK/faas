@@ -7,6 +7,9 @@ with bounded concurrent admissions and a fresh exclusive connection scope per
 admission. The host decides when to call it again; no polling host, idle wait,
 background service, schema or route is installed.
 
+Node provides the [same bounded-pass model](event-acknowledgment-node-recovery-pass.md)
+with its existing pool ownership, generation limit and AbortSignal contracts.
+
 ```python
 from faas_sdk import (
     EventAcknowledgmentIntentRecoveryPassOptions,
