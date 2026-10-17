@@ -2,7 +2,7 @@
 
 - Status: implemented for portable qualification; native acceptance pending
 - Date: 2026-10-15
-- Extends: ADR-1524 and ADR-1525
+- Extends: ADR-1573 and ADR-1574
 
 ## Decision
 
@@ -65,7 +65,7 @@ retained for operator reconciliation. It never trusts an uploaded `result.json`.
 The platform result is frozen in the attempt journal before the engine sees it,
 so restart, output paging and late uploads cannot change it.
 
-This refines ADR-1525's missing-publication behavior. Missing stop confirmation
+This refines ADR-1574's missing-publication behavior. Missing stop confirmation
 still waits. Corrupt sealed output still waits for repair rather than becoming a
 successful result. A stopped task without a seal can no longer wait forever for
 an upload whose native authority has already been revoked.

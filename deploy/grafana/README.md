@@ -330,7 +330,7 @@ Prometheus federation or a shared remote-write backend.
 Renames must update the spec first, then the metric, then this
 dashboard — never the other way around.
 
-## `internal-ci.json` (ADR-1526)
+## `internal-ci.json` (ADR-1575)
 
 Internal CI operations dashboard, UID `faas-internal-ci`. The existing Grafana
 role provisions its byte-identical mirror. Panels use `faas_ci:*` recording

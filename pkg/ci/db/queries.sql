@@ -157,7 +157,7 @@ FROM candidate c WHERE t.account_id = $1 AND t.run_id = c.run_id RETURNING t.*;
 UPDATE ci_github_checks SET status = $4, check_id = $5, last_error = $6, next_attempt_at = $7, lease_token = NULL, lease_until = NULL
 WHERE account_id = $1 AND run_id = $2 AND lease_token = $3 AND status = 'sending' AND lease_until > clock_timestamp();
 
--- ADR-1524: apid-owned CI Jobs intent. Task claiming and instances remain schedd-owned.
+-- ADR-1573: apid-owned CI Jobs intent. Task claiming and instances remain schedd-owned.
 -- name: CIJobsRunOwned :one
 SELECT EXISTS (SELECT 1 FROM ci_job_attempts WHERE account_id = $1 AND run_id = $2);
 
@@ -224,7 +224,7 @@ UPDATE job_runs SET aggregate_status = 'cancelled', finished_at = coalesce(finis
 WHERE id = $1 AND aggregate_status IN ('queued','running')
  AND EXISTS (SELECT 1 FROM job_tasks WHERE run_id = $1 AND status = 'cancelled');
 
--- ADR-1525: task-bound runtime capabilities and sealed output.
+-- ADR-1574: task-bound runtime capabilities and sealed output.
 -- name: CIJobsRuntimeOwner :one
 SELECT account_id, execution_id FROM ci_job_attempts WHERE run_id = $1;
 

@@ -182,7 +182,7 @@ func testInternalCIService(t *testing.T, automatic, pullRequest, filtered bool) 
 		if err := ci.RecordVerifiedGitHubDelivery(t.Context(), cfg, intent, uuid.NewString(), kind, body); err != nil {
 			t.Fatal(err)
 		}
-		// ADR-1531: recover the original source over authenticated HTTPS before
+		// ADR-1580: recover the original source over authenticated HTTPS before
 		// the normal worker can create its single execution and Jobs intent.
 		var eventID string
 		if err := pool.QueryRow(t.Context(), "UPDATE ci_automation_events SET status='dead',attempts=$2,last_error='unavailable' WHERE account_id=$1 RETURNING id", account, api.CIGitHubMaxAttempts).Scan(&eventID); err != nil {

@@ -1,7 +1,7 @@
 {
   "uid": "faas-internal-ci",
   "title": "Gregale internal CI",
-  "description": "ADR-1526 internal-only CI operations. All CI flags ship off. Requires the faas_internal_ci recording group and existing private daemon scrapes. Missing evidence is Unknown; these observations do not qualify native compute. Runbook: docs/runbooks/FaasInternalCIOperations.md.",
+  "description": "ADR-1575 internal-only CI operations. All CI flags ship off. Requires the faas_internal_ci recording group and existing private daemon scrapes. Missing evidence is Unknown; these observations do not qualify native compute. Runbook: docs/runbooks/FaasInternalCIOperations.md.",
   "schemaVersion": 39,
   "version": 1,
   "editable": true,

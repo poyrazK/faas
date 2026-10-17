@@ -38,7 +38,7 @@ grant, while retained log reads work with compute disabled. Step times are
 diagnostic, not billing or lease authority. A stopped task without a seal reports
 `output_incomplete=true` and preserves partial bytes without claiming success.
 Keep sequence evidence during rollback; archive clears raw progress payloads.
-See [ADR-1538](../adr/1538-internal-ci-live-progress.md). Qualify the updated pinned
+See [ADR-1587](../adr/1587-internal-ci-live-progress.md). Qualify the updated pinned
 runner image separately on the native host; defaults and release remain paused.
 
 - Disabled means a fresh owner configuration says the path is off. Paused
@@ -82,7 +82,7 @@ cleanup resumes. Input jobs need qualified manifest-v2 runner images (v3 with
 environment/directory configuration) and current
 control-plane binaries. Drain them before a binary downgrade. Keep flags off;
 native/provider validation and release remain separate. See
-[ADR-1539](../adr/1539-internal-ci-dependency-artifact-inputs.md).
+[ADR-1588](../adr/1588-internal-ci-dependency-artifact-inputs.md).
 
 ## Matrix planning or variant execution failure
 
@@ -104,7 +104,7 @@ Native qualification must verify all pinned variant images, resource admission,
 restart, cancellation and cleanup. Definition readers must understand matrices
 before fresh admission; drain with current binaries and keep admission off during
 binary rollback. Flags remain off and release stays paused. See
-[ADR-1541](../adr/1541-internal-ci-named-matrix-jobs.md).
+[ADR-1590](../adr/1590-internal-ci-named-matrix-jobs.md).
 
 ## Step environment or working-directory failure
 
@@ -113,7 +113,7 @@ Environment values are non-secret literal metadata; empty strings override job
 values, and each step gets a fresh explicit environment. Runner/runtime settings
 cannot be overridden. Quote YAML numbers/booleans and observe the declared and
 merged bounds documented in
-[ADR-1540](../adr/1540-internal-ci-step-configuration.md).
+[ADR-1589](../adr/1589-internal-ci-step-configuration.md).
 
 Directories are checkout-relative and must exist when their step starts. An
 earlier step with `working_directory: .` can create a later directory. Missing
@@ -284,7 +284,7 @@ with compute disabled. githubd applies the intent, rechecks access and publishes
 the original skipped result with the same remote identity. Pending source retry
 intents appear in `check_retries`; event history includes `check_delivery`.
 Preserve the retry journal during rollback. Admission recovery cannot promote
-the source. See [ADR-1537](../adr/1537-internal-ci-source-check-recovery.md).
+the source. See [ADR-1586](../adr/1586-internal-ci-source-check-recovery.md).
 
 Native verification handoff: after deliberate internal opt-in, verify a
 docs-only push skips without creating a Jobs run, a code-path rename/deletion
@@ -294,7 +294,7 @@ older code work running, manual reruns ignore filters, and GitHub reports
 `skipped` with the source identity. Check response-loss/restart recovery and
 account isolation. Keep all production gates off and the release paused until
 that separate qualification is complete. See
-[ADR-1536](../adr/1536-internal-ci-automation-path-filters.md).
+[ADR-1585](../adr/1585-internal-ci-automation-path-filters.md).
 
 ## Pull-request automation
 
@@ -322,7 +322,7 @@ when an already settled exact logical source must run again.
 GitHub state can change after an RPC. Already-admitted executions keep their
 pinned SHA when a PR later closes; use the existing cancellation command if
 needed. All production flags remain off, and native/provider qualification stays
-with the verification workflow. See [ADR-1534](../adr/1534-internal-ci-pull-request-automation.md).
+with the verification workflow. See [ADR-1583](../adr/1583-internal-ci-pull-request-automation.md).
 
 ## Test report diagnostics
 

@@ -21,6 +21,60 @@ import (
 	"time"
 )
 
+// Operator restart execution and persistence budgets (ADR-1522).
+const (
+	OperatorRestartGenerationMaxBytes    = 128
+	OperatorRestartRPCTimeout            = 10 * time.Second
+	OperatorRestartPersistenceTimeout    = 10 * time.Second
+	OperatorRestartPersistenceAttempts   = 3
+	OperatorRestartPersistenceRetryDelay = 100 * time.Millisecond
+	OperatorParkMaxGraceSeconds          = int32(MaxAppManifestStopGracePeriod / time.Second)
+	OperatorParkCleanupTimeout           = 10 * time.Second
+	OperatorParkRPCTimeout               = 90 * time.Second
+)
+
+// Database-only operator cold-boot execution and replay (ADR-1523).
+const (
+	OperatorColdBootPersistenceTimeout    = 10 * time.Second
+	OperatorColdBootPersistenceAttempts   = 3
+	OperatorColdBootPersistenceRetryDelay = 100 * time.Millisecond
+)
+
+// Database-only node maintenance execution and receipt replay (ADR-1526).
+const (
+	OperatorNodePersistenceTimeout    = 10 * time.Second
+	OperatorNodePersistenceAttempts   = 3
+	OperatorNodePersistenceRetryDelay = 100 * time.Millisecond
+)
+
+// Stale node placement retries before VM dispatch (ADR-1528).
+const NodeAdmissionPlacementAttempts = 3
+
+// Durable migration evidence is bounded, never expired into cleanup proof.
+const (
+	MigrationAdmissionRecoveryBatchMax = 128
+	MigrationAdoptionReceiptMaxBytes   = 65536
+	MigrationCleanupProofMaxBytes      = 1024
+	MigrationSourceLeaseTokenMaxBytes  = 128
+)
+
+// Database-only node lifecycle completion and receipt replay (ADR-1527).
+const (
+	NodeLifecycleCompletionTimeout    = 10 * time.Second
+	NodeLifecycleCompletionAttempts   = 3
+	NodeLifecycleCompletionRetryDelay = 100 * time.Millisecond
+)
+
+// Durable operator recovery acceptance (ADR-1524). Receipts do not expire;
+// PollHorizon is only guidance for one polling session.
+const (
+	OperatorRecoveryRequestKeyMaxBytes = 255
+	OperatorRecoveryReasonMaxBytes     = 64
+	OperatorRecoveryTargetMaxBytes     = 255
+	OperatorRecoverySubmissionTimeout  = 10 * time.Second
+	OperatorRecoveryPollHorizon        = 5 * time.Minute
+)
+
 // Application standards preview safeguards, independent of billing quotas.
 const (
 	ApplicationStandardMaxDefinitionBytes             = 64 << 10
@@ -11793,13 +11847,13 @@ const (
 const CIExecutionCheckSummaryMaxBytes = 8 << 10
 
 // Operator recovery is bounded for each retained execution or skipped source
-// (ADR-1528, ADR-1537). Each delivery has its own lifetime budget.
+// (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
 
-// Explicit recovery of a retained, never-admitted automatic source (ADR-1531).
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1580).
 const CIAutomationRetryMaxGenerations = 3
 
-// Automatic runs serialize per account, binding and branch (ADR-1532).
+// Automatic runs serialize per account, binding and branch (ADR-1581).
 const CIAutomationActivePerBranch = 1
 
 // PR automation always verifies its current head and serializes each PR.
@@ -11807,7 +11861,7 @@ const CIAutomationActivePerPullRequest = 1
 const CIGitHubPullRequestMaxBytes = 256 << 10
 const CIGitHubPullRequestJSONMaxDepth = 32
 
-// Internal CI automation path filters (ADR-1536). At provider boundaries a
+// Internal CI automation path filters (ADR-1585). At provider boundaries a
 // capped or incomplete comparison always means run the full pipeline.
 const (
 	CIAutomationMaxPathFilters       = 16

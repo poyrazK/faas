@@ -2,7 +2,7 @@
 
 - Status: implemented behind default-off gates
 - Date: 2026-10-16
-- Extends: ADR-1523, ADR-1339 and ADR-1340
+- Extends: ADR-1572, ADR-1339 and ADR-1340
 
 ## Decision
 

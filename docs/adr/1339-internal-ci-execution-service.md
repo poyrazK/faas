@@ -2,7 +2,7 @@
 
 - Status: implemented behind default-off flags; native/provider qualification pending
 - Date: 2026-10-15
-- Extends: ADR-1524, ADR-1525, ADR-1336, ADR-1337 and ADR-1338
+- Extends: ADR-1573, ADR-1574, ADR-1336, ADR-1337 and ADR-1338
 
 ## Decision
 

@@ -101,7 +101,7 @@ func (e *Engine) withEnvironmentWorkloadQualificationJob(ctx context.Context,
 	if graphNodePinned && graphNodeID != "" && placement.NodeID != graphNodeID {
 		return result, fmt.Errorf("qualification job placement escaped its private node: %w", state.ErrConflict)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(ctx, claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB,
 	})
 	if err != nil {

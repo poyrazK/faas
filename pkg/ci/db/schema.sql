@@ -442,7 +442,7 @@ CREATE TABLE ci_worker_health (
  CHECK(success_at IS NULL OR cycle_at IS NOT NULL)
 );
 
--- ADR-1535: explicit whole-pipeline rerun lineage.
+-- ADR-1584: explicit whole-pipeline rerun lineage.
 ALTER TABLE ci_executions ADD COLUMN IF NOT EXISTS rerun_parent_id uuid;
 ALTER TABLE ci_executions ADD COLUMN IF NOT EXISTS rerun_root_id uuid;
 -- +goose StatementBegin

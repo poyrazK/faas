@@ -1631,6 +1631,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if store != nil {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
+		if parks, ok := store.(state.OperatorParkStore); ok {
+			impl.WithOperatorParkStore(parks, qualificationNodeID)
+		}
+		if restarts, ok := store.(state.OperatorRestartStore); ok {
+			impl.WithOperatorRestartStore(restarts, qualificationNodeID)
+		}
 		if authority, ok := store.(state.ManagedPostgresDrainAuthority); ok {
 			impl.WithManagedPostgresDrainAuthority(authority)
 		}

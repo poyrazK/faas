@@ -2,7 +2,7 @@
 
 - Status: implemented for portable qualification; native and real GCS acceptance pending
 - Date: 2026-10-15
-- Extends: ADR-1524, ADR-1525 and ADR-1336
+- Extends: ADR-1573, ADR-1574 and ADR-1336
 
 ## Decision
 
@@ -32,7 +32,7 @@ one `X-Forwarded-Proto: https` value from the local deployment TLS terminator.
 Forwarding headers from remote peers cannot authorize plaintext access. All
 responses are marked `no-store`.
 
-Guest routes retain the attempt/instance capability protocol from ADR-1525;
+Guest routes retain the attempt/instance capability protocol from ADR-1574;
 account credentials, cookies and query parameters are refused. There is no HTTP
 grant issuance route. Source access still requires current native running
 identity and source policy, and cancellation/VM stop revoke authority according

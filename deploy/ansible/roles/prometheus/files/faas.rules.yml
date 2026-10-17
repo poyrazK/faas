@@ -5127,7 +5127,7 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
-  # ADR-1526: internal CI operational evidence. Fleet gauges repeat across daemons;
+  # ADR-1575: internal CI operational evidence. Fleet gauges repeat across daemons;
   # aggregate only readable targets with max usage/counts and min limits.
   # Boot worker switches are independent of heartbeat freshness. All alerts
   # are internal warnings; disabled worker paths stay quiet. No state is mutated.

@@ -1,5 +1,5 @@
 // adr: 590
-// adr: 1527 — CI configuration needs a strategy; execution authority stays with its source.
+// adr: 1576 — CI configuration needs a strategy; execution authority stays with its source.
 // adr: 623 — pending resize intents belong only to their original database.
 // adr: 738
 // adr: 694

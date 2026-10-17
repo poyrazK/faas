@@ -418,10 +418,11 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
-	nativeGeneration string
-	Lease            Lease
-	Net              netns.Config
-	Method           WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	nativeGeneration          string
+	operatorRestartGeneration string
+	Lease                     Lease
+	Net                       netns.Config
+	Method                    WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
 	runtimeAdmissionEgress  WakeRequest
@@ -5517,16 +5518,21 @@ func (m *Manager) refreshCachedScan(ctx context.Context, scanKey string) bool {
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
 func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+	info, _, err := m.parkWithCleanupResult(ctx, instance, spec)
+	return info, err
+}
+
+func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, bool, error) {
 	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
 	if err != nil {
-		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
+		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, err)
 	}
 	defer m.finishInstanceFlight(instance, flight)
 	if inst.AppTaskOnly {
-		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
+		return SnapshotInfo{}, false, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
 	if m.isFrozen(inst) {
-		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
+		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
 	}
 	m.mu.Lock()
 	flight.parking = true
@@ -5546,13 +5552,19 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	}
 	// Even a failed capture can leave a paused guest. Retain ownership if
 	// teardown fails, and never report a successful park before releasing RAM.
-	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	cleanupCtx := context.WithoutCancel(ctx)
+	if spec.operatorGeneration != "" {
+		var cancel context.CancelFunc
+		cleanupCtx, cancel = context.WithTimeout(cleanupCtx, api.OperatorParkCleanupTimeout)
+		defer cancel()
+	}
+	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
-		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
+		return SnapshotInfo{}, cleanupErr == nil, fmt.Errorf("park %s: %w", instance, err)
 	}
 	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
-	return info, nil
+	return info, true, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier

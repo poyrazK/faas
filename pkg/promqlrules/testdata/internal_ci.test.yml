@@ -1,4 +1,4 @@
-# ADR-1526: synthetic operational evidence; no native/provider calls.
+# ADR-1575: synthetic operational evidence; no native/provider calls.
 rule_files:
 - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
 evaluation_interval: 30s

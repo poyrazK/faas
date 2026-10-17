@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ AuditEventOutboxStore = (*PgStore)(nil)
@@ -135,11 +137,13 @@ func (s *PgStore) DeliverAuditEvent(ctx context.Context, id int64) (bool, error)
 			subject = &u
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO events (actor, kind, subject, data, outbox_id)
-		VALUES ($1, $2, $3, $4::jsonb, $5)
-		ON CONFLICT (outbox_id) WHERE outbox_id IS NOT NULL DO NOTHING
-	`, actor, kind, subject, data, id); err != nil {
+	subjectID := pgtype.UUID{}
+	if subject != nil {
+		subjectID = pgtype.UUID{Bytes: *subject, Valid: true}
+	}
+	if err := sqlc.New().InsertDurableAuditEventWithTrace(ctx, tx, sqlc.InsertDurableAuditEventWithTraceParams{
+		Actor: actor, Kind: kind, Subject: subjectID, Data: data, OutboxID: id,
+	}); err != nil {
 		return false, fmt.Errorf("state: deliver audit event insert: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

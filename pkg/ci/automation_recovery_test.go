@@ -1,4 +1,4 @@
-// ADR-1531: recovery preserves source authority and admits at most one execution.
+// ADR-1580: recovery preserves source authority and admits at most one execution.
 package ci
 
 import (

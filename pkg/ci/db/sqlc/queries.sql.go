@@ -120,7 +120,7 @@ type CIJobsRunOwnedParams struct {
 	RunID     pgtype.UUID
 }
 
-// ADR-1524: apid-owned CI Jobs intent. Task claiming and instances remain schedd-owned.
+// ADR-1573: apid-owned CI Jobs intent. Task claiming and instances remain schedd-owned.
 func (q *Queries) CIJobsRunOwned(ctx context.Context, db DBTX, arg CIJobsRunOwnedParams) (bool, error) {
 	row := db.QueryRow(ctx, cIJobsRunOwned, arg.AccountID, arg.RunID)
 	var exists bool
@@ -137,7 +137,7 @@ type CIJobsRuntimeOwnerRow struct {
 	ExecutionID pgtype.UUID
 }
 
-// ADR-1525: task-bound runtime capabilities and sealed output.
+// ADR-1574: task-bound runtime capabilities and sealed output.
 func (q *Queries) CIJobsRuntimeOwner(ctx context.Context, db DBTX, runID pgtype.UUID) (CIJobsRuntimeOwnerRow, error) {
 	row := db.QueryRow(ctx, cIJobsRuntimeOwner, runID)
 	var i CIJobsRuntimeOwnerRow
