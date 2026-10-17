@@ -135,6 +135,7 @@ func cmdSitesDeploy(args []string) int {
 	description := flags.String("description", "", "caller-provided deployment description")
 	noPromote := flags.Bool("no-promote", false, "verify and stage the release without making it routable")
 	plan := flags.String("plan", "", "reviewed saved plan JSON; requires --no-promote and independent planned-staging opt-in")
+	resumeRelease := flags.String("resume-release", "", "exact retained release UUID; requires --plan, --no-promote and stage-recovery opt-in")
 	wait := flags.Bool("wait", false, "wait for durable publication after promotion")
 	timeout := flags.Duration("wait-timeout", api.HostingPublicationWaitDefault, "bounded publication wait")
 	if err := flags.Parse(args); err != nil || rejectUnexpectedFlagArgs(flags) {
@@ -157,9 +158,16 @@ func cmdSitesDeploy(args []string) int {
 		}
 	}
 	planSupplied := false
-	flags.Visit(func(f *flag.Flag) { planSupplied = planSupplied || f.Name == "plan" })
+	resumeSupplied := false
+	flags.Visit(func(f *flag.Flag) {
+		planSupplied = planSupplied || f.Name == "plan"
+		resumeSupplied = resumeSupplied || f.Name == "resume-release"
+	})
+	if resumeSupplied && (!planSupplied || !hosting.ValidCIRunID(*resumeRelease)) {
+		return printErr("Invalid staging recovery options", errors.New("--resume-release requires an exact canonical release UUID and --plan FILE"))
+	}
 	if planSupplied {
-		return cmdSitesPlannedStage(*plan, *siteID, *dir, *spa, *noPromote, provenance)
+		return cmdSitesPlannedStage(*plan, *siteID, *dir, *spa, *noPromote, provenance, *resumeRelease)
 	}
 	manifest, err := staticHostingManifest(*dir, *spa)
 	if err != nil {

@@ -86,6 +86,10 @@ retirement, cleanup or rollback. Re-running the command after an uncertain creat
 can allocate another release; inspect first. Storage and pending reservations
 remain until the existing lifecycle/cleanup completes.
 
+The independently gated [exact-release recovery workflow](internal-frontend-hosting-stage-recovery.md)
+can continue the retained release through `--resume-release RELEASE_UUID`, reusing
+its existing reservation. A ready release is recognized through reads only.
+
 Review the actual immutable release against current production, then explicitly
 promote using that review's revision:
 

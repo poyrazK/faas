@@ -23,10 +23,16 @@ type reviewedHostingBuild struct {
 	files    map[string][]byte
 }
 
-func cmdSitesPlannedStage(filename, siteID, dir string, spa, noPromote bool, provenance *api.HostingReleaseProvenance) int {
+func cmdSitesPlannedStage(filename, siteID, dir string, spa, noPromote bool, provenance *api.HostingReleaseProvenance, resumeRelease string) int {
 	enabled := os.Getenv("FAAS_FRONTEND_HOSTING_PLANNED_STAGING_ENABLED")
 	if enabled != "1" && enabled != "true" {
 		return printErr("Staging from a saved plan is disabled", errors.New("set FAAS_FRONTEND_HOSTING_PLANNED_STAGING_ENABLED=1"))
+	}
+	if resumeRelease != "" {
+		recovery := os.Getenv("FAAS_FRONTEND_HOSTING_STAGE_RECOVERY_ENABLED")
+		if recovery != "1" && recovery != "true" {
+			return printErr("Staging recovery is disabled", errors.New("set FAAS_FRONTEND_HOSTING_STAGE_RECOVERY_ENABLED=1"))
+		}
 	}
 	if filename == "" || !noPromote || !hosting.ValidCIRunID(siteID) {
 		return printErr("Invalid planned staging options", errors.New("provide --plan FILE, a canonical --site UUID and --no-promote"))
@@ -58,7 +64,12 @@ func cmdSitesPlannedStage(filename, siteID, dir string, spa, noPromote bool, pro
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, api.HostingPlannedStageTimeout)
 	defer cancel()
-	release, err := stageReviewedHostingBuild(ctx, client, plan, build, provenance)
+	var release api.HostingRelease
+	if resumeRelease != "" {
+		release, err = resumeReviewedHostingBuild(ctx, client, plan, build, provenance, resumeRelease)
+	} else {
+		release, err = stageReviewedHostingBuild(ctx, client, plan, build, provenance)
+	}
 	if err != nil {
 		return printErr("Planned staging incomplete; inspect retained releases before retrying", err)
 	}
@@ -66,7 +77,8 @@ func cmdSitesPlannedStage(filename, siteID, dir string, spa, noPromote bool, pro
 		State            string             `json:"state"`
 		Release          api.HostingRelease `json:"release"`
 		ExpectedRevision int64              `json:"expected_revision"`
-	}{State: "staged", Release: release, ExpectedRevision: plan.ExpectedRevision}))
+		Resumed          bool               `json:"resumed,omitempty"`
+	}{State: "staged", Release: release, ExpectedRevision: plan.ExpectedRevision, Resumed: resumeRelease != ""}))
 }
 
 func snapshotReviewedHostingBuild(dir string, spa bool) (reviewedHostingBuild, error) {
@@ -138,19 +150,22 @@ func stageReviewedHostingBuild(ctx context.Context, client *api.Client, plan api
 	if err = finishReviewedHostingStage(ctx, client, plan, e, build, release); err != nil {
 		return release, fmt.Errorf("release %s is retained for inspection: %w", release.ID, err)
 	}
-	createdID := release.ID
-	release, err = client.FinalizeHostingRelease(ctx, plan.SiteID, createdID)
+	return finalizeReviewedHostingStage(ctx, client, plan, e.Site, release.ID, current.PayloadBytes)
+}
+
+func finalizeReviewedHostingStage(ctx context.Context, client *api.Client, plan api.HostingDeploymentPlan, site api.HostingSite, releaseID string, payload int64) (api.HostingRelease, error) {
+	release, err := client.FinalizeHostingRelease(ctx, plan.SiteID, releaseID)
 	if err == nil {
-		err = validateReviewedHostingRelease(release, plan, "ready", current.PayloadBytes)
+		err = validateReviewedHostingRelease(release, plan, "ready", payload)
 	}
-	if err == nil && release.ID != createdID {
+	if err == nil && release.ID != releaseID {
 		err = errors.New("verification response selected another release")
 	}
 	if err == nil {
-		err = checkReviewedHostingSite(ctx, client, e.Site)
+		err = checkReviewedHostingSite(ctx, client, site)
 	}
 	if err != nil {
-		return release, fmt.Errorf("verification or final revision check failed for retained release %s; inspect before retrying: %w", createdID, err)
+		return release, fmt.Errorf("verification or final revision check failed for retained release %s; inspect before retrying: %w", releaseID, err)
 	}
 	return release, nil
 }

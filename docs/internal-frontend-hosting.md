@@ -453,3 +453,6 @@ read-only comparison of local output and prospective capacity before upload.
 
 See [staging from a saved plan](internal-frontend-hosting-planned-staging.md) for
 the independent default-off connection from a reviewed report to frozen uploads.
+
+See [staging recovery](internal-frontend-hosting-stage-recovery.md) for an
+independent opt-in that continues an exact retained release without replacement.

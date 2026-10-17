@@ -26,6 +26,11 @@ type plannedStageCLI struct {
 	uploads             map[string]string
 	creates, finalizes  int
 	mutation            func()
+	retained            bool
+	otherReleases       []api.HostingRelease
+	inventoryReads      int
+	inventoryMutation   func(int)
+	grantMutation       func()
 }
 
 func newPlannedStageCLI(t *testing.T) *plannedStageCLI {
@@ -67,6 +72,14 @@ func newPlannedStageCLI(t *testing.T) *plannedStageCLI {
 		var body any
 		switch {
 		case r.Method == "GET":
+			if r.URL.Path == base+"/releases" && f.retained {
+				f.inventoryReads++
+				if f.inventoryMutation != nil {
+					f.inventoryMutation(f.inventoryReads)
+				}
+				body = append([]api.HostingRelease{f.release}, f.otherReleases...)
+				break
+			}
 			planCLIResponse(t, w, r, f.site, f.caps, f.usage)
 			return
 		case r.Method == "POST" && r.URL.Path == base+"/releases":
@@ -97,6 +110,9 @@ func newPlannedStageCLI(t *testing.T) *plannedStageCLI {
 			}
 			body = f.release
 		case r.Method == "POST" && r.URL.Path == base+"/releases/"+reviewReleaseID+"/uploads":
+			if f.grantMutation != nil {
+				f.grantMutation()
+			}
 			grants := []api.HostingUpload{}
 			for _, file := range f.release.Manifest.Files {
 				grants = append(grants, api.HostingUpload{Path: file.Path, URL: storage.URL + "/hosting/staging/" + reviewSiteID + "/" + reviewReleaseID + "/" + file.Path + "?signature=must-not-print"})
@@ -115,6 +131,10 @@ func newPlannedStageCLI(t *testing.T) *plannedStageCLI {
 				return
 			}
 			f.release.State = "ready"
+			if f.mode == "finalize_accepted_lost" {
+				w.WriteHeader(503)
+				return
+			}
 			if f.mode == "wrong_finalize" {
 				f.release.ID = "44444444-4444-4444-8444-444444444444"
 			}
@@ -307,7 +327,7 @@ func TestReviewedSnapshotRejectsChangedConfiguration(t *testing.T) {
 
 func TestPlannedStageHelpDescribesSavedPlan(t *testing.T) {
 	out := planCLIOutput(t)
-	if code := run([]string{"help", "sites", "deploy"}); code != 0 || !strings.Contains(out.String(), "--plan") || !strings.Contains(out.String(), "--no-promote") {
+	if code := run([]string{"help", "sites", "deploy"}); code != 0 || !strings.Contains(out.String(), "--plan") || !strings.Contains(out.String(), "--no-promote") || !strings.Contains(out.String(), "--resume-release") {
 		t.Fatal(fmt.Sprintf("help exit=%d: %s", code, out))
 	}
 }
