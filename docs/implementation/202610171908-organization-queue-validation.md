@@ -152,3 +152,13 @@ migrations and ownership down/up recovery pass (30.472s). HTTP offboarding,
 project ownership, email verification and internal CI route regressions pass
 (54.311s). These integration reruns use Go 1.26.9 and PostgreSQL 16 without race
 detection; earlier race results above remain scoped to their recorded source.
+
+The fresh GitHub run on `9c67c466d` passed all changed-package lint checks, then
+reached the 20-minute job timeout during importer selection. Selection started
+after the existing 13-minute importer budget had already expired and was still
+fetching Git blobs when canceled. The selector now applies that same budget to
+package discovery and selection, terminates its subprocess group on expiry,
+and warns that unchanged importers are deferred to the mega tier. Changed-package
+lint coverage and the existing vet-batch budget remain intact. All 36 selector
+and affected-package regressions pass, including real subprocess timeout,
+expired-budget, successful-output and error-propagation cases.

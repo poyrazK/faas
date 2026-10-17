@@ -23,14 +23,19 @@ nightly and before every release.
 Reads changed paths on stdin and prints the selected package directories
 (./a ./b). A summary goes to stderr.
 
+In CI, selection shares the importer compile budget. If it expires, unchanged
+importers are deferred to the mega tier with a warning, just as vet batches are.
+
 Usage:
   git diff --name-only BASE HEAD | scripts/ci/select_importers.py --base BASE
 """
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import affected_packages  # noqa: E402
@@ -180,7 +185,53 @@ def selector_names(pkgdir):
     return names
 
 
+def run_with_budget():
+    started = os.environ.get("LINT_SELECTED_AT")
+    budget = os.environ.get("BUDGET_SECONDS")
+    if started is None or budget is None:
+        return None
+    remaining = float(started) + float(budget) - time.time()
+    warning = ("::warning::importer selection reached the light job's compile budget; "
+               "unchanged importers are deferred to the mega tier")
+    if remaining <= 0:
+        print(warning, file=sys.stderr)
+        return 0
+
+    # Supervise the whole selection, including go list and lazy blob fetches.
+    # The child runs the ordinary CLI without recursively supervising itself.
+    env = os.environ.copy()
+    env.pop("LINT_SELECTED_AT")
+    env.pop("BUDGET_SECONDS")
+    command = [sys.executable, os.path.abspath(__file__), *sys.argv[1:]]
+    with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, text=True,
+                          start_new_session=True) as child:
+        try:
+            output, _ = child.communicate(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            # Git can have transport children holding the output pipes open.
+            # Stop the process group so an expired selection cannot hang cleanup.
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.communicate()
+            print(warning, file=sys.stderr)
+            return 0
+        sys.stdout.write(output)
+        return child.returncode
+
+
 def main():
+    budget_status = run_with_budget()
+    if budget_status is not None:
+        return budget_status
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True, help="diff base commit")
     ap.add_argument("--head", default="HEAD", help="diff head (default HEAD)")
@@ -195,4 +246,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
