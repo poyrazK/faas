@@ -8,19 +8,26 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.financial_compute_balance_basis import FinancialComputeBalanceBasis, check_financial_compute_balance_basis
+from ..models.financial_compute_balance_scope_kind import (
+    FinancialComputeBalanceScopeKind,
+    check_financial_compute_balance_scope_kind,
+)
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="FinancialComputeBalance")
 
 
 @_attrs_define
 class FinancialComputeBalance:
-    """Conservative app admission ledger before allowances, including startup and rounding per funded minute. These
-    commitments may exceed invoice compute charges. Expired funding stays reserved until physical retirement and
-    settlement. Other meters, subscriptions and taxes are excluded.
+    """Conservative compute admission ledger. App scopes use gross compute; account scopes share included MB-seconds and
+    cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical
+    retirement. Subscriptions, storage, egress, builds and taxes are excluded. Account strict activation requires no
+    independent jobs.
 
     """
 
     initialized: bool
-    app_id: UUID
     period_start: datetime.datetime
     period_end: datetime.datetime
     committed_millicents: int
@@ -29,12 +36,18 @@ class FinancialComputeBalance:
     unconfirmed_leases: int
     held: bool
     observed_at: datetime.datetime
+    app_id: UUID | Unset = UNSET
+    account_id: UUID | Unset = UNSET
+    scope_kind: FinancialComputeBalanceScopeKind | Unset = UNSET
+    basis: FinancialComputeBalanceBasis | Unset = UNSET
+    allowance_granted_mb_seconds: int | Unset = UNSET
+    allowance_committed_mb_seconds: int | Unset = UNSET
+    allowance_reserved_mb_seconds: int | Unset = UNSET
+    allowance_remaining_mb_seconds: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         initialized = self.initialized
-
-        app_id = str(self.app_id)
 
         period_start = self.period_start.isoformat()
 
@@ -52,12 +65,35 @@ class FinancialComputeBalance:
 
         observed_at = self.observed_at.isoformat()
 
+        app_id: str | Unset = UNSET
+        if not isinstance(self.app_id, Unset):
+            app_id = str(self.app_id)
+
+        account_id: str | Unset = UNSET
+        if not isinstance(self.account_id, Unset):
+            account_id = str(self.account_id)
+
+        scope_kind: str | Unset = UNSET
+        if not isinstance(self.scope_kind, Unset):
+            scope_kind = self.scope_kind
+
+        basis: str | Unset = UNSET
+        if not isinstance(self.basis, Unset):
+            basis = self.basis
+
+        allowance_granted_mb_seconds = self.allowance_granted_mb_seconds
+
+        allowance_committed_mb_seconds = self.allowance_committed_mb_seconds
+
+        allowance_reserved_mb_seconds = self.allowance_reserved_mb_seconds
+
+        allowance_remaining_mb_seconds = self.allowance_remaining_mb_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "initialized": initialized,
-                "app_id": app_id,
                 "period_start": period_start,
                 "period_end": period_end,
                 "committed_millicents": committed_millicents,
@@ -68,6 +104,22 @@ class FinancialComputeBalance:
                 "observed_at": observed_at,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
+        if account_id is not UNSET:
+            field_dict["account_id"] = account_id
+        if scope_kind is not UNSET:
+            field_dict["scope_kind"] = scope_kind
+        if basis is not UNSET:
+            field_dict["basis"] = basis
+        if allowance_granted_mb_seconds is not UNSET:
+            field_dict["allowance_granted_mb_seconds"] = allowance_granted_mb_seconds
+        if allowance_committed_mb_seconds is not UNSET:
+            field_dict["allowance_committed_mb_seconds"] = allowance_committed_mb_seconds
+        if allowance_reserved_mb_seconds is not UNSET:
+            field_dict["allowance_reserved_mb_seconds"] = allowance_reserved_mb_seconds
+        if allowance_remaining_mb_seconds is not UNSET:
+            field_dict["allowance_remaining_mb_seconds"] = allowance_remaining_mb_seconds
 
         return field_dict
 
@@ -75,8 +127,6 @@ class FinancialComputeBalance:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         initialized = d.pop("initialized")
-
-        app_id = UUID(d.pop("app_id"))
 
         period_start = datetime.datetime.fromisoformat(d.pop("period_start"))
 
@@ -94,9 +144,44 @@ class FinancialComputeBalance:
 
         observed_at = datetime.datetime.fromisoformat(d.pop("observed_at"))
 
+        _app_id = d.pop("app_id", UNSET)
+        app_id: UUID | Unset
+        if isinstance(_app_id, Unset):
+            app_id = UNSET
+        else:
+            app_id = UUID(_app_id)
+
+        _account_id = d.pop("account_id", UNSET)
+        account_id: UUID | Unset
+        if isinstance(_account_id, Unset):
+            account_id = UNSET
+        else:
+            account_id = UUID(_account_id)
+
+        _scope_kind = d.pop("scope_kind", UNSET)
+        scope_kind: FinancialComputeBalanceScopeKind | Unset
+        if isinstance(_scope_kind, Unset):
+            scope_kind = UNSET
+        else:
+            scope_kind = check_financial_compute_balance_scope_kind(_scope_kind)
+
+        _basis = d.pop("basis", UNSET)
+        basis: FinancialComputeBalanceBasis | Unset
+        if isinstance(_basis, Unset):
+            basis = UNSET
+        else:
+            basis = check_financial_compute_balance_basis(_basis)
+
+        allowance_granted_mb_seconds = d.pop("allowance_granted_mb_seconds", UNSET)
+
+        allowance_committed_mb_seconds = d.pop("allowance_committed_mb_seconds", UNSET)
+
+        allowance_reserved_mb_seconds = d.pop("allowance_reserved_mb_seconds", UNSET)
+
+        allowance_remaining_mb_seconds = d.pop("allowance_remaining_mb_seconds", UNSET)
+
         financial_compute_balance = cls(
             initialized=initialized,
-            app_id=app_id,
             period_start=period_start,
             period_end=period_end,
             committed_millicents=committed_millicents,
@@ -105,6 +190,14 @@ class FinancialComputeBalance:
             unconfirmed_leases=unconfirmed_leases,
             held=held,
             observed_at=observed_at,
+            app_id=app_id,
+            account_id=account_id,
+            scope_kind=scope_kind,
+            basis=basis,
+            allowance_granted_mb_seconds=allowance_granted_mb_seconds,
+            allowance_committed_mb_seconds=allowance_committed_mb_seconds,
+            allowance_reserved_mb_seconds=allowance_reserved_mb_seconds,
+            allowance_remaining_mb_seconds=allowance_remaining_mb_seconds,
         )
 
         financial_compute_balance.additional_properties = d

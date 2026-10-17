@@ -16,7 +16,7 @@ import (
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Other stopping actions and strict limits remain drafts. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Strict compute supports app gross_usage or account net_usage suspend_workloads with zero drain and no alert thresholds. Other stopping actions remain drafts. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
@@ -175,6 +175,11 @@ func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
 		b := runtime.Compute
 		if _, err := fmt.Fprintf(osStdout, "Committed compute (conservative): %s\nReserved compute: %s\nRemaining compute: %s\nUnconfirmed VM attempts: %d; budget held: %t\n", financialMoney(b.CommittedMillicents), financialMoney(b.ReservedMillicents), financialMoney(b.RemainingMillicents), b.UnconfirmedLeases, b.Held); err != nil {
 			return err
+		}
+		if b.ScopeKind == "account" {
+			if _, err := fmt.Fprintf(osStdout, "Shared account allowance (MB-seconds): granted %d; committed %d; reserved %d; remaining %d\n", b.AllowanceGranted, b.AllowanceCommitted, b.AllowanceReserved, b.AllowanceRemaining); err != nil {
+				return err
+			}
 		}
 		if !b.Initialized {
 			if _, err := fmt.Fprintln(osStdout, "Awaiting accounting initialization for the current UTC month."); err != nil {

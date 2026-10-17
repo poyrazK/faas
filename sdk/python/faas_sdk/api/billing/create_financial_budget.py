@@ -114,9 +114,10 @@ def sync_detailed(
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
-            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
-            quiet app, complete accounting, and native compute owners.
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
+            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            activation requires quiet covered workloads, complete accounting, and native owners.
+            Account strict activation also requires recorded allowance and no independent jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,9 +161,10 @@ def sync(
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
-            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
-            quiet app, complete accounting, and native compute owners.
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
+            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            activation requires quiet covered workloads, complete accounting, and native owners.
+            Account strict activation also requires recorded allowance and no independent jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -201,9 +203,10 @@ async def asyncio_detailed(
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
-            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
-            quiet app, complete accounting, and native compute owners.
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
+            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            activation requires quiet covered workloads, complete accounting, and native owners.
+            Account strict activation also requires recorded allowance and no independent jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -245,9 +248,10 @@ async def asyncio(
     Args:
         idempotency_key (str):
         body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
-            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
-            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
-            quiet app, complete accounting, and native compute owners.
+            notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app
+            gross_usage or account net_usage) with zero drain and no alert thresholds. Strict
+            activation requires quiet covered workloads, complete accounting, and native owners.
+            Account strict activation also requires recorded allowance and no independent jobs.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

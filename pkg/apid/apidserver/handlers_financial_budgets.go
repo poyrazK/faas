@@ -189,7 +189,7 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 		return false
 	}
 	if spec.Enabled {
-		if financial.StrictAppCompute(spec) {
+		if financial.StrictCompute(spec) {
 			if _, ok := store.(state.FinancialComputeStore); ok {
 				return true
 			}
@@ -200,7 +200,7 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 		if monitoring && (financial.NotificationOnly(spec) || stopping && commandOwnership && financial.PreviewStopping(spec)) {
 			return true
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify, monitored compute-only stop_previews, or app-scoped strict gross compute suspend_workloads with zero drain and no alert thresholds. Other policies must remain disabled drafts."))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify, monitored compute-only stop_previews, or strict compute suspend_workloads (app gross_usage or account net_usage) with zero drain and no alert thresholds. Other policies must remain disabled drafts."))
 		return false
 	}
 	return true
@@ -255,7 +255,7 @@ func financialBudgetHistoryQuery(raw string) (int64, int, error) {
 
 func financialBudgetProblem(err error) *api.Problem {
 	if errors.Is(err, financial.ErrComputeUnavailable) {
-		return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "Activation requires a quiet app, complete retained compute accounting, and current native compute owners on every active node.")
+		return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "Activation requires quiet covered workloads, complete retained compute accounting, and current native compute owners on every active node. Account strict compute also requires a recorded compute allowance and no independent job definitions.")
 	}
 	if errors.Is(err, financial.ErrComputeBudget) {
 		return api.NewProblem(422, "financial_compute_budget_too_low", "Compute budget below committed funding", "The limit must cover this month's committed and reserved compute. Changing a policy does not reset spending.")

@@ -15,9 +15,10 @@ T = TypeVar("T", bound="CreateFinancialBudgetRequest")
 
 @_attrs_define
 class CreateFinancialBudgetRequest:
-    """New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and app-scoped strict
-    gross compute suspend_workloads with zero drain and no alert thresholds. Strict activation requires a quiet app,
-    complete accounting, and native compute owners.
+    """New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict compute
+    suspend_workloads (app gross_usage or account net_usage) with zero drain and no alert thresholds. Strict activation
+    requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires
+    recorded allowance and no independent jobs.
 
     """
 

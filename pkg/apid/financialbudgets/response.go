@@ -22,7 +22,7 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		return out, nil
 	}
 	out.Status = "unavailable"
-	if financial.StrictAppCompute(p.Spec) {
+	if financial.StrictCompute(p.Spec) {
 		compute, ok := store.(state.FinancialComputeStore)
 		if !ok {
 			return out, nil
@@ -35,6 +35,10 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		out.EnforcementReady = true
 		out.Runtime = &financial.BudgetRuntime{Compute: &balance, Alerts: []financial.BudgetAlert{}}
 		out.Reasons = []string{"strict_app_gross_compute", "conservative_compute_commitments", "funded_execution_window_only", "subscription_storage_egress_tax_excluded"}
+		if financial.StrictAccountCompute(p.Spec) {
+			out.Reasons[0] = "strict_account_net_compute"
+			out.Reasons = append(out.Reasons, "shared_quantity_allowance", "independent_jobs_unavailable")
+		}
 		if !balance.Initialized {
 			out.Reasons = append(out.Reasons, "awaiting_period_initialization")
 		}

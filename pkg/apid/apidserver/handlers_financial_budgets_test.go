@@ -63,7 +63,7 @@ func decodeFinancialBudget(t *testing.T, rec *httptest.ResponseRecorder, status 
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Header().Get("Cache-Control") != "private, no-store" || out.EnforcementReady != (out.Spec.Enabled && (financial.PreviewStopping(out.Spec) || financial.StrictAppCompute(out.Spec)) && out.DeletedAt == nil) {
+	if rec.Header().Get("Cache-Control") != "private, no-store" || out.EnforcementReady != (out.Spec.Enabled && (financial.PreviewStopping(out.Spec) || financial.StrictCompute(out.Spec)) && out.DeletedAt == nil) {
 		t.Fatalf("unsafe policy response: %+v", out)
 	}
 	return out

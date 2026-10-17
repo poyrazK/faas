@@ -27,9 +27,10 @@ class FinancialBudgetRuntime:
 
     alerts: list[FinancialBudgetAlert]
     compute: FinancialComputeBalance | Unset = UNSET
-    """Conservative app admission ledger before allowances, including startup and rounding per funded minute. These
-    commitments may exceed invoice compute charges. Expired funding stays reserved until physical retirement and
-    settlement. Other meters, subscriptions and taxes are excluded."""
+    """Conservative compute admission ledger. App scopes use gross compute; account scopes share included MB-
+    seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until
+    physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Account strict activation
+    requires no independent jobs."""
     evaluation: FinancialBudgetEvaluation | Unset = UNSET
     """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
     known costs can trigger labelled notifications; stale observations cannot create new alerts."""

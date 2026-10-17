@@ -20,3 +20,31 @@ def test_strict_compute_retains_exact_funding_and_unconfirmed_retirement():
     assert runtime.compute.unconfirmed_leases == 1
     assert runtime.compute.held
     assert runtime.to_dict()["compute"]["remaining_millicents"] == 0
+
+
+def test_account_compute_quantity_allowance_has_no_fake_app_identity():
+    compute = {
+        "initialized": True,
+        "account_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+        "scope_kind": "account",
+        "basis": "net_usage",
+        "period_start": "2026-10-01T00:00:00Z",
+        "period_end": "2026-11-01T00:00:00Z",
+        "committed_millicents": 1000,
+        "reserved_millicents": 25,
+        "remaining_millicents": 975,
+        "allowance_granted_mb_seconds": 9007199254740991,
+        "allowance_committed_mb_seconds": 9007199254740000,
+        "allowance_reserved_mb_seconds": 991,
+        "allowance_remaining_mb_seconds": 0,
+        "unconfirmed_leases": 2,
+        "held": False,
+        "observed_at": "2026-10-17T10:00:00Z",
+    }
+    runtime = FinancialBudgetRuntime.from_dict({"alerts": [], "compute": compute})
+    assert runtime.compute.allowance_granted_mb_seconds == 9007199254740991
+    assert runtime.compute.allowance_reserved_mb_seconds == 991
+    serialized = runtime.to_dict()["compute"]
+    assert "app_id" not in serialized
+    assert serialized["basis"] == "net_usage"
+    assert serialized["allowance_remaining_mb_seconds"] == 0

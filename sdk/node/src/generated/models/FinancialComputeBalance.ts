@@ -3,11 +3,18 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Conservative app admission ledger before allowances, including startup and rounding per funded minute. These commitments may exceed invoice compute charges. Expired funding stays reserved until physical retirement and settlement. Other meters, subscriptions and taxes are excluded.
+ * Conservative compute admission ledger. App scopes use gross compute; account scopes share included MB-seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Account strict activation requires no independent jobs.
  */
 export type FinancialComputeBalance = {
   initialized: boolean;
-  app_id: string;
+  app_id?: string;
+  account_id?: string;
+  scope_kind?: 'account' | 'app';
+  basis?: 'net_usage' | 'gross_usage';
+  allowance_granted_mb_seconds?: number;
+  allowance_committed_mb_seconds?: number;
+  allowance_reserved_mb_seconds?: number;
+  allowance_remaining_mb_seconds?: number;
   period_start: string;
   period_end: string;
   committed_millicents: number;

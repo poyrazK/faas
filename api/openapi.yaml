@@ -61450,11 +61450,18 @@ components:
         targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
     FinancialComputeBalance:
       type: object
-      description: Conservative app admission ledger before allowances, including startup and rounding per funded minute. These commitments may exceed invoice compute charges. Expired funding stays reserved until physical retirement and settlement. Other meters, subscriptions and taxes are excluded.
-      required: [initialized, app_id, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
+      description: Conservative compute admission ledger. App scopes use gross compute; account scopes share included MB-seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Account strict activation requires no independent jobs.
+      required: [initialized, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
       properties:
         initialized: { type: boolean }
         app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        scope_kind: { type: string, enum: [account, app] }
+        basis: { type: string, enum: [net_usage, gross_usage] }
+        allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_reserved_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_remaining_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
@@ -61480,7 +61487,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and app-scoped strict gross compute suspend_workloads with zero drain and no alert thresholds. Strict activation requires a quiet app, complete accounting, and native compute owners.
+      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app gross_usage or account net_usage) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowance and no independent jobs.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
