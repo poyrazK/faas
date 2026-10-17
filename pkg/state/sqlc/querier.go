@@ -1964,6 +1964,10 @@ type Querier interface {
 	IssueInsertOwnershipRule(ctx context.Context, db DBTX, arg IssueInsertOwnershipRuleParams) error
 	IssueInsertToken(ctx context.Context, db DBTX, arg IssueInsertTokenParams) (IssueIngestToken, error)
 	IssueInvocationScope(ctx context.Context, db DBTX, arg IssueInvocationScopeParams) (IssueInvocationScopeRow, error)
+	IssueLifecycleLastAlert(ctx context.Context, db DBTX, arg IssueLifecycleLastAlertParams) (pgtype.Timestamptz, error)
+	IssueLifecyclePolicy(ctx context.Context, db DBTX, arg IssueLifecyclePolicyParams) (IssueLifecyclePolicyRow, error)
+	IssueLifecyclePutPolicy(ctx context.Context, db DBTX, arg IssueLifecyclePutPolicyParams) error
+	IssueLifecycleRecordAlert(ctx context.Context, db DBTX, arg IssueLifecycleRecordAlertParams) error
 	IssueLinkGroup(ctx context.Context, db DBTX, arg IssueLinkGroupParams) error
 	IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]IssueGroupRollup, error)
 	IssueListActivity(ctx context.Context, db DBTX, arg IssueListActivityParams) ([]IssueActivity, error)

@@ -1,6 +1,6 @@
 // Package sharedruntime decides whether a source build's runtime artifact can
 // run on the shared runner base instead of carrying its own toolchain
-// (docs/adr/20261017-shared-runtime-source-apps.md, H10-140).
+// (docs/adr/1500-shared-runtime-source-apps.md, H10-140).
 package sharedruntime
 
 import (

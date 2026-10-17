@@ -772,6 +772,13 @@ type AppIssueImpactAlertPolicy struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type AppIssueLifecycleAlertPolicy struct {
+	AppID           pgtype.UUID
+	Revision        int64
+	Environments    []string
+	CooldownSeconds int64
+}
+
 type AppIssueOwnershipRule struct {
 	AppID             pgtype.UUID
 	RuleOrder         int32
@@ -4733,6 +4740,12 @@ type IssueIngestToken struct {
 	ExpiresAt    pgtype.Timestamptz
 	RevokedAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type IssueLifecycleAlertReceipt struct {
+	AppID       pgtype.UUID
+	IssueID     pgtype.UUID
+	LastAlertAt pgtype.Timestamptz
 }
 
 type IssueRelease struct {

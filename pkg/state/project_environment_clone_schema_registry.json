@@ -12611,5 +12611,24 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_issue_lifecycle_alert_policies",
+    "columns": [
+      "app_id",
+      "revision",
+      "environments",
+      "cooldown_seconds"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_lifecycle_alert_receipts",
+    "columns": [
+      "app_id",
+      "issue_id",
+      "last_alert_at"
+    ],
+    "kind": "operational"
   }
 ]

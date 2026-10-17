@@ -11385,6 +11385,11 @@ const (
 
 // Application Slack delivery history and admission are bounded independently of telemetry.
 const (
+	IssueLifecycleAlertMaxEnvironments    = 20
+	IssueLifecycleAlertMaxCooldownSeconds = 604800
+)
+
+const (
 	IssueApplicationSlackMaxDeliveries    = 1000
 	IssueApplicationSlackHistoryRetention = 7 * 24 * time.Hour
 	IssueApplicationSlackCleanupBatch     = 1000

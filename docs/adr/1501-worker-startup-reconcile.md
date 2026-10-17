@@ -1,4 +1,4 @@
-# Reconcile worker pools once at scheduler start
+# ADR-1501: Reconcile worker pools once at scheduler start
 
 Date: 2026-10-17
 Status: Accepted

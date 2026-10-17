@@ -71,6 +71,8 @@ import type { IssueEventResponse } from '../models/IssueEventResponse.js';
 import type { IssueFrequencyAlertPolicy } from '../models/IssueFrequencyAlertPolicy.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
+import type { IssueLifecycleAlertPolicy } from '../models/IssueLifecycleAlertPolicy.js';
+import type { IssueLifecycleAlertPreview } from '../models/IssueLifecycleAlertPreview.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
 import type { IssueReleaseComparison } from '../models/IssueReleaseComparison.js';
 import type { IssueSavedView } from '../models/IssueSavedView.js';
@@ -97,6 +99,7 @@ import type { NativeIssueTicketResult } from '../models/NativeIssueTicketResult.
 import type { NativeIssueTrackerStatus } from '../models/NativeIssueTrackerStatus.js';
 import type { NativeLinearIssueTrackerStatus } from '../models/NativeLinearIssueTrackerStatus.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
+import type { PreviewIssueLifecycleAlertRequest } from '../models/PreviewIssueLifecycleAlertRequest.js';
 import type { PreviewRouteMonitorRequest } from '../models/PreviewRouteMonitorRequest.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
@@ -173,6 +176,7 @@ import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateIssueFrequencyAlertPolicyRequest } from '../models/UpdateIssueFrequencyAlertPolicyRequest.js';
 import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
+import type { UpdateIssueLifecycleAlertPolicyRequest } from '../models/UpdateIssueLifecycleAlertPolicyRequest.js';
 import type { UpdateIssueTrackerAutoSyncRequest } from '../models/UpdateIssueTrackerAutoSyncRequest.js';
 import type { UpdateIssueTrackerLinearConnectionRequest } from '../models/UpdateIssueTrackerLinearConnectionRequest.js';
 import type { UpdateNativeIssueTrackerStatusRequest } from '../models/UpdateNativeIssueTrackerStatusRequest.js';
@@ -2337,6 +2341,114 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read native new-issue and regression alert filters.
+   * Unconfigured apps return revision zero, all environments and zero cooldown.
+   * @returns IssueLifecycleAlertPolicy Current lifecycle alert policy.
+   * @throws ApiError
+   */
+  public static getIssueLifecycleAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueLifecycleAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-lifecycle-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace native new-issue and regression alert filters.
+   * Requires deploy-write and session MFA. Empty environments means all exact environments. The cooldown is shared across created/regressed native Slack alerts per canonical issue, across channels and teams. Zero disables throttling. Only queue admission consumes it; missing routes, capacity failures and previews do not. Edits preserve receipts and affect future events only; queued messages are unchanged. Merge uses the latest member receipt. No events are replayed. Lifecycle audit webhooks, impact/frequency alerts, reminders and tracker notifications retain their independent policies. Stale revisions return 409.
+   * @returns IssueLifecycleAlertPolicy Updated policy; identical writes preserve its revision.
+   * @throws ApiError
+   */
+  public static setIssueLifecycleAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueLifecycleAlertPolicyRequest,
+  }): CancelablePromise<IssueLifecycleAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-lifecycle-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Lifecycle alert policy revision changed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview a draft lifecycle alert filter without sending.
+   * Requires app read access and Issues entitlement. Evaluates the supplied draft's environment filter and shared cooldown for a hypothetical created/regressed event, resolving merged aliases. Reads one database snapshot and returns the saved policy revision at that snapshot. Does not save, reserve cooldown, mutate lifecycle or contact Slack. Allowed means this policy permits the event; actual delivery separately applies native event subscription, ignore/response state, eligible routing, capacity and sender gates.
+   * @returns IssueLifecycleAlertPreview Draft policy eligibility at the preview snapshot.
+   * @throws ApiError
+   */
+  public static previewIssueLifecycleAlert({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PreviewIssueLifecycleAlertRequest,
+  }): CancelablePromise<IssueLifecycleAlertPreview> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-lifecycle-alert-policy/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

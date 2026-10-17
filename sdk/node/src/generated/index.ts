@@ -946,6 +946,8 @@ export type { IssueImpact } from './models/IssueImpact.js';
 export type { IssueImpactAlertPolicy } from './models/IssueImpactAlertPolicy.js';
 export type { IssueImpactSummary } from './models/IssueImpactSummary.js';
 export type { IssueIngestToken } from './models/IssueIngestToken.js';
+export type { IssueLifecycleAlertPolicy } from './models/IssueLifecycleAlertPolicy.js';
+export type { IssueLifecycleAlertPreview } from './models/IssueLifecycleAlertPreview.js';
 export type { IssueOccurrence } from './models/IssueOccurrence.js';
 export type { IssueOwnershipRule } from './models/IssueOwnershipRule.js';
 export type { IssueOwnershipRules } from './models/IssueOwnershipRules.js';
@@ -1815,6 +1817,7 @@ export type { PreviewEnvironmentMemberResponse } from './models/PreviewEnvironme
 export type { PreviewEnvironmentStatusResponse } from './models/PreviewEnvironmentStatusResponse.js';
 export type { PreviewEventRequest } from './models/PreviewEventRequest.js';
 export type { PreviewEventResponse } from './models/PreviewEventResponse.js';
+export type { PreviewIssueLifecycleAlertRequest } from './models/PreviewIssueLifecycleAlertRequest.js';
 export type { PreviewProductionChangesResponse } from './models/PreviewProductionChangesResponse.js';
 export type { PreviewResourceLinksResponse } from './models/PreviewResourceLinksResponse.js';
 export type { PreviewResourceResponse } from './models/PreviewResourceResponse.js';
@@ -2415,6 +2418,7 @@ export type { UpdateFinancialBudgetRequest } from './models/UpdateFinancialBudge
 export type { UpdateInboundWebhookEndpointRequest } from './models/UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateIssueFrequencyAlertPolicyRequest } from './models/UpdateIssueFrequencyAlertPolicyRequest.js';
 export type { UpdateIssueImpactAlertPolicyRequest } from './models/UpdateIssueImpactAlertPolicyRequest.js';
+export type { UpdateIssueLifecycleAlertPolicyRequest } from './models/UpdateIssueLifecycleAlertPolicyRequest.js';
 export type { UpdateIssueTrackerAutoSyncRequest } from './models/UpdateIssueTrackerAutoSyncRequest.js';
 export type { UpdateIssueTrackerLinearConnectionRequest } from './models/UpdateIssueTrackerLinearConnectionRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';

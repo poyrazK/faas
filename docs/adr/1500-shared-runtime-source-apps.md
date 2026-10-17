@@ -1,4 +1,4 @@
-# Source-built apps run on the shared runtime base
+# ADR-1500: Source-built apps run on the shared runtime base
 
 Date: 2026-10-17
 Status: Accepted (owner chose option A for H10-140; rollout gated by a node flag)

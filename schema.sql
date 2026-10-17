@@ -22009,6 +22009,21 @@ CREATE TABLE public.app_issue_impact_alert_policies (
 
 
 --
+-- Name: app_issue_lifecycle_alert_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_lifecycle_alert_policies (
+    app_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    environments text[] NOT NULL,
+    cooldown_seconds bigint NOT NULL,
+    CONSTRAINT app_issue_lifecycle_alert_policies_cooldown_seconds_check CHECK (((cooldown_seconds >= 0) AND (cooldown_seconds <= 604800))),
+    CONSTRAINT app_issue_lifecycle_alert_policies_environments_check CHECK (((cardinality(environments) <= 20) AND (array_position(environments, NULL::text) IS NULL))),
+    CONSTRAINT app_issue_lifecycle_alert_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
 -- Name: app_issue_ownership_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29435,6 +29450,17 @@ CREATE TABLE public.issue_ingest_tokens (
     CONSTRAINT issue_ingest_tokens_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT issue_ingest_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT issue_ingest_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
+-- Name: issue_lifecycle_alert_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_lifecycle_alert_receipts (
+    app_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    last_alert_at timestamp with time zone NOT NULL
 );
 
 
@@ -40806,6 +40832,14 @@ ALTER TABLE ONLY public.app_issue_impact_alert_policies
 
 
 --
+-- Name: app_issue_lifecycle_alert_policies app_issue_lifecycle_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_lifecycle_alert_policies
+    ADD CONSTRAINT app_issue_lifecycle_alert_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_issue_ownership_rules app_issue_ownership_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44107,6 +44141,14 @@ ALTER TABLE ONLY public.issue_ingest_tokens
 
 ALTER TABLE ONLY public.issue_ingest_tokens
     ADD CONSTRAINT issue_ingest_tokens_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: issue_lifecycle_alert_receipts issue_lifecycle_alert_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_lifecycle_alert_receipts
+    ADD CONSTRAINT issue_lifecycle_alert_receipts_pkey PRIMARY KEY (app_id, issue_id);
 
 
 --
@@ -62332,6 +62374,14 @@ ALTER TABLE ONLY public.app_issue_impact_alert_policies
 
 
 --
+-- Name: app_issue_lifecycle_alert_policies app_issue_lifecycle_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_lifecycle_alert_policies
+    ADD CONSTRAINT app_issue_lifecycle_alert_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_issue_ownership_rules app_issue_ownership_rules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66681,6 +66731,22 @@ ALTER TABLE ONLY public.issue_ingest_tokens
 
 ALTER TABLE ONLY public.issue_ingest_tokens
     ADD CONSTRAINT issue_ingest_tokens_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_lifecycle_alert_receipts issue_lifecycle_alert_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_lifecycle_alert_receipts
+    ADD CONSTRAINT issue_lifecycle_alert_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_lifecycle_alert_receipts issue_lifecycle_alert_receipts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_lifecycle_alert_receipts
+    ADD CONSTRAINT issue_lifecycle_alert_receipts_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
 
 
 --

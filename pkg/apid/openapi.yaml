@@ -17257,6 +17257,94 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-lifecycle-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueLifecycleAlertPolicy
+      summary: Read native new-issue and regression alert filters.
+      description: Unconfigured apps return revision zero, all environments and zero cooldown.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current lifecycle alert policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueLifecycleAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueLifecycleAlertPolicy
+      summary: Replace native new-issue and regression alert filters.
+      description: >-
+        Requires deploy-write and session MFA. Empty environments means all exact environments.
+        The cooldown is shared across created/regressed native Slack alerts per canonical issue,
+        across channels and teams. Zero disables throttling. Only queue admission consumes it;
+        missing routes, capacity failures and previews do not. Edits preserve receipts and affect
+        future events only; queued messages are unchanged. Merge uses the latest member receipt.
+        No events are replayed. Lifecycle audit webhooks, impact/frequency alerts, reminders and
+        tracker notifications retain their independent policies. Stale revisions return 409.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueLifecycleAlertPolicyRequest' }
+      responses:
+        '200':
+          description: Updated policy; identical writes preserve its revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueLifecycleAlertPolicy' }
+        '409':
+          description: Lifecycle alert policy revision changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-lifecycle-alert-policy/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: previewIssueLifecycleAlert
+      summary: Preview a draft lifecycle alert filter without sending.
+      description: >-
+        Requires app read access and Issues entitlement. Evaluates the supplied draft's
+        environment filter and shared cooldown for a hypothetical created/regressed event,
+        resolving merged aliases. Reads one database snapshot and returns the saved policy
+        revision at that snapshot. Does not save, reserve cooldown, mutate lifecycle or contact
+        Slack. Allowed means this policy permits the event; actual delivery separately applies
+        native event subscription, ignore/response state, eligible routing, capacity and sender gates.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewIssueLifecycleAlertRequest' }
+      responses:
+        '200':
+          description: Draft policy eligibility at the preview snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueLifecycleAlertPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issue-frequency-alert-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -100105,6 +100193,62 @@ components:
         unattributed_events: { type: integer }
         coverage: { type: string }
 
+    IssueLifecycleAlertPolicy:
+      description: "Native new-issue/regression environment filter and shared per-group cooldown."
+      type: object
+      additionalProperties: false
+      required: [revision, environments, cooldown_seconds]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0 }
+        environments:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Environments permitted by the saved policy; an empty array means all.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', maxLength: 63 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
+    UpdateIssueLifecycleAlertPolicyRequest:
+      description: "Revision-guarded replacement lifecycle alert policy."
+      type: object
+      additionalProperties: false
+      required: [expected_revision, environments, cooldown_seconds]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        environments:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Replacement allowlist of exact names; an empty array removes the environment filter.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', maxLength: 63 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
+    PreviewIssueLifecycleAlertRequest:
+      description: "Draft policy and hypothetical lifecycle event for an existing issue."
+      type: object
+      additionalProperties: false
+      required: [issue_id, event, environments, cooldown_seconds]
+      properties:
+        issue_id: { type: string, format: uuid }
+        event: { type: string, enum: [created, regressed] }
+        environments:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Draft environment allowlist used only for this preview; an empty array matches all.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', maxLength: 63 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
+    IssueLifecycleAlertPreview:
+      description: "Policy-only eligibility; actual Slack delivery has additional subscription, routing and sender gates."
+      type: object
+      additionalProperties: false
+      required: [issue_id, event, environment, policy_revision, allowed, reason]
+      properties:
+        issue_id: { type: string, format: uuid }
+        event: { type: string, enum: [created, regressed] }
+        environment: { type: string }
+        policy_revision: { type: integer, format: int64, minimum: 0 }
+        allowed: { type: boolean }
+        reason: { type: string, enum: [eligible, environment_excluded, cooldown] }
+        next_eligible_at: { type: string, format: date-time }
     IssueFrequencyAlertRule:
       description: "Named event-frequency threshold with a bounded observation window, cooldown and optional filters."
       type: object

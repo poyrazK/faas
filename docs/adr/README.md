@@ -1281,3 +1281,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1497: Native Slack OAuth installation](1497-native-slack-oauth-installation.md)
 
 - [ADR-1498: Native Slack channel routing rules](1498-native-slack-channel-routing.md)
+
+- [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
+- [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
+- [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
