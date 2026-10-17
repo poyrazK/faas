@@ -581,6 +581,10 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
+from .companion_declaration import CompanionDeclaration
+from .companion_declaration_disk_io_profile import CompanionDeclarationDiskIoProfile
+from .companion_declaration_preset import CompanionDeclarationPreset
+from .companion_declaration_type import CompanionDeclarationType
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -917,6 +921,9 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_companions_response import DeploymentCompanionsResponse
+from .deployment_companions_response_reason import DeploymentCompanionsResponseReason
+from .deployment_companions_response_state import DeploymentCompanionsResponseState
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
 from .deployment_failed_webhook_payload_status import DeploymentFailedWebhookPayloadStatus
 from .deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
@@ -5354,6 +5361,10 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
+    "CompanionDeclaration",
+    "CompanionDeclarationDiskIoProfile",
+    "CompanionDeclarationPreset",
+    "CompanionDeclarationType",
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -5669,6 +5680,9 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentCompanionsResponse",
+    "DeploymentCompanionsResponseReason",
+    "DeploymentCompanionsResponseState",
     "DeploymentFailedWebhookPayload",
     "DeploymentFailedWebhookPayloadStatus",
     "DeploymentGRPCHealthcheck",

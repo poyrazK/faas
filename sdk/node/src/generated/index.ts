@@ -302,6 +302,7 @@ export type { CommitPublicationHistoryResponse } from './models/CommitPublicatio
 export type { CommitReceiptResponse } from './models/CommitReceiptResponse.js';
 export type { CommitRouting } from './models/CommitRouting.js';
 export type { CommitSourceResponse } from './models/CommitSourceResponse.js';
+export type { CompanionDeclaration } from './models/CompanionDeclaration.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
 export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
@@ -465,6 +466,7 @@ export type { DeploymentAliasListResponse } from './models/DeploymentAliasListRe
 export type { DeploymentAliasResponse } from './models/DeploymentAliasResponse.js';
 export type { DeploymentAuditResponse } from './models/DeploymentAuditResponse.js';
 export type { DeploymentChange } from './models/DeploymentChange.js';
+export type { DeploymentCompanionsResponse } from './models/DeploymentCompanionsResponse.js';
 export type { DeploymentFailedWebhookPayload } from './models/DeploymentFailedWebhookPayload.js';
 export type { DeploymentGRPCHealthcheck } from './models/DeploymentGRPCHealthcheck.js';
 export type { DeploymentGRPCLivenessProbe } from './models/DeploymentGRPCLivenessProbe.js';

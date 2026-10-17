@@ -1,5 +1,23 @@
 # Application companions
 
+## Inspect declared configuration
+
+`GET /v1/deployments/{id}/companions` reads a bounded, account-owned declaration
+set for one exact deployment and its returned scope. It requires deployment-read
+permission and MFA. It returns helper names, immutable image/preset/type,
+configured resources/dependencies, and environment **key names** only; command
+strings, environment values, ciphertext and secret references are omitted.
+
+An available empty array means no helpers were declared. Unavailable retained
+metadata is explicitly labelled and must not be interpreted as an empty
+configuration. The endpoint performs no workload probe and does not return
+execution-health evidence; absent telemetry remains Unverified. Preset images
+still require separate operator/runtime qualification. An unavailable preset
+does not establish that every custom helper is unavailable.
+
+Update declarations through the reviewed source manifest/CLI deployment journey.
+Reading configuration does not change a deployment or prove startup/readiness.
+
 Gregale can attach a small helper workload to every instance of an
 application. Typical uses are an OpenTelemetry collector, a database proxy,
 or a custom reverse proxy. The helper shares the application's lifecycle and
