@@ -1,8 +1,7 @@
 [Unit]
 Description=onebox-faas schedd — scheduler + lifecycle owner
-After=network.target postgresql.service faas-cp.slice faas-brokerq.slice faas-schedd.socket
+After=network.target postgresql.service faas-cp.slice faas-brokerq.slice
 Wants=faas-cp.slice faas-brokerq.slice
-Requires=faas-schedd.socket
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 

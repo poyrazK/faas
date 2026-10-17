@@ -3,11 +3,12 @@ Description=Gregale durable schedd listener
 Documentation=https://gregale.dev/docs/ops/schedd
 Before=faas-schedd.service
 
-# Owns schedd's unix socket across restarts so apid's and the gateway's
-# calls wait for the replacement (docs/adr/1580-zero-downtime-daemon-restarts.md).
-# schedd must serve this address (socket_path, empty listen_addr); it refuses
-# to start with an inherited socket it does not serve. Compute-only nodes
-# listen on TCP and use their own unit without this socket.
+# Holds schedd's listener open across restarts so callers wait for the
+# replacement (docs/adr/1580-zero-downtime-daemon-restarts.md). Inert unless
+# the control_plane_service role sets faas_schedd_listen_addr: its drop-ins
+# then make faas-schedd.service want this socket and replace ListenStream
+# with the address schedd is told to serve. schedd refuses to start with an
+# inherited socket it does not serve.
 [Socket]
 ListenStream=/run/faas/schedd.sock
 SocketUser=faas-schedd
