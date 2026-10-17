@@ -1,4 +1,4 @@
-// adr:1546 — verification pins reviewed source builds as well as OCI images.
+// adr:1645 — verification pins reviewed source builds as well as OCI images.
 package state
 
 import (

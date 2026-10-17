@@ -99,7 +99,7 @@ Every phase must run and pass in order:
 12. Independently inventory every HTTP and worker task, cancel owned durable
    authority, and review an empty graph with both `workload_pruning_policy` and
    `queue_pruning_policy` set to `retain`. Keep binding release policies enforced
-   through the checked removal described in [ADR-1548](../adr/1548-checked-binding-retirement.md). Wait
+   through the checked removal described in [ADR-1647](../adr/1647-checked-binding-retirement.md). Wait
    for all three workloads to retire and confirm the future-due message stays
    pending before
    stopping daemons. Native recovery preserves live guests on daemon exit, so
@@ -133,9 +133,9 @@ compile or skipped general metal test supplies no native qualification.
 
 This implementation workspace has no `/dev/kvm`; real native execution and
 host leak qualification remain pending. See
-[ADR-1543](../adr/1543-managed-https-service-probes.md) and
-[ADR-1544](../adr/1544-managed-worker-service-probes.md) and
-[ADR-1546](../adr/1546-reviewed-source-binding-verification.md).
+[ADR-1642](../adr/1642-managed-https-service-probes.md) and
+[ADR-1643](../adr/1643-managed-worker-service-probes.md) and
+[ADR-1645](../adr/1645-reviewed-source-binding-verification.md).
 
 The source-build phase switches the reviewed worker to a Dockerfile from the
 immutable Git archive and uses the real builder microVM pipeline. It requires

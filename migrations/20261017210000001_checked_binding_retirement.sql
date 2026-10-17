@@ -1,18 +1,19 @@
--- ADR-1548: checked removal of a complete managed graph, without recipients.
+-- ADR-1647: checked removal of a complete managed graph, without recipients.
 -- +goose Up
-ALTER TABLE environment_workload_retirements ADD COLUMN binding_policy_context jsonb
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE environment_workload_retirements ADD COLUMN IF NOT EXISTS binding_policy_context jsonb
  CHECK(binding_policy_context IS NULL OR jsonb_typeof(binding_policy_context)='object');
 
 -- Policy revisions are monotonic, including off -> enforce transitions.
 -- Historical reservations stay NULL and cannot be upgraded into authority.
 -- +goose StatementBegin
-CREATE FUNCTION environment_binding_retirement_policy(target_app uuid,target_scope text) RETURNS jsonb LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION environment_binding_retirement_policy(target_app uuid,target_scope text) RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT coalesce((SELECT jsonb_build_object('revision',revision,'mode',mode)
   FROM app_binding_release_policies WHERE app_id=target_app AND scope=target_scope),jsonb_build_object('revision',0,'mode','off'));
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_binding_retirement_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_binding_retirement_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
   NEW.binding_policy_context:=environment_binding_retirement_policy(NEW.app_id,(SELECT slug FROM project_environments WHERE id=NEW.environment_id));
@@ -22,10 +23,11 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_binding_retirement_policy ON environment_workload_retirements;
 CREATE TRIGGER guard_environment_binding_retirement_policy BEFORE INSERT OR UPDATE ON environment_workload_retirements
  FOR EACH ROW EXECUTE FUNCTION guard_environment_binding_retirement_policy();
 
-CREATE TABLE environment_binding_retirement_receipts (
+CREATE TABLE IF NOT EXISTS environment_binding_retirement_receipts (
  release_id uuid PRIMARY KEY REFERENCES project_release_sets(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
  source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
  revision_id uuid NOT NULL REFERENCES environment_desired_revisions(id) ON DELETE RESTRICT,
@@ -39,12 +41,13 @@ CREATE TABLE environment_binding_retirement_receipts (
  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_binding_retirement_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_binding_retirement_audit() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
  RAISE EXCEPTION 'checked binding retirement audit is immutable' USING ERRCODE='23514';
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_binding_retirement_audit ON environment_binding_retirement_receipts;
 CREATE TRIGGER guard_environment_binding_retirement_audit BEFORE UPDATE OR DELETE ON environment_binding_retirement_receipts
  FOR EACH ROW EXECUTE FUNCTION guard_environment_binding_retirement_audit();
 
@@ -52,7 +55,7 @@ CREATE TRIGGER guard_environment_binding_retirement_audit BEFORE UPDATE OR DELET
 -- Original retirement guards still own inventory, ownership, consumer pause and
 -- withdrawal; the deferred check also fences same-transaction catalogue drift.
 -- +goose StatementBegin
-CREATE FUNCTION environment_binding_retirement_current(audit environment_binding_retirement_receipts) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_binding_retirement_current(audit environment_binding_retirement_receipts) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE s environment_git_sources%ROWTYPE; rev environment_desired_revisions%ROWTYPE; release_scope text;
  r environment_workload_retirements%ROWTYPE; ids uuid[]; policy_map jsonb;
 BEGIN
@@ -91,7 +94,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION authorize_environment_binding_retirement(target_source uuid,next_release uuid,prior_release text,reviewed_plan text) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION authorize_environment_binding_retirement(target_source uuid,next_release uuid,prior_release text,reviewed_plan text) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE s environment_git_sources%ROWTYPE; audit environment_binding_retirement_receipts%ROWTYPE; release_scope text; latest text;
 BEGIN
  SELECT * INTO s FROM active_environment_git_sources WHERE id=target_source FOR UPDATE;
@@ -117,7 +120,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION validate_environment_binding_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION validate_environment_binding_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NOT environment_binding_retirement_current(NEW) OR EXISTS(SELECT 1 FROM project_release_members WHERE release_id=NEW.release_id) OR
   NOT EXISTS(SELECT 1 FROM project_release_sets rs JOIN environment_git_sources s ON s.id=NEW.source_id JOIN project_environments e ON e.id=s.environment_id
@@ -126,6 +129,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS validate_environment_binding_retirement ON environment_binding_retirement_receipts;
 CREATE CONSTRAINT TRIGGER validate_environment_binding_retirement AFTER INSERT ON environment_binding_retirement_receipts
  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_environment_binding_retirement();
 

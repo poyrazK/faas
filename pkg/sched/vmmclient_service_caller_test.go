@@ -1,6 +1,6 @@
 package sched_test
 
-// adr:1543 — managed probes require the original live caller and reviewed release.
+// adr:1642 — managed probes require the original live caller and reviewed release.
 
 import (
 	"context"

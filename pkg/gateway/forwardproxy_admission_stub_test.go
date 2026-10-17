@@ -49,7 +49,7 @@ func (*stubVmmdClient) MaterializeRuntimeScan(context.Context, *vmmdpb.Materiali
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not materialize runtime scans")
 }
 
-// ADR-1543: forwarding fixtures cannot authenticate or launch managed probes.
+// ADR-1642: forwarding fixtures cannot authenticate or launch managed probes.
 func (*stubVmmdClient) ResolveServiceCaller(context.Context, *vmmdpb.ResolveServiceCallerRequest, ...grpc.CallOption) (*vmmdpb.ResolveServiceCallerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not authenticate service callers")
 }

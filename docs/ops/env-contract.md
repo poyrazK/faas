@@ -191,6 +191,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
 | `FAAS_E2E_S3_ACCESS_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider access key for the isolated object-storage acceptance fixture; must never be set on a production host |
 | `FAAS_E2E_S3_SECRET_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider secret key for the isolated object-storage acceptance fixture; must never be set on a production host |
+| `FAAS_E2E_SERVICE_HTTPS_CA` | shared | `dev-only` |  |  | `` | test-harness only; public certificate of the ephemeral name-constrained managed HTTPS fixture CA; staged into isolated guests and loaded through the gateway and VMMD production TLS validation paths; must never be set on a production host |
+| `FAAS_E2E_SERVICE_HTTPS_CERT` | shared | `dev-only` |  |  | `` | test-harness only; ephemeral server certificate for the isolated managed HTTPS bridge listener; must never be set on a production host |
+| `FAAS_E2E_SERVICE_HTTPS_KEY` | shared | `dev-only` |  |  | `` | test-harness only; private server key for the isolated managed HTTPS bridge listener, held in a mode-0600 temporary file and never staged into guests or evidence; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-958 tracing fixture for hosts without a matching Go toolchain |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
@@ -391,6 +394,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
+| `FAAS_OBJECT_NODE_ACCESS_KEY_ID` | shared | `dev-only` |  |  | `` | private development node credential; supplied only by the operator or disposable qualifier, never to customers or production units |
+| `FAAS_OBJECT_NODE_BACKENDS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private backend-loading gate; also requires the master gate and explicit backend configuration; restart required |
+| `FAAS_OBJECT_NODE_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private object-node master gate; explicit capability opt-in also required; restart required |
+| `FAAS_OBJECT_NODE_SECRET_ACCESS_KEY` | shared | `dev-only` |  |  | `` | private development node secret; supplied only by the operator or disposable qualifier, never to customers or production units |
+| `FAAS_OBJECT_NODE_SERVER_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 loopback development node startup gate; also requires the master gate; restart required |
+| `FAAS_OBJECT_NODE_SETTLEMENTS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 recovery settlement enrollment gate; also requires master/backend gates and the backend option; restart required |
+| `FAAS_OBJECT_NODE_USAGE_COUNTERS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 logical usage-counter integration gate; also requires master/backend gates and the backend option; restart required |
 | `FAAS_OBJECT_STORAGE_CONFIG` | apid, gatewayd-public, s3-gatewayd, shared | `unit` |  |  | `` | gatewayd-public and s3-gatewayd read /etc/faas/object-storage.json; apid uses the same optional drop-in; s3_enabled runtime config separately defaults off |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |

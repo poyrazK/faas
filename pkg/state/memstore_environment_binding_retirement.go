@@ -1,4 +1,4 @@
-// adr:1548 — complete graph removal consumes reviewed retirement authority.
+// adr:1647 — complete graph removal consumes reviewed retirement authority.
 package state
 
 import (

@@ -1,4 +1,4 @@
-// adr:1547 — held candidate evidence is consumed only by graph activation.
+// adr:1646 — held candidate evidence is consumed only by graph activation.
 package state
 
 import (

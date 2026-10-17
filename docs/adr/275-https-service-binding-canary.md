@@ -15,4 +15,4 @@ replica or release. Successful responses confirm the platform-selected target
 deployment and release; failures confirm neither. The probe never wakes the
 target or invokes application code. Ordinary app probes retain their existing
 behavior. The subsequent managed guest contract and evidence boundary are
-defined in [ADR-1543](1543-managed-https-service-probes.md).
+defined in [ADR-1642](1642-managed-https-service-probes.md).

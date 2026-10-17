@@ -48,6 +48,9 @@ func ServiceGuestTLS(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	variables := map[string]string{
+		"CA": "FAAS_E2E_SERVICE_HTTPS_CA", "CERT": "FAAS_E2E_SERVICE_HTTPS_CERT", "KEY": "FAAS_E2E_SERVICE_HTTPS_KEY",
+	}
 	for name, block := range map[string]*pem.Block{
 		"CA": {Type: "CERTIFICATE", Bytes: caDER}, "CERT": {Type: "CERTIFICATE", Bytes: leafDER}, "KEY": {Type: "PRIVATE KEY", Bytes: keyDER},
 	} {
@@ -55,7 +58,7 @@ func ServiceGuestTLS(t *testing.T) string {
 		if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv("FAAS_E2E_SERVICE_HTTPS_"+name, path)
+		t.Setenv(variables[name], path)
 	}
 	return filepath.Join(dir, "CA.pem")
 }

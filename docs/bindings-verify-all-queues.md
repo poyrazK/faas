@@ -12,7 +12,7 @@ edges and unknown contracts remain unsupported; previews report
 `managed_service_verification_unsupported` and strict coverage blocks those
 gaps even with an ordinary unsupported waiver. Reviewed environment
 qualification remains a separate requirement. For held candidates, the managed
-GitOps pipeline now supports [pre-activation binding qualification](adr/1547-candidate-binding-qualification.md)
+GitOps pipeline now supports [pre-activation binding qualification](adr/1646-candidate-binding-qualification.md)
 for complete HTTPS/push-worker cohorts with enforced policies. Its reviewed health
 or queue smoke handler must exercise every dependency; CLI active-release
 receipts do not substitute for candidate evidence.
@@ -27,12 +27,12 @@ their real digest; reviewed source, Dockerfile and function deployments use the
 frozen archive checksum, build identity and built rootfs. HTTPS context covers
 both caller and target artifacts. Rebuilds invalidate probe, queue and durable-run
 evidence. Unreviewed legacy source archives remain unsupported. See
-[ADR-1546](adr/1546-reviewed-source-binding-verification.md).
+[ADR-1645](adr/1645-reviewed-source-binding-verification.md).
 Declare `GREGALE_QUEUE_CANARY_BINDINGS: '["orders"]'` in reviewed workload
 variables (or inherited deployment overrides). Mutable app variables cannot grant
 this capability. Inventory publishes `queue_canary_reason` when handler capability
 or current deployment/consumer context prevents publication. Release, source,
-policy or consumer changes invalidate completion evidence. See [ADR-1545](adr/1545-managed-worker-queue-canaries.md).
+policy or consumer changes invalidate completion evidence. See [ADR-1644](adr/1644-managed-worker-queue-canaries.md).
 
 Verify an app's bindings, including eligible push queues on an exact deployment:
 

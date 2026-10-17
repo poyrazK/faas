@@ -1,5 +1,6 @@
 -- +goose Up
--- ADR-1546: reviewed source builds have no OCI image digest. Only a fenced
+SET LOCAL lock_timeout = '5s';
+-- ADR-1645: reviewed source builds have no OCI image digest. Only a fenced
 -- managed HTTPS verification task may carry the empty digest; its context
 -- revision pins the immutable archive/build/rootfs identity instead.
 ALTER TABLE app_tasks DROP CONSTRAINT app_tasks_image_digest_chk;

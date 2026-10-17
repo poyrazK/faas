@@ -14,7 +14,7 @@ policies still enforced. The private grant consumes reservation-time policy
 revisions and exact current source/lease/inventory authority. Surviving project
 workloads remain blocked by this path. Existing route withdrawal, consumer pause,
 gateway acknowledgements and execution drain still govern completion; accepted
-queue backlog and retained identities survive. See [ADR-1548](adr/1548-checked-binding-retirement.md).
+queue backlog and retained identities survive. See [ADR-1647](adr/1647-checked-binding-retirement.md).
 Portable owner/state fixtures cover this handoff; real native KVM retirement and
 independent leak qualification remain pending.
 
@@ -28,7 +28,7 @@ Graph publication rechecks that context atomically; serving cutover consumes the
 same bounded proof. Missing, stale, partial and unsupported evidence stays blocked.
 Ordinary active-release CLI receipts remain separate. Native execution and host
 leak qualification remain pending on a dedicated KVM host.
-See [ADR-1547](adr/1547-candidate-binding-qualification.md).
+See [ADR-1646](adr/1646-candidate-binding-qualification.md).
 
 ## Reviewed source binding verification — 2026-10-17
 
@@ -43,7 +43,7 @@ ordinary-task eligibility and refuses downgrade while source history exists.
 Managed-service native contract version 4 adds a real Dockerfile-built worker
 and retains its source archive, build provenance and rootfs evidence. Native
 execution and host leak qualification remain pending on a dedicated KVM host.
-See [ADR-1546](adr/1546-reviewed-source-binding-verification.md).
+See [ADR-1645](adr/1645-reviewed-source-binding-verification.md).
 
 ## Managed worker queue verification — 2026-10-17
 
@@ -56,7 +56,7 @@ Strict batch verification can now complete both HTTPS and queue checks.
 The managed-service native contract is version 3 and requires real handler
 completion plus release/policy invalidation and preservation of unrelated queue
 work. Native execution and host leak qualification remain pending on a dedicated
-KVM host. See [ADR-1545](adr/1545-managed-worker-queue-canaries.md).
+KVM host. See [ADR-1644](adr/1644-managed-worker-queue-canaries.md).
 
 ## Managed worker service verification — 2026-10-17
 
@@ -66,14 +66,14 @@ uses the frozen class and effective execution mode. Tasks retain exact release,
 deployment, scope and policy fences without starting the worker entrypoint or
 listener. Single-service verification leaves queues untouched; strict batch
 verification retains blockers for unsupported queues. Managed zero-traffic worker
-queue-canary admission was a separate gap, subsequently addressed by ADR-1545. Reviewed graphs can
+queue-canary admission was a separate gap, subsequently addressed by ADR-1644. Reviewed graphs can
 qualify service-bound workers with a distinct policy that hashes
 their dependencies and effective transport, retaining atomic graph route checks.
 This change introduced managed-service native contract version 2 and requires worker
 coverage, separate release
 and policy invalidation, pending-message preservation and three-workload
 retirement. Real native execution and host leak qualification remain pending
-on a dedicated KVM host. See [ADR-1544](adr/1544-managed-worker-service-probes.md).
+on a dedicated KVM host. See [ADR-1643](adr/1643-managed-worker-service-probes.md).
 
 ## Managed HTTPS service verification — 2026-10-17
 
@@ -93,7 +93,7 @@ The self-contained [native journey](ops/managed-service-binding-native-acceptanc
 now owns its reviewed graph, private TLS, CLI checks, invalidation and retirement.
 It is the fourth required binding-native suite; the aggregate is version 2.
 Portable contracts and tagged compilation do not establish native qualification.
-See [ADR-1543](adr/1543-managed-https-service-probes.md).
+See [ADR-1642](adr/1642-managed-https-service-probes.md).
 
 ## Managed service gateway probe pins — 2026-10-17
 
@@ -118,7 +118,7 @@ that view. Context revisions participate in review digests; ordinary app probe
 receipts are excluded and managed service task probes remain unsupported.
 Checks, release-policy reviews and strict batch coverage block that gap without
 claiming environment qualification. See
-[ADR-1542](adr/1542-frozen-service-binding-inventory.md).
+[ADR-1641](adr/1641-frozen-service-binding-inventory.md).
 
 ## Deployment service binding explanations — 2026-10-17
 
@@ -131,7 +131,7 @@ pinned, and preserve indeterminate results for unsupported or unreadable context
 The gateway and API share app and alias authorization helpers. These metadata
 observations do not establish runtime adoption, connectivity or native acceptance.
 See [service binding configuration](service-binding-configuration.md) and
-[ADR-1541](adr/1541-deployment-service-binding-explanations.md).
+[ADR-1640](adr/1640-deployment-service-binding-explanations.md).
 
 ## Native binding CI orchestration — 2026-10-17
 

@@ -1,4 +1,4 @@
-// adr:1545 — managed worker canaries use active reviewed graph authority.
+// adr:1644 — managed worker canaries use active reviewed graph authority.
 package state
 
 import (

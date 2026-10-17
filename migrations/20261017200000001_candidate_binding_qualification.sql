@@ -1,11 +1,12 @@
--- ADR-1547: isolated candidate binding evidence, consumed at graph activation.
+-- ADR-1646: isolated candidate binding evidence, consumed at graph activation.
 -- +goose Up
-ALTER TABLE environment_workload_qualification_requests ADD COLUMN binding_context jsonb
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE environment_workload_qualification_requests ADD COLUMN IF NOT EXISTS binding_context jsonb
  CHECK (binding_context IS NULL OR (jsonb_typeof(binding_context)='object' AND
  jsonb_typeof(binding_context->'policy')='object' AND jsonb_typeof(binding_context->'artifact_inputs')='object' AND
  binding_context->>'artifact_revision' ~ '^[a-f0-9]{64}$' AND length(binding_context->>'service_revision')>0) IS TRUE);
 
-CREATE TABLE environment_qualification_service_receipts (
+CREATE TABLE IF NOT EXISTS environment_qualification_service_receipts (
  request_id uuid NOT NULL REFERENCES environment_workload_qualification_requests(id) ON DELETE CASCADE,
  attempt bigint NOT NULL CHECK(attempt>0),
  binding text NOT NULL CHECK(binding ~ '^[a-z0-9][a-z0-9-]*$'),
@@ -13,7 +14,7 @@ CREATE TABLE environment_qualification_service_receipts (
  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(request_id,attempt,binding)
 );
-CREATE TABLE environment_binding_release_receipts (
+CREATE TABLE IF NOT EXISTS environment_binding_release_receipts (
  release_id uuid PRIMARY KEY REFERENCES project_release_sets(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
  graph_id uuid NOT NULL REFERENCES environment_workload_graphs(id) ON DELETE CASCADE,
  members jsonb NOT NULL CHECK(jsonb_typeof(members)='object'),
@@ -22,7 +23,7 @@ CREATE TABLE environment_binding_release_receipts (
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_binding_context() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_binding_context() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.binding_context IS DISTINCT FROM OLD.binding_context THEN
   RAISE EXCEPTION 'candidate binding context is immutable; qualify a fresh reviewed graph' USING ERRCODE='23514';
@@ -30,11 +31,12 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_binding_context ON environment_workload_qualification_requests;
 CREATE TRIGGER guard_environment_binding_context BEFORE UPDATE OF binding_context ON environment_workload_qualification_requests
  FOR EACH ROW EXECUTE FUNCTION guard_environment_binding_context();
 
 -- +goose StatementBegin
-CREATE FUNCTION environment_binding_artifact_inputs(d deployments) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+CREATE OR REPLACE FUNCTION environment_binding_artifact_inputs(d deployments) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
  SELECT jsonb_build_object('rootfs_key',coalesce(d.rootfs_key,''),'rootfs_bytes',coalesce(d.rootfs_bytes,0),
  'kind',d.kind,'image_digest',coalesce(d.image_digest,''),'build_id',coalesce(d.build_id::text,''),
  'source_path',coalesce(d.source_path,''),'source_sha256',coalesce(d.source_sha256,''),'source_bytes',coalesce(d.source_bytes,0),
@@ -43,7 +45,7 @@ CREATE FUNCTION environment_binding_artifact_inputs(d deployments) RETURNS jsonb
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION environment_binding_catalog_supported(target_app uuid,target_scope text) RETURNS boolean LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION environment_binding_catalog_supported(target_app uuid,target_scope text) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT NOT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE app_id=target_app AND scope=target_scope AND state<>'deleted')
  AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials WHERE managed_app_id=target_app AND managed_scope=target_scope AND status='active')
  AND NOT EXISTS(SELECT 1 FROM outbound_app_bindings WHERE app_id=target_app)
@@ -52,12 +54,13 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_binding_release_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_binding_release_audit() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
  RAISE EXCEPTION 'candidate binding release audit is immutable' USING ERRCODE='23514';
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_binding_release_audit ON environment_binding_release_receipts;
 CREATE TRIGGER guard_environment_binding_release_audit BEFORE UPDATE OR DELETE ON environment_binding_release_receipts
  FOR EACH ROW EXECUTE FUNCTION guard_environment_binding_release_audit();
 
@@ -65,7 +68,7 @@ CREATE TRIGGER guard_environment_binding_release_audit BEFORE UPDATE OR DELETE O
 -- The original guards remain unchanged. A grant covers an exact, complete
 -- cohort and expires at the earliest policy/attempt/HTTPS-exchange deadline.
 -- +goose StatementBegin
-CREATE FUNCTION environment_binding_qualification_deadline(target_graph uuid) RETURNS timestamptz LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_binding_qualification_deadline(target_graph uuid) RETURNS timestamptz LANGUAGE plpgsql AS $$
 DECLARE g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; e project_environments%ROWTYPE;
  q environment_workload_qualification_requests%ROWTYPE; p app_binding_release_policies%ROWTYPE;
  smoke environment_qualification_smoke_receipts%ROWTYPE; edge record; target environment_workload_qualification_requests%ROWTYPE;
@@ -133,7 +136,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION authorize_environment_binding_release(target_graph uuid,next_release uuid,prior_release text,members jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION authorize_environment_binding_release(target_graph uuid,next_release uuid,prior_release text,members jsonb) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; release_scope text; deadline timestamptz; actual jsonb; latest text;
 BEGIN
  SELECT * INTO g FROM environment_workload_graphs WHERE id=target_graph;
@@ -154,7 +157,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE FUNCTION validate_environment_binding_release() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION validate_environment_binding_release() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE actual jsonb;
 BEGIN
  SELECT jsonb_object_agg(app_id::text,deployment_id::text) INTO actual FROM project_release_members WHERE release_id=NEW.release_id;
@@ -163,13 +166,14 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS validate_environment_binding_release ON environment_binding_release_receipts;
 CREATE CONSTRAINT TRIGGER validate_environment_binding_release AFTER INSERT ON environment_binding_release_receipts
  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_environment_binding_release();
 
 -- The normal serving owner must consume the same unexpired qualification
 -- before increasing candidate weights. It cannot borrow an image fence.
 -- +goose StatementBegin
-CREATE FUNCTION authorize_environment_binding_traffic(target_graph uuid,target_release uuid) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION authorize_environment_binding_traffic(target_graph uuid,target_release uuid) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE audit environment_binding_release_receipts%ROWTYPE; g environment_workload_graphs%ROWTYPE; s environment_git_sources%ROWTYPE; release_scope text; grants jsonb;
 BEGIN
  SELECT * INTO g FROM environment_workload_graphs WHERE id=target_graph;
@@ -190,7 +194,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_environment_qualification_service_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_environment_qualification_service_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP<>'INSERT' THEN
   IF TG_OP='DELETE' AND pg_trigger_depth()>1 THEN RETURN OLD; END IF;
@@ -211,6 +215,7 @@ BEGIN
  RETURN NEW;
 END $$;
 -- +goose StatementEnd
+DROP TRIGGER IF EXISTS guard_environment_qualification_service_receipt ON environment_qualification_service_receipts;
 CREATE TRIGGER guard_environment_qualification_service_receipt BEFORE INSERT OR UPDATE OR DELETE ON environment_qualification_service_receipts
  FOR EACH ROW EXECUTE FUNCTION guard_environment_qualification_service_receipt();
 
