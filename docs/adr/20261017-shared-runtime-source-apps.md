@@ -50,6 +50,10 @@ today's full-layer path unchanged.
 
    The verdict and the resolved start command go into `build-done.json`. An
    ineligible build reports why and stays on the full-layer path.
+   Railpack's Node plan adds a `libatomic1` apt step by default, so the
+   platform overlay clears `aptPackages` on runner bases too (they ship
+   libatomic), as it already does for the minimal and Alpine bases. A
+   customer's explicit list still disqualifies the build.
 3. **Start command.** Runner bases ship no npm. An eligible
    `npm run <script>` is resolved at build time to
    `sh -c '<script body>'` with `/app/node_modules/.bin` on `PATH`, which is
@@ -69,6 +73,18 @@ today's full-layer path unchanged.
 
 Python follows the same model (`runner-python312/313`, `.venv` under `/app`
 with `PYTHONPATH`, as functions use) in a later slice.
+
+## Slices
+
+1. `pkg/sharedruntime` classifier; guest-init records the verdict in
+   `build-done.json` and builderd logs it. No behavior change; it measures
+   eligibility on real builds.
+2. ADR-595 source-rootfs records gain `source-app-runtime-layer` with a
+   runtime (Go validation, migration of the CHECK and of the SQL intent
+   function that derives the kind from `app.runtime`).
+3. builderd runtime selection and imaged `/app` layer assembly behind
+   `FAAS_SOURCE_APP_SHARED_RUNTIME`, default off.
+4. Native-metal acceptance, then default on. Python.
 
 ## Consequences
 
