@@ -34,7 +34,7 @@ tests:
         alertname: FaasRequestIDJournalWriteFailures
         exp_alerts: []
 
-  # ADR-1340: one failed batch of 128 records among ~20 recorded per second
+  # ADR-1521: one failed batch of 128 records among ~20 recorded per second
   # is under 5% of records and must not alert.
   - interval: 30s
     name: "a single failed batch amid healthy traffic does not alert"

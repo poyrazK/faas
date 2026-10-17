@@ -3080,7 +3080,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The exact request-ID journal is independent of this optional,
 	// sampled telemetry stream, so a debugger-enabled request can be looked
 	// up by its public x-faas-request-id. It is written asynchronously
-	// (ADR-634) in batches (ADR-1340).
+	// (ADR-634) in batches (ADR-1521).
 	journalTarget := cfg.GetRequestTelemetryTarget(osGetenv)
 	journalTLS, journalTLSErr := cfg.LoadAppErrorsTLS()
 	if journalTLSErr != nil {
@@ -3091,7 +3091,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("request ID journal: apid client unavailable; journal records will be counted as failed", "err", journalDialErr)
 	}
 	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
-	// so a slow journal never delays or fails a customer request. ADR-1340:
+	// so a slow journal never delays or fails a customer request. ADR-1521:
 	// the pool writes batches, one apid RPC and insert per flush.
 	var journalRPC requestIDJournalClient
 	if journalClient != nil {

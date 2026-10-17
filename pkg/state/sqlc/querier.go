@@ -4013,7 +4013,7 @@ type Querier interface {
 	// caller-generated record UUID makes an RPC retry idempotent without
 	// collapsing two customer requests that happen to reuse a public ID.
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
-	// ADR-1340: RecordRequestIDJournal for many records in one statement. The
+	// ADR-1521: RecordRequestIDJournal for many records in one statement. The
 	// same ownership join and idempotent-retry rule apply per row; a row whose app
 	// is not owned by its account, or whose id holds different content, is left
 	// out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO

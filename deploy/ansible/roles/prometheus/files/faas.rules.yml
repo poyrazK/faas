@@ -253,7 +253,7 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRequestIDJournalWriteFailures
-        # ADR-1340: records are written in batches, so one failed batch counts
+        # ADR-1521: records are written in batches, so one failed batch counts
         # up to 128 failed records. Alert on a failure share, not a count alone.
         expr: |
           sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)

@@ -20,7 +20,7 @@ const requestIDJournalRPCTimeout = 2 * time.Second
 
 // requestIDJournalBatchRetryAfter is how long the writer uses the per-record
 // RPC after apid answered Unimplemented for the batch RPC. Compute nodes can
-// roll out before the control plane's apid does (ADR-1340).
+// roll out before the control plane's apid does (ADR-1521).
 const requestIDJournalBatchRetryAfter = 5 * time.Minute
 
 // requestIDJournalClient is the apid surface the journal writer needs.
@@ -80,7 +80,7 @@ func (w *requestIDJournalWriter) writeBatch(ctx context.Context, records []gatew
 	}, nil
 }
 
-// writeEach is the pre-ADR-1340 path: one RPC per record, each with its own
+// writeEach is the pre-ADR-1521 path: one RPC per record, each with its own
 // deadline. A record apid did not record (plan without debugger retention)
 // counts as rejected.
 func (w *requestIDJournalWriter) writeEach(ctx context.Context, records []gateway.RequestIDJournalRecord) gateway.RequestIDJournalBatchResult {

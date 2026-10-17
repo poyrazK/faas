@@ -46,7 +46,7 @@ type RequestTelemetryClient interface {
 	// RecordRequestIDJournal is the synchronous, fail-closed public-ID write.
 	RecordRequestIDJournal(ctx context.Context, req *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error)
 	// RecordRequestIDJournalBatch writes many journal records in one call
-	// (ADR-1340). An apid without it answers codes.Unimplemented.
+	// (ADR-1521). An apid without it answers codes.Unimplemented.
 	RecordRequestIDJournalBatch(ctx context.Context, req *apidpb.RecordRequestIDJournalBatchRequest) (*apidpb.RecordRequestIDJournalBatchResponse, error)
 	Close() error
 }
@@ -138,7 +138,7 @@ func (c *RequestTelemetryClientImpl) RecordRequestIDJournal(ctx context.Context,
 }
 
 // RecordRequestIDJournalBatch writes a gateway's buffered journal records in
-// one call (ADR-1340). The wrapped error keeps the gRPC status, so callers can
+// one call (ADR-1521). The wrapped error keeps the gRPC status, so callers can
 // detect an apid that predates the RPC with status.Code.
 func (c *RequestTelemetryClientImpl) RecordRequestIDJournalBatch(ctx context.Context, req *apidpb.RecordRequestIDJournalBatchRequest) (*apidpb.RecordRequestIDJournalBatchResponse, error) {
 	receipt, err := c.cli.RecordRequestIDJournalBatch(ctx, req)

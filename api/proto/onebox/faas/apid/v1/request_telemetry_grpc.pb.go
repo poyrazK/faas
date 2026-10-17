@@ -83,7 +83,7 @@ type RequestTelemetryClient interface {
 	// Apid applies the account's request-time debugger retention window.
 	RecordRequestIDJournal(ctx context.Context, in *RecordRequestIDJournalRequest, opts ...grpc.CallOption) (*RecordRequestIDJournalResponse, error)
 	// RecordRequestIDJournalBatch commits up to 512 journal records with one
-	// account lookup per distinct account and one multi-row insert (ADR-1340).
+	// account lookup per distinct account and one multi-row insert (ADR-1521).
 	// An invalid record is counted as rejected instead of failing the batch;
 	// storage failures are gRPC errors for the whole batch. Gateways fall back
 	// to RecordRequestIDJournal while apid answers Unimplemented.
@@ -186,7 +186,7 @@ type RequestTelemetryServer interface {
 	// Apid applies the account's request-time debugger retention window.
 	RecordRequestIDJournal(context.Context, *RecordRequestIDJournalRequest) (*RecordRequestIDJournalResponse, error)
 	// RecordRequestIDJournalBatch commits up to 512 journal records with one
-	// account lookup per distinct account and one multi-row insert (ADR-1340).
+	// account lookup per distinct account and one multi-row insert (ADR-1521).
 	// An invalid record is counted as rejected instead of failing the batch;
 	// storage failures are gRPC errors for the whole batch. Gateways fall back
 	// to RecordRequestIDJournal while apid answers Unimplemented.

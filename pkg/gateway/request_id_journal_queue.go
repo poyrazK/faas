@@ -1,7 +1,7 @@
 package gateway
 
 // Asynchronous, batched request-ID journal — ADR-634 (amends ADR-127) and
-// ADR-1340.
+// ADR-1521.
 //
 // The exact public-ID index used to be written synchronously before guest
 // work, and a failed write answered 503. Production-us hunt #4 measured what
@@ -11,7 +11,7 @@ package gateway
 // index, so it must never decide whether a customer's request is served. The
 // queue accepts records without blocking and counts what it had to drop.
 //
-// ADR-1340: one apid RPC, account read and insert per customer request still
+// ADR-1521: one apid RPC, account read and insert per customer request still
 // put the control-plane database on the request path (measured 1:1 rows per
 // request on production-us). A batcher now gathers queued records for up to
 // requestIDJournalBatchLinger or requestIDJournalBatchMax records and hands

@@ -63,7 +63,7 @@ service RequestTelemetry {
   rpc RecordRequestIDJournal(RecordRequestIDJournalRequest) returns (RecordRequestIDJournalResponse);
 
   // RecordRequestIDJournalBatch commits up to 512 journal records with one
-  // account lookup per distinct account and one multi-row insert (ADR-1340).
+  // account lookup per distinct account and one multi-row insert (ADR-1521).
   // An invalid record is counted as rejected instead of failing the batch;
   // storage failures are gRPC errors for the whole batch. Gateways fall back
   // to RecordRequestIDJournal while apid answers Unimplemented.

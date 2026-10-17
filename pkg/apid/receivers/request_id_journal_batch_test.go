@@ -65,7 +65,7 @@ func journalRecord(accountID, appID, requestID string, receivedAt time.Time) *ap
 	}
 }
 
-// adr: 1340 — a batch reads each account once, records entitled rows in one
+// adr: 1521 — a batch reads each account once, records entitled rows in one
 // insert, and counts malformed, repeated, unknown-account, not-owned and
 // not-entitled records instead of failing the records around them.
 func TestRecordRequestIDJournalBatchCountsEachOutcome(t *testing.T) {
@@ -110,7 +110,7 @@ func TestRecordRequestIDJournalBatchCountsEachOutcome(t *testing.T) {
 	}
 }
 
-// adr: 1340 — size bounds are InvalidArgument; lookup and storage failures
+// adr: 1521 — size bounds are InvalidArgument; lookup and storage failures
 // fail the whole call as Unavailable so the gateway counts it as failed.
 func TestRecordRequestIDJournalBatchErrors(t *testing.T) {
 	account, app := uuid.NewString(), uuid.NewString()

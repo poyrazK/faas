@@ -1002,7 +1002,7 @@ func NewMetrics() *Metrics {
 		}, []string{"result"}),
 		requestIDJournalWriteTime: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_request_id_journal_write_duration_seconds",
-			Help:    "Time spent writing one batch of exact public request-ID mappings to apid (asynchronous since ADR-634, batched since ADR-1340).",
+			Help:    "Time spent writing one batch of exact public request-ID mappings to apid (asynchronous since ADR-634, batched since ADR-1521).",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
 		}),
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
@@ -3940,7 +3940,7 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 	m.requestTelemetryShipped.Add(float64(n))
 }
 
-// ObserveRequestIDJournalBatch records one batch write (ADR-1340): every
+// ObserveRequestIDJournalBatch records one batch write (ADR-1521): every
 // record counts once as recorded, rejected or failed, and the duration is the
 // batch's. A batch error counts all of its records as failed. Labels are a
 // closed outcome set and intentionally omit tenant/request IDs.

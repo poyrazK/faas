@@ -31,7 +31,7 @@ type RequestIDJournalWriter interface {
 }
 
 // RequestIDJournalBatchWriter inserts many mappings in one statement
-// (ADR-1340). It returns the ids it recorded; an entry whose app is not owned
+// (ADR-1521). It returns the ids it recorded; an entry whose app is not owned
 // by its account, or whose id already holds different content, is left out.
 type RequestIDJournalBatchWriter interface {
 	RecordRequestIDJournalBatch(context.Context, []RequestIDJournalEntry) ([]string, error)
@@ -75,7 +75,7 @@ func (s *PgStore) RecordRequestIDJournal(ctx context.Context, entry RequestIDJou
 	return nil
 }
 
-// RecordRequestIDJournalBatch inserts entries in one statement (ADR-1340).
+// RecordRequestIDJournalBatch inserts entries in one statement (ADR-1521).
 // Record ids must be unique within the call. An invalid entry fails the whole
 // call before anything is written; callers validate records first.
 func (s *PgStore) RecordRequestIDJournalBatch(ctx context.Context, entries []RequestIDJournalEntry) ([]string, error) {

@@ -123,7 +123,7 @@ func TestPgStoreRequestIDJournalConcurrentWritesAreAllVisible(t *testing.T) {
 	}
 }
 
-// adr: 1340 — one statement records a whole batch, keeps the ownership check
+// adr: 1521 — one statement records a whole batch, keeps the ownership check
 // and the identical-retry rule per row, and leaves out rows that fail them.
 func TestPgStoreRequestIDJournalBatchRecordsOwnedRowsOnly(t *testing.T) {
 	store, pool, ctx := pgStoreWithPool(t)

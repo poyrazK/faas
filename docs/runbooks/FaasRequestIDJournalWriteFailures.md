@@ -9,7 +9,7 @@ Severity: warn after failed writes exceed 1/min for 2 minutes.
 
 The exact public `x-faas-request-id` mapping is a debugging index. Since
 ADR-634 the gateway queues it and still serves the request when the write
-fails; since ADR-1340 the queue writes records to apid in batches of up to
+fails; since ADR-1521 the queue writes records to apid in batches of up to
 128. A failed record means its request ID may not resolve in the debugger.
 The alert fires when failed records are above 1 per minute and above 5% of
 all records for 2 minutes. It is fleet-wide by design; the metric has only
@@ -45,7 +45,7 @@ histogram_quantile(
    apid listener is unavailable; correlate with Postgres capacity and
    apid database error metrics.
 3. If gatewayd-internal logs `apid has no batch RPC`, the control plane's
-   apid predates ADR-1340 and the gateway is writing one record per RPC. That
+   apid predates ADR-1521 and the gateway is writing one record per RPC. That
    is expected during a rollout; it is not the cause of failures.
 4. Confirm the counters return to a low failure share and the batch write
    latency is below the gateway's 2-second RPC deadline before closing the

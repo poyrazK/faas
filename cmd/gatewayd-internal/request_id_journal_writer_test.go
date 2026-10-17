@@ -53,7 +53,7 @@ func journalRecords(ids ...string) []gateway.RequestIDJournalRecord {
 	return out
 }
 
-// adr: 1340 — one batch RPC per flush; apid's not_entitled and rejected
+// adr: 1521 — one batch RPC per flush; apid's not_entitled and rejected
 // counts both surface as rejected, and a storage error fails the batch
 // without falling back.
 func TestRequestIDJournalWriterBatch(t *testing.T) {
@@ -82,7 +82,7 @@ func TestRequestIDJournalWriterBatch(t *testing.T) {
 	}
 }
 
-// adr: 1340 — while apid answers Unimplemented the writer sends one RPC per
+// adr: 1521 — while apid answers Unimplemented the writer sends one RPC per
 // record, skips the batch RPC for requestIDJournalBatchRetryAfter, and then
 // tries it again.
 func TestRequestIDJournalWriterFallsBackWhileApidLacksBatch(t *testing.T) {

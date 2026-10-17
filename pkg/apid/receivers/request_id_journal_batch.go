@@ -19,7 +19,7 @@ const requestIDJournalBatchLimit = 512
 
 // RecordRequestIDJournalBatch commits a gateway's buffered journal records
 // with one account lookup per distinct account and one multi-row insert
-// (ADR-1340). One gateway used to cost apid an RPC, an account read and an
+// (ADR-1521). One gateway used to cost apid an RPC, an account read and an
 // insert for every customer request. A malformed record, a repeated record id
 // or an unknown account is counted as rejected rather than failing the
 // records around it; a storage failure fails the whole call so the gateway can

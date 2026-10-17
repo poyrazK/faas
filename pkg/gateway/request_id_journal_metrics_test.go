@@ -21,7 +21,7 @@ func journalCounts(m *Metrics) map[string]float64 {
 	return out
 }
 
-// adr: 1340 — each record counts once as recorded, rejected or failed; a
+// adr: 1521 — each record counts once as recorded, rejected or failed; a
 // batch error fails the whole batch; the duration is observed per batch.
 func TestObserveRequestIDJournalBatchMetrics(t *testing.T) {
 	for _, tc := range []struct {
@@ -115,7 +115,7 @@ func runJournalQueue(t *testing.T, q *RequestIDJournalQueue) {
 	})
 }
 
-// adr: 1340 — queued records leave in batches of at most maxBatch, and a
+// adr: 1521 — queued records leave in batches of at most maxBatch, and a
 // partial batch is flushed once the linger window after its first record
 // closes.
 func TestRequestIDJournalQueueBatchesRecords(t *testing.T) {
@@ -151,7 +151,7 @@ func TestRequestIDJournalQueueBatchesRecords(t *testing.T) {
 	}
 }
 
-// adr: 1340 — the writer's per-record outcomes reach the metrics.
+// adr: 1521 — the writer's per-record outcomes reach the metrics.
 func TestRequestIDJournalQueueCountsBatchOutcomes(t *testing.T) {
 	m := NewMetrics()
 	rec := &batchRecorder{done: make(chan struct{}), want: 3, result: func(int) RequestIDJournalBatchResult {

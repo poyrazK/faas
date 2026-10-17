@@ -1,4 +1,4 @@
-# ADR-1340 · The request-ID journal is written in batches
+# ADR-1521 · The request-ID journal is written in batches
 
 - **Status:** accepted
 - **Date:** 2026-10-15
