@@ -431,3 +431,5 @@ The [CI automation guide](internal-frontend-hosting-automation.md) covers site-s
 The [retention guide](internal-frontend-hosting-retention.md) covers default-off per-site cleanup policies, protected releases and safe retirement of abandoned uploads and expired CI releases.
 
 GitHub jobs can optionally use [explicit site OIDC trust](internal-frontend-hosting-oidc.md) instead of a stored Gregale CI secret. This requires its own default-off flag.
+
+Read-only [deployment diagnostics](internal-frontend-hosting-diagnostics.md) explains retained site and CI intent, with explicit recovery guidance and a separate default-off flag.

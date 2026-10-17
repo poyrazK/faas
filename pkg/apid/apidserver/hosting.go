@@ -248,3 +248,11 @@ func (h hostingHost) HostingOIDCStore() state.HostingOIDCStore {
 func (h hostingHost) HostingOIDCAccount(ctx context.Context, id string) (state.Account, error) {
 	return h.s.store.AccountByID(ctx, id)
 }
+
+func (h hostingHost) HostingDiagnosticsEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingDiagnostics, false)
+}
+func (h hostingHost) HostingDiagnosticReader() hostingapi.DiagnosticReader {
+	reader, _ := h.s.store.(hostingapi.DiagnosticReader)
+	return reader
+}

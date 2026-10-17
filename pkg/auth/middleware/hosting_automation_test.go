@@ -116,3 +116,19 @@ func TestHostingOIDCSessionKillSwitchDoesNotDisableManualCredentials(t *testing.
 		t.Fatal("manual credential blocked", code)
 	}
 }
+
+func TestHostingDiagnosticsRequireBothSiteOperationsAndExactReadPath(t *testing.T) {
+	site := "11111111-1111-4111-8111-111111111111"
+	path := "/v1/internal/hosting/sites/" + site + "/diagnostics"
+	for _, ops := range [][]string{{"stage"}, {"preview"}, {"stage", "preview"}} {
+		key := state.APIKey{HostingSiteID: site, HostingOperations: ops}
+		for _, test := range []struct {
+			method, path string
+			allowed      bool
+		}{{"GET", path + "?run_id=22222222-2222-4222-8222-222222222222", len(ops) == 2}, {"POST", path, false}, {"GET", path + "/extra", false}, {"GET", path + "%2fextra", false}, {"GET", "/v1/internal/hosting/sites/22222222-2222-4222-8222-222222222222/diagnostics", false}} {
+			if got := HostingAutomationRequestAllowed(httptest.NewRequest(test.method, test.path, nil), key); got != test.allowed {
+				t.Fatal(ops, test, got)
+			}
+		}
+	}
+}

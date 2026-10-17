@@ -37,6 +37,9 @@ func HostingAutomationRequestAllowed(r *http.Request, key state.APIKey) bool {
 	if !ok {
 		return false
 	}
+	if r.Method == http.MethodGet && suffix == "diagnostics" && ops["stage"] && ops["preview"] {
+		return true
+	}
 	if r.Method == http.MethodGet && (suffix == "releases" && ops["stage"] || suffix == "previews" && ops["preview"]) {
 		return true
 	}

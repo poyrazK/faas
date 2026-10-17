@@ -30,17 +30,21 @@ func (s Service) Capabilities(w http.ResponseWriter, r *http.Request, acct state
 		StorageTimeoutSeconds:  int(api.HostingStorageTimeout / time.Second),
 		FinalizeTimeoutSeconds: int(api.HostingFinalizeTimeout / time.Second),
 	}
-	if h, ok := s.Host.(OIDCHost); ok && h.HostingOIDCEnabled() && h.HostingOIDCStore() != nil && s.OIDCVerifier != nil {
-		if a, ok := s.Host.(AutomationHost); ok && a.HostingAutomationEnabled() && s.Host.HostingDurableRoutingEnabled() {
-			out.OIDCEnabled = true
-		}
-	}
 	s.retentionCapabilities(&out)
 	s.extendCapabilities(r, &out)
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
 func (s Service) extendCapabilities(r *http.Request, out *api.HostingCapabilities) {
+	if h, ok := s.Host.(OIDCHost); ok && h.HostingOIDCEnabled() && h.HostingOIDCStore() != nil && s.OIDCVerifier != nil {
+		if a, ok := s.Host.(AutomationHost); ok && a.HostingAutomationEnabled() && s.Host.HostingDurableRoutingEnabled() {
+			out.OIDCEnabled = true
+		}
+	}
+	if h, ok := s.Host.(DiagnosticsHost); ok && h.HostingDiagnosticsEnabled() && h.HostingDiagnosticReader() != nil {
+		out.DiagnosticsEnabled = true
+	}
+
 	if h, ok := s.Host.(AnalyticsHost); ok && h.HostingAnalyticsEnabled() && h.HostingTrafficReader() != nil {
 		out.AnalyticsEnabled = true
 	}

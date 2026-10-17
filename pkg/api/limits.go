@@ -11368,6 +11368,8 @@ const (
 
 const HostingCIWorkflowTimeout = 20 * time.Minute
 
+const HostingDiagnosticsTimeout = 15 * time.Second
+
 // Automatic retirement is an internal opt-in, separate from physical cleanup.
 const (
 	HostingRetentionAgeDefault   = 24 * time.Hour

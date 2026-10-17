@@ -261,3 +261,11 @@ run "oidc_stays_off" {
     error_message = "Provider wiring must never enable GitHub identity exchange."
   }
 }
+
+run "diagnostics_api_default_off" {
+  command = plan
+  assert {
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED == "0"
+    error_message = "Provider wiring must leave stored deployment diagnostics disabled."
+  }
+}

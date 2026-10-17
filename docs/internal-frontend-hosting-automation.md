@@ -139,3 +139,5 @@ upload grants, secret-safe Action outputs and stable GitHub reruns. Live
 Cloudflare qualification remains deferred; no live hosting resources are changed.
 
 For short-lived GitHub identity exchange and automatic renewal without stored Gregale secrets, see the separately gated [OIDC guide](internal-frontend-hosting-oidc.md).
+
+Read-only [deployment diagnostics](internal-frontend-hosting-diagnostics.md) explains retained site and CI intent, with explicit recovery guidance and a separate default-off flag.
