@@ -332,3 +332,9 @@ verified resources remain non-clean, and exit 5 indicates incomplete or changed
 verification. Invalid inputs and report errors retain ordinary CLI codes.
 Default status remains informational. Cleanup gating does not change execution,
 coverage, or policy verdicts and performs no cleanup mutations.
+
+Status `--wait-clean` adds bounded read-only polling with a shared deadline,
+fresh resource observations, pinned immutable inputs and inventory, and a final
+report carrying attempts, elapsed time and stop outcome. Watcher progress can
+advance between attempts, but changed evidence during an attempt fails closed.
+It implies live verification and cleanup gating without initiating cleanup.

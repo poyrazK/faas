@@ -295,6 +295,39 @@ func TestCampaignStatusLiveCLI(t *testing.T) {
 					t.Fatal(code)
 				}
 			}
+
+			if mode == "live" || mode == "profile" {
+				waitArgs := append(append([]string{}, args...), "--wait-clean", "--timeout", "1s", "--interval", "1s")
+				want := testCampaignStatusResourcesPresent
+				if mode == "profile" {
+					want = testCampaignStatusVerificationIncomplete
+				}
+				if code := cmdTestCampaignStatus(waitArgs); code != want {
+					t.Fatalf("wait exit %d want %d", code, want)
+				}
+				var waited testCampaignStatusReport
+				if err := readTestCampaignJSON(output, &waited); err != nil {
+					t.Fatal(err)
+				}
+				if waited.CleanWait == nil || waited.CleanWait.Attempts != 1 {
+					t.Fatal("missing wait metadata")
+				}
+				outcome := "deadline_exceeded"
+				if mode == "profile" {
+					outcome = "blocked"
+				}
+				if waited.CleanWait.Outcome != outcome {
+					t.Fatal(waited.CleanWait)
+				}
+				body, err := os.ReadFile(html)
+				if err != nil || !bytes.Contains(body, []byte("Wait for clean resources")) {
+					t.Fatal("wait HTML missing", err)
+				}
+				requests.Store(0)
+				if code := cmdTestCampaignStatus(args); code != 0 {
+					t.Fatal(code)
+				}
+			}
 			var report testCampaignStatusReport
 			if err := readTestCampaignJSON(output, &report); err != nil {
 				t.Fatal(err)

@@ -552,3 +552,25 @@ Invalid inputs and export failures retain ordinary CLI error codes. The flag
 requires `--verify-live`; default informational status behavior is unchanged.
 A clean resource result does not establish execution completeness or policy
 success: CI must check those separately. Verification remains point-in-time.
+
+### Wait for cleanup in CI
+
+Add `--wait-clean --timeout 5m --interval 10s` to `test policy status` with the
+original plan, policy, manifest, directory and any handoff. `--wait-clean` implies
+`--verify-live --require-clean`. Each attempt performs fresh read-only checks;
+it never starts cleanup or mutates resources. Run the cleanup watcher separately.
+
+The overall timeout includes API reads and delays. Timeout is bounded to 1s–1h,
+interval to 1s–1m and no greater than timeout; these duration flags require
+`--wait-clean`. Each individual attempt retains the 30s live-verification budget.
+Polling stops on the first clean observation, blocked verification, changed
+immutable evidence, cancellation, or deadline. Transient read failures can retry.
+Watcher progress may advance between attempts; changes during an individual
+snapshot still invalidate that observation. Original inputs and the full resource
+inventory remain pinned across attempts, as does the observed API endpoint.
+
+Only the final report is emitted to stdout and optional JSON/HTML exports. Its
+`clean_wait` field includes attempts, elapsed milliseconds and the stop outcome.
+At deadline, exit 4 means the final attempt verified resources remain non-clean;
+exit 5 means verification is incomplete (also used for cancellation). Exit 0 requires a clean observation
+before the deadline. Execution and policy gates remain separate.

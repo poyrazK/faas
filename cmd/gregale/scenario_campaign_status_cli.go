@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 func testCampaignStatusFileStamp(path string) string {
@@ -96,6 +99,9 @@ func cmdTestCampaignStatus(args []string) int {
 	directory := fs.String("directory", "", "optional campaign checkpoint directory")
 	verifyLive := fs.Bool("verify-live", false, "opt in to bounded read-only API verification of journaled resources; requires --directory")
 	requireClean := fs.Bool("require-clean", false, "fail unless live verification proves every expected resource clean; requires --verify-live")
+	waitClean := fs.Bool("wait-clean", false, "poll read-only verification until clean; implies --verify-live and --require-clean")
+	timeout := fs.Duration("timeout", 5*time.Minute, "overall --wait-clean deadline (1s to 1h)")
+	interval := fs.Duration("interval", 10*time.Second, "delay between --wait-clean attempts (1s to 1m)")
 	side := fs.String("side", "", "optional baseline/current scope; defaults to checkpoint side or all planned sides")
 	bundle := fs.String("recovery-bundle", "", "optional reconciliation bundle bound to this campaign")
 	from := fs.String("from", "", "original current report used to plan")
@@ -108,9 +114,18 @@ func cmdTestCampaignStatus(args []string) int {
 		}
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *policyPath == "" ||
+	if *waitClean {
+		*verifyLive, *requireClean = true, true
+	}
+	invalidWait := *waitClean && (*timeout < time.Second || *timeout > time.Hour || *interval < time.Second || *interval > time.Minute || *interval > *timeout)
+	fs.Visit(func(f *flag.Flag) {
+		if !*waitClean && (f.Name == "timeout" || f.Name == "interval") {
+			invalidWait = true
+		}
+	})
+	if invalidWait || rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 || *planPath == "" || *policyPath == "" ||
 		(*side != "" && *side != "baseline" && *side != "current") || ((*bundle != "" || *verifyLive) && *directory == "") || (*requireClean && !*verifyLive) {
-		return printErr("Invalid status options", errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle or --verify-live needs --directory; --require-clean needs --verify-live"))
+		return printErr("Invalid status options", errors.New("--plan and --policy are required; side is baseline/current; a recovery bundle or --verify-live needs --directory; --require-clean needs --verify-live; wait durations require --wait-clean and valid bounds"))
 	}
 	resolver, handoffErr := loadTestCampaignBundleResolver(*handoff)
 	if handoffErr != nil {
@@ -205,6 +220,7 @@ func cmdTestCampaignStatus(args []string) int {
 		}
 	}
 
+	immutableInputs := append([]string{}, inputs...)
 	var watcherSnapshot *testCampaignStatusWatchSnapshot
 	if *directory != "" {
 		snapshot := inspectTestCampaignStatusWatcher(testCampaignWatchPaths{Plan: *planPath, Policy: *policyPath, Manifest: *manifestPath, Directory: *directory, Handoff: *handoff}, plan, checkpoint, manifest.Scenarios, resolver)
@@ -234,21 +250,88 @@ func cmdTestCampaignStatus(args []string) int {
 	if err := protectTestCampaignStatusOutputs([]string{*jsonPath, *htmlPath}, inputs, directories); err != nil {
 		return printErr("Invalid status output", err)
 	}
-	if *verifyLive {
-		ctx, cancel := context.WithTimeout(context.Background(), testCampaignStatusLiveBudget)
-		applyTestCampaignStatusLive(ctx, &report, testCampaignWatchPaths{Plan: *planPath, Policy: *policyPath, Manifest: *manifestPath, Directory: *directory, Handoff: *handoff}, plan, checkpoint, manifest.Scenarios, resolver)
+	paths := testCampaignWatchPaths{Plan: *planPath, Policy: *policyPath, Manifest: *manifestPath, Directory: *directory, Handoff: *handoff}
+	evidence := func() string {
+		stamps := []string{}
+		// Pin the configured endpoint before reads, including profile changes made
+		// between attempts. No authentication request is made by authedClient.
+		if client, err := authedClient(); err == nil {
+			stamps = append(stamps, testCampaignJSONHash(client.BaseURL()))
+		} else {
+			stamps = append(stamps, "unavailable_endpoint")
+		}
+		for _, path := range immutableInputs {
+			if path == "" {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return ""
+			}
+			stamps = append(stamps, testCampaignJSONHash(data))
+		}
+		if checkpoint != nil {
+			sources, err := collectTestCampaignFaultHistory(plan, *checkpoint, manifest.Scenarios, *directory, resolver)
+			if err != nil {
+				return ""
+			}
+			stamps = append(stamps, testCampaignJSONHash(sources))
+		}
+		return testCampaignJSONHash(stamps)
+	}
+	initialEndpoint := ""
+	initialEvidence := ""
+	if *waitClean {
+		initialEvidence = evidence()
+	}
+	verify := func(ctx context.Context) {
+		if *waitClean {
+			if initialEvidence == "" || evidence() != initialEvidence {
+				report.SnapshotStable = false
+			}
+			snapshot := inspectTestCampaignStatusWatcher(paths, plan, checkpoint, manifest.Scenarios, resolver)
+			watcherSnapshot = &snapshot
+			report.Watcher = snapshot.Watcher
+		}
+		if *verifyLive {
+			attemptCtx, cancel := context.WithTimeout(ctx, testCampaignStatusLiveBudget)
+			applyTestCampaignStatusLive(attemptCtx, &report, paths, plan, checkpoint, manifest.Scenarios, resolver)
+			cancel()
+			if *waitClean && report.LiveVerification != nil {
+				endpoint := report.LiveVerification.EndpointSHA256
+				if initialEndpoint != "" && endpoint != "" && endpoint != initialEndpoint {
+					report.SnapshotStable = false
+					invalidateTestCampaignStatusLive(&report)
+				}
+				if initialEndpoint == "" {
+					initialEndpoint = endpoint
+				}
+			}
+		}
+		if *directory != "" && (testCampaignStatusFileStamp(filepath.Join(*directory, "checkpoint.json")) != checkpointStamp ||
+			testCampaignStatusFileStamp(filepath.Join(*directory, testCampaignRecoverySealName)) != sealStamp) {
+			report.SnapshotStable = false
+			report.Issues = append(report.Issues, testCampaignStatusIssue{Code: "snapshot_changed", Message: "Checkpoint or seal changed while this report was read.", Action: "Rerun status for a fresh snapshot before relying on the displayed progress."})
+		}
+		if watcherSnapshot != nil {
+			applyTestCampaignStatusWatcherSnapshot(&report, *watcherSnapshot)
+		}
+		if !report.SnapshotStable {
+			invalidateTestCampaignStatusLive(&report)
+		}
+		if *waitClean && evidence() != initialEvidence {
+			report.SnapshotStable = false
+			invalidateTestCampaignStatusLive(&report)
+		}
+	}
+	if *waitClean {
+		signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		ctx, cancel := context.WithTimeout(signalCtx, *timeout)
+		waitTestCampaignStatusClean(ctx, &report, *interval, verify)
 		cancel()
-	}
-	if *directory != "" && (testCampaignStatusFileStamp(filepath.Join(*directory, "checkpoint.json")) != checkpointStamp ||
-		testCampaignStatusFileStamp(filepath.Join(*directory, testCampaignRecoverySealName)) != sealStamp) {
-		report.SnapshotStable = false
-		report.Issues = append(report.Issues, testCampaignStatusIssue{Code: "snapshot_changed", Message: "Checkpoint or seal changed while this report was read.", Action: "Rerun status for a fresh snapshot before relying on the displayed progress."})
-	}
-	if watcherSnapshot != nil {
-		applyTestCampaignStatusWatcherSnapshot(&report, *watcherSnapshot)
-	}
-	if !report.SnapshotStable {
-		invalidateTestCampaignStatusLive(&report)
+	} else {
+		verify(context.Background())
 	}
 	if *htmlPath != "" {
 		body, err := renderTestCampaignStatusHTML(report)
@@ -302,6 +385,7 @@ th{background:#eef3f7}code{overflow-wrap:anywhere;font-size:.85em}.scroll{overfl
 <p class="muted">Read-only snapshot at {{.ObservedAt}} · side {{.Side}} · stable snapshot: {{.SnapshotStable}}</p>
 <p>Policy accepted: <strong>{{.PolicyPassed}}</strong> · violations: {{.PolicyViolations}} · lock present: {{.LockPresent}} · halted: {{.Halted}} · sealed: {{.Sealed}}</p>
 <p><code>{{.PlanSHA256}}</code></p>
+{{with .CleanWait}}<section><h2>Wait for clean resources</h2><p>{{.Outcome}} · attempts: {{.Attempts}} · elapsed milliseconds: {{.ElapsedMilliseconds}}</p></section>{{end}}
 {{with .LiveVerification}}<section><h2>Live resource verification</h2>
 <p>State: <strong>{{.State}}</strong> · all resources verified: {{.AllVerified}} · observed clean: {{.ResourcesClean}} · stable local evidence: {{.SnapshotStable}}</p>
 <p>{{.StartedAt}} — {{.FinishedAt}}</p>

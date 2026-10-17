@@ -23,6 +23,7 @@ REQUIRED = {
     "TestCampaignStatusLiveCancellationProof",
     "TestCampaignStatusLiveCLI",
     "TestCampaignStatusCleanGate",
+    "TestCampaignStatusWaitClean",
     "TestCampaignStatusWatcherStates",
     "TestCampaignStatusWatcherSnapshotAndGuard",
     "TestCampaignStatusWatcherCLIAndAliases",

@@ -68,6 +68,7 @@ type testCampaignStatusLineage struct {
 }
 
 type testCampaignStatusReport struct {
+	CleanWait          *testCampaignStatusCleanWait    `json:"clean_wait,omitempty"`
 	LiveVerification   *testCampaignStatusLiveReport   `json:"live_verification,omitempty"`
 	Watcher            *testCampaignStatusWatcher      `json:"cleanup_watcher,omitempty"`
 	SchemaVersion      int                             `json:"schema_version"`
@@ -179,7 +180,7 @@ func buildTestCampaignStatus(plan testCampaignPolicyPlan, checkpoint *testCampai
 			"Coverage is recomputed from verified receipts; planned repetitions and saved policy summaries do not count as evidence.",
 			"The policy verdict covers the verified evidence subset; it does not imply every planned batch finished.",
 			"The sealed flag records marker presence. A matching recovery bundle verifies adoption and the published continuation.",
-			"This is a read-only snapshot. Do not use it as an execution or cleanup gate.",
+			"This is a read-only snapshot. Only --require-clean or --wait-clean gates resource cleanup; neither certifies test execution or policy success.",
 		}}
 	if plan.Costs != nil {
 		report.PlanBudget = plan.Costs.Budget
