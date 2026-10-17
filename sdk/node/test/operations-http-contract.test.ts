@@ -1,7 +1,69 @@
 // ADR-521: the public generated client preserves stable submissions and durable cursors.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OperationsService, OpenAPI } from '../src/index.js';
+import { DevService, OperationsService, OpenAPI } from '../src/index.js';
+
+test('rehearsal simulation preserves fixture acknowledgement and individual attempts', async () => {
+  const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE;
+  const digest = 'd'.repeat(64), runId = 'a'.repeat(32);
+  OpenAPI.BASE = 'https://api.example.com';
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body));
+      assert.equal(body.action_evidence_version, 2);
+      assert.equal(body.command_version, 1);
+      assert.equal(body.simulation.fixtures[0].adapter, 'resend');
+      return Response.json({webhook_mode: 'capture', network_mode: 'contained', policy_version: 1, action_evidence_version: 2, simulation_sha256: digest, recorder_version: 1, command_version: 1});
+    }
+    return Response.json({version: 2, scope: 'managed_webhooks_and_simulated_outbound', simulation_version: 1, simulation_sha256: digest, recorder_version: 1, recorder_sessions: 1, pending_recorder_sessions: 0, incomplete_recorder_sessions: 0, run_id: runId, status: 'complete', sealed_at: '2026-10-17T12:00:00Z', workloads: ['primary'], intents: [], captured_count: 0, pending_managed_work: 0, incomplete_managed_effects: 0, suppressed_deliveries: 0, truncated: false, simulated_attempts: [
+      {id: '11111111-1111-4111-8111-111111111111', workload: 'primary', fixture: 'notify', integration: 'email', adapter: 'resend', method: 'POST', path: '/emails', request_sha256: 'e'.repeat(64), payload: {subject: 'Import ready'}, attempt: 1, status: 'completed', response_status: 429},
+      {id: '22222222-2222-4222-8222-222222222222', workload: 'primary', fixture: 'notify', integration: 'email', adapter: 'resend', method: 'POST', path: '/emails', request_sha256: 'e'.repeat(64), payload: {subject: 'Import ready'}, attempt: 2, status: 'completed', response_status: 200},
+    ]});
+  };
+  try {
+    const ack = await DevService.registerScenarioTest({runId, requestBody: {command_version: 1, webhook_mode: 'capture', network_mode: 'contained', action_evidence_version: 2, members: [{workload: 'primary', app_slug: 'isolated-api'}], simulation: {version: 1, fixtures: [{workload: 'primary', name: 'notify', integration: 'email', adapter: 'resend', method: 'POST', path: '/emails', responses: [{status: 200, body: '{"id":"simulated-1"}'}]}]}}});
+    assert.equal(ack.simulation_sha256, digest);
+    assert.equal(ack.recorder_version, 1);
+    assert.equal(ack.command_version, 1);
+    const snapshot = await DevService.sealScenarioTestActions({runId});
+    assert.equal(snapshot.version, 2);
+    assert.equal(snapshot.simulation_version, 1);
+    assert.equal(snapshot.recorder_version, 1);
+    assert.equal(snapshot.recorder_sessions, 1);
+    assert.equal(snapshot.pending_recorder_sessions, 0);
+    assert.deepEqual(snapshot.simulated_attempts?.map(a => [a.attempt, a.response_status]), [[1, 429], [2, 200]]);
+  } finally { globalThis.fetch = previousFetch; OpenAPI.BASE = previousBase; }
+});
+
+test('rehearsal capture negotiates sealed evidence and preserves pending inventory', async () => {
+  const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE, previousToken = OpenAPI.TOKEN;
+  const runId = 'a'.repeat(32);
+  const calls: {url: string; method: string | undefined; body: unknown}[] = [];
+  OpenAPI.BASE = 'https://api.example.com'; OpenAPI.TOKEN = 'account-operator';
+  globalThis.fetch = async (input, init) => {
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer account-operator');
+    calls.push({url: String(input), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined});
+    const sealing = init?.method === 'POST';
+    const body = sealing
+      ? {version: 1, scope: 'managed_operation_webhooks', run_id: runId, status: 'pending', workloads: ['primary'], intents: [], captured_count: 0, pending_managed_work: 1, incomplete_managed_effects: 0, suppressed_deliveries: 0, truncated: false}
+      : {webhook_mode: 'capture', network_mode: 'contained', policy_version: 1, action_evidence_version: 1};
+    return new Response(JSON.stringify(body), {status: sealing ? 202 : 200, headers: {'Content-Type': 'application/json'}});
+  };
+  try {
+    const ack = await DevService.registerScenarioTest({runId, requestBody: {webhook_mode: 'capture', network_mode: 'contained', action_evidence_version: 1, members: [{workload: 'primary', app_slug: 'isolated-api'}]}});
+    assert.equal(ack.action_evidence_version, 1);
+    assert.equal(ack.network_mode, 'contained');
+    const snapshot = await DevService.sealScenarioTestActions({runId});
+    assert.equal(snapshot.status, 'pending');
+    assert.equal(snapshot.pending_managed_work, 1);
+    assert.equal(snapshot.scope, 'managed_operation_webhooks');
+    assert.deepEqual(calls.map(c => [new URL(c.url).pathname, c.method]), [
+      [`/v1/dev/test-runs/${runId}`, 'PUT'], [`/v1/dev/test-runs/${runId}/actions/seal`, 'POST'],
+    ]);
+    assert.equal((calls[0]!.body as {action_evidence_version: number}).action_evidence_version, 1);
+    assert.equal((calls[0]!.body as {network_mode: string}).network_mode, 'contained');
+  } finally { globalThis.fetch = previousFetch; OpenAPI.BASE = previousBase; OpenAPI.TOKEN = previousToken; }
+});
 
 test('recovery inspection and preview preserve read-only proposals and revision fences', async () => {
   const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE, previousToken = OpenAPI.TOKEN;
@@ -174,4 +236,20 @@ test('workflow Operations keep named definitions and native execution identities
     assert.equal(page.executions[0]?.workflow_run_id,'run');
     assert.equal(page.executions[0]?.invocation_id,undefined);
   } finally { globalThis.fetch=previousFetch; OpenAPI.BASE=previousBase; OpenAPI.TOKEN=previousToken; }
+});
+
+
+test('simulation recorder closing preserves pending coverage with an empty attempt inventory', async () => {
+  const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE;
+  OpenAPI.BASE = 'https://api.example.com';
+  const wire = {version: 2, scope: 'managed_webhooks_and_simulated_outbound', simulation_version: 1,
+    simulation_sha256: 'd'.repeat(64), recorder_version: 1, recorder_sessions: 1,
+    pending_recorder_sessions: 1, incomplete_recorder_sessions: 0, run_id: 'a'.repeat(32),
+    status: 'pending', workloads: ['primary'], intents: [], captured_count: 0,
+    pending_managed_work: 0, incomplete_managed_effects: 0, suppressed_deliveries: 0, truncated: false};
+  globalThis.fetch = async () => Response.json(wire, {status: 202});
+  try {
+    const snapshot = await DevService.sealScenarioTestActions({runId: 'a'.repeat(32)});
+    assert.deepEqual(snapshot, wire);
+  } finally { globalThis.fetch = previousFetch; OpenAPI.BASE = previousBase; }
 });

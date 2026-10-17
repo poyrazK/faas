@@ -16991,6 +16991,11 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RegisterScenarioTestRequest' }
       responses:
+        '200':
+          description: Durable webhook capture policy registered before source deployment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterScenarioTestResponse' }
         '204': { description: Test workloads registered. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -17005,6 +17010,205 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/dev/test-runs/{run_id}/suspend-resume:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Lowercase hexadecimal ID of this account's enrolled rehearsal run.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    post:
+      tags: [dev]
+      operationId: beginScenarioSuspendResume
+      summary: Request the enrolled after-setup suspend/resume checkpoint.
+      description: Account-owned isolated run only. Managed-job checkpoints arm automatically through their original relay and return 409 here. After-setup requests are idempotent and do not repeat uncertain pauses. Complete requires original VM and collector receipts plus scheduler publication. Durable handling remains available when new enrollment is disabled.
+      responses:
+        '200':
+          description: Pending, complete or explicitly incomplete lifecycle evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioSuspendResumeEvidence' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [dev]
+      operationId: getScenarioSuspendResume
+      summary: Read retained suspend/resume lifecycle receipts.
+      description: Reads retained lifecycle receipts for this account without requesting execution. Pending and incomplete evidence cannot establish a successful resume. Previously enrolled receipts remain readable when new admission is disabled.
+      responses:
+        '200':
+          description: Current run-owned checkpoint evidence, including completed and explicitly incomplete owner receipts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioSuspendResumeEvidence' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/dev/test-runs/{run_id}/actions/seal:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Lowercase hexadecimal identity of this account's capture run.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    post:
+      tags: [dev]
+      operationId: sealScenarioTestActions
+      summary: Close a test run and export its supported action evidence.
+      description: Waits for supported managed work to settle, then irreversibly fences new simulation relay admission and waits for owning recorders to acknowledge closing. Previously admitted requests may finish. Repeating a successful seal returns the immutable retained snapshot. Coverage includes managed webhook intent and enrolled simulated relay attempts; arbitrary direct network traffic and external queues remain outside scope.
+      responses:
+        '200':
+          description: Immutable complete or explicitly incomplete action snapshot. Payloads are included only in a complete inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioActionSnapshot' }
+        '202':
+          description: Managed work, simulation requests or recorder acknowledgements remain pending. Simulation relay admission may already be irreversibly closed; retry collection without submitting new work.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioActionSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/dev/test-runs/{run_id}/objects:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Isolated rehearsal run receiving a fresh object namespace.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    post:
+      tags: [dev]
+      operationId: createScenarioObjects
+      summary: Create an isolated S3 fixture namespace before deploying a rehearsal workload.
+      description: Disabled by default. Pins bounded fixture bytes in dedicated rehearsal tables and injects run-scoped credentials, AWS_REGION, AWS_ENDPOINT_URL_S3 and S3_BUCKET as sealed ephemeral app secrets. The private adapter never accesses managed or production buckets. Only the primary contained app and its commands receive credentials. Requires no existing deployment and complete contained simulation enrollment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScenarioObjectsRequest' }
+      responses:
+        '201':
+          description: Starting objects captured and private storage credentials delivered before deployment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioObjectsReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [dev]
+      operationId: deleteScenarioObjects
+      summary: Revoke a rehearsal namespace and remove its object bodies.
+      description: Cleanup remains available with admission disabled. Missing or terminal resources succeed idempotently. A transaction fences pending requests and removes all current object bytes before acknowledging cleanup.
+      responses:
+        '204': { description: Object bytes are absent and runtime access is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/dev/test-runs/{run_id}/objects/seal:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Isolated run whose object mutations are ready for independent collection.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    post:
+      tags: [dev]
+      operationId: sealScenarioObjects
+      summary: Fence object requests, collect final content digests, and confirm cleanup.
+      description: Requires a deployment belonging to the fixture app and complete sealed action evidence. New requests are fenced before waiting for admitted requests. Unsupported operations, unfinished uploads, bounds violations, collector errors or failed cleanup cannot produce complete evidence. Evidence publication and removal of object bodies share one transaction. Completed sealing is idempotent for the same deployment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SealScenarioObjectsRequest' }
+      responses:
+        '200':
+          description: Independently collected object effects with confirmed namespace cleanup.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioObjectsEvidence' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/dev/test-runs/{run_id}/postgres:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Lowercase hexadecimal identity of this account's isolated rehearsal run.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    post:
+      tags: [dev]
+      operationId: createScenarioPostgres
+      summary: Provision a disposable PostgreSQL fixture before deploying a rehearsal workload.
+      description: Opt-in operator preview for contained warm rehearsals. Executes declared SQL as an unprivileged login on a dedicated fixture cluster, independently captures selected starting rows, and injects DATABASE_URL as a sealed ephemeral app secret. Connection URLs and passwords are never returned. One fresh database per account/run; no existing deployment, managed binding, or production snapshot is accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScenarioPostgresRequest' }
+      responses:
+        '201':
+          description: Isolated starting data captured and secret delivered before deployment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioPostgresReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [dev]
+      operationId: deleteScenarioPostgres
+      summary: Fence and remove this account's disposable PostgreSQL fixture.
+      description: Cleanup remains available when enrollment is disabled. A missing journal or an already confirmed deletion succeeds. Active fixture cleanup is confirmed before returning.
+      responses:
+        '204': { description: Fixture database and login are absent. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/dev/test-runs/{run_id}/postgres/seal:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Isolated run whose database observations are ready to be fenced and collected.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    post:
+      tags: [dev]
+      operationId: sealScenarioPostgres
+      summary: Fence PostgreSQL writes, collect final committed rows, and confirm fixture deletion.
+      description: Requires complete sealed action evidence and a deployment belonging to the fixture app. Unfinished SQL, collector loss, unsupported relations, oversized evidence or failed cleanup cannot produce complete evidence. Repeating a completed seal returns its retained receipt. Lock waits are sampled; short waits may be missed. Row updates appear as a deletion and insertion in the selected row multiset.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SealScenarioPostgresRequest' }
+      responses:
+        '200':
+          description: Bounded independent database evidence with confirmed cleanup.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScenarioPostgresEvidence' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/dev/test-runs/{run_id}/chaos:
     parameters:
@@ -67852,7 +68056,7 @@ components:
         postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
         service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
         availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
-        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api, auth] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api] } }
         scale_to_zero: { type: boolean }
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
@@ -68159,7 +68363,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
         rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
         state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
@@ -68277,7 +68481,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
+        access: { type: string, enum: [read_write, read_only, migration, data_api], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     PrepareManagedPostgresCutoverRequest:
       description: Stage source bindings for one app and scope on a ready database restored from that source.
@@ -68399,7 +68603,7 @@ components:
       properties:
         source_binding_id: { type: string, format: uuid }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api] }
         state: { type: string, enum: [pending, sealed, revoked] }
         verified_at: { type: string, format: date-time }
 
@@ -73624,16 +73828,636 @@ components:
           maxLength: 512
           description: One-line command that starts the development server, for example "npm run dev".
 
+    ScenarioSimulationPlan:
+      description: "Immutable fixtures for contained serving apps using the managed outbound relay. Requires action evidence version 2. Canonical JSON is bounded to 64 KiB. No live provider fallback."
+      type: "object"
+      required: ["version", "fixtures"]
+      properties:
+        version:
+          type: "integer"
+          enum: [1]
+        fixtures:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/ScenarioSimulationFixture"
+          minItems: 1
+          maxItems: 64
+    ScenarioSimulationFixture:
+      description: "One exact workload, integration, method and path. Responses advance per idempotency key, or per fixture without a key; the final response repeats. Only named top-level JSON fields are retained."
+      type: "object"
+      required: ["workload", "name", "integration", "adapter", "method", "path", "responses"]
+      properties:
+        workload:
+          type: "string"
+          minLength: 3
+          maxLength: 40
+        name:
+          type: "string"
+          pattern: "^[a-z][a-z0-9-]{0,62}$"
+        integration:
+          type: "string"
+          pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+        adapter:
+          type: "string"
+          enum: ["http", "resend"]
+        method:
+          type: "string"
+          enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
+        path:
+          type: "string"
+          maxLength: 1024
+          description: "Exact origin path without query, fragment, percent encoding or traversal. Resend supports POST /emails."
+        capture_fields:
+          type: "array"
+          items:
+            type: "string"
+            pattern: "^[a-zA-Z][a-zA-Z0-9_]{0,63}$"
+          maxItems: 32
+          uniqueItems: true
+        responses:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/ScenarioSimulationResponse"
+          minItems: 1
+          maxItems: 16
+    ScenarioSimulationResponse:
+      description: "Deterministic JSON HTTP response or connection fault. Redirects are refused. Timeout requires a positive bounded delay, then closes the connection without an HTTP response. This does not attest which error the application observed."
+      type: "object"
+      properties:
+        status:
+          type: "integer"
+          minimum: 200
+          maximum: 599
+          description: "Required for HTTP responses. Status 300 through 399 is unsupported. Absent for faults."
+        body:
+          type: "string"
+          maxLength: 8192
+          description: "Literal JSON response body. Absent for faults."
+        retry_after_seconds:
+          type: "integer"
+          minimum: 1
+          maximum: 30
+          description: "Supported with status 429 or 503 only."
+        fault:
+          type: "string"
+          enum: ["timeout", "disconnect"]
+        delay_ms:
+          type: "integer"
+          minimum: 0
+          maximum: 2000
+    ScenarioSimulationAttempt:
+      description: "Durable simulated relay attempt recorded before response delivery. This is not proof of email delivery or payment. Headers are excluded. Payload contains declared JSON fields. Hashes identify the canonical full request and idempotency key."
+      type: "object"
+      required: ["id", "workload", "fixture", "integration", "adapter", "method", "path", "request_sha256", "payload", "attempt", "status", "response_status"]
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+        workload:
+          type: "string"
+        fixture:
+          type: "string"
+        integration:
+          type: "string"
+        adapter:
+          type: "string"
+          enum: ["http", "resend"]
+        method:
+          type: "string"
+        path:
+          type: "string"
+        request_sha256:
+          type: "string"
+          pattern: "^[a-f0-9]{64}$"
+        idempotency_sha256:
+          type: "string"
+          pattern: "^[a-f0-9]{64}$"
+        payload:
+          description: "Captured top-level JSON fields selected by the fixture."
+        attempt:
+          type: "integer"
+          minimum: 1
+          maximum: 256
+        status:
+          type: "string"
+          enum: ["pending", "completed", "interrupted", "unsupported"]
+        response_status:
+          type: "integer"
+          minimum: 0
+          maximum: 599
+        fault:
+          type: "string"
+          enum: ["timeout", "disconnect"]
+
+    ScenarioObjectsSpec:
+      description: Versioned single-bucket object rehearsal contract with a canonical fixture inventory digest.
+      type: object
+      required: [version, bucket, fixture_sha256]
+      properties:
+        version: { type: integer, enum: [1] }
+        bucket: { type: string, pattern: '^[a-z][a-z0-9-]{1,29}[a-z0-9]$' }
+        fixture_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    ScenarioObjectsData:
+      description: Bounded object fixture input; raw content is never included in evidence responses.
+      type: object
+      required: [key, body, content_type, metadata]
+      properties:
+        key: { type: string, minLength: 1, maxLength: 512 }
+        body: { type: string, format: byte, maxLength: 87384, description: "Base64-encoded bytes, at most 65536 decoded bytes per object and 262144 decoded bytes in total." }
+        content_type: { type: string, minLength: 1, maxLength: 256 }
+        metadata:
+          type: object
+          maxProperties: 8
+          additionalProperties: { type: string, maxLength: 256 }
+    ScenarioObjectsObject:
+      description: Independent key, byte length, content digest and stable metadata without object content.
+      type: object
+      required: [key, size, sha256, content_type, metadata]
+      properties:
+        key: { type: string, minLength: 1, maxLength: 512 }
+        size: { type: integer, format: int64, minimum: 0, maximum: 65536 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        content_type: { type: string, minLength: 1, maxLength: 256 }
+        metadata:
+          type: object
+          maxProperties: 8
+          additionalProperties: { type: string, maxLength: 256 }
+    CreateScenarioObjectsRequest:
+      description: Fresh primary workload and exact initial objects for an isolated rehearsal namespace.
+      type: object
+      required: [app_slug, spec, objects]
+      properties:
+        app_slug: { type: string }
+        spec: { $ref: '#/components/schemas/ScenarioObjectsSpec' }
+        objects:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ScenarioObjectsData' }
+    SealScenarioObjectsRequest:
+      description: Deployment identity that must own this rehearsal object's primary app.
+      type: object
+      required: [deployment_id]
+      properties:
+        deployment_id: { type: string, format: uuid }
+    ScenarioObjectsReceipt:
+      description: Immutable storage enrollment acknowledgement containing neither content nor credentials.
+      type: object
+      required: [version, run_id, app_id, resource_id, fixture_sha256, contract_sha256, initial_sha256, collector_id]
+      properties:
+        collector_id: { type: string, format: uuid, description: Private listener incarnation that acknowledged the namespace before deployment. }
+        version: { type: integer, enum: [1] }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        app_id: { type: string, format: uuid }
+        resource_id: { type: string, format: uuid }
+        fixture_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        contract_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        initial_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    ScenarioObjectsMutation:
+      description: Successful mutation completion receipt; repeated writes remain separate entries.
+      type: object
+      required: [sequence, method, key, status]
+      properties:
+        workload: { type: string, description: Logical participant responsible for this mutation when managed work is enrolled. }
+        sequence: { type: integer, minimum: 1, maximum: 256, description: Mutation completion order within the namespace. }
+        method: { type: string, enum: [PUT, DELETE] }
+        key: { type: string, minLength: 1, maxLength: 512 }
+        status: { type: integer, enum: [200, 204] }
+        object: { $ref: '#/components/schemas/ScenarioObjectsObject' }
+    ScenarioObjectsEvidence:
+      description: Independently collected object state and mutation receipts, published atomically with content cleanup.
+      allOf:
+        - { $ref: '#/components/schemas/ScenarioObjectsReceipt' }
+        - type: object
+          required: [status, provenance, deployment_id, spec, before, after, mutations, cleanup_confirmed, collector_closed]
+          properties:
+            status: { type: string, enum: [complete] }
+            provenance: { type: string, enum: [platform_object_collector] }
+            deployment_id: { type: string, format: uuid }
+            spec: { $ref: '#/components/schemas/ScenarioObjectsSpec' }
+            before:
+              type: array
+              maxItems: 32
+              items: { $ref: '#/components/schemas/ScenarioObjectsObject' }
+            after:
+              type: array
+              maxItems: 32
+              items: { $ref: '#/components/schemas/ScenarioObjectsObject' }
+            mutations:
+              type: array
+              maxItems: 256
+              items: { $ref: '#/components/schemas/ScenarioObjectsMutation' }
+            collector_closed: { type: boolean, enum: [true], description: The original collector acknowledged a closed capture window. }
+            cleanup_confirmed: { type: boolean, enum: [true] }
+            reason: { type: string }
+
+    ScenarioPostgresTable:
+      type: object
+      description: Explicit stable columns from one ordinary persistent table in the fixture database.
+      additionalProperties: false
+      required: [schema, name, columns]
+      properties:
+        schema: { type: string, enum: [public] }
+        name: { type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$' }
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$' }
+    ScenarioPostgresSpec:
+      type: object
+      description: Versioned fixture digest, selected table contract and sampled lock-wait assertion.
+      additionalProperties: false
+      required: [version, fixture_sha256, tables, max_lock_wait_ms]
+      properties:
+        version: { type: integer, enum: [1] }
+        fixture_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        tables:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioPostgresTable' }
+        max_lock_wait_ms: { type: integer, format: int64, minimum: 1, maximum: 10000 }
+    CreateScenarioPostgresRequest:
+      type: object
+      description: Sanitized fixture SQL and its exact collection contract for a fresh contained workload.
+      additionalProperties: false
+      required: [app_slug, spec, sql]
+      properties:
+        app_slug: { type: string }
+        spec: { $ref: '#/components/schemas/ScenarioPostgresSpec' }
+        sql: { type: string, minLength: 1, maxLength: 65536, description: 'Sanitized UTF-8 fixture SQL; the server also enforces a 65536-byte limit.' }
+    SealScenarioPostgresRequest:
+      type: object
+      description: Pinned deployment identity whose fixture effects are ready for independent collection.
+      additionalProperties: false
+      required: [deployment_id]
+      properties:
+        deployment_id: { type: string, format: uuid }
+    ScenarioPostgresReceipt:
+      type: object
+      description: Non-sensitive identity and starting-data hashes for one isolated PostgreSQL fixture.
+      required: [version, run_id, app_id, resource_id, fixture_sha256, contract_sha256, initial_sha256]
+      properties:
+        version: { type: integer, enum: [1] }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        app_id: { type: string, format: uuid }
+        resource_id: { type: string, format: uuid }
+        fixture_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        contract_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        initial_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    ScenarioPostgresSnapshot:
+      type: object
+      description: Bounded multiset of independently collected selected rows; duplicate rows are retained.
+      required: [table, rows]
+      properties:
+        table: { type: string }
+        rows:
+          type: array
+          maxItems: 1000
+          items: { type: object, additionalProperties: true }
+    ScenarioPostgresDelta:
+      type: object
+      description: Inserted and deleted selected-row multisets; updates appear as deletion and insertion.
+      required: [table, inserted, deleted]
+      properties:
+        table: { type: string }
+        inserted:
+          type: array
+          maxItems: 1000
+          items: { type: object, additionalProperties: true }
+        deleted:
+          type: array
+          maxItems: 1000
+          items: { type: object, additionalProperties: true }
+    ScenarioPostgresEvidence:
+      description: Independent fixture observations with a fenced final capture and confirmed database/login deletion.
+      allOf:
+        - { $ref: '#/components/schemas/ScenarioPostgresReceipt' }
+        - type: object
+          required: [status, provenance, deployment_id, spec, before, after, changes, lock_samples, max_observed_lock_wait_ms, lock_budget_passed, cleanup_confirmed]
+          properties:
+            status: { type: string, enum: [complete] }
+            provenance: { type: string, enum: [platform_postgres_collector] }
+            deployment_id: { type: string, format: uuid }
+            spec: { $ref: '#/components/schemas/ScenarioPostgresSpec' }
+            before:
+              type: array
+              maxItems: 16
+              items: { $ref: '#/components/schemas/ScenarioPostgresSnapshot' }
+            after:
+              type: array
+              maxItems: 16
+              items: { $ref: '#/components/schemas/ScenarioPostgresSnapshot' }
+            changes:
+              type: array
+              maxItems: 16
+              items: { $ref: '#/components/schemas/ScenarioPostgresDelta' }
+            lock_samples: { type: integer, format: int64, minimum: 1 }
+            max_observed_lock_wait_ms: { type: integer, format: int64, minimum: 0 }
+            lock_budget_passed: { type: boolean }
+            cleanup_confirmed: { type: boolean, enum: [true] }
+            reason: { type: string }
+
+    ScenarioManagedWorkPlan:
+      description: Explicit participants and fixture permissions for managed async-route rehearsals. Requires contained commands and simulation; rollout is operator gated.
+      type: object
+      required: [version, primary, participants]
+      properties:
+        version: { type: integer, enum: [1] }
+        primary: { type: string, minLength: 3, maxLength: 40 }
+        worker_termination: { $ref: '#/components/schemas/ScenarioWorkerTermination' }
+        participants:
+          type: array
+          minItems: 2
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioManagedWorkParticipant' }
+    ScenarioSuspendResumeSpec:
+      description: One contained in-place pause after setup or at a cooperative managed-job checkpoint. No persistent VM snapshot is written.
+      type: object
+      required: [version, checkpoint, workloads, pause_ms, within_ms]
+      properties:
+        version: { type: integer, enum: [1] }
+        checkpoint: { type: string, enum: [after_setup, managed_job] }
+        worker_checkpoint: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Required for managed_job; names one successful POST HTTP simulation fixture on the sole selected async worker. }
+        workloads:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items: { type: string, minLength: 3, maxLength: 40 }
+        pause_ms: { type: integer, format: int64, minimum: 1, maximum: 30000 }
+        within_ms: { type: integer, format: int64, minimum: 1, maximum: 120000, description: Maximum host-observed resume duration through hook and readiness. }
+
+    ScenarioSuspendResumeReceipt:
+      description: Original-owner physical pause and resume proof, acknowledged by the scheduler after publishing the same VM with its captured runtime configuration.
+      type: object
+      required: [id, account_id, app_id, run_id, workload, deployment_id, instance_id, recorder_session_id, state, pause_ms, resume_ms]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        workload: { type: string }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        recorder_session_id: { type: string, format: uuid }
+        invocation_id: { type: string, format: uuid, description: Enrolled managed job; present only for managed_job checkpoints. }
+        invocation_attempt: { type: integer, minimum: 1, maximum: 1, description: First dispatch held across the pause. }
+        checkpoint_attempt_id: { type: string, format: uuid, description: Independently completed simulation held by the original relay. }
+        state: { type: string, enum: [waiting, armed, claimed, fenced, paused, resuming, resumed, complete, failed] }
+        method: { type: string, enum: [in_place] }
+        pause_ms: { type: integer, format: int64, minimum: 0 }
+        resume_ms: { type: integer, format: int64, minimum: 0 }
+
+    ScenarioSuspendResumeEvidence:
+      description: Versioned lifecycle inventory. Complete receipts preserve identity while comparisons exclude timing jitter; missing proof remains inconclusive.
+      type: object
+      required: [version, run_id, spec, plan_sha256, status, receipts]
+      properties:
+        version: { type: integer, enum: [1] }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        spec: { $ref: '#/components/schemas/ScenarioSuspendResumeSpec' }
+        plan_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        status: { type: string, enum: [pending, complete, incomplete] }
+        receipts:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioSuspendResumeReceipt' }
+
+    ScenarioColdStartSpec:
+      description: Versioned contained cold-start budget for every declared workload. Requires an operator-qualified cold-start fleet and excludes worker termination.
+      type: object
+      required: [version, within_ms]
+      properties:
+        version: { type: integer, enum: [1] }
+        within_ms: { type: integer, format: int64, minimum: 1, maximum: 120000, description: Maximum host-observed startup duration through guest readiness. }
+
+    ScenarioColdPreparation:
+      description: Original-owner retirement and actual cold-boot receipts for one workload and deployment. Missing receipts never establish lifecycle parity.
+      type: object
+      required: [id, account_id, app_id, run_id, workload, deployment_id, state, startup_ms]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        workload: { type: string }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid, description: Original serving VM when one existed at preparation. }
+        recorder_session_id: { type: string, format: uuid, description: Original retired collector owner. }
+        state: { type: string, enum: [armed, claimed, fenced, retired, ready, booted, failed] }
+        boot_instance_id: { type: string, format: uuid }
+        boot_recorder_session_id: { type: string, format: uuid }
+        wake_id: { type: string, format: uuid }
+        method: { type: string, enum: [cold_boot] }
+        startup_ms: { type: integer, format: int64, minimum: 0 }
+
+    ScenarioColdStartEvidence:
+      description: Sealed cold-start inventory with immutable recipe identity and independent host receipts. Raw timing jitter and runtime IDs are excluded from behavioral equality.
+      type: object
+      required: [version, run_id, spec, plan_sha256, status, preparations]
+      properties:
+        version: { type: integer, enum: [1] }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        spec: { $ref: '#/components/schemas/ScenarioColdStartSpec' }
+        plan_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        status: { type: string, enum: [complete, incomplete] }
+        preparations:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioColdPreparation' }
+
+    ScenarioWorkerTermination:
+      description: One cooperative worker termination at a named POST HTTP simulation checkpoint. The target must execute one job and recover on a fresh VM; rollout is separately operator gated.
+      type: object
+      required: [workload, checkpoint]
+      properties:
+        workload: { type: string, minLength: 3, maxLength: 40 }
+        checkpoint: { type: string, minLength: 1, maxLength: 63 }
+    ScenarioWorkerFault:
+      description: Platform-owned checkpoint, collector and VM termination identity. Complete evidence requires a terminated receipt and independently journalled recovery on a different VM.
+      type: object
+      required: [id, account_id, app_id, run_id, workload, deployment_id, instance_id, invocation_id, checkpoint_attempt_id, recorder_session_id, state]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        workload: { type: string }
+        deployment_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        invocation_id: { type: string, format: uuid }
+        checkpoint_attempt_id: { type: string, format: uuid }
+        recorder_session_id: { type: string, format: uuid }
+        state: { type: string, enum: [armed, ready, claimed, fenced, terminated, failed] }
+        recovery_instance_id: { type: string, format: uuid }
+    ScenarioManagedWorkParticipant:
+      description: One enrolled workload and its explicit resource capabilities. Async workers must execute at least one managed job.
+      type: object
+      required: [workload]
+      properties:
+        workload: { type: string, minLength: 3, maxLength: 40 }
+        async: { type: boolean }
+        postgres: { type: string, enum: [read_write] }
+        objects: { type: string, enum: [read, read_write] }
+    ScenarioManagedWorkBinding:
+      description: Platform identities and fixture resources bound to a logical workload. Missing identities make evidence incomplete.
+      type: object
+      required: [workload, app_id, deployment_id]
+      properties:
+        workload: { type: string }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string }
+        postgres_resource_id: { type: string, format: uuid }
+        objects_resource_id: { type: string, format: uuid }
+    ScenarioManagedWorkAttempt:
+      description: Durable dispatch ownership and terminal outcome, retained across retries. Unknown outcomes cannot establish completion.
+      type: object
+      required: [number, instance_id, deployment_id, outcome]
+      properties:
+        number: { type: integer, minimum: 1, maximum: 32 }
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        outcome: { type: string }
+    ScenarioManagedWorkJob:
+      description: One managed async invocation. Runtime identities support inspection; comparison retains request digest and retry outcomes.
+      type: object
+      required: [id, workload, app_id, deployment_id, method, path, payload_sha256, state, attempts]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string }
+        method: { type: string, maxLength: 10 }
+        path: { type: string, maxLength: 2048 }
+        payload_sha256: { type: string }
+        state: { type: string }
+        attempts:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ScenarioManagedWorkAttempt' }
+    ScenarioManagedWorkEvidence:
+      description: Bounded participant inventory and managed async completion proof. A complete result requires worker execution, successful receipts and closed admission.
+      type: object
+      required: [version, run_id, plan_sha256, status, closing, plan, bindings, jobs]
+      properties:
+        version: { type: integer, enum: [1] }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        plan_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        status: { type: string, enum: [pending, incomplete, complete] }
+        closing: { type: boolean }
+        plan: { $ref: '#/components/schemas/ScenarioManagedWorkPlan' }
+        worker_fault: { $ref: '#/components/schemas/ScenarioWorkerFault' }
+        bindings:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioManagedWorkBinding' }
+        jobs:
+          type: array
+          maxItems: 64
+          items: { $ref: '#/components/schemas/ScenarioManagedWorkJob' }
+        reason: { type: string }
+
     RegisterScenarioTestRequest:
       description: Complete set of developer sessions in one isolated scenario run.
       type: object
       required: [members]
       properties:
+        suspend_resume: { $ref: '#/components/schemas/ScenarioSuspendResumeSpec' }
+        cold_start: { $ref: '#/components/schemas/ScenarioColdStartSpec' }
+        managed_work: { $ref: '#/components/schemas/ScenarioManagedWorkPlan' }
+        command_version: { type: integer, enum: [1], description: Require acknowledgement of contained command execution before deployment. Requires simulation enrollment and an operator-qualified command fleet. }
+        simulation: { $ref: '#/components/schemas/ScenarioSimulationPlan' }
+        network_mode: { type: string, enum: [contained], description: "Opt in to runtime outbound containment version 1. Requires capture mode and an operator-qualified fleet. Supports same-run private HTTP and declared simulation adapters; other outbound traffic is blocked." }
+        action_evidence_version: { type: integer, enum: [1, 2], description: Require support for sealed action evidence before deploying. Version 2 requires simulation fixtures. The server must echo this version in its acknowledgement. Requires webhook_mode capture. }
+        webhook_mode:
+          type: string
+          enum: [capture]
+          description: Capture managed webhook effects and suppress all other webhook deliveries from these fresh test apps. Requires no existing deployments or work. Does not intercept direct application HTTP calls.
         members:
           type: array
           minItems: 1
           maxItems: 16
           items: { $ref: '#/components/schemas/ScenarioTestWorkload' }
+
+    ScenarioCapturedAction:
+      description: A managed operation or workflow webhook intent captured at completion. Runtime IDs support inspection; comparison uses logical workloads and committed business data.
+      type: object
+      required: [id, workload, source, operation_id, name, webhook_id, receiver_sha256, type, payload]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        source: { type: string, enum: [operation, workflow] }
+        operation_id: { type: string, format: uuid }
+        workflow: { type: string, maxLength: 128 }
+        step: { type: string, maxLength: 128 }
+        name: { type: string }
+        webhook_id: { type: string, format: uuid }
+        receiver_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Fingerprint of destination scope, business tenant reference, exact URL, delivery format and retry policy observed at completion. URLs and secrets are not exported.
+        type: { type: string }
+        payload: { description: Committed JSON business data bounded to 64 KiB per intent. }
+
+    ScenarioActionSnapshot:
+      description: Bounded evidence for a sealed action window. Version 1 covers managed webhooks. Version 2 adds declared simulated relay attempts and durable host recorder coverage. Incomplete snapshots never establish equivalent behavior.
+      type: object
+      required: [version, scope, run_id, status, workloads, intents, captured_count, pending_managed_work, incomplete_managed_effects, suppressed_deliveries, truncated]
+      properties:
+        suspend_resume: { $ref: '#/components/schemas/ScenarioSuspendResumeEvidence' }
+        cold_start: { $ref: '#/components/schemas/ScenarioColdStartEvidence' }
+        managed_work: { $ref: '#/components/schemas/ScenarioManagedWorkEvidence' }
+        recorder_version: { type: integer, enum: [1], description: Required in simulation scope. Durable host recorder and closing barrier contract. }
+        recorder_sessions: { type: integer, format: int64, minimum: 0, maximum: 256, description: Retained serving-VM recorder sessions. Every simulation workload must have acknowledged recorder coverage. }
+        pending_recorder_sessions: { type: integer, format: int64, minimum: 0, maximum: 256 }
+        incomplete_recorder_sessions: { type: integer, format: int64, minimum: 0 }
+        version: { type: integer, enum: [1, 2] }
+        scope: { type: string, enum: [managed_operation_webhooks, managed_webhooks_and_simulated_outbound] }
+        run_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        status: { type: string, enum: [complete, pending, incomplete] }
+        sealed_at: { type: string, format: date-time, description: Present only after the managed-effect window has closed. }
+        workloads:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items: { type: string }
+        intents:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedAction' }
+        simulation_version: { type: integer, enum: [1], description: Present in version 2 snapshots. HTTP and Resend simulation contract version. }
+        simulation_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Canonical immutable fixture plan identity. Required for simulation scope. }
+        simulated_attempts:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioSimulationAttempt' }
+        pending_simulation_attempts: { type: integer, format: int64, minimum: 0 }
+        incomplete_simulation_attempts: { type: integer, format: int64, minimum: 0 }
+        captured_count: { type: integer, format: int64, minimum: 0 }
+        pending_managed_work: { type: integer, format: int64, minimum: 0 }
+        incomplete_managed_effects: { type: integer, format: int64, minimum: 0 }
+        suppressed_deliveries: { type: integer, format: int64, minimum: 0, description: Unsupported ordinary deliveries blocked by the run policy; these are not successful business effects. }
+        truncated: { type: boolean }
+        reason: { type: string }
+
+    RegisterScenarioTestResponse:
+      description: Acknowledgement that the versioned webhook capture policy was committed before source deployment.
+      type: object
+      required: [webhook_mode, policy_version]
+      properties:
+        suspend_resume_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Acknowledges the exact suspend/resume plan and workload inventory before deployment. }
+        cold_start_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Acknowledges the exact cold-start budget and workload inventory before deployment. }
+        managed_work_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Acknowledges the exact durable participant plan before deployment. }
+        command_version: { type: integer, enum: [1], description: Echoes supported contained command execution. Each command also requires a matching guest receipt and owner retirement before success. }
+        recorder_version: { type: integer, enum: [1], description: Required when simulation is enrolled. Acknowledges durable recorder support before source deployment. }
+        simulation_sha256: { type: string, pattern: '^[a-f0-9]{64}$', description: Echoes the canonical fixture plan identity after durable enrollment. }
+        network_mode: { type: string, enum: [contained], description: "Echoes the durable network containment enrollment. Each runtime must also acknowledge the exact run before publication." }
+        action_evidence_version: { type: integer, enum: [1, 2], description: Present when the requested sealed action-evidence protocol is supported. }
+        webhook_mode: { type: string, enum: [capture] }
+        policy_version: { type: integer, enum: [1] }
 
     ScenarioTestWorkload:
       description: Logical service name and developer session app slug for a scenario run.
@@ -101682,7 +102506,7 @@ components:
         payload: { description: JSON business data bounded to 64 KiB. }
 
     OperationEffectRecord:
-      description: Immutable effect identity and current delivery status from the signed webhook ledger.
+      description: Immutable effect identity and current delivery status, or platform-captured intent for a rehearsal. Captured effects have no outbound delivery.
       type: object
       required: [id, name, generation, status, attempt]
       properties:
@@ -101691,8 +102515,9 @@ components:
         generation: { type: integer, format: int64 }
         webhook_id: { type: string, format: uuid }
         delivery_id: { type: string, format: uuid, description: Stable across webhook retries; equals the effect ID. }
+        rehearsal_run_id: { type: string, pattern: '^[a-f0-9]{32}$', description: Present only for platform-captured rehearsal effects; no outbound delivery was queued. }
         type: { type: string }
-        status: { type: string, enum: [recorded, pending, in_flight, succeeded, failed, dead, unavailable], description: recorded is an opaque effect with no adapter; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply delivery succeeded. }
+        status: { type: string, enum: [recorded, captured, pending, in_flight, succeeded, failed, dead, unavailable], description: recorded is an opaque effect with no adapter; captured is retained rehearsal intent with no outbound delivery; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply delivery succeeded. }
         attempt: { type: integer, minimum: 0 }
         last_error: { type: string }
 
