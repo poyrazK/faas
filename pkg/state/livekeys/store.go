@@ -52,12 +52,16 @@ type NewKey struct {
 	Recipient string
 }
 
-// Route is one live key an app may route: a key of a database bound to it.
+// Route is one live key an app may route: a key of a database bound to it,
+// with the logins its live queries read as there ("" when the app has no
+// such binding).
 type Route struct {
 	KID                string
 	DatabaseID         string
 	BackendID          string
 	BackendFingerprint string
+	SealedRole         string // the app's read-only, else read-write, binding login
+	DataAPIRole        string // the app's Data API binding login
 }
 
 // Store reads and writes managed_postgres_live_keys.
@@ -163,7 +167,8 @@ func (s *Store) AppRoutes(ctx context.Context, accountID, appID string) ([]Route
 	}
 	routes := make([]Route, 0, len(rows))
 	for _, r := range rows {
-		routes = append(routes, Route{KID: r.Kid, DatabaseID: r.DatabaseID, BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint})
+		routes = append(routes, Route{KID: r.Kid, DatabaseID: r.DatabaseID, BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint,
+			SealedRole: r.SealedRole, DataAPIRole: r.DataApiRole})
 	}
 	return routes, nil
 }

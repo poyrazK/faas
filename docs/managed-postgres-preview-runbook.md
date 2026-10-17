@@ -481,12 +481,24 @@ seals are refused with `forbidden` in realtimed.
 Browsers can also subscribe to a Data API read as the signed-in user. Row-level
 security then decides the rows, with no backend seal.
 
+- **Which login a query reads as.** apid puts the app's binding logins on
+  each live route, and realtimed names the login on every query; clients
+  cannot name one.
+  - Sealed queries read as the app's read-only binding, else its
+    read-write binding. An app with neither is refused (`forbidden`).
+  - RLS-mode reads run as the app's Data API binding (ADR-650), in its
+    `api` schema unless the read names another. An app without a Data API
+    binding is refused.
+  - livequeryd refuses a login that is a superuser or bypasses row-level
+    security.
+  - Binding changes reach realtimed with the endpoint reconciler, within
+    30 seconds.
 - **livequeryd**
-  - Give it `-rls-roles` (for example `authenticated,anon`) and, if
-    anonymous reads are wanted, `-rls-anon-role`.
-  - Its database login must be a member of every listed role.
-  - It accepts RLS reads only from a client certificate that `-client-ca`
-    verified (realtimed's).
+  - Its database login is the superuser that `-install` needs, so it can
+    become every binding login. A login without superuser needs `SET` on
+    each.
+  - It believes a named login and RLS claims only from a client
+    certificate that `-client-ca` verified (realtimed's).
 - **Endpoint.** The app's realtime endpoint must use `oidc_jwt`. realtimed
   verifies each token against that endpoint's issuer and JWKS before the
   database sees its claims.

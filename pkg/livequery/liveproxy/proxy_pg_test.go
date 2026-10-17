@@ -209,6 +209,7 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 		}
 	}
 	exec(`CREATE TABLE messages (id bigint PRIMARY KEY, channel_id bigint NOT NULL, body text)`)
+	reader := readerRole(t, pool, "messages")
 	if err := livequery.Install(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -235,12 +236,12 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 	}
 	tl := &trackingListener{Listener: ln}
 	mux := http.NewServeMux()
-	mux.Handle("/live", liveserver.WebSocket(hub, func(*http.Request) bool { return true }))
+	mux.Handle("/live", liveserver.WebSocketTrusting(hub, func(*http.Request) bool { return true }, func(*http.Request) bool { return true }))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.Serve(tl) }()
 	defer srv.Close()
 
-	router := StaticRouter(map[string]Route{secret.KID: {Database: "db_1", URL: "ws://" + ln.Addr().String() + "/live"}})
+	router := StaticRouter(map[string]Route{secret.KID: {Database: "db_1", URL: "ws://" + ln.Addr().String() + "/live", SealedRole: reader}})
 	proxy := New(nil, nil)
 	proxy.Metrics = NewMetrics(prometheus.NewRegistry())
 	defer proxy.Close()

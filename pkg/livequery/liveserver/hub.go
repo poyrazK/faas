@@ -48,12 +48,9 @@ type Config struct {
 	Logger  *slog.Logger
 	// Limits; zero means the pkg/api default.
 	MaxSubscriptions, MaxQueries, MaxPerConnection, QueueFrames int
-	// RLS mode: the roles a user's token may name (none disables RLS mode),
-	// the role for a token naming none, and the pool Data API reads are
-	// compiled against. MaxRLSSubscriptions bounds RLS-mode subscriptions,
-	// which share maintenance only with identical claims.
-	RLSRoles            []string
-	RLSAnonRole         string
+	// Pool is what RLS-mode Data API reads are compiled against (nil
+	// disables RLS mode). MaxRLSSubscriptions bounds RLS-mode
+	// subscriptions, which share maintenance only with identical claims.
 	Pool                *pgxpool.Pool
 	MaxRLSSubscriptions int
 	// RestoredGrace is how long subscriptions restored from a checkpoint
@@ -380,7 +377,12 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 		refuse(liveproto.CodeForbidden, "the seal names another database", 0, 0)
 		return
 	}
-	h.register(ctx, sess, f, q.SQL, q.Args(), nil, q.Fingerprint(), q.ExpiresAt(), refuse)
+	session, no := sealedSession(sess, f)
+	if no != nil {
+		refuse(no.code, no.msg, 0, 0)
+		return
+	}
+	h.register(ctx, sess, f, q.SQL, q.Args(), session, q.Fingerprint(), q.ExpiresAt(), refuse)
 }
 
 // register subscribes a client to sql, read as session (nil: sealed mode).
@@ -400,7 +402,7 @@ func (h *Hub) register(ctx context.Context, sess *Session, f liveproto.ClientFra
 	case !h.engine.Compiled(sql) && h.engine.Queries() >= h.cfg.MaxQueries:
 		refuse(liveproto.CodeLimit, "too many distinct live queries on this database", h.cfg.MaxQueries, h.engine.Queries()+1)
 		return
-	case session != nil && h.rlsSubs >= h.cfg.MaxRLSSubscriptions:
+	case f.RLS() && h.rlsSubs >= h.cfg.MaxRLSSubscriptions:
 		refuse(liveproto.CodeLimit, "too many RLS-mode live queries on this database", h.cfg.MaxRLSSubscriptions, h.rlsSubs+1)
 		return
 	}
@@ -416,7 +418,7 @@ func (h *Hub) register(ctx context.Context, sess *Session, f liveproto.ClientFra
 	}
 	h.cfg.Logger.Debug("live subscribe", "session", sess.id, "subscription", f.Subscription, "engine", engineID, "rls", session != nil)
 	s := &sub{session: sess, client: f.Subscription, kid: seal.KeyID(f.Sealed), engineID: engineID, fingerprint: fingerprint, expires: expires}
-	if session != nil {
+	if f.RLS() {
 		s.rls, s.rest = true, liveproto.ClientFrame{Database: f.Database, Schema: f.Schema, Rest: f.Rest}
 		h.rlsSubs++
 	}
@@ -444,7 +446,7 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 		case no != nil:
 			refuse(no.code, no.msg)
 			return
-		case rlsFingerprint(liveproto.ClientFrame{Database: s.rest.Database, Schema: s.rest.Schema, Rest: s.rest.Rest}, session) != s.fingerprint:
+		case rlsFingerprint(liveproto.ClientFrame{Database: s.rest.Database, Schema: s.rest.Schema, Rest: s.rest.Rest, Role: f.Role}, session) != s.fingerprint:
 			refuse(liveproto.CodeRenewMismatch, "the renewed token carries different claims; subscribe again")
 			return
 		}

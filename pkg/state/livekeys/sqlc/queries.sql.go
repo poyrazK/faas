@@ -12,7 +12,14 @@ import (
 )
 
 const appLiveRoutes = `-- name: AppLiveRoutes :many
-SELECT DISTINCT k.kid,d.id::text AS database_id,d.backend_id,d.backend_fingerprint FROM managed_postgres_bindings b
+SELECT DISTINCT k.kid,d.id::text AS database_id,d.backend_id,d.backend_fingerprint,
+ coalesce((SELECT x.provider_identity_id FROM managed_postgres_bindings x WHERE x.app_id=b.app_id AND x.database_id=d.id
+   AND x.state IN ('ready','retiring') AND x.access IN ('read_only','read_write') AND x.provider_identity_id IS NOT NULL
+   ORDER BY x.access='read_only' DESC, x.scope='default' DESC, x.created_at LIMIT 1),'')::text AS sealed_role,
+ coalesce((SELECT x.provider_identity_id FROM managed_postgres_bindings x WHERE x.app_id=b.app_id AND x.database_id=d.id
+   AND x.state IN ('ready','retiring') AND x.access='data_api' AND x.provider_identity_id IS NOT NULL
+   ORDER BY x.scope='default' DESC, x.created_at LIMIT 1),'')::text AS data_api_role
+ FROM managed_postgres_bindings b
  JOIN managed_postgres_databases d ON d.id=b.database_id AND d.account_id=b.account_id
  JOIN managed_postgres_live_keys k ON k.database_id=d.id
  WHERE b.app_id=$1::text::uuid AND b.account_id=$2::text::uuid AND b.state IN ('ready','retiring')
@@ -31,8 +38,13 @@ type AppLiveRoutesRow struct {
 	DatabaseID         string
 	BackendID          string
 	BackendFingerprint string
+	SealedRole         string
+	DataApiRole        string
 }
 
+// Each live key of a database the app is bound to, with the logins live
+// queries read as there: sealed queries as the app's read-only (else
+// read-write) binding, RLS-mode reads as its Data API binding (ADR-650).
 func (q *Queries) AppLiveRoutes(ctx context.Context, db DBTX, arg AppLiveRoutesParams) ([]AppLiveRoutesRow, error) {
 	rows, err := db.Query(ctx, appLiveRoutes, arg.AppID, arg.AccountID)
 	if err != nil {
@@ -47,6 +59,8 @@ func (q *Queries) AppLiveRoutes(ctx context.Context, db DBTX, arg AppLiveRoutesP
 			&i.DatabaseID,
 			&i.BackendID,
 			&i.BackendFingerprint,
+			&i.SealedRole,
+			&i.DataApiRole,
 		); err != nil {
 			return nil, err
 		}

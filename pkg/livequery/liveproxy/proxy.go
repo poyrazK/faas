@@ -34,10 +34,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
 )
 
-// Route is where a database's live queries are served.
+// Route is where a database's live queries are served, and the logins the
+// session's app reads as there ("" refuses that mode).
 type Route struct {
-	Database string
-	URL      string // the hub's WebSocket, ws://host/live
+	Database    string
+	URL         string // the hub's WebSocket, ws://host/live
+	SealedRole  string
+	DataAPIRole string
 }
 
 // ErrNoRoute means no database is known for a seal's key.
@@ -192,6 +195,9 @@ func (s *Session) refuse(id, code, msg string, closed bool) {
 
 func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 	route, code, msg := s.route(ctx, f)
+	if code == "" {
+		f.Role, code, msg = loginFor(route, f)
+	}
 	if code != "" {
 		s.refuse(f.Subscription, code, msg, true)
 		return
@@ -239,6 +245,9 @@ func (s *Session) renew(ctx context.Context, f liveproto.ClientFrame) {
 	if code == "" && route.Database != sb.up.route.Database {
 		code, msg = liveproto.CodeForbidden, "the renewal seals a query for another database"
 	}
+	if code == "" {
+		f.Role, code, msg = loginFor(route, f)
+	}
 	if f.RLS() != (sb.cred.Sealed == "") {
 		code, msg = liveproto.CodeRenewMismatch, "a renewal keeps the subscription's mode"
 	}
@@ -269,10 +278,24 @@ func (s *Session) route(ctx context.Context, f liveproto.ClientFrame) (Route, st
 	return route, "", ""
 }
 
+// loginFor is the login a query reads as: the endpoint app's own binding,
+// never a role the client names.
+func loginFor(route Route, f liveproto.ClientFrame) (string, string, string) {
+	switch {
+	case f.RLS() && route.DataAPIRole == "":
+		return "", liveproto.CodeForbidden, "the endpoint's app has no Data API binding to this database"
+	case f.RLS():
+		return route.DataAPIRole, "", ""
+	case route.SealedRole == "":
+		return "", liveproto.CodeForbidden, "the endpoint's app has no read binding to this database"
+	}
+	return route.SealedRole, "", ""
+}
+
 // credential keeps what a subscribe or renew frame authorizes with.
 func credential(f liveproto.ClientFrame) liveproto.ClientFrame {
 	return liveproto.ClientFrame{Sealed: f.Sealed, Database: f.Database, Rest: f.Rest, Schema: f.Schema,
-		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires}
+		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role}
 }
 
 // upstream returns the database's upstream, dialing it when new.
@@ -386,6 +409,7 @@ func (u *upstream) renew(sb *sub, f liveproto.ClientFrame) {
 	} else {
 		sb.cred.Sealed = f.Sealed
 	}
+	sb.cred.Role = f.Role
 	attached := sb.attached
 	connected := u.conn != nil
 	u.mu.Unlock()
@@ -394,7 +418,7 @@ func (u *upstream) renew(sb *sub, f liveproto.ClientFrame) {
 		// Kept for the resubscription.
 	case attached:
 		u.write(liveproto.ClientFrame{Type: liveproto.TypeRenew, Subscription: sb.upstreamID(), Sealed: f.Sealed,
-			Claims: f.Claims, ClaimsExpires: f.ClaimsExpires})
+			Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role})
 	default:
 		// The upstream refused the last seal (it had expired across a
 		// reconnect): subscribe with the fresh one.

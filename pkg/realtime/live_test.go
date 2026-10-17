@@ -174,6 +174,8 @@ func TestLiveTokensBecomeClaims(t *testing.T) {
 	for _, tc := range []struct{ frame, code string }{
 		{`{"type":"live.subscribe","subscription":"forged",` + read + `,"claims":{"sub":"admin"}}`, "protocol_error"},
 		{`{"type":"live.subscribe","subscription":"bad",` + read + `,"token":"nonsense"}`, "seal_rejected"},
+		{`{"type":"live.subscribe","subscription":"named",` + read + `,"token":"user:alice","role":"postgres"}`, "protocol_error"},
+		{`{"type":"live.subscribe","subscription":"sealed-named","sealed":"gls1.0123456789abcdef.x","role":"postgres"}`, "protocol_error"},
 	} {
 		if err := client.WriteMessage(1, []byte(tc.frame)); err != nil {
 			t.Fatal(err)

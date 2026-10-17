@@ -32,11 +32,16 @@ type LiveQueries interface {
 	Attach(routes func() []LiveRoute, send func(frame []byte) error) LiveSession
 }
 
-// LiveRoute is where seals made with one live secret are served.
+// LiveRoute is where seals made with one live secret are served, and the
+// logins the endpoint's app reads as there: sealed queries as its
+// read-only (else read-write) binding, RLS-mode reads as its Data API
+// binding. An empty role refuses that mode.
 type LiveRoute struct {
-	KID      string `json:"kid"`      // the secret's key ID
-	Database string `json:"database"` // the database its seals name
-	URL      string `json:"url"`      // the hub, ws:// or wss://
+	KID         string `json:"kid"`      // the secret's key ID
+	Database    string `json:"database"` // the database its seals name
+	URL         string `json:"url"`      // the hub, ws:// or wss://
+	SealedRole  string `json:"sealed_role,omitempty"`
+	DataAPIRole string `json:"data_api_role,omitempty"`
 }
 
 // validLiveRoutes checks an endpoint's live routes.
@@ -55,6 +60,9 @@ func validLiveRoutes(routes []LiveRoute) ([]LiveRoute, error) {
 		if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" || u.User != nil {
 			return nil, fmt.Errorf("realtime: live route %s: the hub must be a ws:// or wss:// URL", r.KID)
 		}
+		if len(r.SealedRole) > 63 || len(r.DataAPIRole) > 63 || strings.ContainsRune(r.SealedRole+r.DataAPIRole, 0) {
+			return nil, fmt.Errorf("realtime: live route %s: invalid role", r.KID)
+		}
 		seen[r.KID] = true
 	}
 	return append([]LiveRoute(nil), routes...), nil
@@ -65,11 +73,14 @@ func validLiveRoutes(routes []LiveRoute) ([]LiveRoute, error) {
 // sealed frame passes through; claims sent by a client are refused.
 func (m *Manager) verifyLiveToken(ctx context.Context, c *connection, data []byte) ([]byte, string, string) {
 	f, err := liveproto.ParseClientFrame(data)
-	if err != nil || !f.RLS() {
+	if err != nil {
 		return data, "", "" // the hub answers a malformed frame
 	}
-	if len(f.Claims) > 0 {
-		return nil, liveproto.CodeProtocol, "send the user's token; realtimed adds its claims"
+	if len(f.Claims) > 0 || f.Role != "" {
+		return nil, liveproto.CodeProtocol, "realtimed adds the claims and the role; send only the user's token"
+	}
+	if !f.RLS() {
+		return data, "", ""
 	}
 	policy := c.endpointConfig().ClientAuth
 	if policy.Mode != AuthModeOIDCJWT {

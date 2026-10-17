@@ -88,6 +88,10 @@ type ClientFrame struct {
 	// never sends them.
 	Claims        json.RawMessage `json:"claims,omitempty"`
 	ClaimsExpires int64           `json:"claims_expires,omitempty"`
+	// Role is the login the query reads as, which realtimed sets from the
+	// endpoint's route (the app's binding to the database); a client never
+	// sends it.
+	Role string `json:"role,omitempty"`
 }
 
 // RLS reports whether the frame is RLS mode rather than sealed.
@@ -112,7 +116,7 @@ func ParseClientFrame(data []byte) (ClientFrame, error) {
 			return ClientFrame{}, fmt.Errorf("%w: %s carries no version", ErrProtocol, f.Type)
 		}
 	case TypeUnsubscribe:
-		if f.Sealed != "" || f.Version != 0 || f.Database != "" || f.Rest != "" || f.Schema != "" || f.Token != "" || len(f.Claims) > 0 {
+		if f.Sealed != "" || f.Version != 0 || f.Database != "" || f.Rest != "" || f.Schema != "" || f.Token != "" || len(f.Claims) > 0 || f.Role != "" {
 			return ClientFrame{}, fmt.Errorf("%w: %s carries only the subscription", ErrProtocol, f.Type)
 		}
 		return f, nil
@@ -150,6 +154,9 @@ func (f ClientFrame) checkCredential() error {
 		return fmt.Errorf("%w: an RLS-mode subscription carries a Data API read of 1-%d bytes", ErrProtocol, api.LiveQueryRESTMaxBytes)
 	case len(f.Schema) > 63:
 		return fmt.Errorf("%w: schema name too long", ErrProtocol)
+	}
+	if len(f.Role) > 63 {
+		return fmt.Errorf("%w: role name too long", ErrProtocol)
 	}
 	return nil
 }

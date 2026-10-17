@@ -60,15 +60,23 @@ func leave(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// checkRole verifies the engine's login may become role.
+// checkRole verifies the engine's login may become role, and that role is
+// subject to row-level security: live queries never read as a superuser or
+// a role that bypasses it.
 func checkRole(ctx context.Context, conn *pgx.Conn, role string) error {
-	var member bool
-	err := conn.QueryRow(ctx, `SELECT pg_has_role(current_user, r.oid, 'MEMBER') FROM pg_roles r WHERE r.rolname = $1`, role).Scan(&member)
+	var member, privileged bool
+	// From PostgreSQL 16 a membership may withhold SET ROLE; ask for it.
+	err := conn.QueryRow(ctx, `SELECT CASE WHEN current_setting('server_version_num')::int >= 160000
+		THEN pg_has_role(current_user, r.oid, 'SET') ELSE pg_has_role(current_user, r.oid, 'MEMBER') END,
+		r.rolsuper OR r.rolbypassrls FROM pg_roles r WHERE r.rolname = $1`, role).Scan(&member, &privileged)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("livequery: no role %q", role)
 	}
 	if err != nil {
 		return fmt.Errorf("livequery: check role %s: %w", role, err)
+	}
+	if privileged {
+		return fmt.Errorf("livequery: role %q bypasses row-level security; live queries never read as it", role)
 	}
 	if !member {
 		return fmt.Errorf("livequery: the live-query login cannot act as role %q; grant it", role)

@@ -30,7 +30,8 @@ func open(t *testing.T) *pgxpool.Pool {
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `CREATE TABLE managed_postgres_databases (id uuid PRIMARY KEY, account_id uuid NOT NULL, state text NOT NULL,
 		backend_id text NOT NULL DEFAULT 'native-a', backend_fingerprint text NOT NULL DEFAULT 'fp', deleted_at timestamptz);
-		CREATE TABLE managed_postgres_bindings (account_id uuid NOT NULL, database_id uuid NOT NULL, app_id uuid NOT NULL, state text NOT NULL, deleted_at timestamptz)`); err != nil {
+		CREATE TABLE managed_postgres_bindings (account_id uuid NOT NULL, database_id uuid NOT NULL, app_id uuid NOT NULL, scope text NOT NULL DEFAULT 'default',
+			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := migrations.FS.ReadFile("20261017121336518_managed_postgres_live_keys.sql")
@@ -171,7 +172,14 @@ func TestStoreRoutes(t *testing.T) {
 	}
 	bind := func(app, db, state string) {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_bindings VALUES ($1, $2, $3, $4, NULL)`, account, db, app, state); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_bindings (account_id, database_id, app_id, state) VALUES ($1, $2, $3, $4)`, account, db, app, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	login := func(app, db, access, role string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_bindings (account_id, database_id, app_id, access, provider_identity_id, state)
+			VALUES ($1, $2, $3, $4, $5, 'ready')`, account, db, app, access, role); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -211,5 +219,29 @@ func TestStoreRoutes(t *testing.T) {
 	apps, err := store.DatabaseApps(ctx, dbID)
 	if err != nil || strings.Join(apps, ",") != app {
 		t.Fatalf("bound apps = %v, %v", apps, err)
+	}
+
+	// The logins live queries read as: sealed queries as the read-only
+	// binding when there is one, RLS-mode reads as the Data API binding.
+	roles := func() string {
+		t.Helper()
+		got, err := store.AppRoutes(ctx, account, app)
+		if err != nil || len(got) == 0 {
+			t.Fatalf("routes %v, %v", got, err)
+		}
+		return got[0].SealedRole + "|" + got[0].DataAPIRole
+	}
+	if got := roles(); got != "|" {
+		t.Fatalf("roles without logins = %q", got)
+	}
+	login(app, dbID, "read_write", "gregale_rw_1")
+	login(app, dbID, "data_api", "gregale_api_1")
+	if got := roles(); got != "gregale_rw_1|gregale_api_1" {
+		t.Fatalf("roles = %q", got)
+	}
+	login(app, dbID, "read_only", "gregale_ro_1")
+	login(otherApp, dbID, "read_only", "gregale_ro_other")
+	if got := roles(); got != "gregale_ro_1|gregale_api_1" {
+		t.Fatalf("roles with a read-only binding = %q", got)
 	}
 }

@@ -66,7 +66,8 @@ func (s *server) liveRoutes(ctx context.Context, store *livekeys.Store, accountI
 			s.log.Warn("live routes truncated", "app_id", appID, "limit", api.LiveQueryRoutesPerEndpoint)
 			break
 		}
-		routes = append(routes, realtime.LiveRoute{KID: k.KID, Database: k.DatabaseID, URL: hub})
+		routes = append(routes, realtime.LiveRoute{KID: k.KID, Database: k.DatabaseID, URL: hub,
+			SealedRole: k.SealedRole, DataAPIRole: k.DataAPIRole})
 	}
 	return routes, nil
 }

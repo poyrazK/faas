@@ -13,12 +13,29 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
 	"github.com/onebox-faas/faas/pkg/realtime"
 )
+
+// readerRole creates a login-less role that may read tables, as an app's
+// binding login may, and drops it when the test ends.
+func readerRole(t *testing.T, pool interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, tables ...string) string {
+	t.Helper()
+	role := fmt.Sprintf("lq_reader_%d", rand.Uint32())
+	if _, err := pool.Exec(context.Background(), fmt.Sprintf(`CREATE ROLE %s NOLOGIN; GRANT SELECT ON %s TO %s`, role, strings.Join(tables, ", "), role)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), fmt.Sprintf(`DROP OWNED BY %[1]s; DROP ROLE %[1]s`, role))
+	})
+	return role
+}
 
 // userJWT verifies tokens "user:<sub>" as role.
 type userJWT struct{ role string }
@@ -112,21 +129,26 @@ func TestRealtimeCarriesRLSQueries(t *testing.T) {
 	dsn, pool := openDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// role stands for the app's Data API login (ADR-650): no memberships,
+	// grants only in the api schema.
 	role := fmt.Sprintf("lq_rt_%d", rand.Uint32())
 	for _, sql := range []string{
-		`CREATE TABLE members (channel_id bigint, user_id text, PRIMARY KEY (channel_id, user_id))`,
-		`CREATE TABLE messages (id bigint PRIMARY KEY, channel_id bigint NOT NULL, body text)`,
-		fmt.Sprintf(`CREATE ROLE %s NOLOGIN`, role),
-		fmt.Sprintf(`GRANT SELECT ON messages, members TO %s`, role),
-		`ALTER TABLE messages ENABLE ROW LEVEL SECURITY`,
-		fmt.Sprintf(`CREATE POLICY readable ON messages FOR SELECT TO %s USING (channel_id IN (SELECT channel_id FROM members WHERE user_id = current_setting('request.jwt.claims', true)::json->>'sub'))`, role),
-		`INSERT INTO messages VALUES (1, 1, 'one'), (2, 2, 'two'); INSERT INTO members VALUES (1, 'alice')`,
+		`CREATE SCHEMA api`,
+		`CREATE TABLE api.members (channel_id bigint, user_id text, PRIMARY KEY (channel_id, user_id))`,
+		`CREATE TABLE api.messages (id bigint PRIMARY KEY, channel_id bigint NOT NULL, body text)`,
+		fmt.Sprintf(`CREATE ROLE %s NOLOGIN NOINHERIT`, role),
+		fmt.Sprintf(`GRANT USAGE ON SCHEMA api TO %[1]s; GRANT SELECT ON api.messages, api.members TO %[1]s`, role),
+		`ALTER TABLE api.messages ENABLE ROW LEVEL SECURITY`,
+		fmt.Sprintf(`CREATE POLICY readable ON api.messages FOR SELECT TO %s USING (channel_id IN (SELECT channel_id FROM api.members WHERE user_id = current_setting('request.jwt.claims', true)::json->>'sub'))`, role),
+		`INSERT INTO api.messages VALUES (1, 1, 'one'), (2, 2, 'two'); INSERT INTO api.members VALUES (1, 'alice')`,
 	} {
 		if _, err := pool.Exec(ctx, sql); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), fmt.Sprintf(`DROP OWNED BY %[1]s; DROP ROLE %[1]s`, role)) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), fmt.Sprintf(`DROP OWNED BY %[1]s; DROP ROLE %[1]s`, role))
+	})
 	if err := livequery.Install(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -140,8 +162,7 @@ func TestRealtimeCarriesRLSQueries(t *testing.T) {
 	defer func() { _ = capture.Close() }()
 	engine := livequery.NewEngine(pool, capture)
 	engine.VerifyEachRound = true
-	hub := liveserver.New(liveserver.Config{Database: "db_1", Engine: engine, Idle: 5 * time.Millisecond, MaxPerConnection: 1000,
-		RLSRoles: []string{role}, Pool: pool})
+	hub := liveserver.New(liveserver.Config{Database: "db_1", Engine: engine, Idle: 5 * time.Millisecond, MaxPerConnection: 1000, Pool: pool})
 	stopped := make(chan error, 1)
 	go func() { stopped <- hub.Run(ctx) }()
 	defer func() { cancel(); <-stopped }()
@@ -162,7 +183,7 @@ func TestRealtimeCarriesRLSQueries(t *testing.T) {
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"}},
-		LiveRoutes: []realtime.LiveRoute{{KID: "0123456789abcdef", Database: "db_1", URL: hubURL + "/live"}},
+		LiveRoutes: []realtime.LiveRoute{{KID: "0123456789abcdef", Database: "db_1", URL: hubURL + "/live", DataAPIRole: role}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +207,7 @@ func TestRealtimeCarriesRLSQueries(t *testing.T) {
 	}
 
 	// Membership decides: alice joins channel 2 and sees its message.
-	if _, err := pool.Exec(ctx, `INSERT INTO members VALUES (2, 'alice')`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO api.members VALUES (2, 'alice')`); err != nil {
 		t.Fatal(err)
 	}
 	c.until("alice's new channel", func() bool { return ids(c.results["alice"]) == "1,2" })

@@ -162,3 +162,19 @@ func TestPolicyDependencies(t *testing.T) {
 		t.Fatalf("a table without policies depends on %v", d.tables)
 	}
 }
+
+// adr: 1384 — live queries never read as a role that bypasses row-level
+// security, nor as one the engine's login may not become.
+func TestSessionsRefusePrivilegedRoles(t *testing.T) {
+	role := fmt.Sprintf("lq_reader_%d", rand.Uint32())
+	h := newHarness(t, fmt.Sprintf(rlsSchema, role))
+	t.Cleanup(func() { mustExec(t, h.pool, fmt.Sprintf(`DROP OWNED BY %[1]s; DROP ROLE %[1]s`, role)) })
+	mustExec(t, h.pool, fmt.Sprintf(`ALTER ROLE %s BYPASSRLS`, role))
+	_, err := h.engine.RegisterAs(context.Background(), "q", `SELECT id FROM messages`, &Session{Role: role, Claims: `{}`})
+	if err == nil || !strings.Contains(err.Error(), "bypasses row-level security") {
+		t.Fatalf("a BYPASSRLS role: %v", err)
+	}
+	if _, err := h.engine.RegisterAs(context.Background(), "q", `SELECT id FROM messages`, &Session{Role: "no_such_role_lq", Claims: `{}`}); err == nil {
+		t.Fatal("a missing role was accepted")
+	}
+}

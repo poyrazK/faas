@@ -14,7 +14,11 @@ CREATE TABLE managed_postgres_bindings (
  account_id uuid NOT NULL,
  database_id uuid NOT NULL,
  app_id uuid NOT NULL,
+ scope text NOT NULL,
+ access text NOT NULL,
+ provider_identity_id text,
  state text NOT NULL,
+ created_at timestamptz NOT NULL,
  deleted_at timestamptz
 );
 CREATE TABLE managed_postgres_live_keys (

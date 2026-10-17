@@ -927,11 +927,13 @@ Phase 0 did not cover:
     routes, so the binding check applies to RLS mode too.
   - **The hub** believes claims only from a peer whose client certificate
     livequeryd verified (`-client-ca`), that is realtimed.
-    - It picks the role from the token's `role` claim. The role must be in
-      `-rls-roles`; `-rls-anon-role` covers tokens that name none.
+    - It reads as the app's Data API binding login, which realtimed names
+      (see *Logins* below). The token's `role` claim does not choose it, as
+      the Data API gateway also overwrites it (ADR-650).
     - It drops `exp`, `iat`, `nbf` and `jti` from the claims, so a refreshed
       token keeps its plan group.
-    - It compiles the read against the database's catalog.
+    - It compiles the read against the database's catalog, in the `api`
+      schema unless the read names another (the Data API default).
     - A subscription goes stale at the token's expiry until renewed. A
       renewal whose claims differ is a `renew_mismatch`.
     - RLS-mode subscriptions have their own limit,
@@ -948,10 +950,24 @@ Phase 0 did not cover:
       peer;
     - realtime's token-to-claims swap;
     - SDK framing and `liveRead` over a real postgrest-js builder.
-  - **Not yet:**
-    - apid configuring `-rls-roles` from the database's Data API binding;
-    - per-plan-group `SET ROLE` for sealed queries, which still run as the
-      engine login.
+- **Logins** (2026-10-17). Every query from realtimed reads as one of the
+  app's own binding logins, never livequeryd's:
+  - apid adds `sealed_role` (the app's read-only binding, else read-write)
+    and `data_api_role` (its Data API binding) to each live route
+    (`AppLiveRoutes`). The proxy sets `role` on every subscribe and renew
+    from the route; a client-sent `role` or `claims` is refused.
+  - The hub requires `role` from realtimed and refuses it from anyone else.
+    Direct development sessions still read as the engine login.
+  - The engine reads each group as its login (`set_config('role')`, per
+    group, in a savepoint). It refuses a login that is a superuser or has
+    `BYPASSRLS`, or that the engine login may not `SET ROLE` to (`SET` from
+    PostgreSQL 16).
+  - Sealed queries are therefore bounded by the binding's grants and by row
+    policies the customer writes for it, rather than by livequeryd's
+    superuser login.
+  - Binding changes reach realtimed through the 30-second endpoint
+    reconciler. A dropped login closes its queries with `invalid_query`.
+  - Replaces the `-rls-roles` and `-rls-anon-role` flags.
 
 ## Consequences
 

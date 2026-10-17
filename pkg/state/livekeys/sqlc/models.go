@@ -9,11 +9,15 @@ import (
 )
 
 type ManagedPostgresBinding struct {
-	AccountID  pgtype.UUID
-	DatabaseID pgtype.UUID
-	AppID      pgtype.UUID
-	State      string
-	DeletedAt  pgtype.Timestamptz
+	AccountID          pgtype.UUID
+	DatabaseID         pgtype.UUID
+	AppID              pgtype.UUID
+	Scope              string
+	Access             string
+	ProviderIdentityID pgtype.Text
+	State              string
+	CreatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {

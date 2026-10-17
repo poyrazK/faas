@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/livequery"
@@ -14,16 +12,40 @@ import (
 )
 
 // RLS mode (ADR-1384): a client subscribes with a Data API read and its
-// user's token; realtimed verifies the token and forwards its claims. The
-// hub compiles the read and maintains it as the claims' role, so the
-// database's row-level security decides every row.
+// user's token; realtimed verifies the token and forwards its claims with
+// the endpoint app's Data API binding login. The hub compiles the read and
+// maintains it as that login with the claims, as the Data API gateway runs
+// it (ADR-650), so the database's row-level security decides every row.
+//
+// Sealed queries from realtimed also read as a login: the app's read-only
+// (else read-write) binding, whose grants the customer controls.
 
 // volatileClaims change with every token refresh and say nothing about who
 // the user is; leaving them out lets a refreshed token keep its plan group.
 var volatileClaims = []string{"exp", "iat", "nbf", "jti"}
 
+// defaultDataAPISchema is the schema a read names none of: the Data API's
+// first exposed schema by default (ADR-650), the only one its login may
+// read unless DATA_API_SCHEMAS adds others.
+const defaultDataAPISchema = "api"
+
 // rlsRefusal is a live.error code and message refusing an RLS-mode frame.
 type rlsRefusal struct{ code, msg string }
+
+// sealedSession is who a sealed query reads as: the login realtimed names
+// (the app's binding), or the engine's own login for a direct development
+// session, which may not name one.
+func sealedSession(sess *Session, f liveproto.ClientFrame) (*livequery.Session, *rlsRefusal) {
+	switch {
+	case !sess.trusted && f.Role != "":
+		return nil, &rlsRefusal{liveproto.CodeForbidden, "only realtimed names the login a query reads as"}
+	case !sess.trusted:
+		return nil, nil
+	case f.Role == "":
+		return nil, &rlsRefusal{liveproto.CodeForbidden, "the query names no login to read as"}
+	}
+	return &livequery.Session{Role: f.Role, Claims: "{}"}, nil
+}
 
 // session turns a frame's verified claims into the session the engine reads
 // as, and when the claims expire.
@@ -31,8 +53,11 @@ func (h *Hub) session(sess *Session, f liveproto.ClientFrame) (*livequery.Sessio
 	if !sess.trusted {
 		return nil, time.Time{}, &rlsRefusal{liveproto.CodeForbidden, "RLS-mode live queries arrive only through realtimed, which verifies the user's token"}
 	}
-	if len(h.cfg.RLSRoles) == 0 || h.cfg.Pool == nil {
+	if h.cfg.Pool == nil {
 		return nil, time.Time{}, &rlsRefusal{liveproto.CodeUnavailable, "RLS-mode live queries are not enabled on this database"}
+	}
+	if f.Role == "" {
+		return nil, time.Time{}, &rlsRefusal{liveproto.CodeForbidden, "the read names no Data API login to read as"}
 	}
 	var claims map[string]any
 	if err := json.Unmarshal(f.Claims, &claims); err != nil || claims == nil {
@@ -42,13 +67,9 @@ func (h *Hub) session(sess *Session, f liveproto.ClientFrame) (*livequery.Sessio
 	if f.ClaimsExpires <= 0 || !h.cfg.Now().Before(expires) {
 		return nil, time.Time{}, &rlsRefusal{liveproto.CodeSealExpired, "the token has expired; renew it"}
 	}
-	role := h.cfg.RLSAnonRole
-	if r, ok := claims["role"].(string); ok {
-		role = r
-	}
-	if role == "" || !slices.Contains(h.cfg.RLSRoles, role) {
-		return nil, time.Time{}, &rlsRefusal{liveproto.CodeForbidden, fmt.Sprintf("the token's role %q may not read live queries", role)}
-	}
+	// The SQL role is the app's Data API login whatever the token's role
+	// claim says, as the Data API gateway overwrites it (ADR-650).
+	role := f.Role
 	for _, k := range volatileClaims {
 		delete(claims, k)
 	}
@@ -70,7 +91,7 @@ func (h *Hub) compileREST(ctx context.Context, f liveproto.ClientFrame) (*rest.C
 	}
 	schema := f.Schema
 	if schema == "" {
-		schema = "public"
+		schema = defaultDataAPISchema
 	}
 	conn, err := h.cfg.Pool.Acquire(ctx)
 	if err != nil {

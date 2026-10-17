@@ -51,6 +51,7 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	reader := readerRole(t, pool, "messages")
 	if err := livequery.Install(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 	go func() { stopped <- hub.Run(ctx) }()
 	defer func() { cancel(); <-stopped }()
 	hubMux := http.NewServeMux()
-	hubMux.Handle("/live", liveserver.WebSocket(hub, func(*http.Request) bool { return true }))
+	hubMux.Handle("/live", liveserver.WebSocketTrusting(hub, func(*http.Request) bool { return true }, func(*http.Request) bool { return true }))
 	hubSrv := httptest.NewServer(hubMux)
 	defer hubSrv.Close()
 
@@ -85,7 +86,7 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"}},
-		LiveRoutes: []realtime.LiveRoute{{KID: secret.KID, Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live"}},
+		LiveRoutes: []realtime.LiveRoute{{KID: secret.KID, Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live", SealedRole: reader}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 
 	// Binding the app (apid re-registers the endpoint with the route) applies
 	// to the open connection.
-	unbound.LiveRoutes = []realtime.LiveRoute{{KID: secret.KID, Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live"}}
+	unbound.LiveRoutes = []realtime.LiveRoute{{KID: secret.KID, Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live", SealedRole: reader}}
 	if err := m.RegisterEndpoint(unbound); err != nil {
 		t.Fatal(err)
 	}

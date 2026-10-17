@@ -16,8 +16,9 @@ func TestSessionRoutesOnlyThroughItsRouter(t *testing.T) {
 	p := New(nil, nil)
 	defer p.Close()
 	router := StaticRouter(map[string]Route{
-		"0123456789abcdef": {Database: "db_1", URL: "ws://127.0.0.1:1/live"}, // unreachable: subscriptions stay
-		"fedcba9876543210": {Database: "db_2", URL: "ws://127.0.0.1:1/live"},
+		"0123456789abcdef": {Database: "db_1", URL: "ws://127.0.0.1:1/live", SealedRole: "reader"}, // unreachable: subscriptions stay
+		"fedcba9876543210": {Database: "db_2", URL: "ws://127.0.0.1:1/live", SealedRole: "reader"},
+		"1111111111111111": {Database: "db_3", URL: "ws://127.0.0.1:1/live"}, // no binding login
 	})
 	errorFor := func(frames chan []byte, subscription string) liveproto.Error {
 		t.Helper()
@@ -51,6 +52,10 @@ func TestSessionRoutesOnlyThroughItsRouter(t *testing.T) {
 	s.Receive(ctx, frame(liveproto.TypeSubscribe, "unrouted", "aaaaaaaaaaaaaaaa"))
 	if e := errorFor(frames, "unrouted"); e.Code != liveproto.CodeForbidden || !e.Closed {
 		t.Fatalf("unrouted key: %+v", e)
+	}
+	s.Receive(ctx, frame(liveproto.TypeSubscribe, "nologin", "1111111111111111"))
+	if e := errorFor(frames, "nologin"); e.Code != liveproto.CodeForbidden || !e.Closed {
+		t.Fatalf("route without a login: %+v", e)
 	}
 
 	bare := make(chan []byte, 8)
