@@ -692,7 +692,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
 			endUser: aiEndUser, tags: aiTags, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
-			response: responseCheck,
+			response: responseCheck, cacheHit: cacheHit,
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()

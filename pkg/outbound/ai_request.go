@@ -183,10 +183,10 @@ func setReplayableBody(req *http.Request, body []byte) {
 	}
 }
 
-// aiCacheEligible extends the opt-in response cache (ADR-294) to buffered,
-// non-streaming JSON POST calls of an AI integration.
+// aiCacheEligible extends the opt-in response cache (ADR-294) to buffered
+// JSON POST calls of an AI integration, streaming ones included (ADR-1440).
 func aiCacheEligible(req *http.Request, ai *aiRequest, ttlSeconds int) bool {
-	if ai == nil || ai.streaming || ttlSeconds <= 0 || req == nil || req.Method != http.MethodPost {
+	if ai == nil || ttlSeconds <= 0 || req == nil || req.Method != http.MethodPost {
 		return false
 	}
 	return jsonRequest(req.Header.Get("Content-Type"), ai.body) && !requestCacheControlDisablesCaching(req.Header)

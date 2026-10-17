@@ -88,6 +88,10 @@ type OutboundAIUsageItem struct {
 	WebSearches   int64
 	FileSearches  int64
 	CodeSessionGB int64
+	// Cache hits and what caching saved (ADR-1440).
+	CachedRequests             int64
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.

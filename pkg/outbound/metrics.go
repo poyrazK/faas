@@ -48,6 +48,7 @@ type Metrics struct {
 	aiResponseChecks       *prometheus.CounterVec
 	aiResponseFindings     *prometheus.CounterVec
 	aiPromptCacheMarks     *prometheus.CounterVec
+	aiResponseCacheSaved   *prometheus.CounterVec
 }
 
 // NewMetrics registers the outbound gateway metric families against reg.
@@ -176,6 +177,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_route_canary_rollbacks_total",
 			Help: "Model canaries outboundd rolled back, by reason (error_rate or latency) (ADR-1340).",
 		}, []string{"reason"}),
+		aiResponseCacheSaved: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_response_cache_saved_millicents_total",
+			Help: "Provider cost the response cache avoided, priced from cached responses' usage, by integration (ADR-1440).",
+		}, []string{"integration_id"}),
 		aiPromptCacheMarks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_prompt_cache_marks_total",
 			Help: "Prompt-cache breakpoints the gateway added to Claude requests by integration and mark (prefix or conversation) (ADR-1420).",
@@ -232,6 +237,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiResponseChecks,
 		m.aiResponseFindings,
 		m.aiPromptCacheMarks,
+		m.aiResponseCacheSaved,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -438,6 +444,15 @@ func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {
 		return
 	}
 	m.aiCanaryRollbacks.WithLabelValues(reason).Inc()
+}
+
+// ObserveAIResponseCacheSaved counts the provider cost one cache hit
+// avoided (ADR-1440).
+func (m *Metrics) ObserveAIResponseCacheSaved(integrationID string, millicents int64) {
+	if m == nil || m.aiResponseCacheSaved == nil || millicents <= 0 {
+		return
+	}
+	m.aiResponseCacheSaved.WithLabelValues(integrationID).Add(float64(millicents))
 }
 
 // ObserveAIPromptCacheMark counts one breakpoint the gateway added

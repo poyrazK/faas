@@ -90,6 +90,8 @@ type AIUsageTotals struct {
 	VideoSeconds int64
 	// Built-in tool uses (ADR-1380).
 	WebSearches, FileSearches, CodeSessionGB int64
+	// Cache hits and what caching saved (ADR-1440).
+	CachedRequests, CacheSavedMillicents, PromptCacheSavedMillicents int64
 }
 
 // AIUserUsageTotals is one end user's UTC-day rollup (ADR-994).
@@ -637,6 +639,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	row.WebSearches += record.Usage.WebSearches
 	row.FileSearches += record.Usage.FileSearches
 	row.CodeSessionGB += record.Usage.CodeSessionGB
+	row.CachedRequests += cachedRequests(record)
+	row.CacheSavedMillicents += record.CacheSavedMillicents
+	row.PromptCacheSavedMillicents += record.PromptCacheSavedMillicents
 	state.aiUsage[key] = row
 	crossings := []aiBudgetCrossing{
 		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount, "", ""},

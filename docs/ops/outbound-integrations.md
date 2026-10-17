@@ -579,9 +579,20 @@ call:
 - **Retries:** `max_retries` and the retry budget also apply to these calls,
   on the usual transient failures. Every retry happens before any response
   byte reaches the caller.
-- **Cache:** with `response_cache_ttl_seconds` set, an identical
-  non-streaming JSON request (same body, caller and headers) is served from
-  the cache when the provider returned `200`. A cache hit costs no tokens.
+- **Cache:** with `response_cache_ttl_seconds` set, an identical JSON
+  request (same body, caller and headers) is served from the cache when the
+  provider returned `200`. Streams are cached too (ADR-1440): the stream is
+  copied into the cache as it is forwarded and kept only when it ends cleanly
+  within 1 MiB, and a hit replays it at once. Each outboundd process holds at
+  most 32 MiB of entries.
+- **Cache hits** cost no tokens. Each settles as one of the caller's and
+  model's `cached_requests` and adds the cost the provider call would have had,
+  priced from the cached response, to `cache_saved_millicents`.
+  `outbound_ai_response_cache_saved_millicents_total` counts it.
+- **Prompt-cache savings:** every call also adds
+  `prompt_cache_saved_millicents`: its cost with cached reads and cache
+  writes priced as plain input, minus its cost. It is negative when cache
+  writes outweighed reads. `gregale ai usage` shows both savings.
 - **OpenAI stream usage:** the gateway turns on
   `stream_options.include_usage` for OpenAI streaming completions. It records
   the extra usage chunk, then removes it from the stream the caller sees, so

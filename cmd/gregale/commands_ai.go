@@ -244,6 +244,15 @@ func cmdAIPolicy(args []string) int {
 	return 0
 }
 
+// formatSaved renders what caching saved, which prompt-cache writes can
+// make negative (ADR-1440).
+func formatSaved(millicents int64) string {
+	if millicents < 0 {
+		return "-" + financialMoney(-millicents)
+	}
+	return financialMoney(millicents)
+}
+
 // formatMediaUsage lists a rollup's images, audio seconds and characters
 // (ADR-997), video seconds (ADR-1370) and built-in tool uses (ADR-1380),
 // or "-".
@@ -336,11 +345,18 @@ func cmdAIUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Cost today: %s / %s   %s month to date: %s / %s\n", financialMoney(usage.DailyCostMillicents),
 		formatOptionalMoney(usage.DailyCostLimitMillicents), usage.Month, financialMoney(usage.MonthlyCostMillicents), formatOptionalMoney(usage.MonthlyCostLimitMillicents))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST")
+	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED")
+	var saved int64
 	for _, item := range usage.Items {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.ErrorRequests,
-			item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item), financialMoney(item.CostMillicents))
+		itemSaved := item.CacheSavedMillicents + item.PromptCacheSavedMillicents
+		saved += itemSaved
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.CachedRequests,
+			item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
+			financialMoney(item.CostMillicents), formatSaved(itemSaved))
 	}
 	_ = tw.Flush()
+	if saved != 0 {
+		_, _ = fmt.Fprintf(osStdout, "Saved today by the response cache and prompt caching: %s\n", formatSaved(saved))
+	}
 	return 0
 }

@@ -8096,8 +8096,10 @@
     "table": "outbound_ai_usage_daily",
     "columns": [
       "audio_seconds",
+      "cache_saved_millicents",
       "cache_write_tokens",
       "cached_input_tokens",
+      "cached_requests",
       "caller",
       "characters",
       "code_session_gb",
@@ -8109,6 +8111,7 @@
       "integration_id",
       "model",
       "output_tokens",
+      "prompt_cache_saved_millicents",
       "requests",
       "updated_at",
       "usage_date",

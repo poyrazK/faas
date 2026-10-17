@@ -93,6 +93,13 @@ type AIUsageRecord struct {
 	// Export is the call's line for the calling app's log drains
 	// (ADR-1340).
 	Export *AILogExport
+	// Cached marks a response the cache served; it has no tokens or cost,
+	// and CacheSavedMillicents is what the provider call would have cost.
+	// PromptCacheSavedMillicents is what provider prompt caching saved on a
+	// provider call, negative when cache writes outweigh reads (ADR-1440).
+	Cached                     bool
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
 }
 
 // AIRouteAttemptRecord is one settled attempt of a route with a canary.
@@ -258,6 +265,12 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	}
 	if record.CostMillicents < 0 || record.CostMillicents > api.MaxOutboundAICostMillicents {
 		return fmt.Errorf("%w: AI usage cost is out of range", ErrInvalidIntegration)
+	}
+	if record.CacheSavedMillicents < 0 || record.CacheSavedMillicents > api.MaxOutboundAICostMillicents ||
+		record.PromptCacheSavedMillicents < -api.MaxOutboundAICostMillicents || record.PromptCacheSavedMillicents > api.MaxOutboundAICostMillicents ||
+		(!record.Cached && record.CacheSavedMillicents != 0) ||
+		(record.Cached && (usage.BudgetTokens() != 0 || record.CostMillicents != 0 || record.PromptCacheSavedMillicents != 0)) {
+		return fmt.Errorf("%w: AI usage cache savings are invalid", ErrInvalidIntegration)
 	}
 	if !validAITags(record.Tags) {
 		return fmt.Errorf("%w: AI usage tags are invalid", ErrInvalidIntegration)

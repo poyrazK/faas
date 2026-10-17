@@ -182,6 +182,12 @@ type OutboundAIUsageItem struct {
 	WebSearches   int64 `json:"web_searches"`
 	FileSearches  int64 `json:"file_searches"`
 	CodeSessionGB int64 `json:"code_session_gb"`
+	// ADR-1440: requests the response cache served, the provider cost they
+	// avoided, and what provider prompt caching saved, negative when cache
+	// writes outweighed reads.
+	CachedRequests             int64 `json:"cached_requests"`
+	CacheSavedMillicents       int64 `json:"cache_saved_millicents"`
+	PromptCacheSavedMillicents int64 `json:"prompt_cache_saved_millicents"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

@@ -46,6 +46,12 @@ class OutboundAIUsageItem:
     """File search calls (ADR-1380)."""
     code_session_gb: int
     """GB of code-interpreter container sessions (ADR-1380)."""
+    cached_requests: int
+    """Requests the response cache served, with no tokens or cost (ADR-1440)."""
+    cache_saved_millicents: int
+    """Provider cost the response cache avoided, priced from the cached responses at the current price list."""
+    prompt_cache_saved_millicents: int
+    """What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads."""
     cost_millicents: int | Unset = UNSET
     """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
     unpriced model."""
@@ -84,6 +90,12 @@ class OutboundAIUsageItem:
 
         code_session_gb = self.code_session_gb
 
+        cached_requests = self.cached_requests
+
+        cache_saved_millicents = self.cache_saved_millicents
+
+        prompt_cache_saved_millicents = self.prompt_cache_saved_millicents
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -106,6 +118,9 @@ class OutboundAIUsageItem:
                 "web_searches": web_searches,
                 "file_searches": file_searches,
                 "code_session_gb": code_session_gb,
+                "cached_requests": cached_requests,
+                "cache_saved_millicents": cache_saved_millicents,
+                "prompt_cache_saved_millicents": prompt_cache_saved_millicents,
             }
         )
         if cost_millicents is not UNSET:
@@ -148,6 +163,12 @@ class OutboundAIUsageItem:
 
         code_session_gb = d.pop("code_session_gb")
 
+        cached_requests = d.pop("cached_requests")
+
+        cache_saved_millicents = d.pop("cache_saved_millicents")
+
+        prompt_cache_saved_millicents = d.pop("prompt_cache_saved_millicents")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -167,6 +188,9 @@ class OutboundAIUsageItem:
             web_searches=web_searches,
             file_searches=file_searches,
             code_session_gb=code_session_gb,
+            cached_requests=cached_requests,
+            cache_saved_millicents=cache_saved_millicents,
+            prompt_cache_saved_millicents=prompt_cache_saved_millicents,
             cost_millicents=cost_millicents,
         )
 

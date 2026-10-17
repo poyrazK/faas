@@ -368,6 +368,14 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 	return crossings, nil
 }
 
+// cachedRequests counts a cache hit (ADR-1440).
+func cachedRequests(record AIUsageRecord) int64 {
+	if record.Cached {
+		return 1
+	}
+	return 0
+}
+
 func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
 	var errorRequests, unknownRequests int64
 	switch record.Outcome {
@@ -384,7 +392,8 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		INSERT INTO outbound_ai_usage_daily AS usage
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
 		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
-		     images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb)
+		     images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
+		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -392,7 +401,7 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -410,11 +419,15 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    web_searches = usage.web_searches + EXCLUDED.web_searches,
 		    file_searches = usage.file_searches + EXCLUDED.file_searches,
 		    code_session_gb = usage.code_session_gb + EXCLUDED.code_session_gb,
+		    cached_requests = usage.cached_requests + EXCLUDED.cached_requests,
+		    cache_saved_millicents = usage.cache_saved_millicents + EXCLUDED.cache_saved_millicents,
+		    prompt_cache_saved_millicents = usage.prompt_cache_saved_millicents + EXCLUDED.prompt_cache_saved_millicents,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
 		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds,
-		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB)
+		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB, cachedRequests(record), record.CacheSavedMillicents,
+		record.PromptCacheSavedMillicents)
 }
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one

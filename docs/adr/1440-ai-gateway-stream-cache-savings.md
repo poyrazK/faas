@@ -1,0 +1,31 @@
+# ADR-1440 · AI gateway phase 17: streaming response cache and cache savings
+
+- **Status:** accepted
+- **Date:** 2026-10-17
+- **Relates to:** ADR-294 (response cache), ADR-990 (AI cache, prices), ADR-1400 (response checks), ADR-1420 (prompt caching)
+- **Decision:**
+  - **Streams are cached too.** With `response_cache_ttl_seconds` set, an identical streaming AI request is cached like a non-streaming one: same buffered JSON body, caller and headers, through the same per-process, bounded cache.
+    - Server-sent events and Bedrock event streams are both covered.
+    - The provider stream is copied into the entry as it is forwarded, so the first call is not delayed. The entry is kept only when the stream ends cleanly within the entry bound.
+    - A stream that errors, that the caller abandons, that a response check ends (ADR-1400), or that grows past the bound is dropped.
+    - A hit replays the stored bytes at once; response checks apply to hits as to misses.
+  - **Cache hits settle.**
+    - A hit was not settled at all before. Now it adds one cached request to the caller's and model's UTC-day row, with no tokens and no cost.
+    - It also records what the provider call would have cost: the usage read from the cached response, priced as a call. Caps, tags and end users are unaffected, since nothing was spent.
+  - **Prompt-cache savings.** Settlement records what provider prompt caching saved on each call: its cost with cached reads and cache writes priced as plain input, minus its actual cost. This is negative when cache writes outweigh reads.
+  - **Visibility.**
+    - Usage items gain `cached_requests`, `cache_saved_millicents` and `prompt_cache_saved_millicents`, and `gregale ai usage` shows them.
+    - `outbound_ai_response_cache_saved_millicents_total` counts response-cache savings.
+- **Why:**
+  - Most AI calls stream, so the response cache missed most of the traffic it could serve.
+  - Hits were invisible: they neither appeared in usage nor showed what the cache saved.
+  - Prompt caching (ADR-1420) is only worth turning on if its effect is visible in money, not only in token counts.
+- **Consequences:**
+  - **Replay is not paced.** A cached stream arrives as fast as the connection allows. Clients reading events see the same events in the same order.
+  - **Entries stay bounded.** Each entry holds at most 1 MiB in a 32 MiB cache per outboundd process; longer streams are never cached. Concurrent fills share the existing fill slots, and a stream that finds none is forwarded without caching.
+  - **Savings use the current price list.** A response cached under an older price list is valued at today's prices.
+  - **New columns:** `outbound_ai_usage_daily.cached_requests`, `cache_saved_millicents` and `prompt_cache_saved_millicents`.
+- **Rejected alternatives:**
+  - **Buffering a stream before forwarding it on a miss.** It delays every first call by the whole generation.
+  - **Replaying at the original pacing.** It would keep timing data per entry and slow every hit for no gain to the caller.
+  - **Counting hits against caps.** Nothing reached the provider, and the caps bound provider spend.

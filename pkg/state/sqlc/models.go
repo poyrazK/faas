@@ -6907,26 +6907,29 @@ type OutboundAiTagUsageDaily struct {
 }
 
 type OutboundAiUsageDaily struct {
-	IntegrationID        pgtype.UUID
-	UsageDate            pgtype.Date
-	Caller               string
-	Model                string
-	Requests             int64
-	ErrorRequests        int64
-	UsageUnknownRequests int64
-	InputTokens          int64
-	CachedInputTokens    int64
-	CacheWriteTokens     int64
-	OutputTokens         int64
-	UpdatedAt            pgtype.Timestamptz
-	CostMillicents       int64
-	Images               int64
-	AudioSeconds         int64
-	Characters           int64
-	VideoSeconds         int64
-	WebSearches          int64
-	FileSearches         int64
-	CodeSessionGb        int64
+	IntegrationID              pgtype.UUID
+	UsageDate                  pgtype.Date
+	Caller                     string
+	Model                      string
+	Requests                   int64
+	ErrorRequests              int64
+	UsageUnknownRequests       int64
+	InputTokens                int64
+	CachedInputTokens          int64
+	CacheWriteTokens           int64
+	OutputTokens               int64
+	UpdatedAt                  pgtype.Timestamptz
+	CostMillicents             int64
+	Images                     int64
+	AudioSeconds               int64
+	Characters                 int64
+	VideoSeconds               int64
+	WebSearches                int64
+	FileSearches               int64
+	CodeSessionGb              int64
+	CachedRequests             int64
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
 }
 
 type OutboundAiUserUsageDaily struct {

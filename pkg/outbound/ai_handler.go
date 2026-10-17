@@ -84,9 +84,10 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 // observeAIResponse starts usage extraction for an AI integration's
 // generation call. It returns nil when the response is not an AI call. The
 // plan picks the call's wire format and the model to report when the
-// response names none (ADR-991).
+// response names none (ADR-991). A cache hit is observed too, to value
+// what it saved (ADR-1440); its bodies are never captured.
 func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest, plan *aiCallPlan) *aiUsageObserver {
-	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil ||
+	if integration.AIProvider == "" || r.Method != http.MethodPost || resp == nil || resp.Body == nil ||
 		(plan != nil && plan.endpoint.batch) {
 		return nil
 	}
@@ -102,7 +103,7 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 	observer.applyHeaders(resp.Header)
 	_, replaying := replayPrincipalFromContext(r.Context())
 	_, internal := internalPrincipalFromContext(r.Context())
-	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !internal {
+	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !internal && !cacheHit {
 		observer.capture = newAIContentCapture(ai, resp.Header.Get("Content-Type"))
 		if plan != nil {
 			observer.capture.content.RequestPath = plan.path
@@ -151,6 +152,8 @@ type aiSettlement struct {
 	// response is the response check's result, filled as the response is
 	// sent (ADR-1400); nil when the response is not checked.
 	response *aiResponseCheck
+	// cacheHit marks a response the cache served (ADR-1440).
+	cacheHit bool
 }
 
 // speechUsage settles a successful speech call at its input characters when
@@ -228,6 +231,10 @@ func estimatedAIUsage(outcome AIUsageOutcome, usage AIUsage, settlement aiSettle
 // including an aborted one, so partial streams still count what they used.
 func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
 	observer *aiUsageObserver, span oteltrace.Span, metricIntegrationID string) {
+	if settlement.cacheHit {
+		h.settleAICacheHit(ctx, integration, appID, settlement, observer, span, metricIntegrationID)
+		return
+	}
 	usage := observer.Finish()
 	status, upstreamStarted := settlement.status, settlement.started
 	outcome := aiUsageOutcome(status, usage)
@@ -283,6 +290,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
 		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
+		PromptCacheSavedMillicents: promptCacheSavedMillicents(integration, usage, cost),
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
@@ -312,6 +320,47 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		h.Metrics.ObserveAILogExport(metricIntegrationID)
 	}
 	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// settleAICacheHit records a response the cache served (ADR-1440): one
+// cached request of the caller and model, with no tokens and no cost, and
+// what the provider call would have cost, priced from the cached response's
+// usage. Nothing was spent, so caps, end users and tags are not touched.
+func (h *Handler) settleAICacheHit(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
+	observer *aiUsageObserver, span oteltrace.Span, metricIntegrationID string) {
+	usage := observer.Finish()
+	saved := aiCallCostMillicents(integration, usage)
+	span.SetAttributes(attribute.Int64("gregale.ai.cache_saved_millicents", saved))
+	h.Metrics.ObserveAIResponseCacheSaved(metricIntegrationID, saved)
+	recorder, ok := h.Backend.(AIUsageBackend)
+	if !ok {
+		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "unavailable")
+		return
+	}
+	caller := appID
+	if caller == "" {
+		caller = AIUsageCallerRuns
+	}
+	record := AIUsageRecord{IntegrationID: integration.ID, Caller: caller, Outcome: AIUsageOutcomeKnown,
+		Usage: AIUsage{Model: usage.Model, Known: true}, Cached: true, CacheSavedMillicents: saved, LeaseID: settlement.leaseID}
+	write := func(ctx context.Context) ([]AIBudgetAlert, error) { return nil, recorder.RecordAIUsage(ctx, record) }
+	if _, err := h.recordAIUsage(context.WithoutCancel(ctx), record, metricIntegrationID, write); err != nil {
+		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
+		return
+	}
+	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// promptCacheSavedMillicents is what provider prompt caching saved on one
+// call: its cost with cached reads and cache writes priced as plain input,
+// minus its cost. It is negative when writes outweigh reads (ADR-1440).
+func promptCacheSavedMillicents(integration Integration, usage AIUsage, cost int64) int64 {
+	if !usage.Known || usage.CachedInputTokens+usage.CacheWriteTokens == 0 {
+		return 0
+	}
+	plain := usage
+	plain.CachedInputTokens, plain.CacheWriteTokens = 0, 0
+	return aiCallCostMillicents(integration, plain) - cost
 }
 
 // aiRouteAttemptFor is a canary-tracked attempt's contribution to its

@@ -107,7 +107,8 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 	rows, err := s.pool.Query(ctx, `
 		SELECT caller, model, requests, error_requests, usage_unknown_requests,
 		       input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
-		       images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb
+		       images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
+		       cached_requests, cache_saved_millicents, prompt_cache_saved_millicents
 		  FROM outbound_ai_usage_daily
 		 WHERE integration_id = $1 AND usage_date = $2::date
 		 ORDER BY caller, model
@@ -122,7 +123,7 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 		if err := rows.Scan(&item.Caller, &item.Model, &item.Requests, &item.ErrorRequests, &item.UsageUnknownRequests,
 			&item.InputTokens, &item.CachedInputTokens, &item.CacheWriteTokens, &item.OutputTokens, &item.CostMillicents,
 			&item.Images, &item.AudioSeconds, &item.Characters, &item.VideoSeconds, &item.WebSearches, &item.FileSearches,
-			&item.CodeSessionGB); err != nil {
+			&item.CodeSessionGB, &item.CachedRequests, &item.CacheSavedMillicents, &item.PromptCacheSavedMillicents); err != nil {
 			return OutboundAIUsage{}, mapErr(err)
 		}
 		rollupTokens += item.InputTokens + item.OutputTokens

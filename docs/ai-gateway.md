@@ -49,6 +49,9 @@ account during the preview; contact support to have it turned on for yours.
   the gateway marks repeated system prompts and tool lists and continuing
   conversations for the provider's cache, so repeated input is billed at the
   cache-read price.
+- **Response cache.** Identical calls, streamed or not, can be answered from
+  the gateway's cache. Usage shows cache hits and what the response cache and
+  prompt caching saved.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.

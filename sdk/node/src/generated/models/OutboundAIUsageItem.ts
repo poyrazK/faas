@@ -56,5 +56,17 @@ export type OutboundAIUsageItem = {
    * GB of code-interpreter container sessions (ADR-1380).
    */
   code_session_gb: number;
+  /**
+   * Requests the response cache served, with no tokens or cost (ADR-1440).
+   */
+  cached_requests: number;
+  /**
+   * Provider cost the response cache avoided, priced from the cached responses at the current price list.
+   */
+  cache_saved_millicents: number;
+  /**
+   * What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.
+   */
+  prompt_cache_saved_millicents: number;
 };
 
