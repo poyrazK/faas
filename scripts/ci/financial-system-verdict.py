@@ -18,6 +18,49 @@ SOURCES = {
 BINARIES = ("apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd")
 
 
+def reconciliation_contract(root, records):
+    """Independently check canonical integer provider events and receipts."""
+    source = (root / SOURCES["provider"]).read_text()
+    selected = re.search(r'for _, scenario := range \[\]string\{([^}]+)\}', source)
+    if selected is None:
+        raise ValueError("provider source selects no reconciliation scenarios")
+    scenarios = re.findall(r'"([a-z_]+)"', selected[1])
+    if not scenarios:
+        raise ValueError("provider reconciliation scenarios missing")
+    proofs = {}
+    for scenario in scenarios:
+        path = records / f"reconciliation-{scenario}.json"
+        proof = json.loads(path.read_text())
+        expected = proof["expected"]
+        events = proof["provider"]["events"]
+        if proof["scenario"] != scenario or not expected or expected != proof["receipts"] or set(events) != set(expected) or proof["provider"].get("conflicts"):
+            raise ValueError(f"{scenario}: provider/receipt vectors do not reconcile")
+        if any(type(proof.get(name)) is not int for name in ("invoice_millicents", "committed_millicents", "limit_millicents")):
+            raise ValueError(f"{scenario}: financial amounts must be canonical integers")
+        invoice = 0
+        for key, quantity in expected.items():
+            event = events[key]
+            if type(quantity) is not int or type(proof["receipts"][key]) is not int or quantity <= 0 or event["external_id"] != key:
+                raise ValueError(f"{scenario}: invalid canonical event identity/quantity")
+            if event["name"] == "faas_ram_usage":
+                field, unit, rate = "mb_seconds", 1024 * 3600, 1000
+            elif event["name"] == "faas_egress_usage":
+                field, unit, rate = "egress_bytes", 1 << 30, 2000
+            else:
+                raise ValueError(f"{scenario}: unexpected billed meter")
+            if type(event["metadata"].get(field)) is not int or event["metadata"][field] != quantity:
+                raise ValueError(f"{scenario}: canonical wire quantity changed")
+            invoice += (quantity * rate + unit - 1) // unit
+        if invoice != proof["invoice_millicents"] or not 0 <= invoice <= proof["committed_millicents"] <= proof["limit_millicents"]:
+            raise ValueError(f"{scenario}: invoice exceeds its retained money")
+        for meter in ("mb_seconds", "egress_bytes"):
+            measured, funded = proof["measured_" + meter], proof["funded_" + meter]
+            if type(measured) is not int or type(funded) is not int or not 0 < measured <= funded:
+                raise ValueError(f"{scenario}: measured usage exceeds funded quantity")
+        proofs[scenario] = {"path": str(path), "sha256": digest(path), "events": len(events), "invoice_millicents": invoice}
+    return proofs
+
+
 def digest(path):
     h = hashlib.sha256()
     with path.open("rb") as stream:
@@ -106,11 +149,16 @@ def build_report(args, host=None):
             artifacts[name] = {"path": str(path), "sha256": digest(path), "bytes": path.stat().st_size}
         except OSError:
             errors.append(f"matching artifact missing: {name}")
+    reconciliation = {}
+    try:
+        reconciliation = reconciliation_contract(args.root, args.provider_log.parent / "financial-system-records")
+    except (OSError, ValueError, KeyError, TypeError):
+        errors.append("canonical provider reconciliation evidence missing or invalid")
     return {
         "schema_version": 1, "scope": "single_host_full_daemon_and_provider_replay",
         "qualified": not errors, "source_sha": args.source_sha, "run_id": args.run_id,
         "recorded_at": datetime.now(timezone.utc).isoformat(), "host": host,
-        "lanes": lanes, "checks": checks, "artifacts": artifacts, "failures": errors,
+        "lanes": lanes, "checks": checks, "artifacts": artifacts, "reconciliation": reconciliation, "failures": errors,
         "remaining_release_gates": [
             "physical two-host contention and network partitions",
             "complete workload and offload matrix with performance targets",

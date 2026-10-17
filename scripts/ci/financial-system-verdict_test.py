@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -26,6 +27,13 @@ class VerdictTest(unittest.TestCase):
         for path in [self.args.binary_root / name for name in verdict.BINARIES] + [self.args.guest_init, self.args.kernel]:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic artifact; never native execution")
+        provider_source = root / verdict.SOURCES["provider"]
+        provider_source.write_text(provider_source.read_text() + '\nfor _, scenario := range []string{"unavailable", "lost_reply"} {}\n')
+        records = root / "financial-system-records"
+        records.mkdir()
+        for scenario in ("unavailable", "lost_reply"):
+            proof = {"scenario": scenario, "expected": {"compute": 3686400, "egress": 1073741824}, "receipts": {"compute": 3686400, "egress": 1073741824}, "invoice_millicents": 3000, "committed_millicents": 3000, "limit_millicents": 4000, "measured_mb_seconds": 3686400, "funded_mb_seconds": 3686400, "measured_egress_bytes": 1073741824, "funded_egress_bytes": 1073741824, "provider": {"conflicts": [], "events": {"compute": {"external_id": "compute", "name": "faas_ram_usage", "metadata": {"mb_seconds": 3686400}}, "egress": {"external_id": "egress", "name": "faas_egress_usage", "metadata": {"egress_bytes": 1073741824}}}}}
+            (records / ("reconciliation-" + scenario + ".json")).write_text(json.dumps(proof))
 
     def report(self):
         return verdict.build_report(self.args, self.host)
@@ -51,6 +59,19 @@ class VerdictTest(unittest.TestCase):
                 setattr(self.args, name, 1)
                 self.assertFalse(self.report()["qualified"])
                 setattr(self.args, name, 0)
+
+    def test_provider_raw_receipts_quantities_and_money_are_required(self):
+        path = self.args.root / "financial-system-records/reconciliation-lost_reply.json"
+        original = json.loads(path.read_text())
+        for field, value in (("receipts", {}), ("funded_egress_bytes", 1), ("committed_millicents", 1), ("invoice_millicents", 1), ("invoice_millicents", 3000.0)):
+            with self.subTest(field=field):
+                path.write_text(json.dumps({**original, field: value}))
+                self.assertFalse(self.report()["qualified"])
+        original["provider"]["events"]["egress"]["metadata"]["egress_bytes"] += 1
+        path.write_text(json.dumps(original))
+        self.assertFalse(self.report()["qualified"])
+        path.unlink()
+        self.assertFalse(self.report()["qualified"])
 
     def test_new_source_scenario_requires_new_execution(self):
         path = self.args.root / verdict.SOURCES["native"]
