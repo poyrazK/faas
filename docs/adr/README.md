@@ -6,6 +6,13 @@ separate files here. This directory holds ADRs made *after* the spec.
 
 Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
+The default-off internal static-hosting lifecycle, quotas, and Cloudflare/R2
+delivery boundary are recorded in
+[ADR-20261015](20261015-internal-static-hosting.md).
+
+Durable internal static routing, conditional publication, and acknowledgement-based
+retirement are specified by [ADR-202610151515](202610151515-durable-static-hosting.md).
+
 ## Picking a number
 
 ADR numbers are hand-picked, so two concurrent PRs routinely claim the same one
@@ -1226,6 +1233,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+
+[ADR-202610171028: Site hosting GitHub OIDC](202610171028-site-hosting-github-oidc.md) specifies explicit immutable trust and short-lived preview credentials.
+
+[ADR-202610171059: Read-only hosting diagnostics](202610171059-read-only-hosting-diagnostics.md) defines bounded evidence and advisory recovery without provider probes or mutations.
 - [ADR-1133: Undelivered service calls re-route outside the retry budget](1133-undelivered-service-calls-reroute.md)
 - [ADR-1131: Customer service map from unsampled service-proxy edges](1131-customer-service-map.md)
 
