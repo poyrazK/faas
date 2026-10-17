@@ -1,8 +1,8 @@
-# ADR-1528: Bounded GitOps recovery artifact retention
+# ADR-1547: Bounded GitOps recovery artifact retention
 
 - **Status:** accepted (implementation preview; native acceptance pending)
 - **Date:** 2026-10-17
-- **Related:** ADR-590, ADR-1525, ADR-1526, ADR-1527
+- **Related:** ADR-590, ADR-1544, ADR-1545, ADR-1546
 
 ## Context
 

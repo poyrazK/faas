@@ -12001,7 +12001,7 @@ const ServiceMapDefaultRange = "1h"
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
 
-// ADR-1528: conservative opt-in artifact retention ceilings, independent of
+// ADR-1547: conservative opt-in artifact retention ceilings, independent of
 // routing TTL and snapshots. Account reservations prevent environment fan-out.
 const (
 	EnvironmentRecoveryMaxReleases           = 5

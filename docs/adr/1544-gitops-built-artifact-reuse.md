@@ -1,8 +1,8 @@
-# ADR-1525: Reuse signed build artifacts across GitOps environments
+# ADR-1544: Reuse signed build artifacts across GitOps environments
 
 - **Status:** accepted (implementation preview; native acceptance pending)
 - **Date:** 2026-10-17
-- **Related:** ADR-435, ADR-1155, ADR-1523, ADR-1524
+- **Related:** ADR-435, ADR-1155, ADR-1542, ADR-1543
 
 ## Context
 
@@ -44,7 +44,7 @@ keep publisher trust, retention and native qualification independent.
    and validate its exact receipt before authenticating origin lineage. Go
    still verifies current signatures in the same transaction. Revocation,
    replacement, changed lineage and missing target qualification remain fences.
-6. Extend ADR-1524's read-only promotion preview/export with producer ID/hash,
+6. Extend ADR-1543's read-only promotion preview/export with producer ID/hash,
    original build/commit and byte digest. Require the source's current serving
    release evidence, explicit matching app mappings and compatible recipes.
    The review hash binds the selected artifact. Preview/export never pins or

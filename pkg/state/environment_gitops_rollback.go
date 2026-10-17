@@ -1,6 +1,6 @@
 package state
 
-// adr: 1526. Historical serving evidence selects code, never execution authority.
+// adr: 1545. Historical serving evidence selects code, never execution authority.
 import (
 	"context"
 	"errors"

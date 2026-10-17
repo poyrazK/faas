@@ -29,7 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1525, 1500 — shared runner claims and borrowed identity survive migration ordering.
+// adr: 1544, 1500 — shared runner claims and borrowed identity survive migration ordering.
 // Signed byte fixtures prove state and SQL contracts, not native ext4 mounting.
 func TestGitOpsBuildArtifactReuseKeepsTargetConfigAndNeverQueuesBuild(t *testing.T) {
 	for _, kind := range []string{"source", "source-node24", "dockerfile", "function"} {

@@ -1235,7 +1235,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
-- [ADR-1522: Provider-bound GitLab review and workload provenance](1522-gitlab-reviewed-gitops.md)
+- [ADR-1541: Provider-bound GitLab review and workload provenance](1541-gitlab-reviewed-gitops.md)
 
 - [ADR 1461: App-scoped issue teams and explicit CODEOWNERS import](1461-issue-teams-and-codeowners.md)
 
@@ -1317,26 +1317,26 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 
-- [ADR-1523: Reviewed source-backed scheduled Jobs](1523-gitops-source-scheduled-jobs.md)
+- [ADR-1542: Reviewed source-backed scheduled Jobs](1542-gitops-source-scheduled-jobs.md)
 
-- [ADR-1524: Read-only GitOps promotion proposals](1524-gitops-promotion-proposals.md)
+- [ADR-1543: Read-only GitOps promotion proposals](1543-gitops-promotion-proposals.md)
 
-- [ADR-1525: Reuse signed build artifacts across GitOps environments](1525-gitops-built-artifact-reuse.md)
+- [ADR-1544: Reuse signed build artifacts across GitOps environments](1544-gitops-built-artifact-reuse.md)
 
-- [ADR-1526: Reviewed GitOps rollback proposals](1526-gitops-reviewed-rollback-proposals.md)
+- [ADR-1545: Reviewed GitOps rollback proposals](1545-gitops-reviewed-rollback-proposals.md)
 
-- [ADR-1527: GitOps recovery catalog](1527-gitops-recovery-catalog.md)
+- [ADR-1546: GitOps recovery catalog](1546-gitops-recovery-catalog.md)
 
-- [ADR-1528: Bounded GitOps recovery artifact retention](1528-gitops-bounded-recovery-retention.md)
+- [ADR-1547: Bounded GitOps recovery artifact retention](1547-gitops-bounded-recovery-retention.md)
 
-- [ADR-1529: Signed artifact promotion and rollback for scheduled Jobs](1529-gitops-scheduled-job-artifact-promotion-and-rollback.md)
+- [ADR-1548: Signed artifact promotion and rollback for scheduled Jobs](1548-gitops-scheduled-job-artifact-promotion-and-rollback.md)
 
-- [ADR-1530: Reuse signed builds for unchanged isolated GitOps contexts](1530-gitops-unchanged-build-context-reuse.md)
+- [ADR-1549: Reuse signed builds for unchanged isolated GitOps contexts](1549-gitops-unchanged-build-context-reuse.md)
 
-- [ADR-1531: Reviewed GitOps promotion pull and merge requests](1531-gitops-promotion-review-requests.md)
+- [ADR-1550: Reviewed GitOps promotion pull and merge requests](1550-gitops-promotion-review-requests.md)
 
-- [ADR-1532: Reviewed GitOps recovery pull and merge requests](1532-gitops-rollback-review-requests.md)
+- [ADR-1551: Reviewed GitOps recovery pull and merge requests](1551-gitops-rollback-review-requests.md)
 
-- [ADR-1533: Wait for a GitOps commit's recorded serving evidence](1533-gitops-wait-for-serving-commit.md)
+- [ADR-1552: Wait for a GitOps commit's recorded serving evidence](1552-gitops-wait-for-serving-commit.md)
 
-- [ADR-1534: Durable GitOps rollout outcome notifications](1534-gitops-rollout-outcome-notifications.md)
+- [ADR-1553: Durable GitOps rollout outcome notifications](1553-gitops-rollout-outcome-notifications.md)

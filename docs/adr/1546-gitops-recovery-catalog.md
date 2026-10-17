@@ -1,8 +1,8 @@
-# ADR-1527: GitOps recovery catalog
+# ADR-1546: GitOps recovery catalog
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-17
-- **Related:** ADR-1524, ADR-1525, ADR-1526
+- **Related:** ADR-1543, ADR-1544, ADR-1545
 
 ## Context
 
@@ -20,7 +20,7 @@ time and UUID ordering with a scoped release UUID cursor and a bounded page size
 Expired compatibility windows remain visible. A detached/rebound source cannot
 borrow a different binding's history, including through a page cursor.
 
-For every row reuse the exact ADR-1526 rollback planner, on one memory lock or
+For every row reuse the exact ADR-1545 rollback planner, on one memory lock or
 PostgreSQL repeatable-read transaction for the whole page. Expose eligibility and
 stable blockers, public image/build identities, original manifest commit and
 serving time, active selection, and the release routing compatibility deadline.

@@ -1,8 +1,8 @@
-# ADR-1533: Wait for a GitOps commit's recorded serving evidence
+# ADR-1552: Wait for a GitOps commit's recorded serving evidence
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-17
-- **Related:** ADR-568, ADR-1155, ADR-1523, ADR-1531, ADR-1532
+- **Related:** ADR-568, ADR-1155, ADR-1542, ADR-1550, ADR-1551
 
 ## Context
 

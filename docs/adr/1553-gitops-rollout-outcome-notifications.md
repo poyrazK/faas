@@ -1,8 +1,8 @@
-# ADR-1534: Durable GitOps rollout outcome notifications
+# ADR-1553: Durable GitOps rollout outcome notifications
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-17
-- **Related:** ADR-1155, ADR-1523, ADR-1533
+- **Related:** ADR-1155, ADR-1542, ADR-1552
 
 ## Context
 

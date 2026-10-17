@@ -1,14 +1,14 @@
-# ADR-1532: Reviewed GitOps recovery pull and merge requests
+# ADR-1551: Reviewed GitOps recovery pull and merge requests
 
 - **Status:** accepted (implementation preview)
 - **Date:** 2026-10-17
-- **Related:** ADR-1526, ADR-1527, ADR-1528, ADR-1529, ADR-1531
+- **Related:** ADR-1545, ADR-1546, ADR-1547, ADR-1548, ADR-1550
 
 ## Context
 
 The recovery catalog and rollback planner already identify retained, previously
 served releases and export source-only recovery proposals. Operators still need
-to manually turn that export into a Git change during recovery. ADR-1531's
+to manually turn that export into a Git change during recovery. ADR-1550's
 provider transports and branch/review guards can perform that step without
 extending platform deployment authority.
 
@@ -24,7 +24,7 @@ extending platform deployment authority.
    current binding generation/intent. Reject blockers, missing proof, detached
    or suspended sources, source errors and no-op recovery. Do not convert the
    rollback response into a promotion plan or reuse promotion approval hashes.
-3. Extract ADR-1531's provider write/retry state machine behind a private prepared
+3. Extract ADR-1550's provider write/retry state machine behind a private prepared
    request. Only the separately validated promotion and rollback entry points
    can construct one. Reuse the same exact-file/tree/parent checks, provider
    numeric repository identity, exclusive branch creation, fixed hosts, bounded

@@ -1,6 +1,6 @@
 package state
 
-// adr: 1527. Recovery inventory reuses rollback checks without extending retention.
+// adr: 1546. Recovery inventory reuses rollback checks without extending retention.
 import (
 	"context"
 	"errors"

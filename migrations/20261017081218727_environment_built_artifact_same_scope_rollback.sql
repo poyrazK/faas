@@ -1,5 +1,5 @@
 -- filename: 20261017081218727_environment_built_artifact_same_scope_rollback.sql
--- adr: 1526
+-- adr: 1545
 -- +goose Up
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION environment_build_artifact_valid(d deployments, materialized boolean) RETURNS boolean LANGUAGE plpgsql AS $$

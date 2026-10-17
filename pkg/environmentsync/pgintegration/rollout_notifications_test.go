@@ -1,4 +1,4 @@
-// adr: 1534 — current graph outcomes and atomic delivery across both stores.
+// adr: 1553 — current graph outcomes and atomic delivery across both stores.
 package pgintegration_test
 
 import (

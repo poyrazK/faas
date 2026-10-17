@@ -1,4 +1,4 @@
-// adr: 1534 — bounded, deduplicated rollout outcomes share the wait evidence rules.
+// adr: 1553 — bounded, deduplicated rollout outcomes share the wait evidence rules.
 package state
 
 import (

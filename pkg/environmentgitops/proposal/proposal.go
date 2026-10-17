@@ -1,5 +1,5 @@
 // Package proposal opens reviewed Git changes, without approving or deploying them.
-// adr: 1531
+// adr: 1550
 package proposal
 
 import (
