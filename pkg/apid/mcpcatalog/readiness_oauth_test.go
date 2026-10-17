@@ -3,6 +3,7 @@ package mcpcatalog
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,7 +104,7 @@ func TestReadinessOAuthManagedRenewal(t *testing.T) {
 			if err != nil || credential.Token != "NEW_ACCESS" {
 				t.Fatalf("renewal failed: %v", err)
 			}
-			if _, err = runner.AcquireReadinessOAuth(ctx, account.ID, app.ID, ref, "/mcp"); err != state.ErrMCPReadinessOAuthBusy {
+			if _, err = runner.AcquireReadinessOAuth(ctx, account.ID, app.ID, ref, "/mcp"); !errors.Is(err, state.ErrMCPReadinessOAuthBusy) {
 				t.Fatal("shared connection lease duplicated", err)
 			}
 			if err = credential.Release(ctx); err != nil {
