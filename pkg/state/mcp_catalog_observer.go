@@ -47,6 +47,9 @@ func observerDue(view api.MCPCatalogMonitorSnapshot, at time.Time) bool {
 		return false
 	}
 	status := view.ObserverStatus
+	if status != nil && status.OAuthFlow != nil && status.OAuthFlow.BrowserSessionSHA256 != "" && status.OAuthFlow.ExpiresAt.After(at) {
+		return false
+	}
 	return status == nil || ((status.LeaseUntil == nil || !status.LeaseUntil.After(at)) && (status.NextCheckAt == nil || !status.NextCheckAt.After(at)))
 }
 func (m *MemStore) ListDueMCPCatalogObservers(_ context.Context, limit int) ([]MCPCatalogObserverJob, error) {

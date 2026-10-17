@@ -3569,6 +3569,8 @@ const (
 	// missing, expired, or invalid. For min=0 worker apps it also requires a fresh
 	// observer heartbeat equal to 1. Unlike the gauge alert, it evaluates to a
 	// binary 1/0 so a broken publisher can notify operators.
+	AlertMetricMCPProtocolErrorRate           AlertMetric = "mcp_protocol_error_rate_pct"
+	AlertMetricMCPProtocolP95                 AlertMetric = "mcp_protocol_execution_p95_ms"
 	AlertMetricMCPTasksMetricsStale           AlertMetric = "mcp_tasks_metrics_stale"
 	AlertMetricMCPTaskPromotionHoldAgeSeconds AlertMetric = "mcp_task_promotion_hold_age_seconds"
 )
@@ -3702,6 +3704,7 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
+	MCPMinCalls, MCPForMinutes      *int
 	PostDeployRollbackWindowSeconds *int
 	Name                            *string
 	Enabled                         *bool
@@ -3727,7 +3730,9 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	EventSubscriptionID string
+	MCPReadinessScope          string
+	MCPMinCalls, MCPForMinutes int
+	EventSubscriptionID        string
 	// EdgeRuleID scopes an edge-rule activity alert to one rule (ADR-1192);
 	// empty counts every rule of the app. Immutable, and not a foreign key:
 	// a rule-set restore re-inserts rules under the same ids.
@@ -3765,20 +3770,23 @@ type AlertRule struct {
 // list endpoint is the only opt-in path to surface test rows in
 // the operator pane; the default customer-facing read hides them.
 type AlertDelivery struct {
-	ID             string
-	RuleID         string
-	AccountID      string
-	AppID          string // empty when the rule was account-wide
-	IdempotencyKey string
-	Payload        json.RawMessage
-	Status         AlertDeliveryStatus
-	AttemptCount   int
-	LastStatusCode int    // 0 when the attempt never reached the wire
-	LastError      string // empty when no error
-	ObservedValue  float64
-	FiredAt        time.Time
-	DeliveredAt    time.Time // zero until status=delivered
-	IsTest         bool      // true iff row written by Dispatcher.DispatchTest
+	ReadinessEventID        string
+	ReadinessDestination    string
+	ReadinessFailoverReason string
+	ID                      string
+	RuleID                  string
+	AccountID               string
+	AppID                   string // empty when the rule was account-wide
+	IdempotencyKey          string
+	Payload                 json.RawMessage
+	Status                  AlertDeliveryStatus
+	AttemptCount            int
+	LastStatusCode          int    // 0 when the attempt never reached the wire
+	LastError               string // empty when no error
+	ObservedValue           float64
+	FiredAt                 time.Time
+	DeliveredAt             time.Time // zero until status=delivered
+	IsTest                  bool      // true iff row written by Dispatcher.DispatchTest
 }
 
 // AlertDeliveryRow embeds AlertDelivery with a pinned list return —

@@ -5157,3 +5157,67 @@ groups:
         expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[1h]))
       - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
         expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))
+
+  # Starter-reported protocol signals, not host-verified authorization outcomes.
+  # No alert is inferred from event silence: idle apps emit no protocol events.
+  - name: faas_mcp_protocol
+    interval: 30s
+    rules:
+      - alert: FaasMCPProtocolHighErrorRate
+        expr: |
+          (
+            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))
+            / sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m]))
+          ) > 0.1
+          and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m])) >= 20)
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP protocol failures exceed ten percent"
+          description: "Starter-reported RPC/tool failures or timeouts exceed ten percent with at least twenty observed calls in each five-minute window. Cancellations are tracked separately. Review the app's MCP performance dashboard and logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPProtocolSlowExecution
+        expr: |
+          histogram_quantile(0.95, sum by (app_id, le) (rate(vmmd_mcp_protocol_execution_seconds_bucket[5m]))) > 5
+          and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_execution_seconds_count[5m])) >= 20)
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP execution p95 exceeds five seconds"
+          description: "At least twenty response-construction measurements per five-minute window show sustained slow execution. This excludes SSE delivery lifetime and background task execution."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPProtocolAggregationCapacity
+        expr: sum by (job) (increase(vmmd_mcp_protocol_capacity_dropped_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP protocol aggregation is dropping observations"
+          description: "The bounded per-host app table is full. Performance charts may be incomplete. Inspect active app placement and aggregation capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPTelemetryHeartbeatLost
+        expr: |
+          (time() - vmmd_mcp_telemetry_heartbeat_timestamp_seconds > 120)
+          and (time() - vmmd_mcp_telemetry_instance_started_timestamp_seconds > 180)
+          and (vmmd_mcp_telemetry_loss_alert_enabled == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP starter telemetry heartbeats stopped"
+          description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"

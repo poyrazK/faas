@@ -99,6 +99,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 		switch {
 		case path == "/dashboard/" || path == "/dashboard":
 			s.renderIndex(w, r, log, acct)
+		case path == "/dashboard/mcp":
+			s.renderMCPOperations(w, r, log, acct)
 		case path == "/dashboard/apps":
 			s.renderAppsList(w, r, log, acct)
 		case path == "/dashboard/app-costs":

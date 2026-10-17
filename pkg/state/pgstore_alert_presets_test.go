@@ -309,6 +309,7 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	}
 	defer rows.Close()
 	expectedNames := map[string]bool{
+		"mcp_readiness_unhealthy":            true,
 		"mcp_oauth_issuance_unknown":         true,
 		"mcp_oauth_reauthorization_required": true,
 		"mcp_oauth_renewal_failed":           true,

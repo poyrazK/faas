@@ -193,6 +193,7 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/mcp">MCP operations</a>
       <a href="/dashboard/app-costs">App costs</a>
       <a href="/dashboard/developers">Developer environments</a>
       <a href="/dashboard/projects">Projects</a>
@@ -449,7 +450,7 @@
         </table>
       {{end}}
 
-      <h2>Recent deployments</h2>
+      <h2 id="deployments">Recent deployments</h2>
       {{if .Data.Deployments}}
         <table>
           <thead><tr><th>Revision</th><th>Created</th><th>Kind</th><th>Status</th><th>Annotation</th><th>Scan</th><th>Error</th><th>Action</th></tr></thead>
