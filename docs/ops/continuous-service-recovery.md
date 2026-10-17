@@ -4,6 +4,12 @@ Active service apps converge to their desired replicas without incoming
 traffic. schedd checks due apps at startup and every five seconds, preserving
 retry deadlines through restarts. See [ADR-420](../adr/420-continuous-service-recovery.md).
 
+Worker apps are not in this ledger. schedd reconciles every active worker app
+it owns once, 30 seconds after it starts, and logs `worker startup reconcile:
+done` with the number of apps. A worker pool that is still empty after that
+line needs an event (a deploy, a lifecycle change or `gregale wake`) or an
+operator. See [the worker startup reconcile ADR](../adr/1501-worker-startup-reconcile.md).
+
 ## Inspect recovery
 
 The scheduler-owned ledger records its last outcome and next attempt. Use an

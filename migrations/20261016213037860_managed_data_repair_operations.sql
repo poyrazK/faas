@@ -1,6 +1,7 @@
 -- filename: 20261016213037860_managed_data_repair_operations.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- A repair is a native execution, with no synthetic invocation or customer
 -- handler definition. Existing execution writers keep deriving their identity.

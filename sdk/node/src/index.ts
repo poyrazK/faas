@@ -205,6 +205,8 @@ export {
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
 export { createIssueReporter, type IssueContext, type IssueReporterOptions, type IssueSourceMap } from './issues.js';
+export { buildIssueSourceMapManifest, loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
+export { createIssueContext, type IssueBreadcrumbEntry, type IssueContextSnapshot } from './issue-context.js';
 
 export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
 export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
@@ -496,6 +498,7 @@ export type { BindingReleasePolicy } from './generated/models/BindingReleasePoli
 export type { SetBindingReleasePolicyRequest } from './generated/models/SetBindingReleasePolicyRequest.js';
 
 export type { SetObjectStorageBindingReleasePolicyRequest } from './generated/models/SetObjectStorageBindingReleasePolicyRequest.js';
+export type { SetQueueBindingReleasePolicyRequest } from './generated/models/SetQueueBindingReleasePolicyRequest.js';
 
 export type { ObjectStorageReleaseRequirements } from './generated/models/ObjectStorageReleaseRequirements.js';
 
@@ -509,6 +512,58 @@ export { defineDurableEntityClientContract, durableEntityClient, type DurableEnt
 
 export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement, defineDurableSessionEntity, durableSessionFrame, durableSessionRequestID, decodeDurableSessionCommand, DURABLE_ENTITY_MAX_SESSIONS, type DurableSessionCommand, type DurableSessionFrame, type DurableSessionState } from './durable-entity-session.js';
 export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';
+
+// Node-only adapters for verified Issues webhook receivers.
+export {
+  ISSUE_SLACK_DEFAULT_EVENTS, ISSUE_SLACK_EVENTS,
+  formatIssueSlackMessage, issueSlackMessageFromWebhook,
+  type IssueSlackEvent, type IssueSlackOptions, type IssueSlackMessage, type VerifiedIssueSlackMessage,
+} from './issue-slack.js';
+export type { CheckedProjectReleaseManifest } from './generated/models/CheckedProjectReleaseManifest.js';
+export type { CheckedProjectReleaseResponse } from './generated/models/CheckedProjectReleaseResponse.js';
+
+export type { PrepareProjectRollbackRequest } from './generated/models/PrepareProjectRollbackRequest.js';
+
+export type { ProjectReleaseDeactivationReceipt } from './generated/models/ProjectReleaseDeactivationReceipt.js';
+
+export type { StageProjectReleaseRequest } from './generated/models/StageProjectReleaseRequest.js';
+export type { ProjectReleaseStage } from './generated/models/ProjectReleaseStage.js';
+export type { ProjectReleaseStageMember } from './generated/models/ProjectReleaseStageMember.js';
+
+export type { CreateQueueBindingCanaryRequest } from './generated/models/CreateQueueBindingCanaryRequest.js';
+export type { QueueBindingCanary } from './generated/models/QueueBindingCanary.js';
+
+export type { BindingVerificationRun } from './generated/models/BindingVerificationRun.js';
+export type { BindingVerificationRunStep } from './generated/models/BindingVerificationRunStep.js';
+export type { BindingVerificationPlanStep } from './generated/models/BindingVerificationPlanStep.js';
+export type { CreateBindingVerificationRunRequest } from './generated/models/CreateBindingVerificationRunRequest.js';
+
+export type { ProjectBindingVerificationRun } from './generated/models/ProjectBindingVerificationRun.js';
+export type { CreateProjectBindingVerificationRunRequest } from './generated/models/CreateProjectBindingVerificationRunRequest.js';
+
+export type { ReviewBindingVerificationRequest } from './generated/models/ReviewBindingVerificationRequest.js';
+export type { BindingVerificationReview } from './generated/models/BindingVerificationReview.js';
+export type { ReviewProjectBindingVerificationRequest } from './generated/models/ReviewProjectBindingVerificationRequest.js';
+export type { ProjectBindingVerificationReview } from './generated/models/ProjectBindingVerificationReview.js';
+export { runBindingVerification, runProjectBindingVerification, BindingVerificationRecoveryError } from './binding-runner.js';
+export type { BindingVerificationRunnerOptions, BindingVerificationProgress } from './binding-runner.js';
+export type { BindingVerificationDiagnosticBlocker } from './generated/models/BindingVerificationDiagnosticBlocker.js';
+export type { BindingVerificationDifference } from './generated/models/BindingVerificationDifference.js';
+export type { BindingVerificationRecoveryAction } from './generated/models/BindingVerificationRecoveryAction.js';
+export type { BindingVerificationRunDiagnostics } from './generated/models/BindingVerificationRunDiagnostics.js';
+export type { ProjectBindingVerificationRunDiagnostics } from './generated/models/ProjectBindingVerificationRunDiagnostics.js';
+
+export type { BindingVerificationBudget } from "./generated/models/BindingVerificationBudget.js";
+
+export type { BindingVerificationDiagnostics } from "./binding-runner-diagnostics.js";
+export { createBindingVerificationFromReview, reconcileBindingVerificationCreation, createProjectBindingVerificationFromReview, reconcileProjectBindingVerificationCreation, BindingVerificationCreationError } from './binding-creation.js';
+export type { BindingVerificationCreationOptions } from './binding-creation.js';
+
+export type { BindingVerificationRunSummary } from './generated/models/BindingVerificationRunSummary.js';
+export type { BindingVerificationRunList } from './generated/models/BindingVerificationRunList.js';
+
+export type { BindingVerificationQualification } from './generated/models/BindingVerificationQualification.js';
+export type { BindingVerificationQualificationCondition } from './generated/models/BindingVerificationQualificationCondition.js';
 
 export type { EventExecutionReconciliation } from './generated/models/EventExecutionReconciliation.js';
 
@@ -543,3 +598,17 @@ export type { EventExecutionLineageRetryJobControlFilters } from './generated/mo
 
 export { eventConsumerDeliveryContextFromHeaders, EventConsumerDeliveryContextUnavailableError,
   type EventConsumerDeliveryContext } from './event-consumer-delivery-context.js';
+
+export { watchEventSubscriptionDeadlines, EventDeadlineWatchCallbackError,
+  type EventDeadlineWatchOptions, type EventDeadlineWatchResult, type EventDeadlineConfirmation } from './event-deadline-watch.js';
+export { validateEventDeadlineCheckpoint, acknowledgeEventDeadlineAlerts,
+  type EventDeadlineCheckpoint, type EventDeadlineCondition, type EventDeadlineAlert,
+  type EventDeadlineAcknowledgement } from './event-deadline-checkpoint.js';
+export { EVENT_DEADLINE_REASONS, type EventDeadlineReason, type EventDeadlineTarget,
+  type EventDeadlinePolicyOptions, type EventDeadlinePolicy, type EventDeadlineRule } from './event-deadline-policy.js';
+
+export { EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, type EventDeadlineRatioOptions,
+  type EventDeadlineRatioSample } from './event-deadline-ratio.js';
+
+export { investigateEventDeadlineAlert, type EventDeadlineInvestigationOptions,
+  type EventDeadlineInvestigationQuery, type EventDeadlineInvestigation } from './event-deadline-investigation.js';

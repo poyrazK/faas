@@ -31,7 +31,7 @@ const (
 
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|import|activity>", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|import|activity|sso>", "auth")
 		return 1
 	}
 	switch args[0] {
@@ -51,6 +51,8 @@ func cmdAuth(args []string) int {
 		return cmdAuthImport(args[1:])
 	case "activity":
 		return cmdAuthActivity(args[1:])
+	case "sso":
+		return cmdAuthSSO(args[1:])
 	case "login", "logout", "whoami", "token":
 		// `gregale auth` manages an application's own users, not the
 		// Gregale account; other CLIs use the same verbs for account login.

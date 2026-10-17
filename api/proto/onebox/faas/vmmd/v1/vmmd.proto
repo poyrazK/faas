@@ -206,6 +206,13 @@ service Vmmd {
   // Destroy tears down a running instance. Idempotent on unknown instances.
   rpc Destroy(DestroyRequest) returns (DestroyResponse);
 
+  // Operator restart uses a durable operation identity and exact physical VM
+  // generation. Re-entering an uncertain attempt never repeats Destroy.
+  rpc GetOperatorRestartGeneration(GetOperatorRestartGenerationRequest) returns (GetOperatorRestartGenerationResponse);
+  rpc ExecuteOperatorRestartDestroy(ExecuteOperatorRestartDestroyRequest) returns (ExecuteOperatorRestartDestroyResponse);
+  // ADR-1525: one journal-authorized capture/stop of the original VM generation.
+  rpc ExecuteOperatorPark(ExecuteOperatorParkRequest) returns (ExecuteOperatorParkResponse);
+
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
   // seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -544,6 +551,8 @@ service Vmmd {
   // instance's HostIP + GuestUID so schedd can carry them
   // through to the conditional UPDATE at Phase 3.
   rpc AdoptMigratedInstance(AdoptMigratedInstanceRequest) returns (AdoptMigratedInstanceResponse);
+  // Retires only the original admission-backed destination and retains proof.
+  rpc RetireMigrationAdoption(RetireMigrationAdoptionRequest) returns (RetireMigrationAdoptionResponse);
 
   // AcknowledgeMigration (Tier A5 / ADR-065) is Phase 3.5 of
   // the four-phase handoff. Called by the new owner vmmd's
@@ -1434,6 +1443,26 @@ message DestroyRequest {
   string instance = 1;
 }
 
+message GetOperatorRestartGenerationRequest { string instance = 1; }
+message GetOperatorRestartGenerationResponse { string generation = 1; }
+message ExecuteOperatorRestartDestroyRequest {
+  string intent_id = 1;
+  string claim_token = 2;
+}
+message ExecuteOperatorRestartDestroyResponse {
+  string phase = 1;
+  bool acknowledged = 2;
+}
+
+message ExecuteOperatorParkRequest {
+  string intent_id = 1;
+  string claim_token = 2;
+}
+message ExecuteOperatorParkResponse {
+  string phase = 1;
+  bool acknowledged = 2;
+}
+
 message DestroyResponse {
   // Echoed for callers that batch destroys and want a confirmation record.
   // Successful destroys produce an empty `problem` field.
@@ -2228,6 +2257,14 @@ message AdoptMigratedInstanceRequest {
   string fc_version = 9;
   // Destination wake identity, distinct from the source's boot attempt.
   string wake_id = 10;
+  // Required on registered migration receivers (ADR-1529).
+  string admission_id = 11;
+}
+
+message RetireMigrationAdoptionRequest { string admission_id = 1; }
+message RetireMigrationAdoptionResponse {
+  string phase = 1;
+  bool cleaned = 2;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -2250,6 +2287,7 @@ message AdoptMigratedInstanceResponse {
   bool supports_secret_aliases = 6;
   bool image_healthcheck_verified = 7;
   bool supports_image_healthcheck_monitoring = 8;
+  string admission_id = 9;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input

@@ -3,30 +3,25 @@ name: Customer platform starter
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
+    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
+    # pull request; ci.yml runs this suite nightly and in the release gate.
     paths:
       - "cmd/gregale/templates/**"
-      - "cmd/apid/**"
-      - "pkg/apid/**"
-      - "pkg/gateway/**"
-      - "cmd/gatewayd-internal/**"
-      - "pkg/sched/**"
-      - "api/openapi.yaml"
-      - "pkg/state/**"
-      - "pkg/api/**"
       - "pkg/auth/middleware/**"
-      - "migrations/**"
       - "scripts/test-customer-platform.sh"
       - ".github/workflows/customer-platform-starter.yml"
-      - "go.mod"
-      - "go.sum"
-      - "Makefile"
+  # Nightly and release gate: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 
 # Only the newest push to a pull request is interesting; without a group every
 # superseded push kept its runners until completion.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: customer-platform-starter-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

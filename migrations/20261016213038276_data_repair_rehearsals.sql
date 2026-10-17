@@ -1,6 +1,7 @@
 -- filename: 20261016213038276_data_repair_rehearsals.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE data_repair_rehearsals (
  id uuid PRIMARY KEY,
  operation_id uuid NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,

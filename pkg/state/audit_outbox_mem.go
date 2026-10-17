@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -20,6 +21,10 @@ func (m *MemStore) EnqueueAuditEvent(_ context.Context, actor, kind string, subj
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.enqueueAuditEventLocked(actor, kind, subject, data, dedupeKey)
+}
+
+func (m *MemStore) enqueueAuditEventLocked(actor, kind string, subject *string, data []byte, dedupeKey string) (int64, error) {
 	if m.auditOutbox == nil {
 		m.auditOutbox = make(map[int64]auditEventOutboxRow)
 	}
@@ -109,6 +114,14 @@ func (m *MemStore) DeliverAuditEvent(_ context.Context, id int64) (bool, error) 
 	if row.Subject != nil {
 		subject = parseSubjectID(*row.Subject)
 	}
+	var envelope struct {
+		TraceID string `json:"trace_id"`
+	}
+	_ = json.Unmarshal(row.Data, &envelope)
+	var traceID *string
+	if isOTelHex32(envelope.TraceID) {
+		traceID = &envelope.TraceID
+	}
 	m.events = append(m.events, Event{
 		ID:      int64(len(m.events) + 1),
 		At:      time.Now().UTC(),
@@ -116,6 +129,7 @@ func (m *MemStore) DeliverAuditEvent(_ context.Context, id int64) (bool, error) 
 		Kind:    row.Kind,
 		Subject: subject,
 		Data:    append([]byte(nil), row.Data...),
+		TraceID: traceID,
 	})
 	now := time.Now().UTC()
 	row.state = auditEventOutboxStateDelivered

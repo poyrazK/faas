@@ -239,7 +239,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 		case when source_kind = 'consumer' then consumer_key else '' end,
 		case when source_kind = 'surface' then consumer_key else '' end,
 		case when source_kind = 'jwt' then consumer_key else '' end, window_start,
-		request_count, error_count, billable_units from platform_tenant_usage_minutes
+		request_count, error_count, billable_units, compute_ms, response_bytes from platform_tenant_usage_minutes
 		where account_id = $1::uuid and platform_tenant_id = $2::uuid
 		and window_start >= $3 and window_start < $4
 		order by app_id, source_kind, consumer_key, window_start`, accountID, tenantID, start.UTC(), end.UTC())
@@ -251,7 +251,7 @@ func (s *PgStore) ListPlatformTenantUsageMinutes(ctx context.Context, accountID,
 	for rows.Next() {
 		var b APIConsumerUsageBucket
 		if err := rows.Scan(&b.AccountID, &b.AppID, &b.ConsumerKey, &b.SurfaceID, &b.JWTAuthorizationRuleID, &b.WindowStart,
-			&b.RequestCount, &b.ErrorCount, &b.BillableUnits); err != nil {
+			&b.RequestCount, &b.ErrorCount, &b.BillableUnits, &b.ComputeMS, &b.ResponseBytes); err != nil {
 			return nil, err
 		}
 		b.WindowStart = b.WindowStart.UTC()
@@ -515,32 +515,7 @@ func (s *PgStore) CreatePlatformTenantStatementHandoff(ctx context.Context, in P
 		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
 	var conflict bool
-	err = tx.QueryRow(ctx, `select
-		exists (select 1 from api_consumer_usage_statement_handoffs h
-		  join api_consumer_usage_statements a on a.id = h.statement_id
-		  join platform_tenant_statement_consumers c on c.app_id = a.app_id and c.consumer_id = a.consumer_id
-		 where c.statement_id = $1::uuid and a.period_start < $3 and a.period_end > $2)
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_consumers mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_consumers theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.consumer_id = mine.consumer_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_surfaces mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_surfaces theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.surface_id = mine.surface_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_jwt_rules mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_jwt_rules theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.authorization_rule_id = mine.authorization_rule_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
+	err = tx.QueryRow(ctx, `select `+tenantHandoffOverlapSQL+`
 		or exists (select 1 from api_consumer_usage_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)
 		or exists (select 1 from platform_tenant_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)`,
 		in.StatementID, statement.PeriodStart, statement.PeriodEnd, in.TenantID, in.AccountID, in.ExternalInvoiceID).Scan(&conflict)

@@ -9,8 +9,8 @@
 //   - NodeList / NodeListRecoverable: filter on the lifecycle
 //     enum (the generated `active` column is the legacy read
 //     surface but the spec query path goes through lifecycle).
-//   - NodeMarkRecovered: last_recovery_outcome='succeeded' +
-//     lifecycle='recovering'→'active' in one UPDATE.
+//   - Generation-fenced completion: last_recovery_outcome='succeeded' +
+//     lifecycle='recovering'→'active' with an atomic receipt and audit.
 //
 // MemStore parity lives in pkg/sched/recovery_arbiter_test.go
 // (decision matrix) and the in-line CreateComputeNode tests in
@@ -137,16 +137,17 @@ func TestPg_NodeListRecoverable_ReturnsUnavailableAndRecovering(t *testing.T) {
 	}
 }
 
-// TestPg_NodeMarkRecovered — single UPDATE that flips
-// lifecycle='recovering' → 'active' AND stamps
-// last_recovery_outcome='succeeded'. The row count guard
-// returns ErrConflict if the precondition fails (recovery
-// arbiter raced with the heartbeat reactivation).
-func TestPg_NodeMarkRecovered(t *testing.T) {
+// TestPg_NodeLifecycleRecovered verifies the generation-fenced completion.
+
+func TestPg_NodeLifecycleRecovered(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	id := pgTestLifecycleNode(t, s, state.NodeLifecycleRecovering)
-	if err := s.NodeMarkRecovered(t.Context(), id); err != nil {
-		t.Fatalf("NodeMarkRecovered: %v", err)
+	node, err := s.NodeGet(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CompleteNodeLifecycle(t.Context(), state.NodeLifecycleCompletion{NodeID: id, Generation: node.LifecycleGeneration, Lifecycle: node.Lifecycle}); err != nil {
+		t.Fatal(err)
 	}
 	got, err := s.NodeGet(t.Context(), id)
 	if err != nil {

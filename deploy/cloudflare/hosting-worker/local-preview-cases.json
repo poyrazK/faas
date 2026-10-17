@@ -1,0 +1,472 @@
+{
+  "files": [
+    {
+      "path": "index.html",
+      "body": "INDEX",
+      "content_type": "text/html"
+    },
+    {
+      "path": "docs/index.html",
+      "body": "GUIDE",
+      "content_type": "text/html"
+    },
+    {
+      "path": "app.js",
+      "body": "APP",
+      "content_type": "text/javascript"
+    },
+    {
+      "path": "404.html",
+      "body": "NOT_FOUND",
+      "content_type": "text/html"
+    },
+    {
+      "path": "exact",
+      "body": "EXACT",
+      "content_type": "text/plain"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "plain",
+      "requests": [
+        {
+          "name": "root",
+          "path": "/",
+          "status": 200,
+          "response_headers": {
+            "content-type": "text/html",
+            "content-length": "5",
+            "cache-control": "private, max-age=0, must-revalidate",
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "strict-origin-when-cross-origin"
+          },
+          "body": "INDEX"
+        },
+        {
+          "name": "directory without slash",
+          "path": "/docs",
+          "status": 200,
+          "body": "GUIDE"
+        },
+        {
+          "name": "directory slash",
+          "path": "/docs/",
+          "status": 200,
+          "body": "GUIDE"
+        },
+        {
+          "name": "query ignored",
+          "path": "/docs/?private=value",
+          "status": 200,
+          "body": "GUIDE"
+        },
+        {
+          "name": "encoded slash",
+          "path": "/docs%2Findex.html",
+          "status": 200,
+          "body": "GUIDE"
+        },
+        {
+          "name": "asset",
+          "path": "/app.js",
+          "status": 200,
+          "response_headers": {
+            "content-type": "text/javascript",
+            "content-length": "3"
+          },
+          "body": "APP"
+        },
+        {
+          "name": "encoded unreserved",
+          "path": "/app%2Ejs",
+          "status": 200,
+          "body": "APP"
+        },
+        {
+          "name": "HEAD file",
+          "path": "/app.js",
+          "status": 200,
+          "method": "HEAD",
+          "response_headers": {
+            "content-length": "3"
+          },
+          "body": ""
+        },
+        {
+          "name": "ETag",
+          "path": "/app.js",
+          "status": 304,
+          "if_none_match_file": "app.js",
+          "absent_headers": [
+            "content-length"
+          ],
+          "body": ""
+        },
+        {
+          "name": "HEAD ETag",
+          "path": "/",
+          "status": 304,
+          "method": "HEAD",
+          "if_none_match_file": "index.html",
+          "body": ""
+        },
+        {
+          "name": "weak ETag differs",
+          "path": "/app.js",
+          "status": 200,
+          "weak_if_none_match_file": "app.js",
+          "body": "APP"
+        },
+        {
+          "name": "range ignored",
+          "path": "/app.js",
+          "status": 200,
+          "headers": {
+            "Range": "bytes=0-0"
+          },
+          "body": "APP"
+        },
+        {
+          "name": "missing asset",
+          "path": "/missing.js",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          }
+        },
+        {
+          "name": "config metadata not public",
+          "path": "/gregale-hosting.json",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          }
+        },
+        {
+          "name": "internal paths absent",
+          "path": "/_gregale/cache/x",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          }
+        },
+        {
+          "name": "encoded percent not decoded twice",
+          "path": "/%2561pp.js",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          }
+        },
+        {
+          "name": "repeated slash rejected",
+          "path": "/docs//index.html",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          }
+        },
+        {
+          "name": "method denied",
+          "path": "/",
+          "status": 405,
+          "code": "method_not_allowed",
+          "method": "POST"
+        }
+      ]
+    },
+    {
+      "name": "spa",
+      "spa": true,
+      "requests": [
+        {
+          "name": "HTML navigation",
+          "path": "/deep/route",
+          "status": 200,
+          "headers": {
+            "Accept": "text/html"
+          },
+          "body": "INDEX"
+        },
+        {
+          "name": "exact before fallback",
+          "path": "/exact",
+          "status": 200,
+          "headers": {
+            "Accept": "text/html"
+          },
+          "body": "EXACT"
+        },
+        {
+          "name": "JSON navigation",
+          "path": "/deep/route",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          },
+          "headers": {
+            "Accept": "application/json"
+          }
+        },
+        {
+          "name": "asset not SPA",
+          "path": "/missing.js",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          },
+          "headers": {
+            "Accept": "text/html"
+          }
+        },
+        {
+          "name": "trailing directory does not fallback",
+          "path": "/missing/",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          },
+          "headers": {
+            "Accept": "text/html"
+          }
+        },
+        {
+          "name": "Accept is case sensitive",
+          "path": "/deep/route",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          },
+          "headers": {
+            "Accept": "TEXT/HTML"
+          }
+        }
+      ]
+    },
+    {
+      "name": "configured",
+      "config": {
+        "version": 1,
+        "redirects": [
+          {
+            "from": "/old",
+            "to": "/docs/",
+            "status": 308
+          },
+          {
+            "from": "/app.js",
+            "to": "/docs/",
+            "status": 301
+          }
+        ],
+        "headers": [
+          {
+            "path": "/*",
+            "values": {
+              "content-security-policy": "default-src 'self'",
+              "x-frame-options": "DENY"
+            }
+          },
+          {
+            "path": "/docs/*",
+            "values": {
+              "x-frame-options": "SAMEORIGIN"
+            }
+          },
+          {
+            "path": "/docs",
+            "values": {
+              "permissions-policy": "camera=()"
+            }
+          }
+        ],
+        "not_found": "404.html"
+      },
+      "requests": [
+        {
+          "name": "redirect before files",
+          "path": "/app.js",
+          "status": 301,
+          "response_headers": {
+            "location": "/docs/",
+            "cache-control": "private, no-store",
+            "x-frame-options": "DENY"
+          },
+          "body": ""
+        },
+        {
+          "name": "redirect drops query",
+          "path": "/old?token=private",
+          "status": 308,
+          "response_headers": {
+            "location": "/docs/"
+          },
+          "body": ""
+        },
+        {
+          "name": "redirect HEAD",
+          "path": "/old",
+          "status": 308,
+          "method": "HEAD",
+          "response_headers": {
+            "location": "/docs/"
+          },
+          "body": ""
+        },
+        {
+          "name": "later prefix header",
+          "path": "/docs/",
+          "status": 200,
+          "response_headers": {
+            "x-frame-options": "SAMEORIGIN"
+          },
+          "body": "GUIDE"
+        },
+        {
+          "name": "logical header path",
+          "path": "/docs",
+          "status": 200,
+          "response_headers": {
+            "x-frame-options": "DENY",
+            "permissions-policy": "camera=()"
+          },
+          "body": "GUIDE"
+        },
+        {
+          "name": "configured ETag",
+          "path": "/docs/",
+          "status": 304,
+          "if_none_match_file": "docs/index.html",
+          "response_headers": {
+            "x-frame-options": "SAMEORIGIN",
+            "content-security-policy": "default-src 'self'"
+          },
+          "body": ""
+        },
+        {
+          "name": "HTML missing",
+          "path": "/missing",
+          "status": 404,
+          "headers": {
+            "Accept": "text/html"
+          },
+          "response_headers": {
+            "content-length": "9",
+            "x-frame-options": "DENY"
+          },
+          "body": "NOT_FOUND"
+        },
+        {
+          "name": "404 never 304",
+          "path": "/missing",
+          "status": 404,
+          "headers": {
+            "Accept": "text/html"
+          },
+          "if_none_match_file": "404.html",
+          "body": "NOT_FOUND"
+        },
+        {
+          "name": "404 HEAD",
+          "path": "/missing",
+          "status": 404,
+          "method": "HEAD",
+          "headers": {
+            "Accept": "text/html"
+          },
+          "response_headers": {
+            "content-length": "9"
+          },
+          "body": ""
+        },
+        {
+          "name": "JSON missing skips HTML404",
+          "path": "/missing",
+          "status": 404,
+          "code": "hosting_file_not_found",
+          "response_headers": {
+            "cache-control": "no-store"
+          },
+          "headers": {
+            "Accept": "application/json"
+          },
+          "absent_headers": [
+            "content-security-policy",
+            "x-frame-options"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "spa with 404",
+      "spa": true,
+      "config": {
+        "version": 1,
+        "redirects": [
+          {
+            "from": "/old",
+            "to": "/docs/",
+            "status": 308
+          },
+          {
+            "from": "/app.js",
+            "to": "/docs/",
+            "status": 301
+          }
+        ],
+        "headers": [
+          {
+            "path": "/*",
+            "values": {
+              "content-security-policy": "default-src 'self'",
+              "x-frame-options": "DENY"
+            }
+          },
+          {
+            "path": "/docs/*",
+            "values": {
+              "x-frame-options": "SAMEORIGIN"
+            }
+          },
+          {
+            "path": "/docs",
+            "values": {
+              "permissions-policy": "camera=()"
+            }
+          }
+        ],
+        "not_found": "404.html"
+      },
+      "requests": [
+        {
+          "name": "SPA precedes custom404",
+          "path": "/navigation",
+          "status": 200,
+          "headers": {
+            "Accept": "text/html"
+          },
+          "body": "INDEX"
+        },
+        {
+          "name": "asset uses404",
+          "path": "/missing.js",
+          "status": 404,
+          "headers": {
+            "Accept": "text/html"
+          },
+          "body": "NOT_FOUND"
+        }
+      ]
+    }
+  ]
+}

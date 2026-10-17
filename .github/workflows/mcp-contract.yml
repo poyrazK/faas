@@ -3,6 +3,9 @@ name: MCP contract
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
+    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
+    # pull request; ci.yml runs this suite nightly and in the release gate.
     paths:
       - 'pkg/mcphosting/**'
       - 'pkg/mcpmanagement/**'
@@ -10,9 +13,6 @@ on:
       - 'pkg/apid/apidserver/handlers_app_health*'
       - 'pkg/apid/apidserver/binding_release_traffic*'
       - 'pkg/gateway/mcp_policy*'
-      - 'pkg/api/**'
-      - 'go.mod'
-      - 'go.sum'
       - 'scripts/ops/management-mcp-client-acceptance.py'
       - 'scripts/ops/management-mcp-metrics-acceptance.py'
       - 'scripts/ops/management-mcp-drain-acceptance.py'
@@ -44,17 +44,11 @@ on:
       - 'pkg/apid/apidserver/handlers_routes.go'
       - 'pkg/apid/apidserver/handlers_app_operational_summary.go'
       - 'pkg/state/service_rollout_bindings*'
-      - 'pkg/state/queries.sql'
-      - 'pkg/state/sqlc/queries.sql.go'
       - 'pkg/apid/apidserver/handlers_workload_rollout*'
       - 'pkg/apid/apidserver/handlers_rollouts.go'
       - 'pkg/apid/apidserver/service_rollout_recovery.go'
       - 'pkg/apid/apidserver/binding_release_recovery.go'
       - 'pkg/api/rollout_recovery.go'
-      - 'pkg/state/memstore.go'
-      - 'pkg/state/pgstore.go'
-      - 'pkg/apid/apidserver/handlers.go'
-      - 'pkg/apid/apidserver/handlers_ext.go'
       - 'pkg/state/sqlc/release_review*'
       - 'pkg/api/mcp_policy*'
       - 'pkg/apid/apidserver/handlers_mcp_policy*'
@@ -67,12 +61,13 @@ on:
       - 'pkg/apid/apidserver/handlers_templates*.go'
       - 'pkg/apihostingscorecard/**'
       - 'pkg/productcap/**'
-      - 'cmd/gregale/**'
       - '.github/workflows/mcp-contract.yml'
       - '.github/workflows/mcp-catalog-check.yml'
       - 'scripts/ci/mcp-catalog-contract.mjs'
       - 'scripts/ci/mcp-catalog-check.sh'
       - 'testdata/mcp-catalog/**'
+  # Nightly and release gate: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
     inputs:
       qualification-manifest:
@@ -87,8 +82,10 @@ on:
 # Only the newest push to a pull request is interesting; without a group every
 # superseded push kept its runners until completion.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: mcp-contract-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -105,6 +102,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: ${{ github.event_name != 'pull_request' }}
+      # Pull requests restore main's setup-go cache read-only. Saving a ~1 GB
+      # copy per pull-request ref overflowed the 10 GB repository cache and
+      # evicted ci-light's main families, so light jobs compiled cold.
+      - name: restore Go cache from main (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: setup-go-${{ runner.os }}-x64-ubuntu24-go-pr-restore-only
+          restore-keys: |
+            setup-go-${{ runner.os }}-x64-ubuntu24-go-
       - name: Native management harness portable checks
         run: |
           python3 scripts/ops/management-mcp-native-acceptance_test.py

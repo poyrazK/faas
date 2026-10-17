@@ -105,7 +105,7 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 		"malformed weight":        {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--weight", "POST /generate"},
 		"duplicate weight":        {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a=2", "--weight", "GET /a=3"},
 		"tenant tiers and units":  {"rate-card-create", "--id", "t1", "--currency", "EUR", "--included-units", "5", "--tier", "10:0", "--tier", "inf:5"},
-		"tenant weight":           {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a=2"},
+		"tenant bad weight":       {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a"},
 		"bad currency":            {"rate-card-create", "my-api", "--currency", "EURO", "--price-millicents", "1"},
 		"missing invoice":         {"statement-handoff", "my-api", "c1", "s1"},
 		"tenant without id":       {"rate-cards"},

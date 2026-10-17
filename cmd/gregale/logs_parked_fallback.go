@@ -70,6 +70,7 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 		return 3
 	}
 	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
+	header += parkedArchivePendingNote(instance, time.Now())
 	if filter.Level != "" {
 		header += " --level is not applied to retained logs."
 	}
@@ -81,4 +82,23 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 // stream does: a case-insensitive literal substring.
 func retainedLineMatches(line, grep string) bool {
 	return grep == "" || strings.Contains(strings.ToLower(line), strings.ToLower(grep))
+}
+
+// parkedArchiveUploadWindow covers vmmd's archive flush interval
+// (logarchive.DefaultFlushInterval, 5 minutes) with margin.
+const parkedArchiveUploadWindow = 10 * time.Minute
+
+// parkedArchivePendingNote explains a missing archive right after a park. vmmd
+// ships a parked instance's logs on its next flush, so for a few minutes the
+// archive does not exist yet and the reply read "archive gap … check archive
+// retention" (production-us hunt #10, H10-122).
+func parkedArchivePendingNote(ins api.InstanceResponse, now time.Time) string {
+	stopped, err := time.Parse(time.RFC3339, ins.ParkedAt)
+	if err != nil {
+		stopped, err = time.Parse(time.RFC3339, ins.LastRequestAt)
+	}
+	if err != nil || stopped.After(now) || now.Sub(stopped) > parkedArchiveUploadWindow {
+		return ""
+	}
+	return fmt.Sprintf(" It stopped at %s; retained logs reach the archive up to 5 minutes after a park, so if none appear, retry shortly.", stopped.UTC().Format("15:04:05 UTC"))
 }

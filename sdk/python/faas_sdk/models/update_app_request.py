@@ -244,6 +244,10 @@ class UpdateAppRequest:
     """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
     request_timeout_s: int | None | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one
+    request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next
+    deploy."""
     request_rate_limit_rps: int | None | Unset = UNSET
     """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
     may only tighten the plan ceiling. Does not create a deployment."""
@@ -382,6 +386,9 @@ class UpdateAppRequest:
     the UUID. 404 on unknown name; 422 on inactive node."""
     cors_default_enabled: bool | None | Unset = UNSET
     cors_default_origins: list[str] | Unset = UNSET
+    expected_service_binding_fingerprint: str | Unset = UNSET
+    """Apply only if the locked app service settings still match this fingerprint. Supported only for app-level
+    service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -581,6 +588,12 @@ class UpdateAppRequest:
             request_timeout_s = UNSET
         else:
             request_timeout_s = self.request_timeout_s
+
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
 
         request_rate_limit_rps: int | None | Unset
         if isinstance(self.request_rate_limit_rps, Unset):
@@ -853,6 +866,8 @@ class UpdateAppRequest:
         if not isinstance(self.cors_default_origins, Unset):
             cors_default_origins = self.cors_default_origins
 
+        expected_service_binding_fingerprint = self.expected_service_binding_fingerprint
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -906,6 +921,8 @@ class UpdateAppRequest:
             field_dict["retry_policy"] = retry_policy
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if request_rate_limit_rps is not UNSET:
             field_dict["request_rate_limit_rps"] = request_rate_limit_rps
         if request_rate_limit_burst is not UNSET:
@@ -990,6 +1007,8 @@ class UpdateAppRequest:
             field_dict["cors_default_enabled"] = cors_default_enabled
         if cors_default_origins is not UNSET:
             field_dict["cors_default_origins"] = cors_default_origins
+        if expected_service_binding_fingerprint is not UNSET:
+            field_dict["expected_service_binding_fingerprint"] = expected_service_binding_fingerprint
 
         return field_dict
 
@@ -1516,6 +1535,15 @@ class UpdateAppRequest:
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
 
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
         def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -2023,6 +2051,8 @@ class UpdateAppRequest:
 
         cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
 
+        expected_service_binding_fingerprint = d.pop("expected_service_binding_fingerprint", UNSET)
+
         update_app_request = cls(
             profiling=profiling,
             tracing=tracing,
@@ -2049,6 +2079,7 @@ class UpdateAppRequest:
             max_retries=max_retries,
             retry_policy=retry_policy,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             request_rate_limit_rps=request_rate_limit_rps,
             request_rate_limit_burst=request_rate_limit_burst,
             service_replicas=service_replicas,
@@ -2091,6 +2122,7 @@ class UpdateAppRequest:
             overflow_node=overflow_node,
             cors_default_enabled=cors_default_enabled,
             cors_default_origins=cors_default_origins,
+            expected_service_binding_fingerprint=expected_service_binding_fingerprint,
         )
 
         update_app_request.additional_properties = d

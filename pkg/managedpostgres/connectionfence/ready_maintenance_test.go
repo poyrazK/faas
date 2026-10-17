@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 func readyMaintenanceConfig(t *testing.T, f bootstrapFixture) BootstrapConfig {
@@ -70,7 +70,7 @@ func TestReadyMaintenanceRecoversWhileSourceAdmissionIsClosed(t *testing.T) {
 		_, err := sqlc.New().MaintenanceBootstrapAction(ctx, fresh, sqlc.MaintenanceBootstrapActionParams{
 			OwnerToken: tokenUUID(ready.OwnerToken), SourceResourceID: ready.SourceResourceID, Action: action,
 			ExpectedOwner: pgtype.Uint32{Uint32: ready.OwnerOID, Valid: true}, ExpectedDatabase: pgtype.Uint32{Uint32: ready.DatabaseOID, Valid: true}})
-		if !errors.Is(classifyError(err), managedpostgres.ErrInvalid) {
+		if !errors.Is(classifyError(err), pgerrors.ErrInvalid) {
 			t.Fatalf("private observer admitted %s mutation: %v", action, classifyError(err))
 		}
 	}

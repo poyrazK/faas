@@ -981,6 +981,16 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		if problem := validateServiceBindingPlanRequest(req, environment.Slug); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		if *req.ExpectedServiceBindingFingerprint != state.ServiceBindingFingerprint(app) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+			return
+		}
+	}
 	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
 	if callerProblem != nil {
 		api.WriteProblem(w, callerProblem)
@@ -1170,7 +1180,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",
@@ -1493,6 +1503,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			Sealed:   publicAuthSealed,
 		}
 	}
+	if req.ExpectedServiceBindingFingerprint != nil {
+		params.ExpectedServiceBindingFingerprint = *req.ExpectedServiceBindingFingerprint
+	}
 	if environment.Slug != "" {
 		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
 		return
@@ -1524,7 +1537,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if problem := state.ServiceCapacityProblem(err); problem != nil {
+		if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
 			// The caller only sees a generic 503; keep the cause. Under load,
@@ -5214,7 +5229,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 		// events remain ACKed so an unsupported provider event cannot create
 		// an endless retry loop.
 		if mapStripeTypeToEventType(ev.Type) != billing.EventUnknown {
-			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", ev.Data.Object.Customer, "event_type", ev.Type)
+			s.log.Warn("stripe_webhook.unknown_customer", "customer_id", logsanitize.Field(ev.Data.Object.Customer), "event_type", logsanitize.Field(ev.Type))
 			api.WriteProblem(w, api.ErrCapacity("billing webhook customer binding unavailable"))
 			return
 		}
@@ -5223,7 +5238,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	normalized := normalizeStripeWebhook(ev, body)
 	if err := s.persistBillingInvoice(r.Context(), string(webhookdedupe.ProviderStripe), acct, normalized.PlanID, normalized.Invoice); err != nil {
-		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook invoice persistence failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
@@ -5244,7 +5259,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	claimed, err := s.claimWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 	if err != nil {
-		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe replay claim failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("billing webhook replay protection unavailable"))
 		return
 	}
@@ -5263,7 +5278,7 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// VerifyWebhook return value, so both paths converge on
 	// handleBillingEvent.
 	if err := s.handleBillingEvent(r.Context(), normalized, acct); err != nil {
-		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", err)
+		s.log.Error("stripe webhook state application failed", "event_id", logsanitize.Field(ev.ID), "err", logsanitize.Field(err.Error()))
 		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderStripe, ev.ID)
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
@@ -5513,7 +5528,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 	}
 	currency := data.Currency
 	if currency == "" {
-		currency = "eur"
+		currency = api.BillingCurrencyLower
 	}
 	plan := billingPlanFromProviderID(providerPlanID)
 	if !plan.Valid() {
@@ -6652,7 +6667,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	if overage < 0 {
 		overage = 0
 	}
-	// Spec §1 / financial model: €0.01/GB-h overage → 1 cent per
+	// Spec §1 / financial model: $0.01/GB-h overage → 1 cent per
 	// GB-h. Plan's overage rate can vary in the model; constants here
 	// are the production default. Storing cents as int64 keeps
 	// floats away from money (spec §Conventions).

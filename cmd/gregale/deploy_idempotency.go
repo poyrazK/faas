@@ -18,6 +18,7 @@ const maxDeployIdempotencyKeyLength = 255
 // content identity for local/tarball deploys; image and source-ref fields
 // cover the two paths where the CLI does not have source bytes.
 type deployIdempotencyIntent struct {
+	OverrideEnv              map[string]string          `json:"override_env,omitempty"`
 	Slug                     string                     `json:"slug"`
 	Shape                    shape                      `json:"shape"`
 	Runtime                  string                     `json:"runtime,omitempty"`

@@ -13,7 +13,7 @@ func TestScopeFinancialCostsToAppFiltersStableIdentityAndReaggregates(t *testing
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	attribution := financial.Attribution{AppID: "app-1", Name: "api", DeploymentID: "dep-1"}
 	report := api.FinancialCostsResponse{
-		Currency: "EUR", PeriodStart: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), PeriodEnd: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), AsOf: now,
+		Currency: "USD", PeriodStart: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), PeriodEnd: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), AsOf: now,
 		KnownUsageMillicents: 9999, MissingBillComponents: []string{"tax"},
 		Meters: []api.FinancialMeterCosts{{
 			Meter:    "compute",

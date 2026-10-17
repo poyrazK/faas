@@ -1,0 +1,8 @@
+docs-links-check: OK
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.518s
+
+OK
+bash scripts/ci/check_adr_number_uniqueness.sh
+adr-number-uniqueness: OK — 1317 ADRs, 1113 distinct numbers, 164 pre-existing duplicates held at the baseline

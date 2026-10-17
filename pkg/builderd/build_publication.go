@@ -37,7 +37,7 @@ func (b *Builderd) publishBuildExport(ctx context.Context, build state.Build, de
 	if n != result.LayerBytes {
 		return buildpublisher.ErrInvalid
 	}
-	claims := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: canonicalBuildID(app.AccountID), OrgID: canonicalBuildID(app.OrgID), AppID: canonicalBuildID(app.ID), DeploymentID: canonicalBuildID(dep.ID), BuildID: canonicalBuildID(build.ID), ClaimStartedAt: build.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: sourceHash, ExportDigest: digest, ExportBytes: n, Runtime: app.Runtime, BuilderNodeID: b.builderNodeID}
+	claims := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: canonicalBuildID(app.AccountID), OrgID: canonicalBuildID(app.OrgID), AppID: canonicalBuildID(app.ID), DeploymentID: canonicalBuildID(dep.ID), BuildID: canonicalBuildID(build.ID), ClaimStartedAt: build.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: sourceHash, ExportDigest: digest, ExportBytes: n, Runtime: claimedBuildRuntime(app, result), BuilderNodeID: b.builderNodeID}
 	proof, err := b.buildPublisher.Sign(ctx, claims)
 	if err != nil {
 		return err

@@ -83,6 +83,82 @@ func (q *Queries) CheckpointUnselectedDatabaseCount(ctx context.Context, db DBTX
 	return count, err
 }
 
+const checkpointWriterActivity = `-- name: CheckpointWriterActivity :one
+SELECT count(*) FILTER (WHERE backend_type='client backend')::bigint AS client_sessions,
+ count(*) FILTER (WHERE backend_type IN ('autovacuum worker','parallel worker'))::bigint AS background_workers,
+ count(*) FILTER (WHERE backend_type IN ('logical replication worker','walsender','walreceiver'))::bigint AS replication_workers,
+ count(*) FILTER (WHERE backend_type IS NULL OR backend_type NOT IN (
+  'client backend','autovacuum worker','parallel worker','logical replication worker','walsender','walreceiver',
+  'autovacuum launcher','background writer','checkpointer','walwriter','archiver','logical replication launcher'))::bigint AS unknown_backends
+FROM pg_catalog.pg_stat_activity WHERE pid<>pg_backend_pid()
+`
+
+type CheckpointWriterActivityRow struct {
+	ClientSessions     int64
+	BackgroundWorkers  int64
+	ReplicationWorkers int64
+	UnknownBackends    int64
+}
+
+// Backend types hidden by SQL privileges are unknown, never silently idle.
+// The observer itself is the only session excluded. Server housekeeping is
+// distinguished from logical/background writers; provider evidence must still
+// prevent future dispatch and cover alternate endpoints/admin APIs.
+func (q *Queries) CheckpointWriterActivity(ctx context.Context, db DBTX) (CheckpointWriterActivityRow, error) {
+	row := db.QueryRow(ctx, checkpointWriterActivity)
+	var i CheckpointWriterActivityRow
+	err := row.Scan(
+		&i.ClientSessions,
+		&i.BackgroundWorkers,
+		&i.ReplicationWorkers,
+		&i.UnknownBackends,
+	)
+	return i, err
+}
+
+const checkpointWriterCatalog = `-- name: CheckpointWriterCatalog :many
+SELECT oid,datdba AS owner_oid,datname::text AS database_name,datallowconn,datistemplate,datconnlimit
+FROM pg_catalog.pg_database ORDER BY oid LIMIT $1::integer
+`
+
+type CheckpointWriterCatalogRow struct {
+	Oid           pgtype.Uint32
+	OwnerOid      pgtype.Uint32
+	DatabaseName  string
+	Datallowconn  bool
+	Datistemplate bool
+	Datconnlimit  int32
+}
+
+// Read the complete bounded catalog, including the authenticated maintenance
+// database. A changing digest is drift; an unchanged digest is not a DDL fence.
+func (q *Queries) CheckpointWriterCatalog(ctx context.Context, db DBTX, maxDatabases int32) ([]CheckpointWriterCatalogRow, error) {
+	rows, err := db.Query(ctx, checkpointWriterCatalog, maxDatabases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CheckpointWriterCatalogRow{}
+	for rows.Next() {
+		var i CheckpointWriterCatalogRow
+		if err := rows.Scan(
+			&i.Oid,
+			&i.OwnerOid,
+			&i.DatabaseName,
+			&i.Datallowconn,
+			&i.Datistemplate,
+			&i.Datconnlimit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const closeConnections = `-- name: CloseConnections :one
 SELECT gregale_checkpoint.close_connections($1::uuid,$2::text,$3::text[])::boolean AS closed
 `

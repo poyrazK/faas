@@ -14,7 +14,7 @@ import (
 
 // adr: 566 — preview must validate a bounded spec before auth or network.
 func TestFinancialBudgetPreviewCLI(t *testing.T) {
-	spec := financial.BudgetSpec{Name: "preview guard", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{800}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: true}
+	spec := financial.BudgetSpec{Name: "preview guard", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{800}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: true}
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++

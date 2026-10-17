@@ -654,7 +654,7 @@ func sanitizedReplayForwardHeaders(rule gateway.MirrorRuleRow, metadata map[stri
 	for _, key := range append(append([]string(nil), api.MirrorAlwaysStrippedHeaders...), rule.RedactHeaders...) {
 		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
 	}
-	for _, key := range []string{"Host", "Content-Length", "Transfer-Encoding", "Connection"} {
+	for _, key := range []string{"Host", "Content-Length", "Transfer-Encoding", "Connection", state.EventAcknowledgmentTokenHeader} {
 		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
 	}
 	out := make(map[string]string)

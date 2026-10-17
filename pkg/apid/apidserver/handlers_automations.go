@@ -338,6 +338,9 @@ func automationResponses(manifest json.RawMessage, records []state.Automation) (
 		item.Name = record.Name
 		item.Version = record.Version
 		item.UpdatedAt = &record.UpdatedAt
+		if err := automationSavedTests(record, &item); err != nil {
+			return nil, err
+		}
 		if err := json.Unmarshal(record.Draft, &item.Draft); err != nil {
 			return nil, err
 		}
@@ -564,6 +567,8 @@ func writeAutomationError(w http.ResponseWriter, err error) {
 func (s *server) auditAutomationMutation(r *http.Request, account state.Account, appID, name string, mutation state.AutomationMutation, record state.Automation) {
 	kind := "app.automation_" + mutation.Action + "d"
 	switch mutation.Action {
+	case "tests":
+		kind = "app.automation_tests_saved"
 	case "save":
 		kind = "app.automation_saved"
 	case "publish":
