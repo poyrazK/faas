@@ -38,13 +38,18 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 		candidateErr error
 		values       runtimeDeploymentValues
 		valuesErr    error
+		ownerErr     error
 	)
 	concurrently(
 		func() { candidates, candidateErr = e.frozenCandidates(ctx, app, dep) },
 		func() { values, valuesErr = e.loadRuntimeDeploymentValues(ctx, app, dep) },
+		func() { ownerErr = e.ownerGenerationHolds(ctx) },
 	)
 	if candidateErr != nil || len(candidates) == 0 {
 		return WakeResult{}, false, candidateErr
+	}
+	if ownerErr != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: %w", ownerErr)
 	}
 	if valuesErr != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: frozen thaw: runtime values: %w", valuesErr)

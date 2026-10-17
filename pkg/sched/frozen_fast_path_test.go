@@ -91,6 +91,11 @@ func TestTicketedThawFallsBackToTheOrdinaryPath(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		// The ticket held the retirement gate's verdict; the ordinary path
+		// gates before it decides anything.
+		{name: "workload retired", wantRefusals: 1, wantErr: state.ErrEnvironmentWorkloadRetired, change: func(t *testing.T, f *frozenFixture) {
+			retireWithoutNotification(t, f.e, f.store, f.app)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, ops := frozenWithTicket(t)

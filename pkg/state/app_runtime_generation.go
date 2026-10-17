@@ -99,6 +99,27 @@ func (m *MemStore) appRuntimeGenerationLocked(appID string) (int64, error) {
 			write(row)
 		}
 	}
+	var retirements []string
+	for _, memory := range m.environmentGitOps {
+		for _, r := range memory.retirements {
+			if r.AppID == appID {
+				retirements = append(retirements, string(runtimeGenerationDigest(r)))
+			}
+		}
+	}
+	sort.Strings(retirements)
+	write(retirements)
+	// The workload-retirement gate finds retirements through environment
+	// slugs; the Postgres trigger moves every app of a project whose
+	// environment is renamed or removed.
+	var environments []string
+	for id, env := range m.projectEnvironments {
+		if app.ProjectID != "" && env.ProjectID == app.ProjectID {
+			environments = append(environments, id+"/"+env.Slug)
+		}
+	}
+	sort.Strings(environments)
+	write(environments)
 	var releases []string
 	for id, release := range m.projectReleaseSets {
 		if member := releaseMemberForApp(release, appID); member != "" {

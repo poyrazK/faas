@@ -63,6 +63,9 @@ func testAppRuntimeGeneration(t *testing.T, store runtimeAppEnvTestStore) {
 		{name: "plan changed", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			return store.UpdateAccountPlan(ctx, f.account.ID, scale)
 		}},
+		{name: "project environment removed", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
+			return store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "other")
+		}},
 		{name: "snapshot miss recorded", change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			return store.DeploymentRecordSnapshotMiss(ctx, f.deployments["production"].ID, time.Now().Add(time.Minute))
 		}},

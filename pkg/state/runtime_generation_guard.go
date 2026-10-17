@@ -35,6 +35,26 @@ func runtimeGenerationGuardFrom(ctx context.Context) (runtimeGenerationGuard, bo
 	return guard, ok
 }
 
+// CheckRuntimeGenerationGuard rereads the generation ctx's guard carries and
+// refuses with ErrRuntimeGenerationMoved when it moved; without a guard it
+// reads nothing. A write that does not carry the guard checks it this way
+// before it acts, which leaves its decision as fresh as the reads the owner
+// cache replaced.
+func CheckRuntimeGenerationGuard(ctx context.Context, generations AppRuntimeGenerationReader) error {
+	guard, ok := runtimeGenerationGuardFrom(ctx)
+	if !ok {
+		return nil
+	}
+	generation, err := generations.AppRuntimeGeneration(ctx, guard.appID)
+	if errors.Is(err, ErrNotFound) || (err == nil && generation != guard.generation) {
+		return ErrRuntimeGenerationMoved
+	}
+	if err != nil {
+		return fmt.Errorf("state: read app runtime generation: %w", err)
+	}
+	return nil
+}
+
 // checkRuntimeGenerationTx share-locks the app's generation row inside the
 // admission transaction, after the insert has taken its own locks: writers
 // bump the generation after their row locks, so taking it last cannot close

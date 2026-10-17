@@ -1772,7 +1772,12 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// e2e) keep byte-identical behaviour.
 	ctx = WithScope(ctx, scope)
 	scope = ScopeFrom(ctx)
-	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, scope); trigger != TriggerDeploymentSmoke && err != nil {
+	// ADR-1345: a thaw ticket or an owner cache entry carries the
+	// workload-retirement gate's verdict under the app's runtime generation;
+	// the gate is read only when the wake goes on to decide from fresh reads.
+	if trigger != TriggerDeploymentSmoke && e.gateGuardedByGeneration(ctx, appID, deploymentID) {
+		ctx = withDeferredWorkloadGate(ctx, scope)
+	} else if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, scope); trigger != TriggerDeploymentSmoke && err != nil {
 		return WakeResult{}, err
 	}
 	// ── Phase 1: fast path under appMu ─────────────────────────────
@@ -1800,6 +1805,10 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 		app, appFromCache = entry.app, true
 		ins, insErr = e.runningInstanceOfDeployment(ctx, appID, entry.dep)
 	} else {
+		if err := e.checkDeferredWorkloadGate(ctx, appID); err != nil {
+			release()
+			return WakeResult{}, err
+		}
 		concurrently(
 			func() {
 				if app, appErr = e.store.AppByID(ctx, appID); appErr == nil {
@@ -2892,6 +2901,13 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// ADR-1345: an owner cache entry exists only while the barrier is clear
 	// at its generation, and the admission insert rechecks that generation.
 	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID)
+	if !useCache {
+		// A wake that held its retirement gate for the cache, and decides
+		// from fresh reads after all (a stale entry's retry), runs it now.
+		if err := e.checkDeferredWorkloadGate(ctx, appID); err != nil {
+			return WakeResult{}, err
+		}
+	}
 	if useCache {
 		barrier <- nil
 	} else {

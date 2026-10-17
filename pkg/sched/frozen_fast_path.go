@@ -123,6 +123,11 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	if !basis.Selected || basis.Generation <= 0 {
 		return frozenTicket{}, errNoThawTicket
 	}
+	// The ticket stands in for the wake's workload-retirement gate; a
+	// retirement after this moves the generation the guarded thaw checks.
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, ins.AppID, ""); err != nil {
+		return frozenTicket{}, err
+	}
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
 		return frozenTicket{}, err

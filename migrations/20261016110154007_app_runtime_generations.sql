@@ -111,6 +111,26 @@ BEGIN
 END;
 $$;
 
+-- The workload-retirement gate finds an app's retirements through its
+-- environment's slug; renaming or removing an environment moves every app of
+-- the project.
+CREATE OR REPLACE FUNCTION app_runtime_generation_on_project_environments() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE member uuid;
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.slug IS NOT DISTINCT FROM NEW.slug AND OLD.project_id IS NOT DISTINCT FROM NEW.project_id THEN
+        RETURN NULL;
+    END IF;
+    FOR member IN SELECT id FROM apps WHERE project_id = OLD.project_id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS app_runtime_generation_project_environments ON project_environments;
+CREATE TRIGGER app_runtime_generation_project_environments AFTER UPDATE OR DELETE ON project_environments
+    FOR EACH ROW EXECUTE FUNCTION app_runtime_generation_on_project_environments();
+
 DROP TRIGGER IF EXISTS app_runtime_generation_apps ON apps;
 CREATE TRIGGER app_runtime_generation_apps AFTER INSERT OR UPDATE OR DELETE ON apps
     FOR EACH ROW EXECUTE FUNCTION app_runtime_generation_on_apps(
@@ -213,6 +233,8 @@ DROP TRIGGER IF EXISTS app_runtime_generation_release_sets ON project_release_se
 DROP TRIGGER IF EXISTS app_runtime_generation_deployments ON deployments;
 DROP TRIGGER IF EXISTS app_runtime_generation_accounts ON accounts;
 DROP TRIGGER IF EXISTS app_runtime_generation_apps ON apps;
+DROP TRIGGER IF EXISTS app_runtime_generation_project_environments ON project_environments;
+DROP FUNCTION IF EXISTS app_runtime_generation_on_project_environments();
 DROP FUNCTION IF EXISTS app_runtime_generation_on_release_sets();
 DROP FUNCTION IF EXISTS app_runtime_generation_on_accounts();
 DROP FUNCTION IF EXISTS app_runtime_generation_on_apps();

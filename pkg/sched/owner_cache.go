@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -124,6 +125,63 @@ func (e *Engine) HandleOwnerCacheNotification(n db.Notification) {
 
 var errNoOwnerEntry = errors.New("sched: app has no owner cache entry")
 
+// gateGuardedByGeneration reports whether a production wake may take the
+// workload-retirement gate's verdict from a thaw ticket or an owner cache
+// entry instead of reading it first: both were issued only while the gate
+// passed, and a retirement moves the generation their guarded writes check.
+func (e *Engine) gateGuardedByGeneration(ctx context.Context, appID, deploymentID string) bool {
+	if !e.frozenFastPath.Load() && !e.ownerCacheEnabled.Load() {
+		return false
+	}
+	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
+		return false
+	}
+	_, selected := wakeEnvironmentFrom(ctx)
+	return !selected
+}
+
+type deferredWorkloadGateKey struct{}
+
+// deferredWorkloadGate is a wake's workload-retirement gate held back for a
+// thaw ticket or an owner cache entry. Whichever step of the wake decides
+// from fresh reads first runs it; checked records that it ran.
+type deferredWorkloadGate struct {
+	scope   string
+	checked atomic.Bool
+}
+
+func withDeferredWorkloadGate(ctx context.Context, scope string) context.Context {
+	return context.WithValue(ctx, deferredWorkloadGateKey{}, &deferredWorkloadGate{scope: scope})
+}
+
+// checkDeferredWorkloadGate runs ctx's deferred gate once. A wake without
+// one ran its gate before phase 1.
+func (e *Engine) checkDeferredWorkloadGate(ctx context.Context, appID string) error {
+	gate, ok := ctx.Value(deferredWorkloadGateKey{}).(*deferredWorkloadGate)
+	if !ok || gate.checked.Load() {
+		return nil
+	}
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, gate.scope); err != nil {
+		return err
+	}
+	gate.checked.Store(true)
+	return nil
+}
+
+// ownerGenerationHolds rereads the generation an admission took from the
+// owner cache. ADR-1151's thaw and the warm-pool promotion publish without
+// the admission insert's guard, so they check it beside their own reads,
+// before vmmd resumes anything; a moved generation refuses with ErrConflict
+// and the admission retries from fresh reads. Without the cache it reads
+// nothing.
+func (e *Engine) ownerGenerationHolds(ctx context.Context) error {
+	generations, ok := e.store.(state.AppRuntimeGenerationReader)
+	if !ok {
+		return nil
+	}
+	return state.CheckRuntimeGenerationGuard(ctx, generations)
+}
+
 // ownerEntryForPhaseOne returns the app's entry for wake phase 1 under the
 // same conditions as admission.
 func (e *Engine) ownerEntryForPhaseOne(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
@@ -215,6 +273,11 @@ func (e *Engine) loadOwnerEntry(ctx context.Context, appID string) (ownerEntry, 
 	generation, err := generations.AppRuntimeGeneration(ctx, appID)
 	if err != nil {
 		return ownerEntry{}, fmt.Errorf("sched: owner cache: generation: %w", err)
+	}
+	// A production workload being retired gets no entry; its retirements
+	// move the generation, so an entry implies the gate passed.
+	if err := state.CheckEnvironmentWorkloadAdmission(ctx, e.store, appID, ""); err != nil {
+		return ownerEntry{}, err
 	}
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {

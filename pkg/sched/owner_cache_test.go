@@ -3,7 +3,10 @@
 package sched
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -88,6 +91,93 @@ func TestOwnerCacheRefusesAStaleEntryAtAdmission(t *testing.T) {
 		t.Fatalf("admitted instance RAM = %d, %v; want the current %d", ins.RAMMB, err, ram)
 	}
 	if got := f.outcomes(); got["refused"] != 1 {
+		t.Fatalf("owner cache outcomes = %v, want the stale entry refused once", got)
+	}
+}
+
+// retiringStore reports every workload as retired once retired is set. The
+// flag stands in for a retirement row; a test moves the app's generation
+// itself, as the row's trigger would.
+type retiringStore struct {
+	MemStore *state.MemStore
+	retired  atomic.Bool
+}
+
+func (s *retiringStore) EnvironmentWorkloadAdmissionRetired(ctx context.Context, appID, scope string) (bool, error) {
+	if s.retired.Load() {
+		return true, nil
+	}
+	return s.MemStore.EnvironmentWorkloadAdmissionRetired(ctx, appID, scope)
+}
+
+// retireWithoutNotification retires every workload behind e's store and
+// moves the app's generation, without the notification that would drop the
+// cached entry.
+func retireWithoutNotification(t *testing.T, e *Engine, mem *state.MemStore, app state.App) {
+	t.Helper()
+	retiring := &retiringStore{MemStore: mem}
+	retiring.retired.Store(true)
+	e.store = statetest.NewMem(retiring)
+	ram := app.RAMMB * 2
+	if _, err := mem.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{RAMMB: &ram}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOwnerCacheRunsTheDeferredGateBeforeAFreshDecision(t *testing.T) {
+	f := newOwnerCacheFixture(t)
+	f.wakeAndPark(t)
+	retireWithoutNotification(t, f.e, f.mem, f.app)
+	// The cached entry passed the gate at its generation; the admission
+	// insert refuses it, and the retry from fresh reads must gate.
+	if _, err := f.e.Wake(t.Context(), f.app.ID, "", "", ""); !errors.Is(err, state.ErrEnvironmentWorkloadRetired) {
+		t.Fatalf("Wake of a retired workload = %v, want %v", err, state.ErrEnvironmentWorkloadRetired)
+	}
+	instances, err := f.mem.ListInstancesForApp(t.Context(), f.app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ins := range instances {
+		if state.State(ins.State) != state.StateParked {
+			t.Fatalf("instance %s is %s; want nothing admitted for a retired workload", ins.ID, ins.State)
+		}
+	}
+	if got := f.outcomes(); got["refused"] != 1 {
+		t.Fatalf("owner cache outcomes = %v, want the stale entry refused once", got)
+	}
+}
+
+func TestOwnerCacheChecksTheGenerationBeforeAnOrdinaryThaw(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	ops := wire.NewOpsMetrics("schedd")
+	f.e.WithOpsMetrics(ops).WithOwnerCache()
+	f.e.EnableFrozenTier()
+	// The wake that finds the running instance loads the entry.
+	if _, err := f.e.Wake(t.Context(), f.app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if _, ok := f.e.owners.lookup(f.app.ID); !ok {
+		t.Fatal("no owner cache entry after a production wake")
+	}
+	if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); err != nil || !handled {
+		t.Fatalf("FreezeIdle: %v, %v", handled, err)
+	}
+	// The suspension moves the generation; its notification never arrives,
+	// so the entry still holds an active account.
+	if err := f.store.UpdateAccountStatus(t.Context(), f.app.AccountID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.e.Wake(t.Context(), f.app.ID, "", "", ""); !errors.Is(err, ErrPermanentWake) {
+		t.Fatalf("Wake of a suspended account = %v, want %v", err, ErrPermanentWake)
+	}
+	if row, _ := f.store.InstanceByID(t.Context(), f.ins.ID); row.State != string(state.StateFrozen) {
+		t.Fatalf("frozen VM state %q after a refused wake; want it still frozen", row.State)
+	}
+	got := map[string]float64{}
+	for _, outcome := range wire.OwnerCacheOutcomes {
+		got[outcome] = testutil.ToFloat64(ops.OwnerCacheTotal(outcome))
+	}
+	if got["refused"] != 1 {
 		t.Fatalf("owner cache outcomes = %v, want the stale entry refused once", got)
 	}
 }

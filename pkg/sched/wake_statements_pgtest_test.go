@@ -305,9 +305,9 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		}
 	}
 	t.Logf("ticketed thaw: %v, %d sequential round trips", names, pf.tracer.sequentialRoundTrips(answered))
-	// Every wake first checks the GitOps workload-retirement gate; the thaw
-	// itself is one statement guarded by the app's runtime generation.
-	want := map[string]int{"EnvironmentWorkloadAdmissionRetired": 1, "ThawFrozenInstance": 1}
+	// The ticket carries the workload-retirement gate's verdict (ADR-1345):
+	// the thaw is one statement guarded by the app's runtime generation.
+	want := map[string]int{"ThawFrozenInstance": 1}
 	got := map[string]int{}
 	for _, name := range names {
 		got[name]++

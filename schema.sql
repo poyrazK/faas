@@ -317,6 +317,26 @@ $$;
 
 
 --
+-- Name: app_runtime_generation_on_project_environments(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_project_environments() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.slug IS NOT DISTINCT FROM NEW.slug AND OLD.project_id IS NOT DISTINCT FROM NEW.project_id THEN
+        RETURN NULL;
+    END IF;
+    FOR member IN SELECT id FROM apps WHERE project_id = OLD.project_id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: app_runtime_generation_on_release_sets(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -54315,6 +54335,13 @@ CREATE TRIGGER app_runtime_generation_environment_owners AFTER INSERT OR DELETE 
 --
 
 CREATE TRIGGER app_runtime_generation_envs AFTER INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: project_environments app_runtime_generation_project_environments; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_project_environments AFTER DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_project_environments();
 
 
 --

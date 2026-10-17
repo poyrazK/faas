@@ -7,8 +7,8 @@
   own transaction, so the column guards, the stamps and the runtime-values
   read are gone. A ticket reads the generation first; `ThawFrozenInstance`
   locks only the generation row and keeps the proof and enrollment-expiry
-  checks. A ticketed thaw is the workload-retirement gate and that one
-  statement.
+  checks. The ticket also keeps the workload-retirement gate's verdict,
+  which the generation covers, so a ticketed thaw is that one statement.
 - Date: 2026-10-15
 - Amends: ADR-1151 decision 2, "Thaw path"
 - Builds on: ADR-1151 (pause tiers), the scaling roadmap's wake rule (zero
@@ -151,7 +151,8 @@ that was running when the edit landed.
   remove the read by keeping the runtime values in memory.
 - Measured on real Postgres (`TestPostgresTicketedThawStatements`): a
   ticketed thaw runs 4 statements in 2 sequential round trips, against 24
-  statements in about 19 for ADR-1151's thaw.
+  statements in about 19 for ADR-1151's thaw. With ADR-1345's generation
+  guard it runs one statement, `ThawFrozenInstance`.
 - The guards restate the ordinary path's selection rule in SQL. Conformance
   tests on MemStore and Postgres refuse a thaw after each change the guards
   cover, and check that a deployment the basis selects is the one

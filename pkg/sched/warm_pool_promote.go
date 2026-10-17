@@ -20,9 +20,20 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if app.Status != state.AppActive || app.WarmPoolSize <= 0 || !instanceModeUsesSnapshots(mode) || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return WakeResult{}, false, nil
 	}
-	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	var (
+		values   runtimeDeploymentValues
+		err      error
+		ownerErr error
+	)
+	concurrently(
+		func() { values, err = e.loadRuntimeDeploymentValues(ctx, app, dep) },
+		func() { ownerErr = e.ownerGenerationHolds(ctx) },
+	)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
+	}
+	if ownerErr != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: warm pool: %w", ownerErr)
 	}
 	environmentKey := runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID)
 	production := reaperProductionScope(values.Snapshot.Scope)

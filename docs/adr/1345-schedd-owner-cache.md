@@ -76,6 +76,7 @@ The triggers cover only changes that alter a wake's decision:
 | `app_application_standards` | enrollment state, revisions, effective hash, settings, exception expiry (not lease or checkpoint columns) |
 | `deployment_runtime_environment_owners` | any change |
 | `environment_workload_retirements` | any change |
+| `project_environments` | slug or project changed, environment removed; bumps every app of the project |
 
 `compute_nodes` keeps its own channel, `compute_node_changed`, which already
 fires in the writer's transaction for every column admission uses.
@@ -116,6 +117,18 @@ so an admission that used the cache retries on any `ErrConflict`, not only
 on the generation's. An app taken from the cache is never handed to a path
 that does not carry the guard: wake phase 1 passes on only an app it read
 from the database.
+
+ADR-1151's thaw and the warm-pool promotion publish without an insert, so
+when admission took the entry they reread the generation beside their own
+reads, before vmmd resumes the VM, and refuse and retry the same way. Their
+decision is then as fresh as the uncached path's, which also reads before it
+resumes.
+
+The workload-retirement gate is held back for a production wake that an
+entry or a thaw ticket can serve. It runs as soon as the wake decides from
+fresh reads: in wake phase 1 when no entry serves it, or before a retry. A
+wake answered by a running instance writes nothing; it trusts the entry
+until the notification drops it.
 
 The guard replaces ADR-1342's column guards and its runtime-values read: a
 config edit bumps the counter in the edit's own transaction, so the counter
@@ -175,10 +188,14 @@ rides in those two statements.
 
 Done on branch `perf/schedd-owner-cache`: steps 1 to 4, and step 5's
 admission guard. Measured on real Postgres (`TestPostgresBootStatements`): a
-cold boot with the entry cached runs 42 statements in about 39 round trips,
-against 54 in about 46 without the cache. The entry also keeps the runtime
-values' three reads (each wake builds its own values from them) and exists
-only while the cutover barrier is clear at its generation. What remains is
+cold boot with the entry cached runs 41 statements in about 38 round trips,
+against 54 in about 48 without the cache; a ticketed thaw runs one statement.
+The entry also keeps the runtime values' three reads (each wake builds its
+own values from them), exists only while the cutover barrier is clear at its
+generation, and carries the workload-retirement gate's verdict, as does a
+thaw ticket. The gate is deferred only for a production wake with no
+explicit deployment, scope or bypass; when the cache misses, it runs in wake
+phase 1 before any write. What remains is
 step 5: the snapshot choice and node usage are still read,
 and the boot's bookkeeping (standards capture, a 14-statement scaling-state
 transaction) and its 9-statement publication still run as their own
