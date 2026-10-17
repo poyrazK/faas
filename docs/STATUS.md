@@ -7,6 +7,26 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
+
+gatewayd-internal (unix socket and compute data listener), realtimed and the
+control plane's schedd can restart behind systemd sockets that keep their
+listeners open, as apid and gatewayd-public already did (ADR-068). schedd's
+socket follows its configured address (`faas_schedd_listen_addr`, from the
+manifest's schedd bind); the compute sockets stay off
+(`faas_compute_durable_listeners`) until node_join manages them. Shutdown ends
+SSE and WebSocket sessions at once instead of holding the restart for the
+25 s grace, gRPC servers end watch streams so GracefulStop finishes, the
+public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
+wake RPCs wait out a schedd restart, outboundd and bridged drain before
+exiting, and HTTP daemons answer requests on connections accepted just before
+shutdown instead of closing them
+([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
+restart-under-load tests show no failed requests. Open: a native systemd
+restart under load on a compute node and the control plane, the first
+socket conversion through `node_join` and deployctl, and the listeners the
+ADR leaves without socket activation.
+
 ## Durable migration source retirement — 2026-10-17
 
 [ADR-1530](adr/1530-durable-migration-source-retirement.md) binds production

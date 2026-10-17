@@ -1861,6 +1861,7 @@ jobs:
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
           python3 scripts/ci/test_udp_deployment.py
+          python3 scripts/ci/test_durable_listeners.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
